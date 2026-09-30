@@ -11,7 +11,7 @@ MCP/REST/WebSocket API + 판정 코어 + SQLite + MQTT 게이트웨이로 구성
 
 1. `docs/prd.md` — 최상위 서버 요구사항·범위·인수 조건
 2. `docs/architecture.md` — PRD를 따르는 저장소 구조·계층 계약·분담
-3. `docs/intent.md` — 문서가 존재할 때 4인이 합의한 결정 기록 (아래 "문서 수정 규칙" 참고)
+3. `docs/intent/` — 문서가 존재할 때 4인이 합의한 결정 기록 (아래 "문서 수정 규칙" 참고)
 
 구현 판단이 필요하면 추측하지 말고 위 문서에서 근거를 찾는다.
 근거가 없으면 만들어내지 말고 미결 사항으로 남긴다.
@@ -56,17 +56,22 @@ api  ──▶  core  ──▶  db
 
 ## 문서 수정 규칙
 
-- `docs/intent.md` 는 **4인 공유 문서**다. 수정은 PR 로 올리고 **전원 리뷰**를 받는다
-- `src/nearpilot/shared/` 변경도 **전원 리뷰**다. 계층 폴더 변경은 담당자 리뷰로 충분하다
-- 새 intent 문서는 `docs/templates/intent.md` 를 복사해 시작한다. **6개 절을 바꾸지 않는다**
-- 규칙 원문은 `docs/templates/intent.md` 헤더 주석에 있다. 이 파일은 요약일 뿐이다
+| 변경 대상 | 리뷰 |
+|---|---|
+| `docs/prd.md`, `docs/architecture.md`, `docs/intent/` 아래 문서 | **작성자 포함 3인** (작성자 외 2인 승인) |
+| `src/nearpilot/shared/` | **4인 전원** |
+| 계층 폴더, 그 외 | 담당자 1인 |
+
+- 수정은 모두 PR 로 올린다. main 에 직접 push 하지 않는다
+- 새 intent 문서는 `docs/intent/templates/intent.md` 를 복사해 `docs/intent/intent.md` (주제별이면 `docs/intent/<주제>.md`) 로 쓴다. **6개 절을 바꾸지 않는다**
+- 규칙 원문은 `docs/intent/templates/intent.md` 헤더 주석에 있다. 이 파일은 요약일 뿐이다
 
 > 무료 비공개 레포라 브랜치 룰셋·CODEOWNERS 가 잠겨 있다.
 > **GitHub 가 막아주지 않으므로 4인이 합의로 지킨다.** 리뷰어는 수동으로 지정한다.
 
 ### Claude 가 지킬 것
 
-- `docs/intent.md`, `docs/prd.md`, `docs/architecture.md` 는 **직접 수정하지 않는다.**
+- `docs/intent/`, `docs/prd.md`, `docs/architecture.md` 는 **직접 수정하지 않는다.**
   초안을 제시하고 사람이 PR 로 올리게 한다
 - 담당자가 정해진 계층 폴더를 요청 없이 건드리지 않는다
 
