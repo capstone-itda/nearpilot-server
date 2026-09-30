@@ -56,21 +56,12 @@ api  ──▶  core  ──▶  db
 
 ## 문서 수정 규칙
 
-| 변경 대상 | 리뷰 |
-|---|---|
-| `docs/prd.md`, `docs/architecture.md`, `docs/intent/` 아래 문서 | **작성자 포함 3인** (작성자 외 2인 승인) |
-| `src/nearpilot/shared/` | **4인 전원** |
-| 계층 폴더, 그 외 | 담당자 1인 |
-
-- 수정은 모두 PR 로 올린다. main 에 직접 push 하지 않는다
-- 새 intent 문서는 `docs/intent/templates/intent.md` 를 복사해 `docs/intent/intent.md` (주제별이면 `docs/intent/<주제>.md`) 로 쓴다. **5개 절을 바꾸지 않는다**
-- 규칙 원문은 `docs/intent/templates/intent.md` 헤더 주석에 있다. 이 파일은 요약일 뿐이다
-
-> 무료 비공개 레포라 브랜치 룰셋·CODEOWNERS 가 잠겨 있다.
-> **GitHub 가 막아주지 않으므로 4인이 합의로 지킨다.** 리뷰어는 수동으로 지정한다.
+리뷰 인원 규칙은 `docs/architecture.md` §8, 핵심 문서·intent 절차의 원문은
+`docs/intent/templates/intent.md` 헤더 주석에 있다. 여기서 반복하지 않는다.
 
 ### Claude 가 지킬 것
 
+- main 에 직접 push 하지 않는다. 모든 변경은 PR 로 올린다
 - `docs/intent/`, `docs/prd.md`, `docs/architecture.md` 는 **직접 수정하지 않는다.**
   초안을 제시하고 사람이 PR 로 올리게 한다
 - 담당자가 정해진 계층 폴더를 요청 없이 건드리지 않는다
