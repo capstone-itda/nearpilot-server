@@ -1,0 +1,82 @@
+name: PR 규칙
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  format:
+    name: 형식 검사
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const head = pr.head.ref;
+            const files = await github.paginate(github.rest.pulls.listFiles,
+              { ...context.repo, pull_number: pr.number });
+            const paths = files.map(f => f.filename);
+            const errs = [];
+
+            // 브랜치: intent|feat|fix/{계층}-{요약}, docs/{요약}
+            const m = head.match(/^(intent|feat|fix|docs)\/([a-z0-9]+(?:-[a-z0-9]+)*)$/);
+            if (!m) errs.push(`브랜치 이름 '${head}'이 intent|feat|fix|docs/{slug} 형식이 아닙니다.`);
+            else if (m[1] !== 'docs' && !/^(api|core|db|iot|shared)-/.test(m[2]))
+              errs.push(`slug '${m[2]}'가 {계층}-{요약} 형식이 아닙니다. 계층: api core db iot shared`);
+
+            // PR 제목: 타입(계층): 요약
+            if (!/^(intent|feat|fix|docs|test|refactor|chore)(\((api|core|db|iot|shared)\))?: \S/.test(pr.title))
+              errs.push(`PR 제목 '${pr.title}'이 '타입(계층): 요약' 형식이 아닙니다.`);
+
+            // intent PR: docs/intent/{slug}.md 하나만
+            if (m && m[1] === 'intent') {
+              const want = `docs/intent/${m[2]}.md`;
+              if (paths.length !== 1 || paths[0] !== want)
+                errs.push(`intent PR에는 ${want} 하나만 있어야 합니다. 현재: ${paths.join(', ')}`);
+            }
+            if (errs.length) core.setFailed(errs.join('\n'));
+
+  approvals:
+    name: 승인 검사
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const head = pr.head.ref;
+            const files = await github.paginate(github.rest.pulls.listFiles,
+              { ...context.repo, pull_number: pr.number });
+            const paths = files.flatMap(f => [f.filename, f.previous_filename]).filter(Boolean);
+
+            // 필요한 승인 수: 브랜치 이름과 바뀐 파일 중 가장 엄격한 쪽
+            let need = 0; const why = [];
+            if (/^(intent|docs)\//.test(head)) { need = 2; why.push(`${head.split('/')[0]}/ 브랜치`); }
+            if (paths.some(p => p === 'docs/prd.md' || p === 'docs/architecture.md' || p.startsWith('docs/intent/'))) {
+              need = Math.max(need, 2); why.push('prd·architecture·intent 변경');
+            }
+            if (paths.some(p => p.startsWith('src/nearpilot/shared/'))) {
+              need = Math.max(need, 3); why.push('shared 변경(4명 전원)');
+            }
+
+            // 작성자를 뺀 리뷰어별 마지막 리뷰 상태
+            const reviews = await github.paginate(github.rest.pulls.listReviews,
+              { ...context.repo, pull_number: pr.number });
+            const last = {};
+            for (const r of reviews) {
+              if (r.user.login === pr.user.login) continue;
+              if (['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(r.state)) last[r.user.login] = r.state;
+            }
+            const approved = Object.keys(last).filter(u => last[u] === 'APPROVED');
+            const blocked = Object.keys(last).filter(u => last[u] === 'CHANGES_REQUESTED');
+
+            core.info(`필요 ${need}명 (${why.join(', ') || '승인 불필요'}) / 승인: ${approved.join(', ') || '없음'}`);
+            if (approved.length < need)
+              core.setFailed(`승인 ${approved.length}/${need}명. ${why.join(', ')}`);
+            else if (need > 0 && blocked.length)
+              core.setFailed(`변경 요청이 남아 있습니다: ${blocked.join(', ')}`);
