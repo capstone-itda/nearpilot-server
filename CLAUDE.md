@@ -63,7 +63,7 @@ api  ──▶  core  ──▶  db
 | 계층 폴더, 그 외 | 담당자 1인 |
 
 - 수정은 모두 PR 로 올린다. main 에 직접 push 하지 않는다
-- 새 intent 문서는 `docs/intent/templates/intent.md` 를 복사해 `docs/intent/intent.md` (주제별이면 `docs/intent/<주제>.md`) 로 쓴다. **6개 절을 바꾸지 않는다**
+- 새 intent 문서는 `docs/intent/templates/intent.md` 를 복사해 `docs/intent/intent.md` (주제별이면 `docs/intent/<주제>.md`) 로 쓴다. **5개 절을 바꾸지 않는다**
 - 규칙 원문은 `docs/intent/templates/intent.md` 헤더 주석에 있다. 이 파일은 요약일 뿐이다
 
 > 무료 비공개 레포라 브랜치 룰셋·CODEOWNERS 가 잠겨 있다.
