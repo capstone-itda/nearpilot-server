@@ -9,10 +9,9 @@ MCP/REST/WebSocket API + 판정 코어 + SQLite + MQTT 게이트웨이로 구성
 
 내용이 서로 어긋나면 **위쪽이 이긴다.**
 
-1. `bedrock/NearPilot_요구사항분석서.md` — 원본 요구사항. 모든 문서의 출처
-2. `docs/prd.md` — 서버 범위와 인수 조건
-3. `docs/architecture.md` — 저장소 구조·계층 계약·분담
-4. `docs/intent.md` — 4인이 합의한 결정 기록 (아래 "문서 수정 규칙" 참고)
+1. `docs/prd.md` — 최상위 서버 요구사항·범위·인수 조건
+2. `docs/architecture.md` — PRD를 따르는 저장소 구조·계층 계약·분담
+3. `docs/intent.md` — 문서가 존재할 때 4인이 합의한 결정 기록 (아래 "문서 수정 규칙" 참고)
 
 구현 판단이 필요하면 추측하지 말고 위 문서에서 근거를 찾는다.
 근거가 없으면 만들어내지 말고 미결 사항으로 남긴다.
@@ -67,7 +66,7 @@ api  ──▶  core  ──▶  db
 
 ### Claude 가 지킬 것
 
-- `docs/intent.md`, `bedrock/`, `docs/prd.md`, `docs/architecture.md` 는 **직접 수정하지 않는다.**
+- `docs/intent.md`, `docs/prd.md`, `docs/architecture.md` 는 **직접 수정하지 않는다.**
   초안을 제시하고 사람이 PR 로 올리게 한다
 - 담당자가 정해진 계층 폴더를 요청 없이 건드리지 않는다
 
@@ -75,7 +74,7 @@ api  ──▶  core  ──▶  db
 
 - 브랜치는 계층 단위: `api/…`, `core/…`, `db/…`, `iot/…`, 공동 계약은 `shared/…`
 - 커밋·PR·테스트 이름에 요구사항 ID를 적는다 — 예: `FR-19 원자적 점유`
-- **FR 하나당 pytest 케이스를 최소 하나** 둔다 (분석서 부록 D)
+- **FR 하나당 pytest 케이스를 최소 하나** 둔다 (PRD §6)
 - 계층을 합친 시나리오는 `tests/integration/` 에 공동으로 작성한다
 
 ## 함정
