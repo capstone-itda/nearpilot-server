@@ -3,7 +3,8 @@
 AI 호스트(MCP)와 ESP32 노드 사이에서 **실행 허가를 판정하는 단일 프로세스 서버**.
 MCP/REST/WebSocket API + 판정 코어 + SQLite + MQTT 게이트웨이로 구성된다.
 
-4인 캡스톤 팀이 계층 하나씩(API · CORE · DB · IOT) 맡는다.
+4인 캡스톤 팀은 판정 · 근접 추정 · 상태 관리 · DB를 한 명씩 맡는다.
+API · CORE · DB · IOT는 서버의 계층 구조이며, 사람의 역할 분담과는 구분한다.
 
 ## 문서 권위 순서
 
@@ -27,7 +28,7 @@ pytest tests/core         # 계층 하나만
 `pyproject.toml` 에 `pythonpath = ["src"]` 가 있어 설치 없이도 테스트는 돈다.
 **서버 실행 진입점과 Mosquitto 기동 방법은 아직 정해지지 않았다.** 정해지면 이 절에 추가한다.
 
-## 계층 구조와 소유권
+## 계층 구조와 담당 범위
 
 ```
 api  ──▶  core  ──▶  db
@@ -36,7 +37,11 @@ api  ──▶  core  ──▶  db
 ```
 
 코드는 `src/nearpilot/<계층>/`, 테스트는 `tests/<계층>/` 에 둔다.
-**각자 자기 계층 폴더 안에서만 작업한다.** 다른 계층을 고쳐야 하면 그 담당자에게 요청한다.
+판정은 `core/decision/`, 근접 추정은 `core/proximity/`, 상태 관리는 `core/lifecycle/`,
+DB는 `db/`와 대응하는 테스트 범위를 맡는다.
+**각자 자기 담당 범위 안에서 작업한다.** 다른 담당 범위를 고쳐야 하면 해당 담당자와 먼저 조율한다.
+`api/`, `iot/`, `core/policy/`, `core/allocation/`과 노드 시뮬레이터·수집 도구의 세부 담당은 아직 미정이며,
+작업 전에 4인이 담당 범위를 합의한다. 상세 분담은 `docs/architecture.md` §1~2를 따른다.
 `shared/` 와 `tests/integration/` 은 4인 공동 소유다.
 
 ### 의존 규칙 (architecture.md §3)
