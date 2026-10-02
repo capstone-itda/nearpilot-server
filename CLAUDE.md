@@ -68,7 +68,8 @@ api  ──▶  core  ──▶  db
 
 ## 컨벤션
 
-- 브랜치는 계층 단위: `api/…`, `core/…`, `db/…`, `iot/…`, 공동 계약은 `shared/…`
+- 브랜치는 `feat|fix|intent/{계층}-{요약}`, 문서는 `docs/{요약}` — 예: `feat/core-atomic-reserve`.
+  PR 제목은 `타입(계층): 요약`. 원문은 `docs/architecture.md` §8, CI 가 형식을 검사한다
 - 커밋·PR·테스트 이름에 요구사항 ID를 적는다 — 예: `FR-19 원자적 점유`
 - **FR 하나당 pytest 케이스를 최소 하나** 둔다 (PRD §6)
 - 계층을 합친 시나리오는 `tests/integration/` 에 공동으로 작성한다
