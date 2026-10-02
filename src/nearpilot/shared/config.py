@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +36,25 @@ class Settings:
     approval_ttl_sec: int | None = None  # 승인 기본 유효시간
 
     def __post_init__(self) -> None:
+        optional = {
+            "beacon_recent_sec", "online_ttl_sec", "exec_timeout_sec",
+            "rental_timeout_sec", "approval_ttl_sec",
+        }
+        for name in (
+            "threshold_locker", "threshold_light", "rssi_frame_sec",
+            "leave_absent_sec", "leave_grace_sec", "allocation_window_ms",
+            "beacon_recent_sec", "online_ttl_sec", "exec_timeout_sec",
+            "rental_timeout_sec", "approval_ttl_sec",
+        ):
+            v = getattr(self, name)
+            if v is None and name in optional:
+                continue
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                raise ValueError(f"{name} 는 숫자여야 한다: {v!r}")
+            if isinstance(v, float) and not isfinite(v):
+                raise ValueError(f"{name} 는 유한한 숫자여야 한다: {v}")
+            if name in ("allocation_window_ms", "approval_ttl_sec") and not isinstance(v, int):
+                raise ValueError(f"{name} 는 정수여야 한다: {v}")
         for name in ("threshold_locker", "threshold_light"):
             v = getattr(self, name)
             if not 0.0 < v <= 1.0:
