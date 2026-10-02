@@ -224,7 +224,7 @@ PRD가 정한 것은 SQLite, MQTT, MCP Streamable HTTP, WebSocket, HTTPS REST, p
 
 ## 8. 협업 규칙
 
-1. 브랜치는 계층 단위로 딴다: `api/…`, `core/…`, `db/…`, `iot/…`, 공동 계약은 `shared/…`.
+1. 브랜치는 `feat|fix|intent/{계층}-{요약}`, 문서는 `docs/{요약}`으로 딴다. 계층은 `api`·`core`·`db`·`iot`·`shared`, 요약은 영문 소문자·숫자·하이픈이다 (예: `feat/core-atomic-reserve`, `docs/pr-template`). intent PR은 `docs/intent/{계층}-{요약}.md` 하나만 담는다. PR 제목은 `타입(계층): 요약`이며 계층은 생략할 수 있다. 형식은 CI(`.github/workflows/pr-rules.yml`)가 검사한다.
 2. `docs/prd.md`·`docs/architecture.md`·`docs/intent/` 수정은 작성자 포함 3인(작성자 외 2인 승인)이 리뷰한다. `shared` 변경은 4인 모두 리뷰한다. 계층 폴더 변경은 담당자 리뷰로 충분하다. 규칙 원문은 `docs/intent/templates/intent.md` 헤더 주석이다.
 3. 커밋·PR·테스트 이름에 요구사항 ID를 적는다 (예: `FR-19 원자적 점유`).
 4. 각 FR마다 pytest 케이스를 하나 이상 두고, 정량 평가는 PRD의 인수 기준을 따른다.
