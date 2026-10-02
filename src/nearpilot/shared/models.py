@@ -1,12 +1,14 @@
 """계층 사이에서 주고받는 값 객체 (architecture.md §4 도메인 모델).
 
-모두 불변(frozen)이다. DB 행을 그대로 옮긴 것이 아니라 계층 간에 필요한 필드만 담는다.
+모두 불변(frozen)이다. Mapping 필드는 복사하고 내부 JSON 컨테이너도 불변으로 만든다.
+DB 행을 그대로 옮긴 것이 아니라 계층 간에 필요한 필드만 담는다.
 DB 스키마의 전체 필드는 architecture.md §9 와 db 계층이 정의한다.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -31,6 +33,37 @@ from nearpilot.shared.enums import (
     Verdict,
     Visibility,
 )
+
+
+class _FrozenDict(dict):
+    """Read-only snapshot that keeps dict JSON and dataclass serialization."""
+
+    def _reject_mutation(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("Snapshot mappings cannot be modified")
+
+    __setitem__ = _reject_mutation
+    __delitem__ = _reject_mutation
+    clear = _reject_mutation
+    pop = _reject_mutation
+    popitem = _reject_mutation
+    setdefault = _reject_mutation
+    update = _reject_mutation
+    __ior__ = _reject_mutation
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> _FrozenDict:
+        return _FrozenDict(
+            (deepcopy(key, memo), deepcopy(value, memo))
+            for key, value in self.items()
+        )
+
+
+def _freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return _FrozenDict((key, _freeze(item)) for key, item in value.items())
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    return value
+
 
 # ── 계정·비콘 ───────────────────────────────────────────────────────
 
@@ -69,6 +102,10 @@ class NodeInfo:
     last_seen_at: datetime | None
     release_policy: Mapping[str, Any] = field(default_factory=dict)
     anchor_params: Mapping[str, float] = field(default_factory=dict)  # A, n, σ
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "release_policy", _freeze(self.release_policy))
+        object.__setattr__(self, "anchor_params", _freeze(self.anchor_params))
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +217,9 @@ class ProximityResult:
     model_version: str
     calib_version: str
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "posteriors", _freeze(self.posteriors))
+
     @property
     def best(self) -> tuple[str, float] | None:
         """사후확률 최대 장치. 동률이면 node_id 순 (결정론)."""
@@ -202,6 +242,9 @@ class ReserveRequest:
     approval_id: str | None  # 승인이 필요 없으면 None
     expires_at: datetime | None
     release_policy: Mapping[str, Any] = field(default_factory=dict)  # 생성 당시 값 보존
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "release_policy", _freeze(self.release_policy))
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +284,9 @@ class NodeStatus:
     safe: bool | None  # None = 안전 미확인
     detail: Mapping[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "detail", _freeze(self.detail))
+
 
 @dataclass(frozen=True, slots=True)
 class NodeCommand:
@@ -267,3 +313,6 @@ class AuditEvent:
     payload: Mapping[str, Any]  # 입력·결과·버전·임계값·후보 확률
     internal_request_id: str | None = None  # 인증 실패 등은 None
     command_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "payload", _freeze(self.payload))
