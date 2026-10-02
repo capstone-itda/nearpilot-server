@@ -7,10 +7,18 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  statuses: write
+# 리뷰가 연달아 달려도 마지막 판정만 남긴다
+concurrency:
+  group: pr-rules-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
+# 판정 결과는 커밋 상태(형식 검사·승인 검사)로 기록한다.
+# 커밋 상태는 이름이 같으면 마지막 값으로 교체되므로, 리뷰가 늘면 ❌가 ✅로 바뀐다.
+# (검사 실행 결과로 실패시키면 옛 ❌가 남아 머지를 계속 막는다.)
 jobs:
-  format:
-    name: 형식 검사
+  judge:
+    name: PR 규칙 판정
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v7
@@ -21,49 +29,34 @@ jobs:
             const files = await github.paginate(github.rest.pulls.listFiles,
               { ...context.repo, pull_number: pr.number });
             const paths = files.map(f => f.filename);
-            const errs = [];
+            const touched = files.flatMap(f => [f.filename, f.previous_filename]).filter(Boolean);
 
+            // ── 형식 검사 ──
+            const errs = [];
             // 브랜치: intent|feat|fix/{계층}-{요약}, docs/{요약}
             const m = head.match(/^(intent|feat|fix|docs)\/([a-z0-9]+(?:-[a-z0-9]+)*)$/);
-            if (!m) errs.push(`브랜치 이름 '${head}'이 intent|feat|fix|docs/{slug} 형식이 아닙니다.`);
+            if (!m) errs.push(`브랜치 '${head}'가 intent|feat|fix|docs/{slug} 형식이 아님`);
             else if (m[1] !== 'docs' && !/^(api|core|db|iot|shared)-/.test(m[2]))
-              errs.push(`slug '${m[2]}'가 {계층}-{요약} 형식이 아닙니다. 계층: api core db iot shared`);
-
+              errs.push(`slug '${m[2]}'가 {계층}-{요약} 형식이 아님`);
             // PR 제목: 타입(계층): 요약
             if (!/^(intent|feat|fix|docs|test|refactor|chore)(\((api|core|db|iot|shared)\))?: \S/.test(pr.title))
-              errs.push(`PR 제목 '${pr.title}'이 '타입(계층): 요약' 형식이 아닙니다.`);
-
+              errs.push(`PR 제목이 '타입(계층): 요약' 형식이 아님`);
             // intent PR: docs/intent/{slug}.md 하나만
             if (m && m[1] === 'intent') {
               const want = `docs/intent/${m[2]}.md`;
-              if (paths.length !== 1 || paths[0] !== want)
-                errs.push(`intent PR에는 ${want} 하나만 있어야 합니다. 현재: ${paths.join(', ')}`);
+              if (paths.length !== 1 || paths[0] !== want) errs.push(`intent PR에는 ${want} 하나만 있어야 함`);
             }
-            if (errs.length) core.setFailed(errs.join('\n'));
 
-  approvals:
-    name: 승인 검사
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/github-script@v7
-        with:
-          script: |
-            const pr = context.payload.pull_request;
-            const head = pr.head.ref;
-            const files = await github.paginate(github.rest.pulls.listFiles,
-              { ...context.repo, pull_number: pr.number });
-            const paths = files.flatMap(f => [f.filename, f.previous_filename]).filter(Boolean);
-
+            // ── 승인 검사 ──
             // 필요한 승인 수: 브랜치 이름과 바뀐 파일 중 가장 엄격한 쪽
             let need = 0; const why = [];
             if (/^(intent|docs)\//.test(head)) { need = 2; why.push(`${head.split('/')[0]}/ 브랜치`); }
-            if (paths.some(p => p === 'docs/prd.md' || p === 'docs/architecture.md' || p.startsWith('docs/intent/'))) {
+            if (touched.some(p => p === 'docs/prd.md' || p === 'docs/architecture.md' || p.startsWith('docs/intent/'))) {
               need = Math.max(need, 2); why.push('prd·architecture·intent 변경');
             }
-            if (paths.some(p => p.startsWith('src/nearpilot/shared/'))) {
-              need = Math.max(need, 3); why.push('shared 변경(4명 전원)');
+            if (touched.some(p => p.startsWith('src/nearpilot/shared/'))) {
+              need = Math.max(need, 3); why.push('shared 변경');
             }
-
             // 작성자를 뺀 리뷰어별 마지막 리뷰 상태
             const reviews = await github.paginate(github.rest.pulls.listReviews,
               { ...context.repo, pull_number: pr.number });
@@ -74,9 +67,17 @@ jobs:
             }
             const approved = Object.keys(last).filter(u => last[u] === 'APPROVED');
             const blocked = Object.keys(last).filter(u => last[u] === 'CHANGES_REQUESTED');
+            const reason = why.join(', ') || '승인 불필요';
+            let ok = true, msg = `승인 ${approved.length}/${need}명 (${reason})`;
+            if (approved.length < need) ok = false;
+            else if (need > 0 && blocked.length) { ok = false; msg = `변경 요청 남음: ${blocked.join(', ')}`; }
 
-            core.info(`필요 ${need}명 (${why.join(', ') || '승인 불필요'}) / 승인: ${approved.join(', ') || '없음'}`);
-            if (approved.length < need)
-              core.setFailed(`승인 ${approved.length}/${need}명. ${why.join(', ')}`);
-            else if (need > 0 && blocked.length)
-              core.setFailed(`변경 요청이 남아 있습니다: ${blocked.join(', ')}`);
+            // ── 커밋 상태로 기록 ──
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const post = (name, pass, text) => github.rest.repos.createCommitStatus({
+              ...context.repo, sha: pr.head.sha, context: name,
+              state: pass ? 'success' : 'failure', description: text.slice(0, 140), target_url: url });
+            await post('형식 검사', !errs.length, errs.length ? errs.join(' / ') : '형식 통과');
+            await post('승인 검사', ok, msg);
+            core.info(`형식: ${errs.join(' / ') || '통과'}`);
+            core.info(`승인: ${msg}`);
