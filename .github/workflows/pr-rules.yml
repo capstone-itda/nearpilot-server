@@ -36,10 +36,10 @@ jobs:
             // 브랜치: intent|feat|fix/{계층}-{요약}, docs/{요약}
             const m = head.match(/^(intent|feat|fix|docs)\/([a-z0-9]+(?:-[a-z0-9]+)*)$/);
             if (!m) errs.push(`브랜치 '${head}'가 intent|feat|fix|docs/{slug} 형식이 아님`);
-            else if (m[1] !== 'docs' && !/^(api|core|db|iot|shared)-/.test(m[2]))
+            else if (m[1] !== 'docs' && !/^(api|core|db|iot|shared|app|dashboard|firmware)-/.test(m[2]))
               errs.push(`slug '${m[2]}'가 {계층}-{요약} 형식이 아님`);
             // PR 제목: 타입(계층): 요약
-            if (!/^(intent|feat|fix|docs|test|refactor|chore)(\((api|core|db|iot|shared)\))?: \S/.test(pr.title))
+            if (!/^(intent|feat|fix|docs|test|refactor|chore)(\((api|core|db|iot|shared|app|dashboard|firmware)\))?: \S/.test(pr.title))
               errs.push(`PR 제목이 '타입(계층): 요약' 형식이 아님`);
             // intent PR: docs/intent/{slug}.md 하나만
             if (m && m[1] === 'intent') {
@@ -54,7 +54,7 @@ jobs:
             if (touched.some(p => p === 'docs/prd.md' || p === 'docs/architecture.md' || p.startsWith('docs/intent/'))) {
               need = Math.max(need, 2); why.push('prd·architecture·intent 변경');
             }
-            if (touched.some(p => p.startsWith('src/nearpilot/shared/'))) {
+            if (touched.some(p => p.startsWith('server/src/nearpilot/shared/'))) {
               need = Math.max(need, 3); why.push('shared 변경');
             }
             // 작성자를 뺀 리뷰어별 마지막 리뷰 상태

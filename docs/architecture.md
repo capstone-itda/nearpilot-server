@@ -38,16 +38,18 @@ flowchart TB
 | **IOT** | MQTT 브로커 연결, 노드 발견·RSSI·상태·실행 결과 수신과 검증, 실행 명령 전송과 결과 대기(타임아웃), 노드별 자격정보, 노드 시뮬레이터 | FR-04~07(서버 측), NFR-08·10·12, 지표 8 수집 |
 | **shared** | 계층 사이에서 오가는 데이터 모델·열거형·인터페이스 정의. 4인 공동 소유 | PRD 판정·점유·외부 계약 |
 
-| 역할 | 담당 코드·테스트 | 주요 책임 |
-|---|---|---|
-| **판정** | `src/nearpilot/core/decision/`, `tests/core/decision/` | 판정 ⓪~⑥ 조합, 근접·정책·점유 결과 반영, 실행 직전 재검사 |
-| **근접 추정** | `src/nearpilot/core/proximity/`, `tests/core/proximity/` | 관측 모델·HMM, 사후확률 계산, 근접 추정 인터페이스 |
-| **상태 관리** | `src/nearpilot/core/lifecycle/`, `tests/core/lifecycle/` | 예약 이후 상태 전이, 이탈 유예·타임아웃·해제·FAULT 복구 |
-| **DB** | `src/nearpilot/db/`, `tests/db/`, `tools/evaluation/` | 스키마·저장소·원자적 점유 및 승인 사용분 처리·감사 로그·평가 스크립트 |
+경로는 `server/` 기준이며, 테스트는 같은 이름의 `tests/` 하위 폴더에 둔다.
 
-이 표는 역할별 담당 범위를 기록하며 개인 이름은 명시하지 않는다. `api/`, `iot/`, `core/policy/`,
-`core/allocation/`과 노드 시뮬레이터·수집 도구의 세부 담당은 별도로 합의한다. 해당 영역은 작업 전에
-4인이 담당 범위를 조율하며, API·IOT 전담자가 이미 정해졌다고 가정하지 않는다.
+| 역할 | 담당 코드 | 주요 책임 |
+|---|---|---|
+| **판정** | `src/nearpilot/core/decision/`, `core/allocation/`, `api/mcp/`, `api/auth/` | 판정 ⓪~⑥ 조합, 근접·정책·점유 결과 반영, 실행 직전 재검사, 전역 할당, MCP 도구 6개, 토큰 → 계정 식별 |
+| **근접 추정** | `src/nearpilot/core/proximity/`, `tools/data_collection/` | 관측 모델·HMM, 사후확률 계산, 근접 추정 인터페이스, RSSI 라벨 수집 |
+| **상태 관리** | `src/nearpilot/core/lifecycle/`, `iot/`, `tools/node_sim/` | 예약 이후 상태 전이, 이탈 유예·타임아웃·해제·FAULT 복구, MQTT 게이트웨이, 노드 시뮬레이터 |
+| **DB** | `src/nearpilot/db/`, `core/policy/`, `tools/evaluation/` | 스키마·저장소·원자적 점유 및 승인 사용분 처리·감사 로그·평가 스크립트, 접근 정책·승인 검사, 토큰 해시로 계정 조회(`AccountLookup`) |
+
+이 표는 역할별 담당 범위를 기록하며 개인 이름은 명시하지 않는다. 앱(`app/`)·대시보드(`dashboard/`)는
+서버 담당 업무를 먼저 마친 사람이 맡는다. `api/rest/`·`api/ws/`는 앱·대시보드 담당이 정해지면 함께 배정한다.
+펌웨어(`firmware/`) 담당은 별도로 합의한다.
 
 ## 2. 폴더 구조
 
@@ -56,39 +58,42 @@ flowchart TB
 ├── docs/
 │   ├── prd.md                       최상위 요구사항 · 범위 · 인수 기준
 │   └── architecture.md              PRD를 구현하는 구조와 계약 (이 문서)
-├── src/nearpilot/
-│   ├── shared/            [공동]  계층 간 계약: 도메인 모델 · 열거형 · 인터페이스
-│   ├── api/               [세부 담당 미정]
-│   │   ├── mcp/           MCP 엔드포인트 · 도구 6개 (FR-08~11)
-│   │   ├── auth/          토큰 → 계정 식별, 무효 토큰 거부
-│   │   ├── rest/          앱(계정·승인) · 대시보드(신뢰·정책·복구) API
-│   │   └── ws/            실시간 모니터링 (FR-12B)
-│   ├── core/              [역할별 하위 폴더 담당]
-│   │   ├── decision/      [판정] ⓪~⑥ 판정 파이프라인 (FR-15·18)
-│   │   ├── proximity/     [근접 추정] 관측 모델 · HMM · 재질문 임계값 (FR-16·17)
-│   │   ├── policy/        [세부 담당 미정] 접근 정책 · 승인 검사 (FR-14)
-│   │   ├── allocation/    [세부 담당 미정] 전역 할당 (FR-23)
-│   │   └── lifecycle/     [상태 관리] 상태 머신 · 자동 해제 · FAULT 복구 (FR-19·20, NFR-04)
-│   ├── db/                [DB]
-│   │   ├── schema/        DDL · 마이그레이션
-│   │   ├── repositories/  테이블별 저장소 · 원자적 점유
-│   │   └── audit/         감사 로그 (FR-22)
-│   └── iot/               [세부 담당 미정]
-│       ├── mqtt/          브로커 연결 · 구독 · 명령 전송
-│       └── messages/      MQTT 페이로드 스키마 (펌웨어와의 계약)
-├── tests/
-│   ├── api/  core/  db/  iot/     계층별 단위 테스트 — 역할별 담당 범위와 대응
-│   └── integration/               계층을 합친 시나리오 테스트 — 공동
-└── tools/
-    ├── node_sim/          가상 ESP32 노드 (하드웨어 없이 개발·부하 시험) — 세부 담당 미정
-    ├── data_collection/   RSSI 라벨 수집 (지표 8) — 세부 담당 미정
-    └── evaluation/        지표 1~9 평가 표·그래프 생성 (NFR-13) — DB
+├── server/
+│   ├── pyproject.toml
+│   ├── src/nearpilot/
+│   │   ├── shared/            [공동]  계층 간 계약: 도메인 모델 · 열거형 · 인터페이스
+│   │   ├── api/
+│   │   │   ├── mcp/           [판정] MCP 엔드포인트 · 도구 6개 (FR-08~11)
+│   │   │   ├── auth/          [판정] 토큰 → 계정 식별, 무효 토큰 거부
+│   │   │   ├── rest/          [미정] 앱(계정·승인) · 대시보드(신뢰·정책·복구) API
+│   │   │   └── ws/            [미정] 실시간 모니터링 (FR-12B)
+│   │   ├── core/
+│   │   │   ├── decision/      [판정] ⓪~⑥ 판정 파이프라인 (FR-15·18)
+│   │   │   ├── proximity/     [근접 추정] 관측 모델 · HMM · 재질문 임계값 (FR-16·17)
+│   │   │   ├── policy/        [DB] 접근 정책 · 승인 검사 (FR-14)
+│   │   │   ├── allocation/    [판정] 전역 할당 (FR-23)
+│   │   │   └── lifecycle/     [상태 관리] 상태 머신 · 자동 해제 · FAULT 복구 (FR-19·20, NFR-04)
+│   │   ├── db/                [DB]
+│   │   │   ├── schema/        DDL · 마이그레이션
+│   │   │   ├── repositories/  테이블별 저장소 · 원자적 점유
+│   │   │   └── audit/         감사 로그 (FR-22)
+│   │   └── iot/               [상태 관리]
+│   │       ├── mqtt/          브로커 연결 · 구독 · 명령 전송
+│   │       └── messages/      MQTT 페이로드 스키마 (펌웨어와의 계약)
+│   ├── tests/
+│   │   ├── api/  core/  db/  iot/  shared/   계층별 단위 테스트 — 역할별 담당 범위와 대응
+│   │   └── integration/       계층을 합친 시나리오 테스트 — 공동
+│   └── tools/
+│       ├── node_sim/          가상 ESP32 노드 (하드웨어 없이 개발·부하 시험) — 상태 관리
+│       ├── data_collection/   RSSI 라벨 수집 (지표 8) — 근접 추정
+│       └── evaluation/        지표 1~9 평가 표·그래프 생성 (NFR-13) — DB
+├── app/                       Android 앱 (비콘 · 알림)
+├── dashboard/                 운영 대시보드 (웹)
+└── firmware/                  ESP32 앵커·장치 노드
 ```
 
 각 담당자는 §1의 자기 담당 코드와 대응하는 테스트 범위 안에서 작업한다.
-`core/`는 판정·근접 추정·상태 관리 담당이 하위 폴더별로 나누어 사용한다.
-다른 담당 범위를 고쳐야 하면 해당 담당자와 먼저 조율한다. 세부 담당이 미정인 영역은
-4인이 담당 범위를 합의한 뒤 작업한다. `shared/`와 `tests/integration/`은 4인 공동 소유다.
+다른 담당 범위를 고쳐야 하면 해당 담당자와 먼저 조율한다. `shared/`와 `tests/integration/`은 4인 공동 소유다.
 
 ## 3. 의존 규칙
 
@@ -237,11 +242,11 @@ PRD가 정한 것은 SQLite, MQTT, MCP Streamable HTTP, WebSocket, HTTPS REST, p
 
 ## 8. 협업 규칙
 
-1. 브랜치는 `feat|fix|intent/{계층}-{요약}`, 문서는 `docs/{요약}`으로 딴다. 계층은 `api`·`core`·`db`·`iot`·`shared`, 요약은 영문 소문자·숫자·하이픈이다 (예: `feat/core-atomic-reserve`, `docs/pr-template`). intent PR은 `docs/intent/{계층}-{요약}.md` 하나만 담는다. PR 제목은 `타입(계층): 요약`이며 계층은 생략할 수 있다. 형식은 CI(`.github/workflows/pr-rules.yml`)가 검사한다.
+1. 브랜치는 `feat|fix|intent/{계층}-{요약}`, 문서는 `docs/{요약}`으로 딴다. 계층은 `api`·`core`·`db`·`iot`·`shared`(서버 밖은 `app`·`dashboard`·`firmware`), 요약은 영문 소문자·숫자·하이픈이다 (예: `feat/core-atomic-reserve`, `docs/pr-template`). intent PR은 `docs/intent/{계층}-{요약}.md` 하나만 담는다. PR 제목은 `타입(계층): 요약`이며 계층은 생략할 수 있다. 형식은 CI(`.github/workflows/pr-rules.yml`)가 검사한다.
 2. `docs/prd.md`·`docs/architecture.md`·`docs/intent/` 수정은 작성자 포함 3인(작성자 외 2인 승인)이 리뷰한다. `shared` 변경은 4인 모두 리뷰한다. 역할별 담당 범위의 코드·테스트 변경은 해당 담당자 리뷰로 충분하다. 규칙 원문은 `docs/intent/templates/intent.md` 헤더 주석이다.
 3. 커밋·PR·테스트 이름에 요구사항 ID를 적는다 (예: `FR-19 원자적 점유`).
 4. 각 FR마다 pytest 케이스를 하나 이상 두고, 정량 평가는 PRD의 인수 기준을 따른다.
-5. 계층을 합친 시나리오(대표 시연 4장면)는 `tests/integration/`에 공동으로 작성한다.
+5. 계층을 합친 시나리오(대표 시연 4장면)는 `server/tests/integration/`에 공동으로 작성한다.
 
 ## 9. 데이터 계약 (DB · shared)
 
