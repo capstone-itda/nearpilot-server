@@ -3,7 +3,7 @@
 AI 호스트(MCP)와 ESP32 노드 사이에서 **실행 허가를 판정하는 단일 프로세스 서버**.
 MCP/REST/WebSocket API + 판정 코어 + SQLite + MQTT 게이트웨이로 구성된다.
 
-4인 캡스톤 팀이 계층 하나씩(API · CORE · DB · IOT) 맡는다.
+저장소는 모노레포다. 서버는 `server/`, 앱·대시보드·펌웨어는 `app/`·`dashboard/`·`firmware/`, 문서는 `docs/`에 둔다.
 
 ## 문서 권위 순서
 
@@ -19,15 +19,16 @@ MCP/REST/WebSocket API + 판정 코어 + SQLite + MQTT 게이트웨이로 구성
 ## 개발 명령
 
 ```bash
+cd server
 pip install -e ".[dev]"   # 개발 설치
 pytest                    # 전체 테스트
 pytest tests/core         # 계층 하나만
 ```
 
-`pyproject.toml` 에 `pythonpath = ["src"]` 가 있어 설치 없이도 테스트는 돈다.
+`server/pyproject.toml` 에 `pythonpath = ["src"]` 가 있어 설치 없이도 테스트는 돈다.
 **서버 실행 진입점과 Mosquitto 기동 방법은 아직 정해지지 않았다.** 정해지면 이 절에 추가한다.
 
-## 계층 구조와 소유권
+## 계층 구조와 담당 범위
 
 ```
 api  ──▶  core  ──▶  db
@@ -35,8 +36,9 @@ api  ──▶  core  ──▶  db
 모든 계층 ──▶ shared
 ```
 
-코드는 `src/nearpilot/<계층>/`, 테스트는 `tests/<계층>/` 에 둔다.
-**각자 자기 계층 폴더 안에서만 작업한다.** 다른 계층을 고쳐야 하면 그 담당자에게 요청한다.
+코드는 `server/src/nearpilot/<계층>/`, 테스트는 `server/tests/<계층>/` 에 둔다.
+역할별 담당 폴더는 `docs/architecture.md` §1을 따른다.
+**각자 자기 담당 범위 안에서 작업한다.** 다른 담당 범위를 고쳐야 하면 해당 담당자와 먼저 조율한다.
 `shared/` 와 `tests/integration/` 은 4인 공동 소유다.
 
 ### 의존 규칙 (architecture.md §3)
@@ -72,7 +74,7 @@ api  ──▶  core  ──▶  db
   PR 제목은 `타입(계층): 요약`. 원문은 `docs/architecture.md` §8, CI 가 형식을 검사한다
 - 커밋·PR·테스트 이름에 요구사항 ID를 적는다 — 예: `FR-19 원자적 점유`
 - **FR 하나당 pytest 케이스를 최소 하나** 둔다 (PRD §6)
-- 계층을 합친 시나리오는 `tests/integration/` 에 공동으로 작성한다
+- 계층을 합친 시나리오는 `server/tests/integration/` 에 공동으로 작성한다
 
 ## 함정
 

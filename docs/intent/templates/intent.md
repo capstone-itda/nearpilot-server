@@ -2,9 +2,9 @@
 intent 문서 규칙  ·  이 주석이 규칙 원문이다 (다른 문서는 요약·포인터일 뿐)
 
 무엇인가
-- docs/intent/ 아래 문서는 4인 공유 문서다. 계층별 spec 문서는 각자 관리하지만 이 문서들은 아니다.
+- docs/intent/ 아래 문서는 4인 공유 문서다. 역할별 담당 범위의 spec 문서는 각자 관리하지만 이 문서들은 아니다.
 - 이 파일은 템플릿이다. intent 하나당 복사해서 docs/intent/{계층}-{요약}.md 로 쓴다.
-  예) docs/intent/shared-approval-flow.md  (계층: api core db iot shared, 요약: 영문 소문자·숫자·하이픈)
+  예) docs/intent/shared-approval-flow.md  (계층: api core db iot shared app dashboard firmware, 요약: 영문 소문자·숫자·하이픈)
 - 브랜치는 intent/{계층}-{요약} 으로, 파일 이름과 같게 딴다. intent PR 에는 그 파일 하나만 담는다.
 
 수정 절차
