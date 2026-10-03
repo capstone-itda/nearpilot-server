@@ -34,7 +34,7 @@ class Step(StrEnum):
 
 
 class ReasonCode(StrEnum):
-    """판정 사유. [결정 필요] 초안 목록이며 팀 합의로 추가·삭제한다."""
+    """판정 사유. 항목을 추가·삭제할 때는 shared 변경 규칙(4인 리뷰)을 따른다."""
 
     OK = "OK"
     # 인증·입력
@@ -53,12 +53,17 @@ class ReasonCode(StrEnum):
     # ④
     APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
     POLICY_DENIED = "POLICY_DENIED"
-    APPROVAL_EXHAUSTED = "APPROVAL_EXHAUSTED"  # 횟수 초과·만료
+    APPROVAL_PENDING = "APPROVAL_PENDING"  # 소유자 응답 대기 (PRD §2)
+    APPROVAL_REJECTED = "APPROVAL_REJECTED"  # 소유자 거부
+    APPROVAL_EXPIRED = "APPROVAL_EXPIRED"  # 유효시간 만료
+    APPROVAL_EXHAUSTED = "APPROVAL_EXHAUSTED"  # 사용 횟수 소진
     ACTION_NOT_ALLOWED = "ACTION_NOT_ALLOWED"  # 승인과 다른 동작
     # ⑤⑥
     DEVICE_BUSY = "DEVICE_BUSY"
     USER_BUSY = "USER_BUSY"
     NOT_ASSIGNED = "NOT_ASSIGNED"  # 전역 할당에서 미배정 (FR-23)
+    # 핸들 (FR-21): 없는 핸들과 타인 핸들을 구분하지 않는다
+    USE_NOT_FOUND = "USE_NOT_FOUND"
     # 실행
     RECHECK_FAILED = "RECHECK_FAILED"  # 실행 직전 재검사 실패
     EXEC_FAILED = "EXEC_FAILED"

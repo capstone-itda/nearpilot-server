@@ -27,7 +27,7 @@ def test_fr14_fr23_integer_settings_reject_floats(name, value):
         Settings(**{name: value})
 
 
-@pytest.mark.parametrize("name", NUMERIC_FIELDS[:6])
+@pytest.mark.parametrize("name", NUMERIC_FIELDS)
 def test_fr17_fr20_fr23_required_settings_reject_none(name):
     with pytest.raises(ValueError):
         Settings(**{name: None})
@@ -39,6 +39,7 @@ def test_fr20_settings_allow_finite_integer_times_and_zero_grace():
     assert settings.leave_grace_sec == 0
 
 
-def test_fr14_fr20_undecided_settings_remain_optional():
+def test_fr14_fr15_fr20_prd7_time_settings_have_defaults():
     settings = Settings()
-    assert all(getattr(settings, name) is None for name in NUMERIC_FIELDS[6:])
+    assert settings.beacon_recent_sec >= settings.rssi_frame_sec
+    assert all(getattr(settings, name) > 0 for name in NUMERIC_FIELDS[6:])
