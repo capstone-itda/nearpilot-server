@@ -2,7 +2,7 @@
 제목: 타입(계층): 요약
   타입 intent | feat | fix | docs | test | refactor | chore,  계층 api | core | db | iot | shared | app | dashboard | firmware (생략 가능)
   예) feat(core): FR-19 원자적 점유   ·   docs: FR-03 승인 알림 흐름
-브랜치: intent|feat|fix/{계층}-{요약},  문서는 docs/{요약}.  intent PR 은 docs/intent/{요약}.md 하나만 담는다.
+브랜치: intent|feat|fix/{계층}-{요약},  문서는 docs/{요약}.  intent PR 은 docs/intent/{계층}-{요약}.md 하나만 담는다.
 위 형식은 CI "PR 규칙 / 형식 검사" 가 확인한다.
 -->
 
@@ -25,8 +25,7 @@
 - [ ] `server/src/nearpilot/shared/` — 작성자 외 3인 승인 (4인 전원)
 - [ ] 그 외 (빌드 설정, 기타 문서, 도구 등) — 담당자 1인
 
-> CI "PR 규칙 / 승인 검사" 가 문서·shared 의 승인 수를 센다.
-> 무료 플랜이라 검사가 실패해도 머지 버튼은 막히지 않는다. **머지 전에 초록불을 직접 확인한다.**
+> CI "PR 규칙 / 승인 검사" 가 문서·shared 의 승인 수를 센다. 검사가 실패하면 머지할 수 없다.
 
 ## 확인한 것
 
@@ -40,7 +39,6 @@
 
 **문서**
 - [ ] 상위 문서와 어긋나지 않는다 (prd > architecture > intent)
-- [ ] 근거 없는 결정은 본문 대신 미결 사항(PRD §7, intent Open questions)에 적었다
 
 ## 리뷰어에게
 

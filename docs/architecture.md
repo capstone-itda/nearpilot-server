@@ -40,14 +40,14 @@ flowchart TB
 
 경로는 `server/` 기준이며, 테스트는 같은 이름의 `tests/` 하위 폴더에 둔다.
 
-| 역할 | 담당 코드 | 주요 책임 |
-|---|---|---|
-| **판정** | `src/nearpilot/core/decision/`, `core/allocation/`, `api/mcp/`, `api/auth/` | 판정 ⓪~⑥ 조합, 근접·정책·점유 결과 반영, 실행 직전 재검사, 전역 할당, MCP 도구 6개, 토큰 → 계정 식별 |
-| **근접 추정** | `src/nearpilot/core/proximity/`, `tools/data_collection/` | 관측 모델·HMM, 사후확률 계산, 근접 추정 인터페이스, RSSI 라벨 수집 |
-| **상태 관리** | `src/nearpilot/core/lifecycle/`, `iot/`, `tools/node_sim/` | 예약 이후 상태 전이, 이탈 유예·타임아웃·해제·FAULT 복구, MQTT 게이트웨이, 노드 시뮬레이터 |
-| **DB** | `src/nearpilot/db/`, `core/policy/`, `tools/evaluation/` | 스키마·저장소·원자적 점유 및 승인 사용분 처리·감사 로그·평가 스크립트, 접근 정책·승인 검사, 토큰 해시로 계정 조회(`AccountLookup`) |
+| 역할 | 담당자 | 담당 코드 | 주요 책임 |
+|---|---|---|---|
+| **판정** | @eunji719 | `src/nearpilot/core/decision/`, `core/allocation/`, `api/mcp/`, `api/auth/` | 판정 ⓪~⑥ 조합, 근접·정책·점유 결과 반영, 실행 직전 재검사, 전역 할당, MCP 도구 6개, 토큰 → 계정 식별 |
+| **근접 추정** | @dnnals | `src/nearpilot/core/proximity/`, `tools/data_collection/` | 관측 모델·HMM, 사후확률 계산, 근접 추정 인터페이스, RSSI 라벨 수집 |
+| **상태 관리** | @JM-220 | `src/nearpilot/core/lifecycle/`, `iot/`, `tools/node_sim/` | 예약 이후 상태 전이, 이탈 유예·타임아웃·해제·FAULT 복구, MQTT 게이트웨이, 노드 시뮬레이터 |
+| **DB** | @paiwhy | `src/nearpilot/db/`, `core/policy/`, `tools/evaluation/` | 스키마·저장소·원자적 점유 및 승인 사용분 처리·감사 로그·평가 스크립트, 접근 정책·승인 검사, 토큰 해시로 계정 조회(`AccountLookup`) |
 
-이 표는 역할별 담당 범위를 기록하며 개인 이름은 명시하지 않는다. 앱(`app/`)·대시보드(`dashboard/`)는
+이 표는 역할별 담당자와 담당 범위를 기록한다. 담당자는 실명 대신 GitHub 계정으로 적는다. 앱(`app/`)·대시보드(`dashboard/`)는
 서버 담당 업무를 먼저 마친 사람이 맡는다. `api/rest/`·`api/ws/`는 앱·대시보드 담당이 정해지면 함께 배정한다.
 펌웨어(`firmware/`) 담당은 별도로 합의한다.
 
@@ -243,7 +243,7 @@ PRD가 정한 것은 SQLite, MQTT, MCP Streamable HTTP, WebSocket, HTTPS REST, p
 ## 8. 협업 규칙
 
 1. 브랜치는 `feat|fix|intent/{계층}-{요약}`, 문서는 `docs/{요약}`으로 딴다. 계층은 `api`·`core`·`db`·`iot`·`shared`(서버 밖은 `app`·`dashboard`·`firmware`), 요약은 영문 소문자·숫자·하이픈이다 (예: `feat/core-atomic-reserve`, `docs/pr-template`). intent PR은 `docs/intent/{계층}-{요약}.md` 하나만 담는다. PR 제목은 `타입(계층): 요약`이며 계층은 생략할 수 있다. 형식은 CI(`.github/workflows/pr-rules.yml`)가 검사한다.
-2. `docs/prd.md`·`docs/architecture.md`·`docs/intent/` 수정은 작성자 포함 3인(작성자 외 2인 승인)이 리뷰한다. `shared` 변경은 4인 모두 리뷰한다. 역할별 담당 범위의 코드·테스트 변경은 해당 담당자 리뷰로 충분하다. 규칙 원문은 `docs/intent/templates/intent.md` 헤더 주석이다.
+2. `docs/prd.md`·`docs/architecture.md`·`docs/intent/` 수정은 작성자 포함 3인(작성자 외 2인 승인)이 리뷰한다. `shared` 변경은 4인 모두 리뷰한다. 역할별 담당 범위의 코드·테스트 변경은 해당 담당자 리뷰로 충분하다.
 3. 커밋·PR·테스트 이름에 요구사항 ID를 적는다 (예: `FR-19 원자적 점유`).
 4. 각 FR마다 pytest 케이스를 하나 이상 두고, 정량 평가는 PRD의 인수 기준을 따른다.
 5. 계층을 합친 시나리오(대표 시연 4장면)는 `server/tests/integration/`에 공동으로 작성한다.

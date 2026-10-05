@@ -11,7 +11,8 @@ MCP/REST/WebSocket API + 판정 코어 + SQLite + MQTT 게이트웨이로 구성
 
 1. `docs/prd.md` — 최상위 서버 요구사항·범위·인수 조건
 2. `docs/architecture.md` — PRD를 따르는 저장소 구조·계층 계약·분담
-3. `docs/intent/` — 문서가 존재할 때 4인이 합의한 결정 기록 (아래 "문서 수정 규칙" 참고)
+3. `docs/intent/` — PRD·architecture 를 담당 영역별로 쉽게 풀어 쓴 설명 문서. 새 결정을 담지 않는다
+   (아래 "문서 수정 규칙" 참고)
 
 구현 판단이 필요하면 추측하지 말고 위 문서에서 근거를 찾는다.
 근거가 없으면 만들어내지 말고 미결 사항으로 남긴다.
@@ -58,14 +59,17 @@ api  ──▶  core  ──▶  db
 
 ## 문서 수정 규칙
 
-리뷰 인원 규칙은 `docs/architecture.md` §8, 핵심 문서·intent 절차의 원문은
-`docs/intent/templates/intent.md` 헤더 주석에 있다. 여기서 반복하지 않는다.
+리뷰 인원 규칙은 `docs/architecture.md` §8 에 있다. 여기서 반복하지 않는다.
+
+intent 는 `/intent` 스킬(Codex 는 `$intent`)로 쓰고 갱신한다. 원본은 `.claude/skills/intent/` 에 있다.
+리뷰에서 결정이 나면 architecture 를 고치는 docs PR 을 먼저 올리고, intent 는 그 뒤에 갱신한다.
 
 ### Claude 가 지킬 것
 
 - main 에 직접 push 하지 않는다. 모든 변경은 PR 로 올린다
 - `docs/intent/`, `docs/prd.md`, `docs/architecture.md` 는 **직접 수정하지 않는다.**
   초안을 제시하고 사람이 PR 로 올리게 한다
+- 예외: 작성자가 `/intent` 스킬을 실행하면 `docs/intent/` 문서를 쓰고 작성자 확인 뒤 PR 로 올린다
 - 담당자가 정해진 계층 폴더를 요청 없이 건드리지 않는다
 
 ## 컨벤션
