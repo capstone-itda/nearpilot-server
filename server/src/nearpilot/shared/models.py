@@ -2,7 +2,7 @@
 
 모두 불변(frozen)이다. Mapping 필드는 복사하고 내부 JSON 컨테이너도 불변으로 만든다.
 DB 행을 그대로 옮긴 것이 아니라 계층 간에 필요한 필드만 담는다.
-DB 스키마의 전체 필드는 architecture.md §9 와 db 계층이 정의한다.
+DB 스키마의 전체 필드는 architecture.md §6 과 db 계층이 정의한다.
 """
 
 from __future__ import annotations
@@ -277,7 +277,7 @@ class NodeAnnounce:
 
 @dataclass(frozen=True, slots=True)
 class NodeStatus:
-    """하트비트·안전 상태. [결정 필요] 장치별 안전 센서 조합 (PRD §7)."""
+    """하트비트·안전 상태. [결정 필요] 장치별 안전 센서 조합 (requirements.md FR-07 미결)."""
 
     node_id: str
     received_at: datetime

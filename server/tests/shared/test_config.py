@@ -1,4 +1,4 @@
-"""Regression checks for PRD section 2 operational settings."""
+"""Regression checks for requirements.md section 1.2 operational settings."""
 
 import pytest
 

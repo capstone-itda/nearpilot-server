@@ -1,7 +1,7 @@
-"""운영 수치 설정 (PRD §2 수치 설정과 변경 원칙, architecture.md §9).
+"""운영 수치 설정 (requirements.md §1.2 수치 설정과 변경 원칙, architecture.md §6).
 
 코드 상수로 흩어 두지 않고 여기 하나로 모은다. 판정 한 건에는 같은 버전을 적용하고
-`version` 을 감사 기록에 남긴다. PRD §7 시간 설정은 시연용 초기값이며 측정 후 조정한다.
+`version` 을 감사 기록에 남긴다. requirements.md에서 미결인 시간 설정은 시연용 초기값이며 측정 후 조정한다.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ class Settings:
     # 전역 할당 대기 구간 (FR-23)
     allocation_window_ms: int = 500
 
-    # ── PRD §7 시간 설정 (시연용 초기값) ──
+    # ── 미결 시간 설정 (시연용 초기값) ──
     beacon_recent_sec: float = 3.0  # ① 비콘 최근 수신 T: RSSI 3프레임
     online_ttl_sec: float = 15.0  # 노드 ONLINE 판단 TTL: 5초 하트비트 3회
     exec_timeout_sec: float = 3.0  # 실행 결과 대기 제한 (NFR-01 p95 6초 안)
