@@ -28,36 +28,36 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 
 | 용어 | 뜻 | 코드 이름 | 쓰지 않는 말 |
 |---|---|---|---|
-| 노드 | ESP32 보드 하나와 그 보드가 제어하는 사물함 또는 조명. 앵커 역할도 한다 | `node`, `NodeInfo` | 장치, 기기 |
-| 앵커 | 비콘의 RSSI를 측정해서 보고하는 노드의 역할 | `anchor_params` | |
+| 기기 | ESP32 보드 하나와 그 보드가 제어하는 사물함 또는 조명. 앵커 역할도 한다 | `node`, `NodeInfo` | 장치, 노드 |
+| 앵커 | 비콘의 RSSI를 측정해서 보고하는 기기의 역할 | `anchor_params` | |
 | 비콘 | 방문자 폰이 송출하는 iBeacon 식별자 `(uuid, major, minor)` | `beacon`, `BeaconKey` | |
 | 계정 | 토큰으로 식별하는 사용자. 역할은 방문자 또는 소유자다 | `user`, `Account` | |
-| 방문자 | 노드를 사용하는 계정 | `Role.VISITOR` | |
-| 소유자 | 장소와 노드를 관리하고 접근을 승인하는 계정 | `Role.OWNER` | |
-| 장소 | 소유자가 가진 공간. 노드를 배치한다 | `place` | |
+| 방문자 | 기기를 사용하는 계정 | `Role.VISITOR` | |
+| 소유자 | 장소와 기기를 관리하고 접근을 승인하는 계정 | `Role.OWNER` | |
+| 장소 | 소유자가 가진 공간. 기기를 배치한다 | `place` | |
 | AI 호스트 | 사용자의 요청을 MCP로 서버에 전달하는 LLM 앱. Claude, ChatGPT, Gemini | `host_kind` | |
 | 판정 | core가 요청에 내리는 결과. `OK`, `BUSY`, `ASK`, `DENY`, `NEED_APPROVAL` | `Verdict` | |
 | 사유 코드 | 판정의 이유 | `ReasonCode` | |
-| 허가 | 판정 `OK`로 노드 실행을 허락하는 것 | `Verdict.OK` | 승인 |
-| 승인 | 소유자가 제한 노드의 접근 요청을 받아들이는 것 | `approval` | 허가 |
+| 허가 | 판정 `OK`로 기기 실행을 허락하는 것 | `Verdict.OK` | 승인 |
+| 승인 | 소유자가 제한 기기의 접근 요청을 받아들이는 것 | `approval` | 허가 |
 | 승인 사용분 | 승인 하나에서 요청 하나가 쓰는 사용 횟수 | `approval_usage` | |
-| 접근 정책 | 노드의 승인 필요 여부. `open` 또는 `restricted` | `PolicyRevision.mode` | |
-| 공개 범위 | 노드를 주변 목록에 보일지 여부. `public` 또는 `private` | `Visibility` | |
-| 점유 방식 | 노드를 한 계정이 점유하는지 여부. 대여형 `rental` 또는 공용형 `shared` | `Occupancy` | |
-| 점유 세션 | 대여형 노드를 한 계정이 점유하는 기간의 기록 | `use_session`, `use_id` | 사용 세션 |
-| 신뢰 상태 | 소유자가 정한 노드의 신뢰 여부. `discovered`, `trusted`, `revoked` | `TrustState` | |
-| 온라인 | 노드의 마지막 수신 시각이 TTL 안에 있는 상태 | `last_seen_at` | |
+| 접근 정책 | 기기의 승인 필요 여부. `open` 또는 `restricted` | `PolicyRevision.mode` | |
+| 공개 범위 | 기기를 주변 목록에 보일지 여부. `public` 또는 `private` | `Visibility` | |
+| 점유 방식 | 기기를 한 계정이 점유하는지 여부. 대여형 `rental` 또는 공용형 `shared` | `Occupancy` | |
+| 점유 세션 | 대여형 기기를 한 계정이 점유하는 기간의 기록 | `use_session`, `use_id` | 사용 세션 |
+| 신뢰 상태 | 소유자가 정한 기기의 신뢰 여부. `discovered`, `trusted`, `revoked` | `TrustState` | |
+| 온라인 | 기기의 마지막 수신 시각이 TTL 안에 있는 상태 | `last_seen_at` | |
 | 외부 요청 ID | 호스트가 보내는 계정 범위의 멱등 키 | `request_id` | |
 | 내부 요청 ID | 서버가 외부 요청 ID에 연결하는 전역 고유 ID | `internal_request_id` | |
 | 명령 ID | 서버가 물리 명령마다 발급하는 고유 ID | `command_id` | |
-| 실행 직전 재검사 | 노드에 명령을 보내기 직전에 허가, 근접, 대상을 다시 검사하는 것 | | |
-| 전역 할당 | 대기 구간 안의 `any:locker` 요청을 묶어 노드를 1:1로 배정하는 것 | | |
+| 실행 직전 재검사 | 기기에 명령을 보내기 직전에 허가, 근접, 대상을 다시 검사하는 것 | | |
+| 전역 할당 | 대기 구간 안의 `any:locker` 요청을 묶어 기기를 1:1로 배정하는 것 | | |
 
 ### 상태 값
 
 | 대상 | 값 | 코드 이름 |
 |---|---|---|
-| 노드 상태 | `AVAILABLE`, `RESERVED`, `ACTIVE`, `CLOSING`, `FAULT` | `DeviceState` |
+| 기기 상태 | `AVAILABLE`, `RESERVED`, `ACTIVE`, `CLOSING`, `FAULT` | `DeviceState` |
 | 점유 세션 상태 | `RESERVED`, `ACTIVE`, `CLOSING`, `CLOSED` | `SessionState` |
 | 종료 사유 | `release`, `leave`, `timeout`, `fault` | `EndReason` |
 | 승인 상태 | `pending`, `approved`, `denied` | `approval.status` |
@@ -70,6 +70,6 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 영역 | 담당 역할 하나가 맡는 폴더 묶음. `architecture.md` §2에 있다 |
 | 담당자 | 영역을 맡은 사람 |
 | spec | 작업 하나의 명세. `specs/{계층}-{요약}/spec.md` |
-| 결정 PR | 팀 결정 하나를 반영하는 PR. 브랜치는 `decision/{요약}`이다 |
+| decision PR | 팀 결정 하나를 반영하는 PR. 브랜치는 `decision/{요약}`이다 |
 | 추상 요약 | 경계에서 보이는 입력, 출력, 바뀌는 상태, 약속만 쓴 설명. 내부 동작은 쓰지 않는다 |
 | 미결 | 아직 정하지 않은 내용. 이슈가 생기면 `미결 — #이슈번호`로 쓴다 |
