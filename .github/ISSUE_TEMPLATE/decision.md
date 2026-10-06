@@ -1,8 +1,7 @@
 ---
-name: 결정 요청
-about: 팀이 함께 정할 질문을 올린다
-title: "결정: "
-labels: 결정
+name: Decision request
+about: Raise a question for the team to decide together
+title: "decision: "
 ---
 
 <!--
