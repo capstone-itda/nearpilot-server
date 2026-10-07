@@ -125,7 +125,7 @@ class AuditLog(Protocol):
 
 @runtime_checkable
 class ProximityEstimator(Protocol):
-    """관측 모델 + HMM (FR-16). 교체 가능한 인터페이스로 분리한다 (PRD §2)."""
+    """관측 모델 + HMM (FR-16). 교체 가능한 인터페이스로 분리한다 (requirements.md §1.2)."""
 
     def observe(self, frame: RssiFrame) -> None:
         """RSSI 프레임 하나로 내부 상태(HMM 필터)를 갱신한다."""

@@ -1,12 +1,12 @@
-"""계층 간에 오가는 상태값·판정 결과·사유 코드 (architecture.md §4, §9).
+"""계층 간에 오가는 상태값·판정 결과·사유 코드 (architecture.md §4, §6).
 
-값 문자열은 DB 저장값·감사 로그·API 응답에 그대로 쓰이므로 바꾸면 4인 리뷰 대상이다.
+값 문자열은 DB 저장값·감사 로그·API 응답에 그대로 쓰이므로 바꾸면 팀 결정 대상이다.
 """
 
 from enum import StrEnum
 
 
-# ── 판정 (PRD §3, FR-18) ────────────────────────────────────────────
+# ── 판정 (FR-18) ────────────────────────────────────────────────────
 
 
 class Verdict(StrEnum):
@@ -18,7 +18,7 @@ class Verdict(StrEnum):
 
 
 class Step(StrEnum):
-    """판정·실행 단계. 감사 로그 `step` 값과 같다 (architecture.md §9 audit_log)."""
+    """판정·실행 단계. 감사 로그 `step` 값과 같다 (architecture.md §6 audit_log)."""
 
     AUTH = "auth"
     DEDUP = "0"  # ⓪ 중복
@@ -34,7 +34,7 @@ class Step(StrEnum):
 
 
 class ReasonCode(StrEnum):
-    """판정 사유. 항목을 추가·삭제할 때는 shared 변경 규칙(4인 리뷰)을 따른다."""
+    """판정 사유. 항목을 추가·삭제하는 것은 팀 결정이다."""
 
     OK = "OK"
     # 인증·입력
@@ -53,7 +53,7 @@ class ReasonCode(StrEnum):
     # ④
     APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
     POLICY_DENIED = "POLICY_DENIED"
-    APPROVAL_PENDING = "APPROVAL_PENDING"  # 소유자 응답 대기 (PRD §2)
+    APPROVAL_PENDING = "APPROVAL_PENDING"  # 소유자 응답 대기 (FR-03)
     APPROVAL_REJECTED = "APPROVAL_REJECTED"  # 소유자 거부
     APPROVAL_EXPIRED = "APPROVAL_EXPIRED"  # 유효시간 만료
     APPROVAL_EXHAUSTED = "APPROVAL_EXHAUSTED"  # 사용 횟수 소진
@@ -85,7 +85,7 @@ class TargetKind(StrEnum):
     ANY = "any"  # any:locker (FR-23)
 
 
-# ── 계정·노드 (PRD §5) ──────────────────────────────────────────────
+# ── 계정·노드 (requirements.md §1.3) ──────────────────────────────────────────
 
 
 class Role(StrEnum):
@@ -96,7 +96,7 @@ class Role(StrEnum):
 class Capability(StrEnum):
     LOCKER = "locker"
     LIGHT = "light"
-    # gate/pass 는 향후 확장 예약값 (architecture.md §9)
+    # gate/pass 는 향후 확장 예약값 (architecture.md §6)
 
 
 class Occupancy(StrEnum):
@@ -118,7 +118,7 @@ class DeviceState(StrEnum):
     FAULT = "FAULT"
 
 
-# ── 점유 세션 (PRD §4) ──────────────────────────────────────────────
+# ── 점유 세션 (FR-19, FR-20) ───────────────────────────────────────────
 
 
 class SessionState(StrEnum):

@@ -26,37 +26,24 @@ jobs:
           script: |
             const pr = context.payload.pull_request;
             const head = pr.head.ref;
-            const files = await github.paginate(github.rest.pulls.listFiles,
-              { ...context.repo, pull_number: pr.number });
-            const paths = files.map(f => f.filename);
-            const touched = files.flatMap(f => [f.filename, f.previous_filename]).filter(Boolean);
 
             // ── 형식 검사 ──
             const errs = [];
-            // 브랜치: intent|feat|fix/{계층}-{요약}, docs/{요약}
-            const m = head.match(/^(intent|feat|fix|docs)\/([a-z0-9]+(?:-[a-z0-9]+)*)$/);
-            if (!m) errs.push(`브랜치 '${head}'가 intent|feat|fix|docs/{slug} 형식이 아님`);
-            else if (m[1] !== 'docs' && !/^(api|core|db|iot|shared|app|dashboard|firmware)-/.test(m[2]))
+            // 브랜치: feat|fix/{계층}-{요약}, decision|docs/{요약}
+            const m = head.match(/^(feat|fix|decision|docs)\/([a-z0-9]+(?:-[a-z0-9]+)*)$/);
+            if (!m) errs.push(`브랜치 '${head}'가 feat|fix|decision|docs/{slug} 형식이 아님`);
+            else if (['feat', 'fix'].includes(m[1]) && !/^(api|core|db|iot|shared|app|dashboard|firmware)-/.test(m[2]))
               errs.push(`slug '${m[2]}'가 {계층}-{요약} 형식이 아님`);
             // PR 제목: 타입(계층): 요약
-            if (!/^(intent|feat|fix|docs|test|refactor|chore)(\((api|core|db|iot|shared|app|dashboard|firmware)\))?: \S/.test(pr.title))
+            if (!/^(feat|fix|decision|docs|test|refactor|chore)(\((api|core|db|iot|shared|app|dashboard|firmware)\))?: \S/.test(pr.title))
               errs.push(`PR 제목이 '타입(계층): 요약' 형식이 아님`);
-            // intent PR: docs/intent/{slug}.md 하나만
-            if (m && m[1] === 'intent') {
-              const want = `docs/intent/${m[2]}.md`;
-              if (paths.length !== 1 || paths[0] !== want) errs.push(`intent PR에는 ${want} 하나만 있어야 함`);
-            }
+            // decision PR: 본문에 Closes #이슈번호
+            if (m && m[1] === 'decision' && !/\bcloses\s+#\d+/i.test(pr.body || ''))
+              errs.push(`decision PR 본문에 'Closes #이슈번호'가 없음`);
 
             // ── 승인 검사 ──
-            // 필요한 승인 수: 브랜치 이름과 바뀐 파일 중 가장 엄격한 쪽
-            let need = 0; const why = [];
-            if (/^(intent|docs)\//.test(head)) { need = 2; why.push(`${head.split('/')[0]}/ 브랜치`); }
-            if (touched.some(p => p === 'docs/prd.md' || p === 'docs/architecture.md' || p.startsWith('docs/intent/'))) {
-              need = Math.max(need, 2); why.push('prd·architecture·intent 변경');
-            }
-            if (touched.some(p => p.startsWith('server/src/nearpilot/shared/'))) {
-              need = Math.max(need, 3); why.push('shared 변경');
-            }
+            // 모든 PR은 작성자 외 3인 승인이 필요하다
+            const need = 3;
             // 작성자를 뺀 리뷰어별 마지막 리뷰 상태
             const reviews = await github.paginate(github.rest.pulls.listReviews,
               { ...context.repo, pull_number: pr.number });
@@ -67,10 +54,9 @@ jobs:
             }
             const approved = Object.keys(last).filter(u => last[u] === 'APPROVED');
             const blocked = Object.keys(last).filter(u => last[u] === 'CHANGES_REQUESTED');
-            const reason = why.join(', ') || '승인 불필요';
-            let ok = true, msg = `승인 ${approved.length}/${need}명 (${reason})`;
+            let ok = true, msg = `승인 ${approved.length}/${need}명`;
             if (approved.length < need) ok = false;
-            else if (need > 0 && blocked.length) { ok = false; msg = `변경 요청 남음: ${blocked.join(', ')}`; }
+            else if (blocked.length) { ok = false; msg = `변경 요청 남음: ${blocked.join(', ')}`; }
 
             // ── 커밋 상태로 기록 ──
             const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
