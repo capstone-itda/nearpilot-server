@@ -6,6 +6,7 @@
 모든 함수는 동기 함수다. SQLite 와 paho-mqtt(스레드)가 동기 방식이고, FastAPI 는 `def`
 엔드포인트를 스레드풀에서 실행하므로 이벤트 루프를 막지 않는다. 동시 요청의 이중 점유는
 `Repository.reserve_if_free()` 의 `BEGIN IMMEDIATE` 트랜잭션이 막는다.
+예약 이후의 상태 변경은 `ExecutionStore` 의 사건별 함수 하나가 트랜잭션 하나다 (#17).
 """
 
 from __future__ import annotations
@@ -16,19 +17,22 @@ from typing import Any, Mapping, Protocol, runtime_checkable
 
 from nearpilot.shared.enums import (
     Action,
-    ApprovalUsageState,
     Capability,
-    DeviceState,
+    CommandOutcome,
     EndReason,
-    SessionState,
+    ExecutionStatus,
+    ReasonCode,
 )
 from nearpilot.shared.models import (
     Account,
     Approval,
     AuditEvent,
     BeaconKey,
+    CommandRecord,
     CommandResult,
     Decision,
+    ExecutionContext,
+    ExecutionResult,
     NodeAnnounce,
     NodeCommand,
     NodeInfo,
@@ -39,6 +43,7 @@ from nearpilot.shared.models import (
     ReserveRequest,
     ReserveResult,
     RssiFrame,
+    StoreResult,
     UseRequest,
     UseSession,
 )
@@ -88,29 +93,74 @@ class Repository(Protocol):
     # ⑤⑥ — BEGIN IMMEDIATE 한 트랜잭션 (FR-19)
     def reserve_if_free(self, req: ReserveRequest) -> ReserveResult: ...
 
-    # 상태 전이 — 현재 상태가 expected 일 때만 바꾸고 성공 여부를 돌려준다 (조건부 갱신)
-    def transition_session(
-        self,
-        use_id: str,
-        expected: SessionState,
-        new: SessionState,
-        end_reason: EndReason | None = None,
-    ) -> bool: ...
-
-    def transition_device(self, node_id: str, expected: DeviceState, new: DeviceState) -> bool: ...
-
-    def settle_approval_usage(
-        self, usage_id: str, expected: ApprovalUsageState, new: ApprovalUsageState
-    ) -> bool: ...
-
+    # 조회 — 예약 이후의 쓰기는 ExecutionStore 로만 한다
     def session(self, use_id: str) -> UseSession | None: ...
 
     def session_owner_matches(self, use_id: str, user_id: str) -> bool: ...  # FR-21
 
-    # 명령 기록 — 재시작 후에도 보존
-    def create_command(self, internal_request_id: str, node_id: str, action: Action) -> NodeCommand: ...
 
-    def record_command_result(self, result: CommandResult) -> None: ...
+@runtime_checkable
+class ExecutionStore(Protocol):
+    """DB → CORE 예약 이후 사건별 저장 (#17, architecture.md §4).
+
+    - 함수 하나가 트랜잭션 하나다. 사건에 딸린 기기·세션·명령·승인 사용분·감사 기록을 함께 반영한다.
+    - 사건은 대상 식별자와 함수로 식별한다. 같은 사건·같은 내용은 ALREADY_APPLIED, 다른 내용은 CONFLICT 다.
+    - CONFLICT 는 기존 기록을 덮어쓰지 않는다. 상충한 결과는 감사 기록에 남긴다.
+    - 저장 장애는 `errors.StoreNotApplied` 또는 `errors.StoreOutcomeUnknown` 으로 알린다.
+    - 공용형에는 점유 세션이 없다. 세션 관련 반영은 대여형에만 적용한다.
+    """
+
+    def link_command(self, internal_request_id: str, node_id: str, action: Action) -> StoreResult:
+        """요청의 명령을 연결한다. 이미 있으면 기존 명령과 진행 상태를 반환한다. 키: internal_request_id"""
+        ...
+
+    def begin_send(self, command_id: str) -> StoreResult:
+        """PENDING → IN_PROGRESS. APPLIED 일 때만 전송을 시작한다. 취소된 명령은 CONFLICT. 키: command_id"""
+        ...
+
+    def cancel_not_sent(
+        self,
+        internal_request_id: str,
+        expected: ExecutionStatus,
+        reason: ReasonCode,
+        evidence: Mapping[str, Any],
+    ) -> StoreResult:
+        """확실한 미전송 취소. 현재 상태가 expected 가 아니거나 결과가 있으면 CONFLICT.
+
+        대여형: 기기 AVAILABLE, 세션 CLOSED·cancelled. 공통: 사용분 released, 명령 NOT_SENT, 감사.
+        재검사 실패와 예약 대기 제한은 expected=PENDING, IOT 의 NOT_SENT 증명은 expected=IN_PROGRESS 다.
+        """
+        ...
+
+    def record_result(
+        self,
+        command_id: str,
+        outcome: CommandOutcome,
+        occurred_at: datetime,
+        rental_due_at: datetime | None,
+        evidence: Mapping[str, Any],
+    ) -> StoreResult:
+        """실행 결과를 명령 하나에 한 번만 확정한다. outcome 은 SUCCEEDED·FAILED·UNKNOWN 이다.
+
+        SUCCEEDED: 명령 성공, 대여형 기기·세션 ACTIVE 와 rental_due_at, 사용분 consumed, 감사.
+        FAILED·UNKNOWN: 명령 결과, 기기 FAULT, 사용분 held, 세션 보존, 감사.
+        이미 다른 결과가 있으면 CONFLICT 다. 늦은 성공으로 FAULT 를 해제하지 않는다.
+        """
+        ...
+
+    def begin_close(self, use_id: str, reason: EndReason) -> StoreResult:
+        """대여형 기기·세션 ACTIVE → CLOSING. 키: use_id"""
+        ...
+
+    def finish_close(
+        self, use_id: str, closed_at: datetime, evidence: Mapping[str, Any]
+    ) -> StoreResult:
+        """CORE 가 안전을 확인한 뒤 세션 CLOSED, 기기 AVAILABLE, closed_at, 종료 기록. 키: use_id"""
+        ...
+
+    def execution(self, internal_request_id: str) -> CommandRecord | None:
+        """반영 여부가 불명일 때 다시 조회한다."""
+        ...
 
 
 @runtime_checkable
@@ -118,6 +168,32 @@ class AuditLog(Protocol):
     """DB → CORE 감사 로그 (FR-22). 테이블 + JSONL."""
 
     def append(self, event: AuditEvent) -> None: ...
+
+
+# ── CORE 내부 (decision ↔ lifecycle, #16) ──────────────────────────
+
+
+@runtime_checkable
+class DecisionRechecker(Protocol):
+    """판정 제공, 상태 관리 사용. 전송 직전에 허가·근접·확정 대상을 다시 검사한다.
+
+    통과는 Verdict.OK 뿐이다. 정상 거부는 판정과 사유를 그대로 반환한다.
+    검사 오류는 Verdict.DENY 와 ReasonCode.RECHECK_FAILED 로 반환한다.
+    자기 요청의 예약을 타인 점유로 보지 않는다.
+    """
+
+    def recheck(self, ctx: ExecutionContext) -> Decision: ...
+
+
+@runtime_checkable
+class ExecutionService(Protocol):
+    """상태 관리 제공, 판정 사용. 허가된 요청의 실행을 이어 간다.
+
+    같은 internal_request_id 의 재인계는 기존 진행 상태나 결과를 반환한다. 실행 시작은 한 번이다.
+    업무 결과는 ExecutionResult 로 반환하고 예외로 알리지 않는다.
+    """
+
+    def execute(self, ctx: ExecutionContext) -> ExecutionResult: ...
 
 
 # ── CORE 내부 (decision ↔ proximity) ────────────────────────────────
