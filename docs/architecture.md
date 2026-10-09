@@ -121,7 +121,7 @@ api  ──▶  core  ──▶  db
 | 계약 | 제공 | 사용 | 약속 |
 |---|---|---|---|
 | 저장소 인터페이스 | DB | CORE (API는 계정 식별만) | 계정과 비콘, 기기, 정책 이력과 승인 사용분, 외부 키와 내부 요청 ID와 명령 ID의 연결, 점유 세션, RSSI 관측, 원자적 점유와 승인 예약 (`reserve_if_free`) |
-| 사건별 저장 인터페이스 | DB | CORE | 예약 이후의 명령 연결, 전송 시작, 미전송 취소, 실행 결과, 종료를 사건마다 원자적으로 반영한다 (`ExecutionStore`). |
+| 사건별 저장 인터페이스 | DB | CORE | 예약 이후의 명령 연결, 전송 시작, 미전송 취소, 실행 결과, 이상 격리, 종료를 사건마다 원자적으로 반영한다 (`ExecutionStore`). |
 | 감사 로그 인터페이스 | DB | CORE | 단계별 입력, 결과, 버전, 임계값, 후보 확률의 기록 |
 | 기기 명령 인터페이스 | IOT | CORE | `command_id`별로 전송과 결과를 추적한다. 확실한 미전송, 전송 뒤 성공, 전송 뒤 실패, 결과 불명을 구분한다. 시간 초과와 연결 끊김을 미실행으로 보지 않는다. |
 | 기기 이벤트 인터페이스 | CORE | IOT | CORE는 기능 발표, RSSI 프레임, 원시 물리 관측과 늦은 실행 결과 사건을 받는다. 안전은 CORE가 판단한다. |
@@ -205,6 +205,7 @@ CORE는 실행·종료·안전을 판단한다. DB는 현재 상태와 기록 �
 | 전송 시작 | `begin_send` | `command_id` |
 | 확실한 미전송 취소 | `cancel_not_sent` | `internal_request_id` |
 | 실행 성공, 실패 또는 불명 | `record_result` | `command_id` |
+| 명령 결과가 아닌 이상의 격리 | `isolate_device` | `node_id` |
 | 종료 시작 | `begin_close` | `use_id` |
 | 안전 종료 | `finish_close` | `use_id` |
 | 반영 여부 재조회 | `execution` | `internal_request_id` |
@@ -215,6 +216,7 @@ CORE는 실행·종료·안전을 판단한다. DB는 현재 상태와 기록 �
 - 확실한 미전송 취소는 대여형 기기를 `AVAILABLE`로, 점유 세션을 `cancelled` 사유의 `CLOSED`로 둔다.
 - 저장 오류는 `StoreNotApplied`와 `StoreOutcomeUnknown` 예외로 구분한다. `StoreOutcomeUnknown`이면 `execution`으로 다시 조회한다.
 - 실행 성공 때 CORE는 인계받은 `Settings`로 `rental_due_at`을 계산해서 전달한다.
+- 센서 이상과 종료 뒤 안전 미확인은 `isolate_device`로 기기만 `FAULT`로 둔다. 점유 세션과 승인 사용분은 보존한다.
 - `Repository`의 개별 상태 갱신 함수는 쓰지 않는다. 예약 이후의 쓰기는 `ExecutionStore`로만 한다.
 - 미결 — #17: 복원 조회와 복구 정산의 상세 형식
 
