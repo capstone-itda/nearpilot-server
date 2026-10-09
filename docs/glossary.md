@@ -44,6 +44,9 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 접근 정책 | 기기의 승인 필요 여부. `open` 또는 `restricted` | `PolicyRevision.mode` | |
 | 공개 범위 | 기기를 주변 목록에 보일지 여부. `public` 또는 `private` | `Visibility` | |
 | 점유 방식 | 기기를 한 계정이 점유하는지 여부. 대여형 `rental` 또는 공용형 `shared` | `Occupancy` | |
+| 대여시간 기준 시각 | 대여시간 초과를 계산하는 기준이다. 접근 승인 만료와 구분한다 | `rental_due_at` | 대여 권한 만료 시각 |
+| 초과시간 | 대여시간 기준 시각을 넘긴 시간이다. 종료 전에는 현재 시각, 종료 뒤에는 종료 시각으로 계산한다 | | |
+| 기기 연결 ID | 기기가 MQTT에 접속할 때 새로 만드는 UUID다 | `session_id` | 점유 세션 ID |
 | 점유 세션 | 대여형 기기를 한 계정이 점유하는 기간의 기록 | `use_session`, `use_id` | 사용 세션 |
 | 신뢰 상태 | 소유자가 정한 기기의 신뢰 여부. `discovered`, `trusted`, `revoked` | `TrustState` | |
 | 온라인 | 기기의 마지막 수신 시각이 TTL 안에 있는 상태 | `last_seen_at` | |
