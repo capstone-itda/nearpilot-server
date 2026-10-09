@@ -148,6 +148,14 @@ class ExecutionStore(Protocol):
         """
         ...
 
+    def isolate_device(self, node_id: str, evidence: Mapping[str, Any]) -> StoreResult:
+        """명령 결과가 아닌 이상으로 기기를 FAULT 로 격리한다 (NFR-04). 키: node_id
+
+        센서 이상, 종료 뒤 안전 미확인 등이 해당한다. 점유 세션과 승인 사용분은 바꾸지 않는다.
+        이미 FAULT 이면 ALREADY_APPLIED 를 반환하고 새 근거를 감사 기록에 남긴다.
+        """
+        ...
+
     def begin_close(self, use_id: str, reason: EndReason) -> StoreResult:
         """대여형 기기·세션 ACTIVE → CLOSING. 키: use_id"""
         ...

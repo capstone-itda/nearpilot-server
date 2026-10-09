@@ -110,6 +110,9 @@ def test_fr19_fake_store_satisfies_protocol():
         def record_result(self, command_id, outcome, occurred_at, rental_due_at, evidence):
             return StoreResult(StoreOutcome.APPLIED, record)
 
+        def isolate_device(self, node_id, evidence):
+            return StoreResult(StoreOutcome.APPLIED)
+
         def begin_close(self, use_id, reason):
             return StoreResult(StoreOutcome.APPLIED)
 
