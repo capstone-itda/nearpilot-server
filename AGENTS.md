@@ -83,3 +83,4 @@ pytest tests/<계층>      # 계층 하나
 ## Gotchas
 <!-- 에이전트가 한 실수와 올바른 방법을 한 줄씩 쓴다. -->
 - 로컬 갱신 스크립트를 `server/`에서 저장소 루트 기준 경로로 실행해 실패했다. 스크립트의 기준 경로와 명령의 작업 디렉터리를 먼저 맞춘다.
+- decision PR 본문에 양식에 없는 절을 추가했다. `.github/PULL_REQUEST_TEMPLATE/decision.md`의 절을 따르고, `Closes`는 결정을 모두 반영한 이슈에만 쓴다.
