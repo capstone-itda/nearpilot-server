@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
     AccessMode,
     Action,
@@ -22,12 +23,14 @@ from nearpilot.shared.enums import (
     CommandOutcome,
     DeviceState,
     EndReason,
+    ExecutionStatus,
     Occupancy,
     ReasonCode,
     ReserveOutcome,
     Role,
     SessionState,
     Step,
+    StoreOutcome,
     TargetKind,
     TrustState,
     Verdict,
@@ -233,14 +236,16 @@ class ProximityResult:
 
 @dataclass(frozen=True, slots=True)
 class ReserveRequest:
-    """`reserve_if_free` 입력. ⑤⑥ 검사·RESERVED 생성·승인 사용분 예약을 한 트랜잭션에서."""
+    """`reserve_if_free` 입력. ⑤⑥ 검사·RESERVED 생성·승인 사용분 예약을 한 트랜잭션에서.
+
+    대여시간 기준 `rental_due_at` 은 예약 때 정하지 않는다. 실행 성공 때 CORE 가 계산한다.
+    """
 
     internal_request_id: str
     user_id: str
     node_id: str
     action: Action
     approval_id: str | None  # 승인이 필요 없으면 None
-    expires_at: datetime | None
     release_policy: Mapping[str, Any] = field(default_factory=dict)  # 생성 당시 값 보존
 
     def __post_init__(self) -> None:
@@ -256,12 +261,65 @@ class ReserveResult:
 
 @dataclass(frozen=True, slots=True)
 class UseSession:
+    """대여형 점유 세션 (FR-19, FR-20). 초과시간은 저장하지 않고 계산한다."""
+
     use_id: str
     internal_request_id: str
     node_id: str
     state: SessionState
-    expires_at: datetime | None
+    rental_due_at: datetime | None = None  # 대여시간 기준 시각. 실행 성공 전에는 None
+    closed_at: datetime | None = None
     end_reason: EndReason | None = None
+    release_policy: Mapping[str, Any] = field(default_factory=dict)  # 생성 당시 종료 정책
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "release_policy", _freeze(self.release_policy))
+
+
+# ── 실행 인계와 사건별 저장 (#16, #17) ──────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionContext:
+    """판정 → 상태 관리 실행 인계 (#16). CORE 내부 값이며 호스트 응답이 아니다."""
+
+    internal_request_id: str
+    request: UseRequest  # 토큰 계정, 외부 요청 ID, 원래 대상 지정과 동작
+    node_id: str  # 확정한 물리 대상. 재검사와 실행이 바꾸지 않는다.
+    use_id: str | None  # 공용형이면 None
+    usage_id: str | None  # 승인이 필요 없으면 None
+    settings: Settings  # 판정에 적용한 설정. 실행과 대여시간 계산도 이 값을 쓴다.
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionResult:
+    """상태 관리 → 판정 실행 결과 (#16). 사용자 ID·점유 주체 필드를 두지 않는다."""
+
+    internal_request_id: str
+    status: ExecutionStatus
+    command_id: str | None = None  # 명령을 연결하기 전에 막혔으면 None
+    use_id: str | None = None  # 호스트에는 SUCCEEDED 일 때만 반환한다
+    recheck: Decision | None = None  # 재검사가 전송을 막았을 때 그 판정
+
+
+@dataclass(frozen=True, slots=True)
+class CommandRecord:
+    """요청 하나에 연결된 물리 명령과 저장된 진행 상태 (#17)."""
+
+    command_id: str
+    internal_request_id: str
+    node_id: str
+    action: Action
+    status: ExecutionStatus
+
+
+@dataclass(frozen=True, slots=True)
+class StoreResult:
+    """`ExecutionStore` 사건 반영 결과와 반영 뒤의 현재 기록 (#17)."""
+
+    outcome: StoreOutcome
+    command: CommandRecord | None = None
+    session: UseSession | None = None
 
 
 # ── 노드 이벤트·명령 (IOT ↔ CORE) ──────────────────────────────────

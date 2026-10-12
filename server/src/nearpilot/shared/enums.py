@@ -65,8 +65,8 @@ class ReasonCode(StrEnum):
     # 핸들 (FR-21): 없는 핸들과 타인 핸들을 구분하지 않는다
     USE_NOT_FOUND = "USE_NOT_FOUND"
     # 실행
-    # 실행 직전 재검사의 정상 거부에는 쓰지 않는다. 재검사의 원래 판정과 사유를 그대로 전달한다 (#16).
-    # 재검사 오류의 전달 방식은 미결 — #16 (architecture.md §4).
+    # 실행 직전 재검사의 검사 오류에만 쓴다. 판정은 DENY 와 함께 반환한다 (#16).
+    # 정상 거부에는 쓰지 않는다. 재검사의 원래 판정과 사유를 그대로 전달한다.
     RECHECK_FAILED = "RECHECK_FAILED"
     EXEC_FAILED = "EXEC_FAILED"
     EXEC_UNKNOWN = "EXEC_UNKNOWN"  # 결과 불명 → FAULT 복구
@@ -132,9 +132,10 @@ class SessionState(StrEnum):
 
 class EndReason(StrEnum):
     RELEASE = "release"
-    LEAVE = "leave"
-    TIMEOUT = "timeout"
+    LEAVE = "leave"  # 예약값: 현재 계약에서 쓰지 않는다 (architecture.md §6)
+    TIMEOUT = "timeout"  # 예약값: 현재 계약에서 쓰지 않는다 (architecture.md §6)
     FAULT = "fault"
+    CANCELLED = "cancelled"  # 확실한 미전송 취소 (FR-19)
 
 
 # ── 정책·승인 (FR-03·14) ────────────────────────────────────────────
@@ -176,6 +177,28 @@ class CommandOutcome(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"  # 노드가 실패를 보고
     UNKNOWN = "unknown"  # 시간 초과·연결 끊김. 미실행으로 간주하지 않음 → FAULT
+
+
+class ExecutionStatus(StrEnum):
+    """요청 하나의 저장된 실행 진행 상태 (#16, architecture.md §4).
+
+    `CommandOutcome` 은 IOT 전송 한 번의 결과다. 이 값은 요청 단위의 진행 상태다.
+    """
+
+    PENDING = "pending"  # 명령 ID 를 연결했다. 전송을 시작하지 않았다.
+    IN_PROGRESS = "in_progress"  # 전송 시작을 기록했다. 결과를 기다린다.
+    SUCCEEDED = "succeeded"  # 실행 성공과 저장 반영을 확인했다.
+    FAILED = "failed"  # 기기가 실패를 보고했다. FAULT 로 격리한다.
+    UNKNOWN = "unknown"  # 실행 여부를 확정하지 못했다. FAULT 로 격리한다.
+    NOT_SENT = "not_sent"  # 확실한 미전송으로 취소했다.
+
+
+class StoreOutcome(StrEnum):
+    """`ExecutionStore` 사건 반영 결과 (#17). 저장 오류는 `StoreError` 예외로 구분한다."""
+
+    APPLIED = "applied"
+    ALREADY_APPLIED = "already_applied"  # 같은 사건·같은 내용의 재호출. 재전송 허가가 아니다.
+    CONFLICT = "conflict"  # 현재 상태 또는 기존 기록과 충돌한다. 기존 기록을 덮어쓰지 않는다.
 
 
 class ReserveOutcome(StrEnum):

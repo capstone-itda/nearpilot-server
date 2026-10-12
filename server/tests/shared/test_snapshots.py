@@ -9,7 +9,10 @@ import operator
 import pytest
 
 from nearpilot.shared.enums import Action, Capability, DeviceState, Occupancy, Step, TrustState
-from nearpilot.shared.models import AuditEvent, NodeInfo, NodeStatus, ProximityResult, ReserveRequest
+from nearpilot.shared.enums import SessionState
+from nearpilot.shared.models import (
+    AuditEvent, NodeInfo, NodeStatus, ProximityResult, ReserveRequest, UseSession,
+)
 
 
 NOW = datetime(2026, 10, 1)
@@ -17,7 +20,7 @@ NODE = NodeInfo(
     "locker-1", None, Capability.LOCKER, Occupancy.RENTAL,
     TrustState.TRUSTED, DeviceState.AVAILABLE, None, None,
 )
-RESERVATION = ReserveRequest("r1", "u1", "locker-1", Action.OPEN, None, None)
+RESERVATION = ReserveRequest("r1", "u1", "locker-1", Action.OPEN, None)
 
 
 @pytest.mark.parametrize(
@@ -27,6 +30,7 @@ RESERVATION = ReserveRequest("r1", "u1", "locker-1", Action.OPEN, None, None)
         (NODE, "anchor_params"),
         (ProximityResult({}, NOW, NOW, "m0", "c0"), "posteriors"),
         (RESERVATION, "release_policy"),
+        (UseSession("s1", "r1", "locker-1", SessionState.RESERVED), "release_policy"),
         (NodeStatus("locker-1", NOW, True), "detail"),
         (AuditEvent("e1", Step.CLOSE, {}), "payload"),
     ],

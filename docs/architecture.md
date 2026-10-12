@@ -121,6 +121,7 @@ api  ──▶  core  ──▶  db
 | 계약 | 제공 | 사용 | 약속 |
 |---|---|---|---|
 | 저장소 인터페이스 | DB | CORE (API는 계정 식별만) | 계정과 비콘, 기기, 정책 이력과 승인 사용분, 외부 키와 내부 요청 ID와 명령 ID의 연결, 점유 세션, RSSI 관측, 원자적 점유와 승인 예약 (`reserve_if_free`) |
+| 사건별 저장 인터페이스 | DB | CORE | 예약 이후의 명령 연결, 전송 시작, 미전송 취소, 실행 결과, 이상 격리, 종료를 사건마다 원자적으로 반영한다 (`ExecutionStore`). |
 | 감사 로그 인터페이스 | DB | CORE | 단계별 입력, 결과, 버전, 임계값, 후보 확률의 기록 |
 | 기기 명령 인터페이스 | IOT | CORE | `command_id`별로 전송과 결과를 추적한다. 확실한 미전송, 전송 뒤 성공, 전송 뒤 실패, 결과 불명을 구분한다. 시간 초과와 연결 끊김을 미실행으로 보지 않는다. |
 | 기기 이벤트 인터페이스 | CORE | IOT | CORE는 기능 발표, RSSI 프레임, 원시 물리 관측과 늦은 실행 결과 사건을 받는다. 안전은 CORE가 판단한다. |
@@ -157,7 +158,17 @@ api  ──▶  core  ──▶  db
 - 상태 관리는 미전송, 진행 중, 성공, 실패, 불명을 구분한다. 명령 결과에는 `CommandResult`를 활용한다.
 - 내부 계정 정보는 호스트 응답으로 보내지 않는다. 완료 안내는 실행 성공과 필요한 저장 반영 뒤에 한다.
 - DB는 대여형 예약 때 `use_id`를 만든다. 서버는 실행 성공과 필요한 저장 반영 뒤에만 `use_id`를 호스트에 반환한다.
-- 미결 — #16: 예외 전달 방식과 요청에 연결된 진행 상태의 상세 반환 타입
+
+| 계약 요소 | `shared` 이름 | 약속 |
+|---|---|---|
+| 인계 객체 | `ExecutionContext` | 위 표의 정보를 담는다. 호스트 응답이 아니다. |
+| 실행 접점 | `ExecutionService.execute` | 상태 관리가 제공한다. `ExecutionResult`를 반환한다. 업무 결과를 예외로 알리지 않는다. |
+| 재검사 접점 | `DecisionRechecker.recheck` | 판정이 제공한다. `Decision`을 반환한다. |
+| 진행 상태 | `ExecutionStatus` | `pending`, `in_progress`, `succeeded`, `failed`, `unknown`, `not_sent`다. |
+
+- 재검사의 검사 오류는 `DENY`와 `RECHECK_FAILED`로 반환한다. `RECHECK_FAILED`는 정상 거부에 쓰지 않는다.
+- `recheck()`가 예외를 던지면 상태 관리는 검사 오류와 같게 처리한다.
+- `ExecutionResult`는 재검사가 전송을 막았을 때 그 `Decision`을 함께 담는다. 호스트 응답 변환은 판정이 맡는다 (FR-09).
 
 ### 예약 이후 저장
 
@@ -187,7 +198,27 @@ CORE는 실행·종료·안전을 판단한다. DB는 현재 상태와 기록 �
 - DB 전송 시작 기록은 실제 MQTT 전송과 별개다. 기록만으로 실행 성공과 미전송을 확정하지 않는다.
 - 공용형에는 세션과 `CLOSING`을 만들지 않는다. 제한 공용형도 사용분을 실행 전에 원자적으로 확보한다.
 - 늦은 결과와 복구 재호출은 중복 정산과 완료 상태의 되돌림을 만들지 않는다.
-- 미결 — #17: 사건 식별 방식, 함수·입력·반환 타입, 복원 조회와 복구 정산의 상세 형식
+
+| 사건 | `ExecutionStore` 함수 | 식별 키 |
+|---|---|---|
+| 기존 실행 조회와 명령 연결 | `link_command` | `internal_request_id` |
+| 전송 시작 | `begin_send` | `command_id` |
+| 확실한 미전송 취소 | `cancel_not_sent` | `internal_request_id` |
+| 실행 성공, 실패 또는 불명 | `record_result` | `command_id` |
+| 명령 결과가 아닌 이상의 격리 | `isolate_device` | `node_id` |
+| 종료 시작 | `begin_close` | `use_id` |
+| 안전 종료 | `finish_close` | `use_id` |
+| 반영 여부 재조회 | `execution` | `internal_request_id` |
+
+- 사건은 새 사건 ID 없이 식별 키와 함수로 식별한다. 결과는 `applied`, `already_applied`, `conflict` 중 하나다.
+- 실행 결과는 명령 하나에 하나만 확정한다. 이미 다른 결과가 있으면 `conflict`다. 상충한 결과는 감사 기록에 남긴다.
+- 미전송 취소는 기대 상태를 함께 받는다. 재검사 실패와 예약 대기 제한은 `pending`에서만 취소한다. IOT가 미전송을 증명하면 `in_progress`에서도 취소한다.
+- 확실한 미전송 취소는 대여형 기기를 `AVAILABLE`로, 점유 세션을 `cancelled` 사유의 `CLOSED`로 둔다.
+- 저장 오류는 `StoreNotApplied`와 `StoreOutcomeUnknown` 예외로 구분한다. `StoreOutcomeUnknown`이면 `execution`으로 다시 조회한다.
+- 실행 성공 때 CORE는 인계받은 `Settings`로 `rental_due_at`을 계산해서 전달한다.
+- 센서 이상과 종료 뒤 안전 미확인은 `isolate_device`로 기기만 `FAULT`로 둔다. 점유 세션과 승인 사용분은 보존한다.
+- `Repository`의 개별 상태 갱신 함수는 쓰지 않는다. 예약 이후의 쓰기는 `ExecutionStore`로만 한다.
+- 미결 — #17: 복원 조회와 복구 정산의 상세 형식
 
 ### 이탈 판단의 관측 계약
 
@@ -211,8 +242,7 @@ CORE는 실행·종료·안전을 판단한다. DB는 현재 상태와 기록 �
 ### 공동 인터페이스의 후속 반영
 
 - 현재 `shared`는 이 문서의 새 계약을 모두 구현하지 않았다.
-- 실행 인계 객체, 요청에 연결된 진행 상태와 사건별 저장 접점은 #16·#17에 맞춰 추가한다.
-- `UseSession.expires_at`은 대여시간 기준 `rental_due_at`으로 분리한다. `closed_at`과 생성 당시 종료 정책도 전달한다.
+- 실행 인계, 진행 상태, 사건별 저장 접점과 `UseSession`의 `rental_due_at`, `closed_at`, 종료 정책은 `shared`에 반영했다.
 - 현재 `NodeEventSink`에는 늦은 결과 접점이 없다. #19의 결과 사건 전달 계약을 추가한다.
 - 현재 `NodeStatus.safe`를 IOT의 안전 판단으로 쓰지 않는다. 원시 관측과 최신성을 전달하고 CORE가 판단한다.
 - 현재 `CommandResult.safe`를 종료 안전의 근거로 쓰지 않는다. 명령 실행 성공과 종료 안전은 별개다 (§5.7).
@@ -410,7 +440,7 @@ CORE는 점유 세션 생성 당시의 종료 정책을 적용한다. 종료 관
 | `rssi_observation` | PK `obs_id`, FK `node_id`, `beacon_id`, `rssi` (dBm), `frame_ts` (약 1초 프레임), nullable `label` (기기 1~6 앞 또는 none) |
 | `request` | TEXT PK `internal_request_id`, FK `user_id`, 외부 `request_id`, UNIQUE `(user_id, request_id)`, 정규화 입력 요약, nullable FK `parent_internal_request_id`, nullable FK `node_id`, `target_spec`, `action`, `verdict`, `reason_code`, `p_max`, 버전 `model`, `calib`, `policy_ver`, `config_ver`, 실제 설정을 포함한 JSON `decision_context`, `host_kind` |
 | `node_command` | TEXT PK `command_id`, FK `internal_request_id`, `node_id`, 대상 동작과 입력 요약, 전송 시도, 실행 상태, 결과, 시각. 승인 사용분과 연결한다. 결과 불명은 실패, 미전송과 구분한다. 기록은 재시작 뒤에도 보존한다. |
-| `use_session` | TEXT PK `use_id`, FK `internal_request_id`, `user_id`, `node_id`, `state` (`RESERVED`, `ACTIVE`, `CLOSING`, `CLOSED`), `end_reason` (`release`, `leave`, `timeout`, `fault`), `rental_due_at`, nullable `closed_at`, 생성 당시 종료 정책. 대여형 요청과 점유 세션은 1:0..1 관계다. |
+| `use_session` | TEXT PK `use_id`, FK `internal_request_id`, `user_id`, `node_id`, `state` (`RESERVED`, `ACTIVE`, `CLOSING`, `CLOSED`), `end_reason` (`release`, `leave`, `timeout`, `fault`, `cancelled`), nullable `rental_due_at` (실행 성공 때 정한다), nullable `closed_at`, 생성 당시 종료 정책. 대여형 요청과 점유 세션은 1:0..1 관계다. |
 | `audit_log` | PK `log_id`, UNIQUE `event_id`, nullable FK `internal_request_id`, nullable 명령 참조, `step` (`auth`, ⓪~⑥, `exec`, `close`, `fault`), JSON `payload_json`. 인증 실패는 요청 참조 없이 기록한다. |
 
 - 계정은 여러 비콘, 장소, 요청을 가진다. 장소는 여러 기기를 가진다.
@@ -425,9 +455,9 @@ CORE는 점유 세션 생성 당시의 종료 정책을 적용한다. 종료 관
 - `release_policy`는 종료 조건, 이탈 동작, 미수신 시간, 유예 시간을 담는다.
 - 대여형은 이탈과 대여시간 초과로 점유를 해제하지 않는다. 초과시간은 `rental_due_at`과 현재 시각 또는 `closed_at`으로 계산한다.
 - 공용형에는 점유 세션이 없다. 그래서 `end_reason`의 `leave`와 `timeout`은 현재 계약에서 쓰지 않는 예약값이다.
-- 미결: 확실한 미전송 취소 뒤의 기기 상태, 점유 세션 상태와 종료 사유
+- 확실한 미전송 취소 뒤에는 기기가 `AVAILABLE`, 점유 세션이 `CLOSED`, 종료 사유가 `cancelled`다.
 - 조명 이탈 판단을 활성화하면 유효 재수신은 유예 타이머를 초기화한다. 대여형의 `CLOSING` 뒤에는 종료를 계속한다.
-- 미결 — #17: 기존 `expires_at`의 호환성과 데이터 이전 방식
+- 기존 `expires_at`은 `rental_due_at`으로 바꾼다. 배포한 DB 스키마가 없어서 데이터 이전은 필요 없다.
 - 복구할 때는 실행 여부, 승인 사용분, 점유 세션 상태를 함께 정산한 뒤 재사용을 허가한다.
 - 운영 수치는 requirements.md §1.2의 초기 기본값과 설정 버전을 쓴다.
 - `shared`에는 단위와 범위를 검증하는 설정 모델을 둔다.
