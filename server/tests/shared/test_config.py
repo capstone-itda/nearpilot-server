@@ -9,7 +9,7 @@ NUMERIC_FIELDS = (
     "threshold_locker", "threshold_light", "rssi_frame_sec",
     "leave_absent_sec", "leave_grace_sec", "allocation_window_ms",
     "beacon_recent_sec", "online_ttl_sec", "exec_timeout_sec",
-    "rental_timeout_sec", "approval_ttl_sec",
+    "rental_duration_sec", "approval_ttl_sec",
 )
 
 

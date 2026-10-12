@@ -1,7 +1,8 @@
 """운영 수치 설정 (requirements.md §1.2 수치 설정과 변경 원칙, architecture.md §6).
 
 코드 상수로 흩어 두지 않고 여기 하나로 모은다. 판정 한 건에는 같은 버전을 적용하고
-`version` 을 감사 기록에 남긴다. requirements.md에서 미결인 시간 설정은 시연용 초기값이며 측정 후 조정한다.
+`version` 을 감사 기록에 남긴다.
+"미결 — #15" 구역의 값은 개발·시연용 임시값이다. 팀이 정한 기본값이 아니며, 결정되면 requirements.md 와 함께 바꾼다.
 """
 
 from __future__ import annotations
@@ -21,18 +22,19 @@ class Settings:
     # 관측 (FR-05)
     rssi_frame_sec: float = 1.0
 
-    # 이탈 판단 (FR-20): 연속 미수신 후 유예
+    # 이탈 판단 (FR-20): 연속 미수신 후 유예. 초기 기본값이며 설정으로 바꿀 수 있다.
+    # 공용 조명 자동 꺼짐에 쓴다. 대여형의 점유 해제에는 쓰지 않는다.
     leave_absent_sec: float = 10.0
     leave_grace_sec: float = 5.0
 
     # 전역 할당 대기 구간 (FR-23)
     allocation_window_ms: int = 500
 
-    # ── 미결 시간 설정 (시연용 초기값) ──
+    # ── 미결 — #15 시간 설정 (개발·시연용 임시값, 확정 기본값 아님) ──
     beacon_recent_sec: float = 3.0  # ① 비콘 최근 수신 T: RSSI 3프레임
     online_ttl_sec: float = 15.0  # 노드 ONLINE 판단 TTL: 5초 하트비트 3회
     exec_timeout_sec: float = 3.0  # 실행 결과 대기 제한 (NFR-01 p95 6초 안)
-    rental_timeout_sec: float = 3600.0  # 대여 기본 타임아웃
+    rental_duration_sec: float = 3600.0  # 대여 기본 시간: 자동 반납 기준이 아니라 초과시간 계산 기준 (FR-20)
     approval_ttl_sec: int = 600  # 승인 기본 유효시간
 
     def __post_init__(self) -> None:
@@ -40,7 +42,7 @@ class Settings:
             "threshold_locker", "threshold_light", "rssi_frame_sec",
             "leave_absent_sec", "leave_grace_sec", "allocation_window_ms",
             "beacon_recent_sec", "online_ttl_sec", "exec_timeout_sec",
-            "rental_timeout_sec", "approval_ttl_sec",
+            "rental_duration_sec", "approval_ttl_sec",
         ):
             v = getattr(self, name)
             if isinstance(v, bool) or not isinstance(v, (int, float)):
@@ -59,7 +61,7 @@ class Settings:
             "beacon_recent_sec",
             "online_ttl_sec",
             "exec_timeout_sec",
-            "rental_timeout_sec",
+            "rental_duration_sec",
             "approval_ttl_sec",
         ):
             v = getattr(self, name)

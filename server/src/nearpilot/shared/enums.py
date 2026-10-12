@@ -65,7 +65,9 @@ class ReasonCode(StrEnum):
     # 핸들 (FR-21): 없는 핸들과 타인 핸들을 구분하지 않는다
     USE_NOT_FOUND = "USE_NOT_FOUND"
     # 실행
-    RECHECK_FAILED = "RECHECK_FAILED"  # 실행 직전 재검사 실패
+    # 실행 직전 재검사의 정상 거부에는 쓰지 않는다. 재검사의 원래 판정과 사유를 그대로 전달한다 (#16).
+    # 재검사 오류의 전달 방식은 미결 — #16 (architecture.md §4).
+    RECHECK_FAILED = "RECHECK_FAILED"
     EXEC_FAILED = "EXEC_FAILED"
     EXEC_UNKNOWN = "EXEC_UNKNOWN"  # 결과 불명 → FAULT 복구
 
