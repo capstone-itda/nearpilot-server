@@ -37,6 +37,7 @@ from nearpilot.shared.models import (
     NodeCommand,
     NodeInfo,
     NodeStatus,
+    PolicyCheckResult,
     PolicyRevision,
     ProximityResult,
     RequestLink,
@@ -56,6 +57,20 @@ class AccountLookup(Protocol):
     """API 가 DB 를 직접 부르는 유일한 경로 (의존 규칙 1)."""
 
     def account_by_token_hash(self, token_hash: str) -> Account | None: ...
+
+
+@runtime_checkable
+class PolicyChecker(Protocol):
+    """DB(`core/policy`) → CORE ④ 정책 검사 (#23).
+
+    정책 모드, 승인 범위, 정책 버전 비교 규칙은 이 함수 안에 둔다. 판정은 순서와 중단만 맡는다.
+    ③ 에서 확정한 대상만 검사한다. 검사 결과로 다른 기기를 고르지 않는다 (FR-18).
+    저장소를 바꾸지 않는다. 승인 사용분 예약은 ⑤⑥ 의 `reserve_if_free()` 가 한다.
+    """
+
+    def check(
+        self, user_id: str, node_id: str, action: Action, now: datetime
+    ) -> PolicyCheckResult: ...
 
 
 @runtime_checkable

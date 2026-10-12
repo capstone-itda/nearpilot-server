@@ -137,6 +137,21 @@ class Approval:
     remaining_uses: int | None  # 예약·보류·소진을 뺀 잔여. 무제한이면 None
 
 
+@dataclass(frozen=True, slots=True)
+class PolicyCheckResult:
+    """④ 정책 검사 결과 (#23). 사용자 ID·점유 주체 필드를 두지 않는다.
+
+    verdict 는 OK(허용)·NEED_APPROVAL(승인 필요)·DENY(거부) 중 하나다.
+    NEED_APPROVAL 의 reason 은 APPROVAL_REQUIRED·APPROVAL_PENDING·APPROVAL_REJECTED·
+    APPROVAL_EXPIRED 로 구분한다. approval_id 는 ⑤⑥ 의 `ReserveRequest.approval_id` 로 넘어간다.
+    """
+
+    verdict: Verdict
+    reason: ReasonCode
+    policy_version: int
+    approval_id: str | None = None  # 승인이 필요 없거나 아직 없으면 None
+
+
 # ── 요청·판정 ───────────────────────────────────────────────────────
 
 

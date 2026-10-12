@@ -17,7 +17,7 @@ spec 규칙
 - 상태: 작성 중
 - 담당: eunji719 (판정)
 - 요구사항: FR-18
-- 따르는 결정: #24, #25
+- 따르는 결정: #23, #24, #25
 
 ## 1. 왜
 
@@ -86,7 +86,7 @@ spec 규칙
 |---|---|---|
 | `Repository.link_request` (⓪) | 사용 | DB |
 | `ProximityEstimator.posterior` (③) | 사용 | 근접 추정 |
-| `Repository.current_policy`, `Repository.valid_approval` (④) | 사용. 경계는 미결 (7절) | DB |
+| `PolicyChecker.check` (④) | 사용. `core/policy`가 제공한다 (6절) | DB |
 | `Repository.reserve_if_free` (⑤⑥) | 사용 | DB |
 | `Repository.save_decision` | 사용 | DB |
 | `AuditLog.append` | 사용 | DB |
@@ -112,6 +112,9 @@ spec 규칙
 
 ## 6. 결정
 
+- ④는 `core/policy`가 제공하는 `PolicyChecker.check()` 한 번으로 검사한다 (#23). 판정은 반환된 `PolicyCheckResult`를 `Decision`에 반영하고, 정책 모드와 승인 범위 규칙을 직접 조합하지 않는다.
+  - 반환 값: `verdict`(`OK`, `NEED_APPROVAL`, `DENY`), 사유, 적용한 `policy_version`, `approval_id`
+  - `approval_id`는 ⑤⑥의 `ReserveRequest.approval_id`로 넘긴다.
 - ⓪의 `input_digest`는 판정이 계산해서 `link_request()`에 넘긴다. DB는 저장하고 비교만 한다 (#24).
   - 정규화 입력에 넣는 필드: `target`(정규화한 대상 지정), `action`, `parent_internal_request_id`
   - 넣지 않는 필드: `request_id`(키 자체다), `received_at`, `host_kind`. 호스트가 바뀌어도 재전송은 같은 요청이다.
@@ -120,7 +123,6 @@ spec 규칙
 ## 7. 가정
 
 - 미결: ① T 값과 ② 온라인 TTL 값. requirements.md FR-15, FR-13의 미결과 같다.
-- 미결: ④ 정책 검사의 경계. `core/policy`가 검사 함수를 제공하고 decision은 결과만 반영하는가, 아니면 decision이 `current_policy`와 `valid_approval`을 직접 조합하는가.
 - 미결: 실행 직전 재검사의 위치. decision이 제공하고 lifecycle이 호출하는가, 아니면 lifecycle 안에서 하는가. 재검사가 실패하면 예약과 승인 사용분 반환을 누가 시작하는가.
 - 미결: 오류로 거부한 요청을 같은 `request_id`로 재전송할 때 다시 판정할지. #25는 이 부분을 정하지 않았다.
 - 미결: `input_digest`의 직렬화와 해시 방식. #24는 필드와 계산 주체만 정했다. 구현할 때 담당자가 정해서 6절에 쓴다.
