@@ -113,7 +113,9 @@ spec 규칙
 ## 6. 결정
 
 - ④는 `core/policy`가 제공하는 `PolicyChecker.check()` 한 번으로 검사한다 (#23). 판정은 반환된 `PolicyCheckResult`를 `Decision`에 반영하고, 정책 모드와 승인 범위 규칙을 직접 조합하지 않는다.
-  - 반환 값: `verdict`(`OK`, `NEED_APPROVAL`, `DENY`), 사유, 적용한 `policy_version`, `approval_id`
+  - 반환 값: `verdict`(`OK`, `NEED_APPROVAL`, `DENY`), 사유, 적용한 `policy_version`(정책이 없는 기기는 `None`), `approval_id`
+  - 정책이 없는 기기는 `DENY`로 거부한다.
+  - 승인 사용 횟수 소진(`APPROVAL_EXHAUSTED`)과 승인과 다른 동작(`ACTION_NOT_ALLOWED`)은 `NEED_APPROVAL`이다. 다시 승인받으면 되기 때문이다.
   - `approval_id`는 ⑤⑥의 `ReserveRequest.approval_id`로 넘긴다.
 - ⓪의 `input_digest`는 판정이 계산해서 `link_request()`에 넘긴다. DB는 저장하고 비교만 한다 (#24).
   - 정규화 입력에 넣는 필드: `target`(정규화한 대상 지정), `action`, `parent_internal_request_id`

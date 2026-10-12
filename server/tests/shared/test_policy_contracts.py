@@ -21,9 +21,16 @@ def test_fr14_fr18_need_approval_reasons_are_distinguishable():
         ReasonCode.APPROVAL_PENDING,
         ReasonCode.APPROVAL_REJECTED,
         ReasonCode.APPROVAL_EXPIRED,
+        ReasonCode.APPROVAL_EXHAUSTED,
+        ReasonCode.ACTION_NOT_ALLOWED,
     }
     results = [PolicyCheckResult(Verdict.NEED_APPROVAL, r, 1) for r in reasons]
-    assert len({r.reason for r in results}) == 4
+    assert len({r.reason for r in results}) == 6
+
+
+def test_fr14_policy_check_result_allows_no_policy_version_on_deny():
+    result = PolicyCheckResult(Verdict.DENY, ReasonCode.POLICY_DENIED, None)
+    assert result.policy_version is None
 
 
 def test_fr11_policy_check_result_has_no_user_fields():

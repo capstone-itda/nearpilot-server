@@ -143,12 +143,15 @@ class PolicyCheckResult:
 
     verdict 는 OK(허용)·NEED_APPROVAL(승인 필요)·DENY(거부) 중 하나다.
     NEED_APPROVAL 의 reason 은 APPROVAL_REQUIRED·APPROVAL_PENDING·APPROVAL_REJECTED·
-    APPROVAL_EXPIRED 로 구분한다. approval_id 는 ⑤⑥ 의 `ReserveRequest.approval_id` 로 넘어간다.
+    APPROVAL_EXPIRED·APPROVAL_EXHAUSTED(사용 횟수 소진)·ACTION_NOT_ALLOWED(승인과 다른 동작)로
+    구분한다. 다시 승인받으면 되는 경우이므로 DENY 로 주지 않는다. approval_id 는 ⑤⑥ 의
+    `ReserveRequest.approval_id` 로 넘어간다. 정책이 없는 기기는 DENY 로 거부하며 이때
+    policy_version 은 None 이다.
     """
 
     verdict: Verdict
     reason: ReasonCode
-    policy_version: int
+    policy_version: int | None  # 적용한 정책이 없으면 None
     approval_id: str | None = None  # 승인이 필요 없거나 아직 없으면 None
 
 
