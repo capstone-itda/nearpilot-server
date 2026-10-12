@@ -1,12 +1,13 @@
 name: PR 규칙
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened]
+    types: [opened, edited, synchronize, reopened, review_requested, review_request_removed]
   pull_request_review:
     types: [submitted, edited, dismissed]
 permissions:
   contents: read
   pull-requests: read
+  issues: read
   statuses: write
 # 리뷰가 연달아 달려도 마지막 판정만 남긴다
 concurrency:
@@ -42,8 +43,16 @@ jobs:
               errs.push(`decision PR 본문에 'Closes #이슈번호'가 없음`);
 
             // ── 승인 검사 ──
-            // 모든 PR은 작성자 외 3인 승인이 필요하다
-            const need = 3;
+            // 지정된 리뷰어 전원이 승인해야 한다. 지정된 리뷰어가 없으면 통과한다.
+            // requested_reviewers는 리뷰를 내면 빠지므로 타임라인의 지정·해제 기록으로 지정 목록을 만든다.
+            const events = await github.paginate(github.rest.issues.listEventsForTimeline,
+              { ...context.repo, issue_number: pr.number });
+            const requested = new Set();
+            for (const e of events) {
+              if (!e.requested_reviewer) continue;  // 팀 단위 지정은 세지 않는다
+              if (e.event === 'review_requested') requested.add(e.requested_reviewer.login);
+              if (e.event === 'review_request_removed') requested.delete(e.requested_reviewer.login);
+            }
             // 작성자를 뺀 리뷰어별 마지막 리뷰 상태
             const reviews = await github.paginate(github.rest.pulls.listReviews,
               { ...context.repo, pull_number: pr.number });
@@ -52,11 +61,11 @@ jobs:
               if (r.user.login === pr.user.login) continue;
               if (['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(r.state)) last[r.user.login] = r.state;
             }
-            const approved = Object.keys(last).filter(u => last[u] === 'APPROVED');
             const blocked = Object.keys(last).filter(u => last[u] === 'CHANGES_REQUESTED');
-            let ok = true, msg = `승인 ${approved.length}/${need}명`;
-            if (approved.length < need) ok = false;
-            else if (blocked.length) { ok = false; msg = `변경 요청 남음: ${blocked.join(', ')}`; }
+            const pending = [...requested].filter(u => last[u] !== 'APPROVED');
+            let ok = true, msg = requested.size ? `승인 ${requested.size - pending.length}/${requested.size}명` : '지정된 리뷰어 없음';
+            if (blocked.length) { ok = false; msg = `변경 요청 남음: ${blocked.join(', ')}`; }
+            else if (pending.length) { ok = false; msg += `, 대기: ${pending.join(', ')}`; }
 
             // ── 커밋 상태로 기록 ──
             const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
