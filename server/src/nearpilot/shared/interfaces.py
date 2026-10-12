@@ -239,7 +239,12 @@ class ProximityEstimator(Protocol):
     def posterior(
         self, beacons: Sequence[BeaconKey], candidates: Sequence[NodeInfo], at: datetime
     ) -> ProximityResult:
-        """후보 장치별 사후확률. 후보가 없으면 빈 posteriors."""
+        """후보 장치별 사후확률. 후보가 없으면 빈 posteriors.
+
+        판정은 명시 지정 요청에도 ② 의 전체 후보를 넘긴다 (#26). 지정 대상은 인자로 받지 않는다.
+        같은 입력에는 지정 여부와 상관없이 같은 출력을 낸다 (NFR-09).
+        판정이 `posteriors[지정 대상]` 을 읽어 임계값과 비교한다.
+        """
         ...
 
 
