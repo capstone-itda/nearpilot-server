@@ -24,6 +24,11 @@ from nearpilot.shared.enums import (
     ReasonCode,
 )
 from nearpilot.shared.models import (
+    RecoveryRecord,
+    RecoverySettlement,
+    RestoreBundle,
+    RecoveryReadiness,
+    RecoveryApprovalResult,
     Account,
     Approval,
     AuditEvent,
@@ -139,7 +144,14 @@ class Repository(Protocol):
     ) -> Approval | None: ...
 
     # ⑤⑥ — BEGIN IMMEDIATE 한 트랜잭션 (FR-19)
-    def reserve_if_free(self, req: ReserveRequest) -> ReserveResult: ...
+    def reserve_if_free(self, req: ReserveRequest) -> ReserveResult:
+        """⑤⑥ 검사와 승인 사용분 예약은 BEGIN IMMEDIATE 하나에서 한다 (FR-19).
+
+        본인 ACTIVE 점유이면 요청·계정·기기 연결을 검사하고 REOPERATING 과 기존 use_id 를 반환한다.
+        이번 요청의 사용분만 예약한다. 새 세션을 만들거나 rental_due_at 을 바꾸지 않는다.
+        타인 점유 또는 RESERVED·CLOSING·FAULT 는 DEVICE_BUSY 다. 같은 요청의 중복은 기존 연결을 반환한다.
+        """
+        ...
 
     # 조회 — 예약 이후의 쓰기는 ExecutionStore 로만 한다
     def session(self, use_id: str) -> UseSession | None: ...
@@ -163,7 +175,12 @@ class ExecutionStore(Protocol):
         ...
 
     def begin_send(self, command_id: str) -> StoreResult:
-        """PENDING → IN_PROGRESS. APPLIED 일 때만 전송을 시작한다. 취소된 명령은 CONFLICT. 키: command_id"""
+        """PENDING → IN_PROGRESS. APPLIED 일 때만 전송을 시작한다. 키: command_id
+
+        같은 기기의 다른 미완료 구동 명령, 기기·세션 상태와 요청 연결을 원자적으로 검사한다.
+        다른 명령과의 경합은 CONFLICT·COMMAND_IN_PROGRESS, CLOSING·FAULT 는 CONFLICT·STATE_CONFLICT 다.
+        같은 명령의 중복 시작은 ALREADY_APPLIED 이며 재전송 허가가 아니다. 취소된 명령은 CONFLICT 다.
+        """
         ...
 
     def cancel_not_sent(
@@ -175,7 +192,8 @@ class ExecutionStore(Protocol):
     ) -> StoreResult:
         """확실한 미전송 취소. 현재 상태가 expected 가 아니거나 결과가 있으면 CONFLICT.
 
-        대여형: 기기 AVAILABLE, 세션 CLOSED·cancelled. 공통: 사용분 released, 명령 NOT_SENT, 감사.
+        최초 대여: 기기 AVAILABLE, 세션 CLOSED·cancelled. 재조작: 기존 점유·rental_due_at 보존.
+        공통: 이번 요청의 사용분 released, 명령 NOT_SENT, 감사. 기존 대여의 사용분은 바꾸지 않는다.
         재검사 실패와 예약 대기 제한은 expected=PENDING, IOT 의 NOT_SENT 증명은 expected=IN_PROGRESS 다.
         """
         ...
@@ -188,9 +206,13 @@ class ExecutionStore(Protocol):
         rental_due_at: datetime | None,
         evidence: Mapping[str, Any],
     ) -> StoreResult:
-        """실행 결과를 명령 하나에 한 번만 확정한다. outcome 은 SUCCEEDED·FAILED·UNKNOWN 이다.
+        """실행 결과를 명령 하나에 한 번만 확정한다. outcome 은 SUCCEEDED·FAILED·UNKNOWN·REJECTED 다. NOT_SENT 는 cancel_not_sent 로 반영한다.
 
-        SUCCEEDED: 명령 성공, 대여형 기기·세션 ACTIVE 와 rental_due_at, 사용분 consumed, 감사.
+        SUCCEEDED: 최초 대여는 기기·세션 ACTIVE 와 rental_due_at. 재조작은 기존 점유·rental_due_at 보존.
+        공통으로 이번 요청의 사용분 consumed 와 감사를 반영한다.
+        REJECTED: 검증된 DEVICE_BUSY 의 미접수·미실행 근거와 상충 여부를 검사한다.
+        이번 요청의 사용분만 released 로 둔다. 최초 대여는 이번 예약을 cancelled 로 종료한다.
+        재조작은 기존 점유·rental_due_at 을 보존한다. 기기를 FAULT 로 두지 않는다.
         FAILED·UNKNOWN: 명령 결과, 기기 FAULT, 사용분 held, 세션 보존, 감사.
         이미 다른 결과가 있으면 CONFLICT 다. 늦은 성공으로 FAULT 를 해제하지 않는다.
         """
@@ -205,7 +227,11 @@ class ExecutionStore(Protocol):
         ...
 
     def begin_close(self, use_id: str, reason: EndReason) -> StoreResult:
-        """대여형 기기·세션 ACTIVE → CLOSING. 키: use_id"""
+        """대여형 기기·세션 ACTIVE → CLOSING. 키: use_id
+
+        다른 미완료 구동 명령이 있으면 CONFLICT·COMMAND_IN_PROGRESS 로 반납 시작을 보류한다.
+        전송 시작과 반납 시작의 검사·쓰기를 원자적으로 한다. CLOSING 뒤에는 새 전송을 막는다.
+        """
         ...
 
     def finish_close(
@@ -230,6 +256,35 @@ class ExecutionStore(Protocol):
 
     def execution(self, internal_request_id: str) -> CommandRecord | None:
         """반영 여부가 불명일 때 다시 조회한다."""
+        ...
+
+
+    def restore_pending(self) -> Sequence[RestoreBundle]:
+        """미완료 요청·명령·세션·사용분·복구 건과 FAULT 기기를 일관된 읽기 시점에 조회한다.
+
+        공용형의 사용분도 반환한다. 조회 오류를 빈 목록으로 바꾸지 않고 저장한 시각을 보존한다.
+        복원·현재 상태 확인 전에는 새 실행과 재사용을 허가하지 않는다.
+        """
+        ...
+
+    def save_recovery(self, record: RecoveryRecord) -> StoreResult:
+        """복구 건과 근거를 저장한다. 대상 연결은 바꾸지 않고 완료 근거는 덮어쓰지 않는다.
+
+        같은 내용은 ALREADY_APPLIED, 다른 대상 연결은 CONFLICT 다. 점유·사용분·기기 상태는 풀지 않는다.
+        """
+        ...
+
+    def recovery(self, recovery_id: str) -> RecoveryRecord | None:
+        """복구 건과 완료 결과를 조회한다. None 만으로 미반영을 단정하지 않는다."""
+        ...
+
+    def settle_recovery(self, settlement: RecoverySettlement) -> StoreResult:
+        """연결·예상 상태를 검사하고 승인·근거·사용분·점유 종료·기기 복구·감사를 함께 커밋한다.
+
+        finish_close 를 거치지 않는다. 반납 check_id 대신 복구 근거를 쓴다.
+        같은 recovery_id·논리 정산이면 ALREADY_APPLIED 와 기존 완료 결과를 반환한다.
+        다른 연결·요약값·예상 상태는 CONFLICT 다. 늦은 결과로 완료 정산을 뒤집지 않는다.
+        """
         ...
 
 
@@ -296,7 +351,8 @@ class ProximityEstimator(Protocol):
 class NodeCommandGateway(Protocol):
     """IOT → CORE 노드 명령 (FR-06).
 
-    결과는 NOT_SENT / SUCCEEDED / FAILED / UNKNOWN 으로 구분한다.
+    결과는 NOT_SENT / SUCCEEDED / FAILED / UNKNOWN / REJECTED 으로 구분한다.
+    REJECTED 는 검증된 DEVICE_BUSY 접수·실행 전 거부다. 다른 거부는 실패·불명 규칙을 따른다.
     시간 초과·연결 끊김은 UNKNOWN 이며 미실행으로 간주하지 않는다.
     같은 command_id 로만 재전송하고 새 ID 로 자동 재시도하지 않는다.
     """
@@ -365,3 +421,17 @@ class CoreService(Protocol):
     def release_use(self, user_id: str, use_id: str) -> Decision: ...
 
     def get_use_status(self, user_id: str, use_id: str) -> Mapping[str, Any]: ...
+
+
+@runtime_checkable
+class RecoveryService(Protocol):
+    """상태 관리 → API 복구 접점 (NFR-04). API 는 인증 계정만 넘긴다.
+
+    조회·승인 모두 장소 소유권을 검사한다. 조회는 복구 건을 만들거나 정산하지 않는다.
+    승인은 현재 복구 건·온라인·신뢰·실행·안전·물리 상태를 다시 검사한다.
+    저장 미반영은 rejected, 저장 불명은 pending 이다. 완료 기록 확인 뒤에만 completed 다.
+    """
+
+    def readiness(self, user_id: str, node_id: str) -> RecoveryReadiness: ...
+
+    def approve(self, user_id: str, node_id: str, recovery_id: str) -> RecoveryApprovalResult: ...

@@ -171,7 +171,7 @@ api  ──▶  core  ──▶  db
 | 계약 요소 | `shared` 이름 | 약속 |
 |---|---|---|
 | 인계 객체 | `ExecutionContext` | 위 표의 정보를 담는다. 호스트 응답이 아니다. |
-| 실행 종류 | `execution_kind` | 최초 대여, 기존 대여의 재조작, 공용형 조작이다. 값의 이름은 미결 — #35다. |
+| 실행 종류 | `execution_kind` | `ExecutionKind`의 `rental_initial`, `rental_reoperation`, `shared`다. |
 | 실행 접점 | `ExecutionService.execute` | 상태 관리가 제공한다. `ExecutionResult`를 반환한다. 업무 결과를 예외로 알리지 않는다. |
 | 재검사 접점 | `DecisionRechecker.recheck` | 판정이 제공한다. `Decision`을 반환한다. |
 | 진행 상태 | `ExecutionStatus` | `pending`, `in_progress`, `succeeded`, `failed`, `unknown`, `not_sent`다. |
@@ -229,7 +229,7 @@ CORE는 실행·종료·안전을 판단한다. DB는 현재 상태와 기록 �
 | 복구 건 조회 | `recovery` | `recovery_id` |
 | 복구 정산 | `settle_recovery` | `recovery_id` |
 
-- `link_command`부터 `execution`까지는 `ExecutionStore`의 함수다. 복원·복구의 네 함수를 둘 인터페이스는 미결 — #17이다.
+- 예약 이후 저장과 복원·복구 네 함수는 `ExecutionStore`에 둔다. 같은 사건별 저장 규칙을 적용한다.
 - 사건은 새 사건 ID 없이 식별 키와 함수로 식별한다. 결과는 `applied`, `already_applied`, `conflict` 중 하나다.
 - 실행 결과는 명령 하나에 하나만 확정한다. 이미 다른 결과가 있으면 `conflict`다. 상충한 결과는 감사 기록에 남긴다.
 - 미전송 취소는 기대 상태를 함께 받는다. 재검사 실패와 예약 대기 제한은 `pending`에서만 취소한다. IOT가 미전송을 증명하면 `in_progress`에서도 취소한다.
@@ -270,7 +270,6 @@ DB는 기기별 복원 묶음을 반환한다. 복원 묶음 하나는 현재 �
 - 공용 조명의 과거 참여자 목록은 복원 묶음에 넣지 않는다. 공용 조명의 현재 기기 상태, 미완료 명령, 승인 사용분, 장애와 복구 기록은 복원 대상이다.
 - 참여자를 새로 구성하는 규칙은 대여형 점유 세션의 복원을 생략하지 않는다.
 - 서버 중단 시간을 예약 대기와 대여시간에 적용하는 기준은 #15를 따른다.
-- 미결 — #17: 복원 묶음과 각 기록의 `shared` 모델 이름과 필드 이름
 
 ### 복구 건과 복구 정산
 
@@ -318,7 +317,6 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - 늦은 명령 결과가 정산 근거와 같으면 DB는 다시 정산하지 않는다. 상충하면 DB는 충돌 근거를 기록하고 상태 관리가 다시 확인한다.
 - 늦은 결과는 종료한 점유 세션을 되살리지 않고 완료한 정산을 뒤집지 않는다. DB는 복구 정산과 늦은 결과 반영에서 현재 기록을 원자적으로 검사한다.
 - 과거 복구의 완료는 현재 기기의 사용 가능 여부와 구분한다.
-- 미결 — #17: 네 함수의 인자와 반환 객체의 필드 이름, 네 함수를 둘 `shared` 인터페이스
 
 ### 구동 중 추가 명령 제한의 저장
 
@@ -335,8 +333,7 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - 명령을 접수했거나 구동했다는 근거가 있으면 이 예외를 적용하지 않는다. 결과가 상충할 때도 같다. 상태 관리는 불명·충돌·격리 규칙을 따른다.
 - 상태 관리는 결과 대기 시간 초과를 `DEVICE_BUSY`로 추정하지 않는다.
 - 같은 거부 결과를 다시 받아도 DB는 사용분을 한 번만 반환한다.
-- 미결 — #17: 접수·실행 전 거부를 나타내는 `CommandOutcome` 값의 이름과 이 결과를 저장하는 함수
-- 미결 — #35: 전송 중인 명령이 있을 때 반납 시작을 보류할지 여부
+- 전송 중인 명령이 있으면 `begin_close`는 `conflict`와 `COMMAND_IN_PROGRESS`로 반납 시작을 보류한다.
 
 ### 본인 재조작의 저장 범위
 
@@ -569,12 +566,11 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | DB | 원자적 저장, 중복 반영 방지 |
 
 - REST 경로는 §5에 있다.
-- 미결 — #20: 관리 API의 구현 담당과 화면 구성
-- 미결 — #20: 준비 조회 모델과 승인 결과 객체의 `shared` 이름, 필드 타입, 상태 관리가 제공하는 접점의 이름
+- 미결: 관리 API의 구현 담당과 화면. 관리 API 담당을 배정한 뒤 정한다.
 
 ### 공동 인터페이스의 후속 반영
 
-- 현재 `shared`는 이 문서의 새 계약을 모두 구현하지 않았다.
+- 복원·복구의 공동 모델과 접점은 `shared`에 반영했다. DB와 API의 실제 구현은 후속 작업이다.
 - 실행 인계, 진행 상태, 사건별 저장 접점과 `UseSession`의 `rental_due_at`, `closed_at`, 종료 정책은 `shared`에 반영했다.
 - 기기 보고의 공통 정보, 실행 결과와 반납 검사의 모델과 접점, `close_result`, 기기 연결의 저장 접점, 반납 검사의 시간 설정은 `shared`에 반영했다.
 - IOT는 `iot/messages/`에 `safety_check`와 `safety_check_result`의 스키마, 거부 코드 `DEVICE_BUSY`를 구현한다.
@@ -583,12 +579,46 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - 미결: `Settings`의 시각 오차 허용값. 실제 기기의 시각 동기화 방식과 최대 오차를 검증한 뒤 정한다. 시뮬레이터는 서버와 같은 PC의 시계를 쓴다.
 - 계정·비콘·관측 기기·장소·관측 시각·수신 시각·중복 정보의 전달은 #18의 장소 범위와 #19의 최신성 기준을 함께 따른다.
 - 개별 저장 함수의 연속 호출만으로 사건 전체의 원자성을 보장한다고 가정하지 않는다.
-- 현재 `shared`에는 `restore_pending`, `save_recovery`, `recovery`, `settle_recovery`와 복원 묶음·복구 건 모델이 없다. #17에 맞춰 추가한다.
-- 현재 `ExecutionContext`에는 `execution_kind`가 없다. #35에 맞춰 추가한다.
-- 현재 `CommandOutcome`에는 접수·실행 전 거부를 나타내는 값이 없다. #17에 맞춰 값 하나를 추가한다.
-- 현재 `begin_send`는 같은 기기의 다른 미완료 구동 명령을 검사한다는 약속이 없다. #17에 맞춰 추가한다.
-- 현재 `cancel_not_sent`와 `record_result`는 최초 대여와 재조작을 구분하지 않는다. #35에 맞춰 저장 범위를 나눈다.
-- 현재 `shared`에는 복구 준비 조회 모델, 복구 승인 결과 객체, 상태 관리의 복구 접점이 없다. #20에 맞춰 추가한다.
+
+### 실행·복원·복구의 공동 모델
+
+- `ExecutionKind`는 `rental_initial`, `rental_reoperation`, `shared`다. `ExecutionContext.execution_kind`에 담는다.
+- ⑤⑥에서 `reserve_if_free`는 본인 `ACTIVE` 세션을 원자적으로 확인한다. `reoperating`과 기존 `use_id`를 반환한다.
+- DB는 재조작 요청을 기존 세션에 연결하고 이번 승인 사용분만 예약한다. 기존 대여시간과 최초 요청 연결을 보존한다.
+- `CommandOutcome.REJECTED`와 `ExecutionStatus.REJECTED`는 검증된 `DEVICE_BUSY`의 접수·실행 전 거부다.
+- CORE는 구동 중 거부를 `BUSY`와 `COMMAND_IN_PROGRESS`로 반환한다. ⑤의 점유 충돌 `DEVICE_BUSY`와 구분한다.
+- `record_result`가 거부를 저장한다. `NOT_SENT`는 `cancel_not_sent`로 저장한다.
+- `StoreResult.conflict_reason`은 `StoreConflictReason`이다. 구동 경합, 상태 충돌, 내용 충돌, 연결 불일치를 구분한다.
+- 복구 정산은 `finish_close`를 거치지 않는다. `settle_recovery`가 복구 근거로 세션을 종료한다.
+
+| 접점 | 인자 | 반환 |
+|---|---|---|
+| `ExecutionStore.restore_pending` | 없음 | `Sequence[RestoreBundle]` |
+| `ExecutionStore.save_recovery` | `RecoveryRecord` | `StoreResult` |
+| `ExecutionStore.recovery` | `recovery_id` | `RecoveryRecord` 또는 `None` |
+| `ExecutionStore.settle_recovery` | `RecoverySettlement` | `StoreResult` |
+| `RecoveryService.readiness` | 인증 계정, `node_id` | `RecoveryReadiness` |
+| `RecoveryService.approve` | 인증 계정, `node_id`, `recovery_id` | `RecoveryApprovalResult` |
+
+| 모델 | 정보 |
+|---|---|
+| `RestoreBundle` | `node`, `read_at`, `requests`, `commands`, `sessions`, `approval_usages`, `recoveries` |
+| `PendingRequestRecord` | 내부 요청 ID, 원래 요청, 입력 요약값, 실행 종류, 세션·사용분 연결, 예약 시각, 판정 |
+| `CommandRecord` | 명령·요청·기기·세션·사용분 연결, 동작, 진행 상태, 실행 종류, 예약·전송·결과 시각, 전송 여부, 결과·근거 |
+| `RestoredSession` | `UseSession`, 소유 계정, 생성 시각, 관련 근거 |
+| `ApprovalUsageRecord` | 사용분·승인·요청·명령 연결과 사용분 상태 |
+| `RecoveryEvidence` | 근거 ID, 기기 연결 ID, 관측 시각, 확인한 실행 결과·안전·물리 상태 동기화 |
+| `RecoveryRecord` | 복구·기기·요청·명령·세션 연결, 생성 시각, 준비 상태, 근거, 완료 기록 |
+| `RecoverySettlement` | 인증 승인 계정·승인 시각, 대상 연결, 예상 상태, 근거, 사용분 정산, 점유 종료, `settlement_digest` |
+| `RecoveryCompletion` | 채택한 정산과 완료 시각 |
+| `RecoveryReadiness` | 기기·복구 ID, 상태, 부족한 조건, 근거, 검사 시각. 점유 주체를 담지 않는다. |
+| `RecoveryApprovalResult` | 복구 ID, 결과, 사유, 준비 조회 값, 완료 시각 |
+
+- `RecoveryBlocker`는 실행 미확인, 안전 미확인, 동기화 미완료, 오프라인, 미신뢰, 저장 불명과 `NO_RECOVERY_REQUIRED`를 구분한다.
+- `RecoveryReason`은 관리 응답의 사유다. `OK`, `STORE_NOT_APPLIED`, `STORE_OUTCOME_UNKNOWN`, `NOT_OWNER`, `RECOVERY_MISMATCH`, `NOT_READY`, `STATE_CONFLICT`다.
+- `RecoveryOutcome`은 `completed`, `rejected`, `pending`이다. 호스트 판정의 `ReasonCode`와 관리 응답의 사유를 구분한다.
+- 상태 관리는 논리 정산의 `settlement_digest`를 계산한다. DB는 값을 저장하고 대조한다.
+- 미결: 정산 요약값의 직렬화와 해시 방식. 상태 관리와 DB 구현 담당이 spec에서 같은 방식을 정한다.
 
 ## 5. 외부 계약
 
@@ -712,6 +742,7 @@ RSSI의 `uuid`는 하이픈을 포함한 소문자 UUID 문자열이다. `major`
 - 다른 구동 명령이 진행 중이면 펌웨어는 새 명령을 대기열에 넣지 않는다. 펌웨어는 구동 전에 `result.state=rejected`와 `error_code=DEVICE_BUSY`로 거부한다.
 - `DEVICE_BUSY` 거부는 기기가 새 명령의 물리 동작을 시작하지 않았다는 근거다.
 - 펌웨어는 거부한 명령의 ID, 내용, 결과를 명령 기록에 보존한다. 펌웨어는 같은 거부 명령의 재전송에도 거부 결과를 반환한다.
+- 검증된 `DEVICE_BUSY` 거부의 전송 결과는 `CommandOutcome.REJECTED`다. IOT는 미전송으로 바꾸지 않는다.
 - 거부 코드 `DEVICE_BUSY`는 ⑤ 기기 점유의 사유 코드 `ReasonCode.DEVICE_BUSY`와 다른 값이다.
 
 재시작 뒤 접수·실행 기록만 있고 결과를 증명하지 못하면 기기는 `unknown`을 보고한다. 기기는 자동으로 동작을 재개하지 않는다. 초기 구현에서는 명령 중복 방지 기록을 자동 삭제하지 않는다. 기기는 명령 기록을 재시작 뒤에도 보존한다. 외부 요청 ID의 중복 방지 기록 정책(#15)은 기기의 명령 기록 삭제를 뜻하지 않는다. 보존기간과 삭제 뒤 거부 방식은 FR-22의 후속 결정으로 남긴다.
@@ -845,7 +876,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `request` | TEXT PK `internal_request_id`, FK `user_id`, 외부 `request_id`, UNIQUE `(user_id, request_id)`, 정규화 입력 요약 `input_digest`, nullable FK `parent_internal_request_id`, nullable FK `node_id`, `target_spec`, `action`, `verdict`, `reason_code`, `p_max`, 버전 `model`, `calib`, `policy_ver`, `config_ver`, 실제 설정을 포함한 JSON `decision_context`, `host_kind` |
 | `node_command` | TEXT PK `command_id`, FK `internal_request_id`, `node_id`, 대상 동작과 입력 요약, 전송 시도, 실행 상태, 결과, 시각. 승인 사용분과 연결한다. 결과 불명은 실패, 미전송과 구분한다. 접수·실행 전 거부는 미전송, 실패와 구분한다. 기록은 재시작 뒤에도 보존한다. |
 | `use_session` | TEXT PK `use_id`, FK `internal_request_id`, `user_id`, `node_id`, `state` (`RESERVED`, `ACTIVE`, `CLOSING`, `CLOSED`), `end_reason` (`release`, `leave`, `timeout`, `fault`, `cancelled`), nullable `rental_due_at` (실행 성공 때 정한다), nullable `closed_at`, 생성 당시 종료 정책. 대여형 요청과 점유 세션은 1:0..1 관계다. |
-| 복구 건 | TEXT PK `recovery_id`, FK `node_id`, 관련 요청·명령·점유 세션 연결, 실행·안전·물리 상태 동기화 근거의 참조와 시각, 복구 승인 계정과 승인 시각, 정산 내용의 요약값, 완료 결과. 같은 복구 건의 대상 연결은 바꾸지 않는다. 엔터티의 코드 이름은 미결 — #17이다. |
+| 복구 건 | TEXT PK `recovery_id`, FK `node_id`, 관련 요청·명령·점유 세션 연결, 실행·안전·물리 상태 동기화 근거의 참조와 시각, 복구 승인 계정과 승인 시각, 정산 내용의 요약값, 완료 결과. 같은 복구 건의 대상 연결은 바꾸지 않는다. 엔터티의 코드 이름은 `recovery`다. |
 | `audit_log` | PK `log_id`, UNIQUE `event_id`, nullable FK `internal_request_id`, nullable 명령 참조, `step` (`auth`, ⓪~⑥, `exec`, `close`, `fault`), JSON `payload_json`. 인증 실패는 요청 참조 없이 기록한다. |
 
 - 계정은 여러 비콘, 장소, 요청을 가진다. 장소는 여러 기기를 가진다.
