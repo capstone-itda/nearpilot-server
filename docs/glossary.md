@@ -32,14 +32,18 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 앵커 | 비콘의 RSSI를 측정해서 보고하는 기기의 역할 | `anchor_params` | |
 | 비콘 | 방문자 폰이 송출하는 iBeacon 식별자 `(uuid, major, minor)` | `beacon`, `BeaconKey` | |
 | 계정 | 토큰으로 식별하는 사용자. 역할은 방문자 또는 소유자다 | `user`, `Account` | |
+| 토큰 | 서버가 계정에 발급하는 32바이트 무작위 값. AI 호스트와 앱이 인증에 쓴다 | | |
+| 토큰 해시 | 토큰의 SHA-256 해시를 소문자 hex 문자열로 쓴 값. 서버는 토큰 원문 대신 토큰 해시를 저장한다 | `token_hash` | |
 | 방문자 | 기기를 사용하는 계정 | `Role.VISITOR` | |
 | 소유자 | 장소와 기기를 관리하고 접근을 승인하는 계정 | `Role.OWNER` | |
 | 장소 | 소유자가 가진 공간. 기기를 배치한다 | `place` | |
 | AI 호스트 | 사용자의 요청을 MCP로 서버에 전달하는 LLM 앱. Claude, ChatGPT, Gemini | `host_kind` | |
 | 판정 | core가 요청에 내리는 결과. `OK`, `BUSY`, `ASK`, `DENY`, `NEED_APPROVAL` | `Verdict` | |
 | 사유 코드 | 판정의 이유 | `ReasonCode` | |
+| 판정 기록 | 판정 한 건에 적용한 버전, 설정, 후보별 사후확률, 관측 구간을 담은 값 객체 | `DecisionRecord` | |
 | 허가 | 판정 `OK`로 기기 실행을 허락하는 것 | `Verdict.OK` | 승인 |
 | 승인 | 소유자가 제한 기기의 접근 요청을 받아들이는 것 | `approval` | 허가 |
+| 대기 승인 | 소유자가 아직 결정하지 않은 승인 요청 | `approval.status`의 `pending` | |
 | 승인 사용분 | 승인 하나에서 요청 하나가 쓰는 사용 횟수 | `approval_usage` | |
 | 복구 승인 | 소유자가 `FAULT` 기기의 복구 건 하나의 복구를 허용하는 것. 승인과 별개다. 승인의 유효시간을 적용하지 않는다 | | |
 | 정책 검사 | ④에서 접근 정책과 승인을 검사하는 것. 결과는 허용, 승인 필요, 거부다 | `PolicyChecker.check`, `PolicyCheckResult` | |
@@ -87,6 +91,7 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 복구 건 | 기기의 장애 격리 하나에 딸린 복구 업무의 기록. 근거와 복구 승인을 연결한다 | `RecoveryRecord`, `recovery_id` | `store_event_id` |
 | 복구 준비 조회 | 복구 건의 준비 상태와 부족한 조건을 읽는 조회. 복구를 승인하지 않는다 | | |
 | 복구 정산 | 복구 승인 기록, 승인 사용분 정산, 점유 종료, 기기 복구, 감사 기록, 완료 결과를 한 트랜잭션으로 반영하는 것 | `settle_recovery` | |
+| 관리 쓰기 | 계정과 비콘 등록, 기기 신뢰 변경, 장소 배치, 정책 변경을 DB에 저장하는 것 | `AdminRepository` | |
 | 전역 할당 | 대기 구간 안의 `any:locker` 요청을 묶어 기기를 1:1로 배정하는 것 | | |
 
 ### 상태 값

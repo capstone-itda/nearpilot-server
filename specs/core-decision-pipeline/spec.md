@@ -17,7 +17,7 @@ spec 규칙
 - 상태: 작성 중
 - 담당: eunji719 (판정)
 - 요구사항: FR-18
-- 따르는 결정: #15, #23, #24, #25, #26, #35
+- 따르는 결정: #15, #23, #24, #25, #26, #27, #33, #34, #35
 
 ## 1. 왜
 
@@ -34,7 +34,9 @@ spec 규칙
 - 출력: 판정 (`Decision`). 판정 값은 `Verdict`, 사유는 `ReasonCode`다.
 - 바뀌는 상태:
   - 최초 대여가 ⑤⑥을 통과하면 `RESERVED` 점유 세션이 생긴다. 본인 재조작은 기존 `ACTIVE` 세션에 연결한다.
+  - 공용형 제한 기기의 요청은 승인 사용분의 `reserved` 행만 생긴다. 기기 상태와 점유 세션은 바뀌지 않는다.
   - 단계마다 입력과 결과가 감사 기록에 남는다.
+  - 판정 한 건마다 판정 기록이 한 번 남는다.
 - 약속:
   - core는 항상 ⓪부터 ⑥까지 같은 순서로 검사한다.
   - 한 단계가 실패하면 core는 그 단계의 판정과 사유 코드를 반환한다. 뒤 단계는 실행하지 않는다.
@@ -59,14 +61,15 @@ spec 규칙
 
 - ③에서 대상이 확정된다. ④는 확정된 대상만 검사한다.
 - ⑤⑥은 `Repository.reserve_if_free()` 한 번으로 검사하고 `RESERVED`를 만든다.
-- 공용형(`shared`) 기기는 ⑤⑥과 점유 세션 생성을 건너뛴다.
+- 공용형(`shared`) 기기는 ⑤⑥과 점유 세션 생성을 건너뛴다. 건너뛰는 주체는 DB다.
+- 판정은 공용형 기기에도 `reserve_if_free()`를 호출한다 (6절).
 
 ## 3. 제약
 
 - 기본값은 거부다. 예외, 누락, 알 수 없는 상태는 `OK`가 되지 않는다 (FR-18).
 - 공용형의 ⑤⑥ 생략 외에는 호스트나 발화로 단계를 건너뛰지 않는다 (FR-18).
 - 정책과 점유는 대상을 확정한 뒤에만 검사한다. 검사 결과로 다른 물리 대상을 고르지 않는다 (FR-18).
-- decision은 트랜잭션을 직접 열지 않는다. ⑤⑥은 `reserve_if_free()`만 호출한다 (FR-19, NFR-03).
+- decision은 트랜잭션을 직접 열지 않는다. ⑤⑥은 `reserve_if_free()`만 호출한다 (FR-19, NFR-03). decision은 기기의 점유 방식에 따라 호출을 나누지 않는다.
 - decision은 다른 계층에 `shared/interfaces.py`의 Protocol로만 의존한다 (`AGENTS.md` 의존 규칙 4).
 - 임계값과 T는 설정에서 받는다. 적용한 값과 설정 버전을 감사 기록에 남긴다 (requirements.md §1.2, FR-22).
 - `Decision`에는 사용자 ID와 점유 주체를 넣지 않는다. 응답 변환은 api가 한다 (FR-11, NFR-08).
@@ -88,9 +91,9 @@ spec 규칙
 | `Repository.link_request` (⓪) | 사용 | DB |
 | `ProximityEstimator.posterior` (③) | 사용 | 근접 추정 |
 | `PolicyChecker.check` (④) | 사용. `core/policy`가 제공한다 (6절) | DB |
-| `Repository.reserve_if_free` (⑤⑥) | 사용 | DB |
-| `Repository.save_decision` | 사용 | DB |
-| `AuditLog.append` | 사용 | DB |
+| `Repository.reserve_if_free` (⑤⑥) | 사용. 대여형과 공용형 모두 호출한다 (6절) | DB |
+| `Repository.save_decision` | 사용. `DecisionRecord`를 넘긴다 (6절) | DB |
+| `AuditLog.append` | 사용. `event_id`는 decision이 만든다 (6절) | DB |
 | 실행 직전 재검사 | 제공. `DecisionRechecker.recheck`를 상태 관리가 호출한다 | 상태 관리 |
 
 ### 만들지 않는 것
@@ -110,6 +113,9 @@ spec 규칙
 | 새 요청인데 중복 방지 항목이 한도 이상이다 | `DENY` / `CAPACITY_EXCEEDED`를 반환한다. 재전송에는 기존 결과를 반환한다 | |
 | 단계 실행 중 예상하지 못한 예외가 난다 | `DENY` / `INTERNAL_ERROR`를 반환한다. 호스트 응답에 예외 내용을 넣지 않는다 | |
 | 두 요청이 같은 기기를 동시에 요청한다 | `reserve_if_free()` 결과를 따른다. 실패한 요청은 `BUSY`다 | |
+| 공용형 제한 기기를 요청한다 | `reserve_if_free()`를 호출한다. `use_id`는 `None`이고 `usage_id`는 사용분 ID다 | |
+| 공용형 `open` 기기를 승인 없이 요청한다 | `reserve_if_free()`를 호출한다. DB는 아무것도 쓰지 않고 `RESERVED`를 반환한다 | |
+| 같은 `internal_request_id`에 다른 판정을 다시 저장한다 | DB가 충돌로 거부한다. decision은 기존 판정 기록을 덮어쓰지 않는다 | |
 | 실행 직전 재검사에서 자기 요청의 예약을 만난다 | 타인 점유로 보지 않는다 | |
 | 실행 직전 재검사가 실패한다 | 상태 관리가 전송을 막고 `cancel_not_sent`로 이번 요청의 예약과 승인 사용분을 정리한다 | |
 
@@ -134,6 +140,17 @@ spec 규칙
   - DB는 저장한 요청과 점유 세션의 연결을 검사한다. 판정은 인계 값만으로 기존 점유를 바꾸지 않는다.
 
 - #35의 재조작은 `reserve_if_free`의 `reoperating` 결과로 식별한다. `ExecutionKind.RENTAL_REOPERATION`과 기존 `use_id`를 인계한다.
+- 공용형 기기의 요청에도 `reserve_if_free()` 하나만 호출한다 (#27). 판정은 기기의 점유 방식에 따라 호출을 나누지 않는다.
+  - DB가 기기의 `occupancy`를 보고 ⑤⑥과 점유 세션 생성을 건너뛴다. DB는 같은 `BEGIN IMMEDIATE`에서 승인 사용분만 예약한다.
+  - 공용형의 `ReserveResult`는 `use_id`가 `None`이고 `usage_id`가 사용분 ID다.
+  - 공용형 `open` 정책이고 `approval_id`가 `None`이면 DB는 아무것도 쓰지 않고 `RESERVED`를 반환한다.
+- `save_decision()`에는 자유 형식 `context` 대신 `DecisionRecord`를 넘긴다 (#33).
+  - 필드: `model_version`, `calib_version`, `policy_version`, `settings`, `posteriors`, 관측 구간
+  - `ProximityResult`의 `model_version`, `calib_version`, `window_start`, `window_end`와 `posteriors`를 그대로 옮긴다. 근접 추정 전에 끝난 판정은 `None`이다.
+  - 판정 한 건마다 `save_decision()`을 한 번 호출한다. `ASK`, `BUSY`, `DENY`도 저장한다.
+  - 같은 `internal_request_id`에 다른 판정을 다시 저장하면 DB가 충돌로 거부한다.
+- `AuditLog.append()`에 넘기는 `event_id`는 decision이 UUID로 만든다 (#34). DB는 같은 `event_id`를 한 번만 저장한다.
+  - 감사 테이블이 원본이다. JSONL 기록이 실패해도 판정을 멈추지 않는다.
 
 ## 7. 가정
 
@@ -145,7 +162,7 @@ spec 규칙
 - 실행 직전 재검사는 판정이 제공하고 상태 관리가 호출한다. 재검사 실패의 미전송 취소도 상태 관리가 시작한다.
 - 미결: 오류로 거부한 요청을 같은 `request_id`로 재전송할 때 다시 판정할지. #25는 이 부분을 정하지 않았다.
 - 미결: `input_digest`의 직렬화와 해시 방식. #24는 필드와 계산 주체만 정했다. 구현할 때 담당자가 정해서 6절에 쓴다.
-- 미결: 공용 조명의 승인 사용분 확보. 공용 조명은 ⑤⑥을 건너뛰지만 승인 사용분은 원자적으로 확보해야 한다 (FR-18). `reserve_if_free()`로 처리할지, 다른 DB 호출이 필요한지 정해야 한다.
+- 미결 — #33: `save_decision()`의 나머지 인자와 충돌을 알리는 방식. `shared` 시그니처를 바꿀 때 정한다.
 
 ## 8. 테스트
 
