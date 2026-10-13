@@ -28,6 +28,7 @@ from nearpilot.shared.models import (
     Approval,
     AuditEvent,
     BeaconKey,
+    CloseResult,
     CommandRecord,
     CommandResult,
     Decision,
@@ -36,6 +37,7 @@ from nearpilot.shared.models import (
     NodeAnnounce,
     NodeCommand,
     NodeInfo,
+    NodeResult,
     NodeStatus,
     PolicyCheckResult,
     PolicyRevision,
@@ -44,6 +46,8 @@ from nearpilot.shared.models import (
     ReserveRequest,
     ReserveResult,
     RssiFrame,
+    SafetyCheckRequest,
+    SafetyCheckResult,
     StoreResult,
     UseRequest,
     UseSession,
@@ -93,16 +97,39 @@ class Repository(Protocol):
     # ① 비콘
     def beacons_of(self, user_id: str) -> Sequence[BeaconKey]: ...
 
-    def save_rssi(self, frame: RssiFrame) -> None: ...
+    def save_rssi(self, frame: RssiFrame) -> None:
+        """등록된 활성 비콘의 프레임만 저장한다. 그 밖의 비콘은 저장하지 않는다 (FR-05).
+
+        `(node_id, session_id, seq, beacon)` 이 같은 프레임은 한 번만 저장한다.
+        수집 라벨은 `tools/data_collection` 만 쓴다. 이 경로의 라벨은 NULL 이다.
+        """
+        ...
 
     def rssi_since(self, beacons: Sequence[BeaconKey], since: datetime) -> Sequence[RssiFrame]: ...
 
     # ② 후보
     def nodes(self, capability: Capability | None = None) -> Sequence[NodeInfo]: ...
 
-    def upsert_announced_node(self, announce: NodeAnnounce) -> None: ...
+    def upsert_announced_node(self, announce: NodeAnnounce) -> None:
+        """기능 발표를 반영한다 (FR-04). 발표는 신뢰 부여가 아니다.
 
-    def touch_node(self, node_id: str, seen_at: datetime) -> None: ...
+        처음 보는 node_id 는 DISCOVERED 로 만든다. 내용이 같은 재발표는 신뢰 상태를 바꾸지 않는다.
+        기능이나 점유 방식이 다르면 새 값으로 바꾸고 신뢰 상태를 DISCOVERED 로 되돌린다.
+        되돌린 변경은 같은 트랜잭션에서 감사 로그에 남긴다.
+        """
+        ...
+
+    def touch_node(self, node_id: str, seen_at: datetime) -> None:
+        """저장한 값보다 새로운 시각일 때만 last_seen_at 을 바꾼다 (FR-13)."""
+        ...
+
+    def set_node_session(self, node_id: str, session_id: str, first_seen_at: datetime) -> None:
+        """현재 기기 연결 ID 와 그 연결의 첫 수신 시각을 저장한다 (FR-04).
+
+        같은 session_id 를 다시 받으면 첫 수신 시각을 바꾸지 않는다.
+        조회는 `nodes()` 의 `NodeInfo.session_id`, `NodeInfo.session_first_seen_at` 으로 한다.
+        """
+        ...
 
     # ④ 정책
     def current_policy(self, node_id: str) -> PolicyRevision: ...
@@ -182,9 +209,23 @@ class ExecutionStore(Protocol):
         ...
 
     def finish_close(
-        self, use_id: str, closed_at: datetime, evidence: Mapping[str, Any]
+        self, use_id: str, closed_at: datetime, check_id: str, evidence: Mapping[str, Any]
     ) -> StoreResult:
-        """CORE 가 안전을 확인한 뒤 세션 CLOSED, 기기 AVAILABLE, closed_at, 종료 기록. 키: use_id"""
+        """CORE 가 종료를 결정한 뒤 세션 CLOSED, 기기 AVAILABLE, closed_at, 종료 기록. 키: use_id
+
+        check_id 는 종료 근거로 채택한 반납 검사다. evidence 는 그 검사의 근거다. 함께 저장한다.
+        기기 상태, 점유 세션, 채택한 검사가 바뀌지 않았는지 같은 트랜잭션에서 검사한다.
+        같은 use_id·같은 check_id 의 재호출은 ALREADY_APPLIED, 다른 check_id 나 내용은 CONFLICT 다.
+        DB 는 문·구동부·센서 조건을 다시 판단하지 않는다.
+        """
+        ...
+
+    def close_result(self, use_id: str) -> CloseResult | None:
+        """반납의 저장된 완료 기록과 채택한 check_id·근거를 조회한다 (FR-20). 키: use_id
+
+        finish_close 의 반영 여부가 불명일 때 쓴다. 기록이 없으면 None 이다.
+        None 은 미반영의 증거가 아니다. 저장이 진행 중일 수 있다.
+        """
         ...
 
     def execution(self, internal_request_id: str) -> CommandRecord | None:
@@ -263,18 +304,45 @@ class NodeCommandGateway(Protocol):
     def send(self, command: NodeCommand, timeout_sec: float) -> CommandResult: ...
 
 
+@runtime_checkable
+class SafetyCheckGateway(Protocol):
+    """IOT → CORE 반납 검사 요청 (FR-20). 물리 구동 명령과 구분한다.
+
+    결과를 기다리지 않는다. 결과는 `NodeEventSink.on_safety_check_result` 로 온다.
+    응답 기한과 재검사는 CORE 가 `Settings` 값으로 잰다. 전송 실패도 CORE 에서는 응답 기한 초과다.
+    같은 check_id 의 재전송은 내용을 바꾸지 않는다. 다시 측정하려면 새 check_id 를 쓴다.
+    """
+
+    def request_check(self, request: SafetyCheckRequest) -> None: ...
+
+
 # ── CORE 제공 ───────────────────────────────────────────────────────
 
 
 @runtime_checkable
 class NodeEventSink(Protocol):
-    """CORE 가 구현하고 IOT 가 호출한다. 검증을 마친 MQTT 메시지만 넘긴다."""
+    """CORE 가 구현하고 IOT 가 호출한다. 검증을 마친 MQTT 메시지만 넘긴다.
+
+    IOT 는 안전을 판정하지 않는다. 점유 해제와 장애 상태 변경은 CORE 가 결정한다.
+    인계가 예외로 실패하면 IOT 는 실패를 기록하고 다시 인계한다. 중복 반영은 CORE 와 DB 가 막는다.
+    """
 
     def on_announce(self, announce: NodeAnnounce) -> None: ...
 
     def on_rssi(self, frame: RssiFrame) -> None: ...
 
     def on_status(self, status: NodeStatus) -> None: ...
+
+    def on_result(self, result: NodeResult) -> None:
+        """기기가 보고한 실행 결과. 결과 대기 중과 결과 대기가 끝난 뒤의 보고를 모두 받는다 (FR-07).
+
+        과거 명령의 결과는 정산과 감사에만 쓴다. 현재 온라인·안전 상태를 갱신하지 않는다.
+        """
+        ...
+
+    def on_safety_check_result(self, result: SafetyCheckResult) -> None:
+        """기기가 보고한 반납 검사 결과 (FR-20)."""
+        ...
 
 
 @runtime_checkable

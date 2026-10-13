@@ -104,7 +104,7 @@ nearpilot-server/
 - 이 표는 역할별 담당 범위를 기록한다. 개인 이름은 쓰지 않는다.
 - 미결: `api/rest/`와 `api/ws/`의 담당. 앱과 대시보드의 담당을 정할 때 함께 배정한다.
 - 미결: 앱(`app/`)과 대시보드(`dashboard/`)의 담당. 서버 담당 업무를 먼저 마친 사람이 맡는다.
-- 미결 — #19: 펌웨어(`firmware/`)의 담당과 IOT 구현의 담당 배정
+- 미결: 펌웨어(`firmware/`)의 담당과 IOT 구현의 담당 배정. 팀이 펌웨어 담당을 배정할 때 함께 정한다.
 
 ## 3. 의존 관계
 
@@ -125,7 +125,7 @@ api  ──▶  core  ──▶  db
 | 정책 검사 인터페이스 | DB (`core/policy`) | CORE (판정) | ④에서 계정, 확정한 기기, 동작, 현재 시각으로 정책과 승인을 검사한다 (`PolicyChecker.check`). 허용, 승인 필요, 거부와 사유, 적용한 정책 버전(정책이 없으면 없음), 승인 ID를 `PolicyCheckResult`로 반환한다. 정책 모드, 승인 범위, 정책 버전 비교 규칙은 이 접점 안에 둔다. 승인 사용분 예약은 하지 않는다 (`reserve_if_free`). |
 | 근접 추정 인터페이스 | 근접 추정 (`core/proximity`) | CORE (판정) | ③에서 비콘, 후보 기기, 시각으로 후보별 사후확률을 계산한다 (`ProximityEstimator.posterior`). 판정은 명시 지정 요청에도 ②의 전체 후보를 넘기고, 지정 대상을 인자로 넘기지 않는다. 근접 추정은 지정 여부를 모른다. 판정이 `posteriors[지정 대상]`을 읽어 임계값과 비교한다. |
 | 감사 로그 인터페이스 | DB | CORE | 단계별 입력, 결과, 버전, 임계값, 후보 확률의 기록 |
-| 기기 명령 인터페이스 | IOT | CORE | `command_id`별로 전송과 결과를 추적한다. 확실한 미전송, 전송 뒤 성공, 전송 뒤 실패, 결과 불명을 구분한다. 시간 초과와 연결 끊김을 미실행으로 보지 않는다. 기기가 구동 전에 `DEVICE_BUSY`로 거부한 결과는 거부 상태와 사유를 그대로 전달한다 (§5 MQTT 5절). IOT는 CORE가 요청한 반납 검사를 `check_id`별로 기기에 보낸다. |
+| 기기 명령 인터페이스 | IOT | CORE | `command_id`별로 전송과 결과를 추적한다. 확실한 미전송, 전송 뒤 성공, 전송 뒤 실패, 결과 불명을 구분한다. 시간 초과와 연결 끊김을 미실행으로 보지 않는다. 기기가 구동 전에 `DEVICE_BUSY`로 거부한 결과는 거부 상태와 사유를 그대로 전달한다 (§5 MQTT 5절). 접점은 `NodeCommandGateway.send`다. IOT는 CORE가 요청한 반납 검사를 `check_id`별로 기기에 보낸다. 접점은 `SafetyCheckGateway.request_check`다. |
 | 기기 이벤트 인터페이스 | CORE | IOT | CORE는 기능 발표, RSSI 프레임, 원시 물리 관측, 실행 결과, 반납 검사 결과를 받는다 (`NodeEventSink`). IOT는 안전을 자체 판정하지 않는다. 반납의 종료는 CORE가 결정한다. |
 | 기능 인터페이스 | CORE | API | MCP 도구 6개와 관리 기능 (계정 등록, 기기 신뢰, 정책, 승인, `FAULT` 복구) |
 | 승인 알림 인터페이스 | API | CORE | 승인 대기가 생기면 CORE가 소유자 앱 알림을 요청한다. 요청에는 승인 요청 식별자를 담는다. 전달 실패는 승인 상태와 판정을 바꾸지 않는다. 전달 수단은 미결이다 (FR-03). |
@@ -270,35 +270,37 @@ CORE는 실행·종료·안전을 판단한다. DB는 현재 상태와 기록 �
 [#38](https://github.com/capstone-itda/nearpilot-server/issues/38)의 A안을 따른다.
 IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 전달한다.
 
-| 종류 | 전달할 정보 |
-|---|---|
-| 기기 보고의 공통 정보 | `node_id`, 기기 연결 ID, 순번, 발행 시각, 서버 수신 시각 |
-| RSSI와 상태 | 공통 정보, 관측 시각, 비콘 관측 또는 물리 관측 |
-| 실행 결과 | 공통 정보, `command_id`, 결과 사건 ID `event_id`, 결과 발생 시각, 진행 상태 또는 완료 상태, 오류 근거 |
-| 반납 검사 결과 | 공통 정보, `check_id`, 결과 사건 ID, 검사 기준 ID와 버전, 검사 시각, 검사 결과, 근거 |
+| 종류 | `shared` 모델 | 전달할 정보와 필드 |
+|---|---|---|
+| 기기 보고의 공통 정보 | 아래 모델 모두 | `node_id`, 기기 연결 ID `session_id`, 순번 `seq`, 발행 시각 `sent_at`, 서버 수신 시각 `received_at` |
+| 기능 발표 | `NodeAnnounce` | 공통 정보, `capability`, `occupancy` |
+| RSSI | `RssiFrame` | 공통 정보, 관측 시각 `frame_ts`, `beacon`, `rssi` |
+| 상태 | `NodeStatus` | 공통 정보, 관측 시각 `observed_at`, 물리 관측 `physical` (`PhysicalState`) |
+| 실행 결과 | `NodeResult` | 공통 정보, `command_id`, 결과 사건 ID `event_id`, 결과 발생 시각 `occurred_at`, 기기가 보고한 상태 `state` (`NodeResultState`), 오류 근거 `error_code` |
+| 반납 검사 결과 | `SafetyCheckResult` | 공통 정보, `check_id`, 결과 사건 ID `event_id`, 검사 기준 `criteria` (`CheckCriteria`), 검사 시각 `checked_at`, 검사 결과 `outcome` (`SafetyCheckOutcome`), 근거 `evidence` |
 
 | 접점 | 전달하는 사건 |
 |---|---|
-| `NodeEventSink.on_announce` | 기능 발표 |
-| `NodeEventSink.on_rssi` | RSSI 프레임 |
-| `NodeEventSink.on_status` | 물리 관측 |
-| `NodeEventSink.on_result` | 결과 대기 중의 실행 결과와 결과 대기가 끝난 뒤의 실행 결과 |
-| `NodeEventSink.on_safety_check_result` | 반납 검사 결과 |
+| `NodeEventSink.on_announce(NodeAnnounce)` | 기능 발표 |
+| `NodeEventSink.on_rssi(RssiFrame)` | RSSI 프레임 |
+| `NodeEventSink.on_status(NodeStatus)` | 물리 관측 |
+| `NodeEventSink.on_result(NodeResult)` | 결과 대기 중의 실행 결과와 결과 대기가 끝난 뒤의 실행 결과 |
+| `NodeEventSink.on_safety_check_result(SafetyCheckResult)` | 반납 검사 결과 |
 
 - IOT는 관측 시각을 서버 수신 시각으로 바꾸지 않는다. IOT는 두 시각을 따로 전달한다.
 - `detail`에는 선택적인 진단 정보만 둔다.
 - IOT는 §5의 기기 식별, 현재 연결, 최신성, 중복 검사를 유지한다.
 - IOT는 검증한 정보와 결과만 전달한다. 점유 해제와 장애 상태 변경은 CORE가 결정한다.
-- 같은 기기 보고를 `send()` 반환과 `on_result`에서 받으면 CORE는 같은 `event_id`로 식별한다.
+- `send()`가 반환하는 `CommandResult`는 근거가 된 기기 보고를 `report`(`NodeResult`)로 담는다. 같은 기기 보고를 `on_result`에서 받으면 CORE는 같은 `event_id`로 식별한다.
+- `NodeResult`는 기기의 `state`와 `error_code`를 바꾸지 않고 담는다. `rejected`의 `error_code` 값은 `RejectCode`다.
 - CORE와 DB는 같은 결과의 중복 정산을 막는다. CORE는 저장과 재시작 뒤의 반영 여부를 `ExecutionStore`로 확인한다.
 - CORE는 IOT의 메모리 중복 목록만으로 DB 반영을 판단하지 않는다.
 - IOT는 서버의 타임아웃과 통신 오류를 기기가 보고한 `unknown`과 구분한다.
-- IOT는 서버가 만든 결과에 기기 보고의 `event_id`를 붙이지 않는다.
+- IOT는 서버가 만든 결과에 기기 보고의 `event_id`를 붙이지 않는다. 서버가 만든 `CommandResult`의 `report`는 없다. IOT는 서버가 만든 결과를 `NodeResult`로 만들지 않는다.
 - CORE는 과거 명령의 결과를 정산과 감사에 쓴다. CORE는 과거 결과만으로 현재 온라인 시각과 안전 상태를 갱신하지 않는다.
 - CORE는 늦은 성공만으로 `FAULT`를 해제하거나 종료한 점유 세션을 되살리지 않는다.
 - CORE 인계가 실패하면 IOT는 실패를 기록하고 다시 인계한다. IOT는 인계에 실패한 결과를 전달 완료로 버리지 않는다.
-- 미결 — #38: `shared` 모델의 서버 수신 시각, 발행 시각, 순번, 기기 연결 ID 필드 이름과 `on_result`의 인자 타입
-- 미결 — #19: IOT 구현의 담당 배정
+- `NodeStatus`와 `CommandResult`에는 `safe` 필드를 두지 않는다. 일반 상태 보고와 명령 결과는 종료 안전의 근거가 아니다.
 
 ### 반납 검사와 종료
 
@@ -316,7 +318,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 
 1. 서버는 반납을 `use_id`로 식별한다.
 2. 서버는 검사 시도마다 새 `check_id`를 발급한다.
-3. 서버는 대상 기기 연결 ID, 검사 기준 ID와 버전, 요청 유효시간을 담아 검사를 요청한다.
+3. 서버는 대상 기기 연결 ID, 검사 기준 ID와 버전, 발행 시각, 만료 시각을 담아 검사를 요청한다 (`SafetyCheckRequest`).
 4. 펌웨어는 요청을 받은 뒤 새로 검사한다.
 5. 펌웨어는 결과에 같은 `check_id`를 담는다.
 6. 상태 관리는 현재 반납의 유효한 검사 결과만 종료 근거로 쓴다.
@@ -350,9 +352,16 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - 검사 메시지는 물리 구동 명령과 구분한다. 검사에 실제 구동이 필요하면 서버는 실행 허가와 구동 중 제한을 적용한다.
 - 반납 검사는 `FAULT` 복구의 소유자 승인과 재사용 조건을 생략하지 않는다.
 - 시간 값의 초기 기준은 §5 MQTT 7절에 있다. MQTT 토픽과 본문은 §5 MQTT 1절과 3절에 있다.
-- 미결 — #37: 검사 기준 ID와 버전을 생성 당시 종료 정책에 연결하는 방식
-- 미결 — #37: CORE가 IOT에 반납 검사를 요청하는 접점의 이름과 `shared` 모델의 이름
-- 미결 — #19: 실제 센서 검사와 펌웨어의 근거 제공 능력의 검증
+- CORE는 `SafetyCheckGateway.request_check(SafetyCheckRequest)`로 검사를 요청한다. 이 접점은 결과를 기다리지 않는다. CORE가 응답 기한과 재검사 간격을 잰다.
+- 검사 요청의 전송이 실패해도 CORE는 응답 기한 초과와 같게 확인 불능으로 취급한다.
+- 검사 결과의 값은 `SafetyCheckOutcome`이다. 반납 완료 기록은 `CloseResult`다. `close_result`는 완료 기록이 없으면 `None`을 반환한다.
+- `finish_close`는 `use_id`, 종료 시각, 채택한 `check_id`, 검사 근거를 받는다.
+- 기기의 `release_policy`는 검사 기준을 `check_criteria`의 `id`와 `version`으로 담는다. DB는 점유 세션을 만들 때 `release_policy`를 그대로 보존한다.
+- CORE는 점유 세션의 `UseSession.check_criteria`(`CheckCriteria`)를 읽어 검사 요청에 담는다. 기기는 실제로 적용한 검사 기준을 결과에 담는다.
+- 검사 기준이 없는 점유 세션을 CORE는 검사 통과로 추정하지 않는다.
+- 미결: 검사 기준의 내용 정의와 버전 관리 방식. 실제 기기의 센서 검사 능력을 검증한 뒤 정한다.
+- 미결: 검사 근거 `evidence`의 필수 항목. 실제 기기의 센서 조합과 근거 제공 능력을 검증한 뒤 정한다.
+- 미결: 같은 `check_id`에 다른 내용이 온 충돌을 펌웨어가 보고하는 형식. 펌웨어 담당을 배정한 뒤 정한다. 그때까지 서버는 응답 기한 초과로 취급한다.
 
 ### 기기 발표와 관측의 저장
 
@@ -360,17 +369,18 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 
 - DB는 처음 보는 `node_id`의 발표를 `discovered`로 저장한다. 발표는 신뢰 부여가 아니다.
 - 내용이 같은 재발표는 신뢰 상태를 바꾸지 않는다.
-- 신뢰한 기기가 다른 기능이나 다른 점유 방식으로 발표하면 DB는 신뢰 상태를 `discovered`로 되돌린다. DB는 기능과 점유 방식을 새 값으로 바꾸고 변경을 기록한다.
+- 신뢰한 기기가 다른 기능이나 다른 점유 방식으로 발표하면 DB는 신뢰 상태를 `discovered`로 되돌린다. DB는 기능과 점유 방식을 새 값으로 바꾼다. DB는 같은 트랜잭션에서 변경을 감사 로그에 기록한다.
 - 소유자가 다시 신뢰해야 기기가 후보가 된다.
 - `touch_node()`는 저장한 값보다 새로운 시각일 때만 `last_seen_at`을 바꾼다.
-- DB는 현재 기기 연결 ID와 그 연결의 첫 수신 시각을 `node`에 저장한다. IOT는 `cmd`의 `target_session_id`를 만들 때 이 값을 조회한다.
+- DB는 현재 기기 연결 ID와 그 연결의 첫 수신 시각을 `node`에 저장한다. 저장 접점은 `Repository.set_node_session`이다. 같은 기기 연결 ID를 다시 받으면 DB는 첫 수신 시각을 바꾸지 않는다.
+- 상태 관리는 `NodeInfo.session_id`를 조회해서 `NodeCommand.target_session_id`와 `SafetyCheckRequest.target_session_id`에 담는다. IOT는 받은 값을 `cmd`와 `safety_check`의 `target_session_id`로 보낸다.
 - DB는 등록된 활성 비콘의 RSSI 관측만 저장한다. DB는 등록하지 않은 비콘의 관측을 저장하지 않는다.
 - DB는 RSSI 관측에 서버 수신 시각, 기기 연결 ID, 순번을 함께 저장한다.
-- DB는 `(node_id, 기기 연결 ID, 순번, 비콘)`이 같은 관측을 한 번만 저장한다.
+- DB는 `(node_id, 기기 연결 ID, 순번, 비콘)`이 같은 관측을 한 번만 저장한다. `RssiFrame`의 필드 이름은 `session_id`, `seq`, `sent_at`, `received_at`이다.
 - 수집 라벨 `label`은 `tools/data_collection`만 쓴다. 운영 저장 경로에서는 `NULL`이다.
 - 근접 추정은 HMM 내부 상태를 메모리에 둔다. DB의 관측은 재현과 재시작 복원에 쓴다.
-- 미결 — #32: 진행 중인 점유(`RESERVED`, `ACTIVE`, `CLOSING`)가 있는 기기의 발표 내용이 바뀔 때 `isolate_device`로 격리할지 여부
-- 미결 — #31: `RssiFrame`에 추가하는 필드의 이름
+- 진행 중인 점유(`RESERVED`, `ACTIVE`, `CLOSING`)가 있는 기기의 발표 내용이 바뀔 때 `isolate_device`로 격리할지는 상태 관리가 정한다. 이 판단은 상태 관리 영역의 내부 결정이다.
+- 미결: 신뢰 상태를 되돌린 변경을 기록하는 감사 로그의 `step` 값. 현재 `step` 값에는 기기 발표에 맞는 값이 없다. DB 담당이 감사 로그 계약에서 정한다.
 
 ### 관리 API의 남은 계약
 
@@ -382,18 +392,11 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 
 - 현재 `shared`는 이 문서의 새 계약을 모두 구현하지 않았다.
 - 실행 인계, 진행 상태, 사건별 저장 접점과 `UseSession`의 `rental_due_at`, `closed_at`, 종료 정책은 `shared`에 반영했다.
-- 현재 `NodeEventSink`에는 `on_result()`와 `on_safety_check_result()`가 없다. #38과 #37에 맞춰 두 접점을 추가한다.
-- 현재 `NodeStatus.safe`를 IOT의 안전 판단으로 쓰지 않는다. IOT는 원시 관측과 최신성을 전달한다. CORE는 종료 안전을 반납 검사 결과로 확인한다.
-- 현재 `CommandResult.safe`를 종료 안전의 근거로 쓰지 않는다. 명령 실행 성공과 종료 안전은 별개다 (§5 MQTT 7절).
-- 기기 연결 ID, 순번, 발행 시각, 서버 수신 시각, 관측 시각, 결과 사건 ID와 발생 시각은 #38에 맞춰 공동 모델의 명시적인 필드로 반영한다.
-- 현재 `RssiFrame`에는 서버 수신 시각, 기기 연결 ID, 순번이 없다. #31에 맞춰 추가한다.
-- 현재 `shared`에는 반납 검사 요청과 반납 검사 결과의 모델, 검사 결과 열거형, 검사 요청 접점이 없다. #37에 맞춰 추가한다.
-- 현재 `ExecutionStore`에는 `close_result()`가 없다. `finish_close()`는 채택한 `check_id`와 검사 근거를 받지 않는다. #37에 맞춰 반영한다.
-- 현재 `Repository`에는 현재 기기 연결 ID와 그 연결의 첫 수신 시각을 저장하고 조회하는 접점이 없다. #32에 맞춰 추가한다.
-- 기기가 `DEVICE_BUSY`로 거부한 결과를 나타내는 `CommandOutcome` 값은 미결 — #17이다.
-- 현재 `Settings`에는 반납 검사 응답 기한, 반납 재검사 대기 간격, 연속 안전 확인 불능 제한이 없다. §5 MQTT 7절의 초기 기준에 맞춰 추가한다.
-- 현재 `NodeCommand`에는 §5.3 `cmd`의 `target_session_id`, `issued_at`, `expires_at`이 없다. #19에 맞춰 추가한다.
-- 현재 `Settings`에는 §5.6의 하트비트 간격, RSSI 허용 나이, 명령 유효 시간, 안전 보고 허용 나이와 시각 오차 허용값이 없다. 값은 #15와 실제 기기 검증에 맞춰 정한다.
+- 기기 보고의 공통 정보, 실행 결과와 반납 검사의 모델과 접점, `close_result`, 기기 연결의 저장 접점, 반납 검사의 시간 설정은 `shared`에 반영했다.
+- IOT는 `iot/messages/`에 `safety_check`와 `safety_check_result`의 스키마, 거부 코드 `DEVICE_BUSY`를 구현한다.
+- 시뮬레이터(`tools/node_sim`)는 반납 검사 응답, 구동 명령의 직렬화, 대기열 없는 `DEVICE_BUSY` 거부를 구현한다.
+- DB는 `save_rssi`의 저장 범위와 중복 제약, `upsert_announced_node`의 신뢰 되돌림과 감사 기록, `touch_node`의 시각 비교, `set_node_session`, `finish_close`의 검사 연결 검사, `close_result`를 구현한다.
+- 미결: `Settings`의 시각 오차 허용값. 실제 기기의 시각 동기화 방식과 최대 오차를 검증한 뒤 정한다. 시뮬레이터는 서버와 같은 PC의 시계를 쓴다.
 - 계정·비콘·관측 기기·장소·관측 시각·수신 시각·중복 정보의 전달은 #18의 장소 범위와 #19의 최신성 기준을 함께 따른다.
 - 개별 저장 함수의 연속 호출만으로 사건 전체의 원자성을 보장한다고 가정하지 않는다.
 
@@ -407,20 +410,20 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 
 서버와 시뮬레이터는 [#19](https://github.com/capstone-itda/nearpilot-server/issues/19)의 MQTT 계약 v1을 개발 기준으로 쓴다.
 이 절은 #19의 2026-10-13 결정과 [#37](https://github.com/capstone-itda/nearpilot-server/issues/37), [#38](https://github.com/capstone-itda/nearpilot-server/issues/38)의 결정을 포함한다.
-실제 기기 검증은 미결 — #19다.
+미결: 실제 기기 검증. 팀이 펌웨어 담당을 배정한 뒤 실제 기기에서 검증한다. 검증 항목은 7절에 있다.
 페이로드 스키마의 구현 경로는 `server/src/nearpilot/iot/messages/`다.
 
 #### 1. MQTT 전달 설정
 
 MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_session=true`로 접속하고 매번 구독한다.
 
-서버와 시뮬레이터는 Mosquitto를 브로커로 쓴다. 구현자는 설정 파일을 지정해서 `mosquitto -c <설정 파일 경로>`로 브로커를 직접 실행한다.
+서버와 시뮬레이터는 Mosquitto를 브로커로 쓴다. 구현자는 `server/`에서 `mosquitto -c config/mosquitto.conf`로 브로커를 직접 실행한다. 설정 파일의 경로는 `server/config/mosquitto.conf`다.
 
 - 서버는 전용 계정으로 접속한다. 기기는 기기마다 다른 계정으로 접속한다. 브로커는 익명 접속을 허용하지 않는다.
 - 브로커는 기기 계정과 `node_id`의 연결에 따라 토픽 접근을 제한한다.
 - 서버와 기기는 자격정보와 접속 설정을 실행 설정에서 받는다. 코드와 문서에 실제 비밀번호를 쓰지 않는다.
 - 인증과 토픽 접근 제어의 설정 방식은 [Mosquitto 설정 문서](https://mosquitto.org/man/mosquitto-conf-5.html)를 따른다.
-- 미결 — #19: 브로커 설정 파일의 경로
+- IOT 구현자가 설정 파일을 만든다. 비밀번호 파일은 저장소에 넣지 않는다.
 
 기존 토픽 `nearpilot/node/{node_id}/{종류}`를 유지한다. 발행 QoS와 구독 QoS는 다음 표를 따른다.
 
@@ -470,8 +473,8 @@ MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_sess
 | `status` | `observed_at`: UTC 시각, `physical_state`: 객체 | 기기는 현재 물리 관측을 보고한다. 서버의 점유 상태나 `AVAILABLE`을 기기가 정하지 않는다. |
 | `result` | `command_id`: 문자열, `event_id`: UUID 문자열, `state`: 아래 상태 값, `occurred_at`: UTC 시각, `error_code?`: 문자열 | 결과 사건을 다시 보고할 때 `event_id`, 상태 값, 발생 시각을 유지한다. 발행 순번과 발행 시각은 새로 부여한다. |
 | `cmd` | `command_id`: 문자열, `action`: `open`·`on`·`off`, `target_session_id`: 문자열, `issued_at`: UTC 시각, `expires_at`: UTC 시각 | 서버는 현재 확인한 기기 연결을 지정한다. `open`은 사물함, `on`·`off`는 조명에만 보낸다. |
-| `safety_check` | `check_id`, 대상 기기 연결 ID, 검사 기준 ID와 버전, 요청 유효시간 | 서버는 검사 시도마다 새 `check_id`를 쓴다. 검사 요청은 물리 구동 명령이 아니다. |
-| `safety_check_result` | `check_id`, 결과 사건 ID, 검사 기준 ID와 버전, 검사 시각, 검사 결과, 근거 | 기기는 요청을 받은 뒤 새로 검사한다. 기기는 요청과 같은 `check_id`와 검사 기준을 담는다. 기기 연결 ID는 공통 필드 `session_id`로 담는다. |
+| `safety_check` | `check_id`: 문자열, `target_session_id`: 문자열, `criteria_id`: 문자열, `criteria_version`: 정수, `issued_at`: UTC 시각, `expires_at`: UTC 시각 | 서버는 검사 시도마다 새 `check_id`를 쓴다. 서버는 현재 확인한 기기 연결을 지정한다. 검사 요청은 물리 구동 명령이 아니다. |
+| `safety_check_result` | `check_id`: 문자열, `event_id`: UUID 문자열, `criteria_id`: 문자열, `criteria_version`: 정수, `checked_at`: UTC 시각, `outcome`: 아래 검사 결과 값, `evidence`: 객체 | 기기는 요청을 받은 뒤 새로 검사한다. 기기는 요청과 같은 `check_id`를 담는다. 기기는 실제로 적용한 검사 기준을 담는다. 기기 연결 ID는 공통 필드 `session_id`로 담는다. |
 
 RSSI의 `uuid`는 하이픈을 포함한 소문자 UUID 문자열이다. `major`와 `minor`는 0~65535의 정수다. `rssi`는 dBm 단위의 유한한 수다. 프레임 하나는 같은 비콘 조합을 중복으로 담지 않는다.
 
@@ -486,12 +489,14 @@ RSSI의 `uuid`는 하이픈을 포함한 소문자 UUID 문자열이다. `major`
 
 기기가 `status`의 `safe: true`로 서버의 안전 판정을 대신하지 않는다. IOT는 관측을 검증해서 CORE에 전달한다.
 
-`safety_check_result`의 검사 결과는 `passed`, `not_ready`, `fault`, `unknown` 중 하나다. 값의 뜻은 §4 "반납 검사와 종료"에 있다.
+`safety_check_result`의 `outcome`은 `passed`, `not_ready`, `fault`, `unknown` 중 하나다. 값의 뜻은 §4 "반납 검사와 종료"에 있다.
 
 - 서버는 `check_id`와 반납을 내부에서 연결한다. 서버는 계정 정보와 점유 주체를 기기에 보내지 않는다.
 - 서버는 검사 기준의 ID와 버전을 점유 세션 생성 당시 종료 정책과 연결한다.
 - 펌웨어가 검사 기준을 모르거나 결과를 확인하지 못하면 펌웨어는 통과로 보고하지 않는다.
-- 미결 — #19: `safety_check`와 `safety_check_result`에서 `check_id`를 뺀 필드의 이름과 타입
+- `safety_check`의 만료는 발행 시각에 반납 검사 응답 기한을 더해 산출한다. 기기는 `cmd`와 같게 대상 연결과 유효 시간을 검사한다.
+- 기기는 결과를 다시 보고할 때 `event_id`, `outcome`, `checked_at`을 유지한다. 기기는 발행 순번과 발행 시각을 새로 부여한다.
+- `evidence`는 기기 통신의 근거다. 필수 항목은 §4 "반납 검사와 종료"의 미결을 따른다.
 
 #### 4. 명령 접수와 중복 처리
 
@@ -537,7 +542,7 @@ RSSI의 `uuid`는 하이픈을 포함한 소문자 UUID 문자열이다. `major`
 - IOT는 `DEVICE_BUSY` 거부를 `NOT_SENT`로 바꾸지 않는다. IOT는 거부 상태, 거부 코드, 명령 ID, 결과 사건 ID를 그대로 전달한다.
 - IOT는 서버 타임아웃을 `DEVICE_BUSY`로 추정하지 않는다.
 - 기기가 이미 접수했거나 구동했다는 근거가 있으면 CORE는 `DEVICE_BUSY` 거부를 예외로 정리하지 않는다. 결과가 상충할 때도 같다.
-- `DEVICE_BUSY` 거부의 `CommandOutcome` 값과 서버 쪽 저장은 미결 — #17이다.
+- IOT는 `DEVICE_BUSY` 거부를 `NodeResult`의 `state`와 `error_code`로 전달한다. 서버 쪽 저장과 사용분의 정리는 FR-19를 따른다.
 - PUBACK, `accepted`, `running`, 현재 조명 상태만으로 명령 성공을 확정하지 않는다.
 - 결과 대기 제한이 지나도 IOT는 결과 구독을 유지한다. IOT는 늦은 결과도 `NodeEventSink.on_result()`로 CORE에 전달한다 (§4 "기기 보고의 인계").
 - 서버는 저장한 명령의 기기 ID를 결과와 대조한다. 과거 연결의 결과도 원래 명령의 정산 근거로 받을 수 있다.
@@ -560,7 +565,13 @@ RSSI의 `uuid`는 하이픈을 포함한 소문자 UUID 문자열이다. `major`
 - 서버는 관측 시각을 수신 시각으로 바꾸지 않는다. 오래된 보고는 온라인 시각과 안전 확인 시각을 갱신하지 않는다.
 - 과거 명령의 `result`는 별도로 정산한다. 결과의 오래된 시각은 현재 온라인·안전 상태를 갱신하는 근거가 아니다.
 
-RSSI는 약 1초 프레임을 유지한다. 하트비트 간격, 온라인 유지 시간, RSSI 허용 나이, 실행 응답 제한, 명령 유효 시간, 안전 보고 허용 나이는 설정에서 받는다. 공통 값의 초기 기준은 requirements.md §1.2와 [#15](https://github.com/capstone-itda/nearpilot-server/issues/15)를 따른다. 반납 검사의 시간 값은 7절에 있다. 초기 명령 만료는 발행 시각에 설정된 실행 대기 시간을 더해 산출한다. 예약 대기 제한과 실행 대기 시간은 구분한다. 시각 오차 허용값은 별도 설정으로 받고 실제 기기 검증에서 정한다.
+RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주기, 온라인 유지 시간, 최근 비콘 기준, 실행 응답 제한, 안전 보고 허용 나이를 설정에서 받는다. 초기 기준과 설정 이름은 requirements.md §1.2에 있다.
+
+- 기기의 하트비트는 `status` 보고다. 하트비트 간격은 기기 상태 보고 주기(`status_report_sec`)다. 별도 설정을 두지 않는다.
+- RSSI 허용 나이는 최근 비콘 기준(`beacon_recent_sec`)이다. 별도 설정을 두지 않는다.
+- 명령 유효 시간은 실행 응답 제한(`exec_timeout_sec`)이다. 서버는 `expires_at`을 `issued_at`에 실행 응답 제한을 더해 산출한다.
+- 예약 대기 제한과 실행 응답 제한은 구분한다.
+- 미결: 시각 오차 허용값. 실제 기기의 시각 동기화 방식과 최대 오차를 검증한 뒤 정한다. 그때 별도 설정으로 추가한다.
 
 #### 7. 반납 검사와 실제 기기 검증
 
@@ -580,12 +591,12 @@ RSSI는 약 1초 프레임을 유지한다. 하트비트 간격, 온라인 유�
 
 서버는 시간 값을 설정에서 받는다. 다음 값은 초기 기준이다.
 
-| 설정 | 초기 기준 | 재는 방법 |
-|---|---|---|
-| 안전 보고 허용 나이 | 3초 | 시각 오차를 고려한 검사 시각의 나이다. 반납 검사 결과에 적용한다. |
-| 반납 검사 응답 기한 | 3초 | 검사 요청의 전송 시작부터 잰다. |
-| 반납 재검사 대기 간격 | 1초 | 유효한 `not_ready` 수신 뒤 또는 확인 불능 뒤에 잰다. |
-| 연속 안전 확인 불능 제한 | 30초 | 확인 불능이 시작된 시점부터 연속으로 잰다. |
+| 설정 | 설정 이름 | 초기 기준 | 재는 방법 |
+|---|---|---|---|
+| 안전 보고 허용 나이 | `safety_report_max_age_sec` | 3초 | 시각 오차를 고려한 검사 시각의 나이다. 반납 검사 결과에 적용한다. |
+| 반납 검사 응답 기한 | `safety_check_timeout_sec` | 3초 | 검사 요청의 전송 시작부터 잰다. |
+| 반납 재검사 대기 간격 | `safety_check_retry_sec` | 1초 | 유효한 `not_ready` 수신 뒤 또는 확인 불능 뒤에 잰다. |
+| 연속 안전 확인 불능 제한 | `safety_unconfirmed_limit_sec` | 30초 | 확인 불능이 시작된 시점부터 연속으로 잰다. 반납 검사 응답 기한 이상이어야 한다. |
 
 - 서버는 방금 수신했다는 이유만으로 오래된 보고를 인정하지 않는다.
 - 실제 기기의 시각 오차를 검증하기 전에는 서버가 임의의 허용 오차로 안전을 확정하지 않는다.
@@ -593,7 +604,7 @@ RSSI는 약 1초 프레임을 유지한다. 하트비트 간격, 온라인 유�
 
 명령 실행 성공과 종료 안전은 별개다. 사물함 `open`의 성공 보고만으로 점유 세션을 종료하지 않는다. 새 `close` 동작은 추가하지 않는다. 공용 조명의 꺼짐은 FR-20의 유지 대상자 이탈 기준을 따른다. 시간에 따른 자동 꺼짐 타이머는 두지 않는다.
 
-펌웨어 연동 때 다음 항목을 검증하고 #19에 결과를 반영한다.
+미결: 실제 기기 검증. 팀이 펌웨어 담당을 배정한 뒤 실제 기기에서 다음 항목을 검증한다. 그때까지 이 계약은 서버와 시뮬레이터의 개발 기준이다.
 
 - 리드 스위치의 문 닫힘 관측과 이상 검출 범위다.
 - 사물함 서보의 완료 근거와 조명의 실제 켜짐·꺼짐 확인 근거다. 제어 신호를 보낸 사실만으로 성공을 보고하지 않는다.
@@ -632,12 +643,12 @@ RSSI는 약 1초 프레임을 유지한다. 하트비트 간격, 온라인 유�
 | `user` | PK `user_id`, `name`, UNIQUE `token_hash`, `role` (`visitor`, `owner`) |
 | `beacon` | PK `beacon_id`, FK `user_id`, `(uuid, major, minor)` 조합 UNIQUE, `is_active` |
 | `place` | PK `place_id`, FK `owner_user_id`, `name` |
-| `node` | TEXT PK `node_id`, FK `place_id`, `capability`, `occupancy`, `trust_state`, `device_state`, `exclusive_group`, JSON `release_policy`, JSON `anchor_params`, `last_seen_at`, 현재 기기 연결 ID, 그 연결의 첫 수신 시각 |
+| `node` | TEXT PK `node_id`, FK `place_id`, `capability`, `occupancy`, `trust_state`, `device_state`, `exclusive_group`, JSON `release_policy`, JSON `anchor_params`, `last_seen_at`, 현재 기기 연결 ID `session_id`, 그 연결의 첫 수신 시각 `session_first_seen_at` |
 | `access_policy` | PK `policy_id`, UNIQUE FK `node_id` (기기당 하나), `current_version`. 현재 접근 정책 리비전을 참조한다. |
 | `policy_revision` | 복합 PK `(policy_id, version)`, `visibility` (`public`, `private`), `mode` (`open`, `restricted`), FK `approver_user_id`, `approval_ttl_sec`, `approval_mode` (`one_time`, `time_window`), `max_uses` (기간형이 무제한이면 NULL). 과거 리비전은 바꾸지 않는다. |
 | `approval` | PK `approval_id`, FK `node_id`, `requester_user_id`, `internal_request_id`, `approved_by_user_id`, `action`, 정책 리비전 참조, `status` (`pending`, `approved`, `denied`), `valid_until`, `used_count`. 요청 참조는 승인 신청의 출처다. 허용 범위는 요청자, 기기, 동작, 정책 버전으로 검사한다. |
 | `approval_usage` | PK `usage_id`, FK `approval_id`, `internal_request_id`, 명령 연결, `state` (`reserved`, `held`, `consumed`, `released`). 요청별로 중복 예약을 막는다. 허용 횟수는 예약, 보류, 소진을 합쳐서 검사한다. `used_count`는 소진 집계값이며 중복으로 계산하지 않는다. 미전송이 확정되면 자동으로 반환한다. 결과가 실패하거나 불명이면 보류하고 복구 뒤 정산한다. |
-| `rssi_observation` | PK `obs_id`, FK `node_id`, `beacon_id`, `rssi` (dBm), `frame_ts` (약 1초 프레임), 서버 수신 시각, 기기 연결 ID, 순번, `(node_id, 기기 연결 ID, 순번, 비콘)` UNIQUE, nullable `label` (기기 1~6 앞 또는 none). 등록된 활성 비콘의 관측만 저장한다. `label`은 `tools/data_collection`만 쓴다. |
+| `rssi_observation` | PK `obs_id`, FK `node_id`, `beacon_id`, `rssi` (dBm), `frame_ts` (약 1초 프레임), 서버 수신 시각 `received_at`, 발행 시각 `sent_at`, 기기 연결 ID `session_id`, 순번 `seq`, `(node_id, session_id, seq, beacon_id)` UNIQUE, nullable `label` (기기 1~6 앞 또는 none). 등록된 활성 비콘의 관측만 저장한다. `label`은 `tools/data_collection`만 쓴다. |
 | `request` | TEXT PK `internal_request_id`, FK `user_id`, 외부 `request_id`, UNIQUE `(user_id, request_id)`, 정규화 입력 요약 `input_digest`, nullable FK `parent_internal_request_id`, nullable FK `node_id`, `target_spec`, `action`, `verdict`, `reason_code`, `p_max`, 버전 `model`, `calib`, `policy_ver`, `config_ver`, 실제 설정을 포함한 JSON `decision_context`, `host_kind` |
 | `node_command` | TEXT PK `command_id`, FK `internal_request_id`, `node_id`, 대상 동작과 입력 요약, 전송 시도, 실행 상태, 결과, 시각. 승인 사용분과 연결한다. 결과 불명은 실패, 미전송과 구분한다. 기록은 재시작 뒤에도 보존한다. |
 | `use_session` | TEXT PK `use_id`, FK `internal_request_id`, `user_id`, `node_id`, `state` (`RESERVED`, `ACTIVE`, `CLOSING`, `CLOSED`), `end_reason` (`release`, `leave`, `timeout`, `fault`, `cancelled`), nullable `rental_due_at` (실행 성공 때 정한다), nullable `closed_at`, 생성 당시 종료 정책. 대여형 요청과 점유 세션은 1:0..1 관계다. |
@@ -654,7 +665,7 @@ RSSI는 약 1초 프레임을 유지한다. 하트비트 간격, 온라인 유�
 - `gate`와 `pass`는 나중 확장을 위한 예약값이다.
 - 기기 상태(`AVAILABLE`, `RESERVED`, `ACTIVE`, `CLOSING`, `FAULT`)와 점유 세션 상태를 구분한다.
 - `FAULT`는 기기의 격리 상태다. `FAULT`는 불명확한 점유 세션을 지우거나 자동으로 종료하는 근거가 아니다.
-- `release_policy`는 종료 조건, 이탈 동작, 미수신 시간, 유예 시간을 담는다.
+- `release_policy`는 종료 조건, 이탈 동작, 미수신 시간, 유예 시간을 담는다. 반납 검사 기준은 `check_criteria`의 `id`와 `version`으로 담는다.
 - 대여형은 이탈과 대여시간 초과로 점유를 해제하지 않는다. 초과시간은 `rental_due_at`과 현재 시각 또는 `closed_at`으로 계산한다.
 - 공용형에는 점유 세션이 없다. 그래서 `end_reason`의 `leave`와 `timeout`은 현재 계약에서 쓰지 않는 예약값이다.
 - 확실한 미전송 취소 뒤에는 기기가 `AVAILABLE`, 점유 세션이 `CLOSED`, 종료 사유가 `cancelled`다.
@@ -749,7 +760,7 @@ sequenceDiagram
 | 수치 계산 | numpy, scipy (HMM과 할당) | `server/pyproject.toml` |
 | DB | SQLite (WAL) | FR-19 |
 | 테스트 | pytest | NFR-13 |
-| MQTT 브로커 | Mosquitto. 독립 AP 안에서 `mosquitto -c <설정 파일 경로>`로 실행한다. 설정 파일 경로는 미결 — #19다. | #19 |
+| MQTT 브로커 | Mosquitto. 독립 AP 안에서 실행한다. 설정 파일은 `server/config/mosquitto.conf`다. | #19 |
 
 ## 9. 실행 환경
 

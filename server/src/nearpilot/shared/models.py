@@ -17,6 +17,7 @@ from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
     AccessMode,
     Action,
+    ActuatorState,
     ApprovalMode,
     ApprovalStatus,
     Capability,
@@ -24,10 +25,12 @@ from nearpilot.shared.enums import (
     DeviceState,
     EndReason,
     ExecutionStatus,
+    NodeResultState,
     Occupancy,
     ReasonCode,
     ReserveOutcome,
     Role,
+    SafetyCheckOutcome,
     SessionState,
     Step,
     StoreOutcome,
@@ -105,6 +108,8 @@ class NodeInfo:
     last_seen_at: datetime | None
     release_policy: Mapping[str, Any] = field(default_factory=dict)
     anchor_params: Mapping[str, float] = field(default_factory=dict)  # A, n, σ
+    session_id: str | None = None  # 현재 기기 연결 ID. 확인한 연결이 없으면 None
+    session_first_seen_at: datetime | None = None  # 현재 연결의 첫 수신 시각
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "release_policy", _freeze(self.release_policy))
@@ -222,12 +227,20 @@ class Decision:
 
 @dataclass(frozen=True, slots=True)
 class RssiFrame:
-    """노드 하나가 약 1초 동안 본 비콘 하나의 RSSI."""
+    """노드 하나가 약 1초 동안 본 비콘 하나의 RSSI.
+
+    DB 는 등록된 활성 비콘의 프레임만 저장한다. `(node_id, session_id, seq, beacon)` 이
+    같은 프레임은 한 번만 저장한다 (FR-05).
+    """
 
     node_id: str
     beacon: BeaconKey
     rssi: float  # dBm
-    frame_ts: datetime
+    frame_ts: datetime  # 관측 시각. 수신 시각으로 바꾸지 않는다.
+    session_id: str  # 기기 연결 ID
+    seq: int  # 같은 연결·토픽의 발행 순번
+    sent_at: datetime  # 기기 발행 시각
+    received_at: datetime  # 서버 수신 시각
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +306,31 @@ class UseSession:
     def __post_init__(self) -> None:
         object.__setattr__(self, "release_policy", _freeze(self.release_policy))
 
+    @property
+    def check_criteria(self) -> CheckCriteria | None:
+        """생성 당시 종료 정책이 정한 반납 검사 기준. 없으면 None.
+
+        `release_policy["check_criteria"]` 의 `id` 와 `version` 을 읽는다.
+        기준이 없는 점유 세션을 검사 통과로 추정하지 않는다 (FR-20).
+        """
+        raw = self.release_policy.get("check_criteria")
+        if not isinstance(raw, Mapping):
+            return None
+        criteria_id, version = raw.get("id"), raw.get("version")
+        if not isinstance(criteria_id, str) or not criteria_id:
+            return None
+        if isinstance(version, bool) or not isinstance(version, int):
+            return None
+        return CheckCriteria(criteria_id, version)
+
+
+@dataclass(frozen=True, slots=True)
+class CheckCriteria:
+    """반납 검사 기준의 ID 와 버전. 점유 세션 생성 당시 종료 정책과 함께 보존한다 (FR-20)."""
+
+    criteria_id: str
+    criteria_version: int
+
 
 # ── 실행 인계와 사건별 저장 (#16, #17) ──────────────────────────────
 
@@ -340,24 +378,95 @@ class StoreResult:
     session: UseSession | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class CloseResult:
+    """`ExecutionStore.close_result` 가 반환하는 반납 완료 기록 (FR-20).
+
+    기기의 현재 상태가 아니라 그 반납의 저장된 완료 기록이다.
+    """
+
+    use_id: str
+    closed_at: datetime
+    end_reason: EndReason
+    check_id: str  # 종료 근거로 채택한 반납 검사
+    evidence: Mapping[str, Any] = field(default_factory=dict)  # 채택한 검사 근거
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evidence", _freeze(self.evidence))
+
+
 # ── 노드 이벤트·명령 (IOT ↔ CORE) ──────────────────────────────────
+#
+# 기기 보고의 공통 정보는 모든 보고 모델에서 같은 이름을 쓴다 (architecture.md §4 기기 보고의 인계).
+#   session_id  기기 연결 ID. 기기가 MQTT 에 접속할 때마다 새로 만든다.
+#   seq         같은 연결·토픽에서 1부터 증가하는 발행 순번
+#   sent_at     기기 발행 시각. 관측 시각과 구분한다.
+#   received_at 서버 수신 시각. 관측 시각을 이 값으로 바꾸지 않는다.
+# `detail` 에는 선택적인 진단 정보만 둔다. 판정에 쓰는 값은 명시적인 필드로 둔다.
 
 
 @dataclass(frozen=True, slots=True)
 class NodeAnnounce:
+    """기능 발표 (FR-04). 발표는 신뢰 부여가 아니다."""
+
     node_id: str
     capability: Capability
     occupancy: Occupancy
     received_at: datetime
+    session_id: str
+    seq: int
+    sent_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class PhysicalState:
+    """`status` 의 원시 물리 관측 (architecture.md §5 MQTT 3절). None 은 확인하지 못했다는 뜻이다."""
+
+    door_closed: bool | None
+    light_on: bool | None
+    actuator_state: ActuatorState
+    sensor_fault: bool | None
 
 
 @dataclass(frozen=True, slots=True)
 class NodeStatus:
-    """하트비트·안전 상태. [결정 필요] 장치별 안전 센서 조합 (requirements.md FR-07 미결)."""
+    """기기 상태 보고. 원시 관측만 담는다.
+
+    IOT 는 안전을 판정하지 않는다. 이 보고는 반납 검사를 대신하지 못한다 (FR-07).
+    """
 
     node_id: str
     received_at: datetime
-    safe: bool | None  # None = 안전 미확인
+    session_id: str
+    seq: int
+    sent_at: datetime
+    observed_at: datetime  # 관측 시각
+    physical: PhysicalState
+    detail: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "detail", _freeze(self.detail))
+
+
+@dataclass(frozen=True, slots=True)
+class NodeResult:
+    """기기가 보고한 실행 결과 사건 하나 (FR-07).
+
+    기기 보고만 이 모델로 만든다. 서버의 타임아웃과 통신 오류는 이 모델로 만들지 않는다.
+    같은 보고를 다시 받아도 event_id, state, occurred_at 은 같다.
+    state 와 error_code 는 기기 값을 그대로 담는다. IOT 는 DEVICE_BUSY 거부를 NOT_SENT 로 바꾸지 않는다.
+    """
+
+    node_id: str
+    session_id: str
+    seq: int
+    sent_at: datetime
+    received_at: datetime
+    command_id: str
+    event_id: str  # 결과 사건 ID. 기기가 붙인다.
+    state: NodeResultState
+    occurred_at: datetime  # 결과 발생 시각
+    error_code: str | None = None  # 기기 통신의 근거. rejected 의 값은 RejectCode 다.
     detail: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -366,17 +475,72 @@ class NodeStatus:
 
 @dataclass(frozen=True, slots=True)
 class NodeCommand:
+    """CORE → IOT 실행 명령 (FR-06). 사용자 ID·점유 주체 필드를 두지 않는다.
+
+    같은 command_id 의 재전송은 아래 내용을 바꾸지 않는다.
+    """
+
     command_id: str
     node_id: str
     action: Action
+    target_session_id: str  # 대상 기기 연결 ID. `NodeInfo.session_id` 에서 가져온다.
+    issued_at: datetime
+    expires_at: datetime  # issued_at + Settings.exec_timeout_sec
 
 
 @dataclass(frozen=True, slots=True)
 class CommandResult:
+    """`NodeCommandGateway.send` 한 번의 결과.
+
+    report 는 이 결과의 근거가 된 기기 보고다. 서버가 만든 결과(NOT_SENT, 타임아웃, 통신 오류)는
+    report 가 None 이다. 그래서 서버가 만든 결과에는 event_id 가 없다.
+    같은 기기 보고는 `NodeEventSink.on_result` 에도 같은 event_id 로 온다.
+    """
+
     command_id: str
     outcome: CommandOutcome
-    safe: bool | None = None
-    reported_at: datetime | None = None
+    report: NodeResult | None = None
+    reported_at: datetime | None = None  # 서버가 결과를 정한 시각
+
+
+@dataclass(frozen=True, slots=True)
+class SafetyCheckRequest:
+    """CORE → IOT 반납 검사 요청 (FR-20). 물리 구동 명령이 아니다.
+
+    검사 시도마다 새 check_id 를 쓴다. 반납(use_id)과의 연결은 서버 안에만 둔다.
+    사용자 ID·점유 주체 필드를 두지 않는다.
+    """
+
+    check_id: str
+    node_id: str
+    target_session_id: str  # 대상 기기 연결 ID
+    criteria: CheckCriteria  # 점유 세션 생성 당시 종료 정책의 검사 기준
+    issued_at: datetime
+    expires_at: datetime  # issued_at + Settings.safety_check_timeout_sec
+
+
+@dataclass(frozen=True, slots=True)
+class SafetyCheckResult:
+    """기기가 보고한 반납 검사 결과 (FR-07, FR-20).
+
+    기기는 요청을 받은 뒤 새로 검사한다. 같은 check_id 의 재전송에는 같은 결과를 보고한다.
+    종료는 CORE 가 결정한다. PASSED 는 점유 해제 결정이 아니다.
+    """
+
+    node_id: str
+    session_id: str
+    seq: int
+    sent_at: datetime
+    received_at: datetime
+    check_id: str
+    event_id: str  # 결과 사건 ID. 기기가 붙인다.
+    criteria: CheckCriteria  # 기기가 실제로 적용한 검사 기준
+    checked_at: datetime  # 검사 시각
+    outcome: SafetyCheckOutcome
+    evidence: Mapping[str, Any] = field(default_factory=dict)  # 검사 근거
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evidence", _freeze(self.evidence))
 
 
 # ── 감사 (FR-22) ────────────────────────────────────────────────────

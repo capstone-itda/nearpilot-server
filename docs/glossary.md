@@ -50,11 +50,11 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 대여 기본 시간 | 대여시간 기준 시각을 정하는 시간이다. 자동 반납의 기준이 아니다 | `rental_duration_sec` | |
 | 유지 대상자 | 공용 조명을 켜 두는 근거가 되는 계정. 켜기 요청에 성공했고 사용 권한이 유효한 계정이다. 서버는 유지 대상자를 저장하지 않는다 | | 유지 참여자 |
 | 초기 참여 대기 | 서버가 재시작 뒤 관측을 재개한 시점부터 새 유지 대상자를 기다리는 시간. 이탈 판단의 미수신 시간과 유예 시간의 합이다 | `leave_absent_sec`, `leave_grace_sec` | |
-| 기기 연결 ID | 기기가 MQTT에 접속할 때 새로 만드는 UUID다. 재접속과 재시작마다 바뀐다 | `session_id`, `target_session_id` | 점유 세션 ID, 노드 세션 ID |
-| 결과 사건 ID | 기기가 결과 보고 하나에 붙이는 UUID다. 같은 보고를 다시 보내도 유지한다 | `event_id` | |
-| 반납 검사 | 서버의 요청을 받은 기기가 반납의 물리 조건을 새로 검사하는 것. 서버는 검사 결과와 점유 상태, 장애 상태로 종료를 결정한다 | `safety_check`, `safety_check_result` | 안전 검사 |
+| 기기 연결 ID | 기기가 MQTT에 접속할 때 새로 만드는 UUID다. 재접속과 재시작마다 바뀐다. 명령과 검사 요청의 대상으로 쓸 때는 `target_session_id`다 | `session_id` | 점유 세션 ID, 노드 세션 ID, `node_session_id` |
+| 결과 사건 ID | 기기가 결과 보고 하나에 붙이는 UUID다. 같은 보고를 다시 보내도 유지한다. 서버가 만든 결과에는 없다 | `NodeResult.event_id`, `SafetyCheckResult.event_id` | |
+| 반납 검사 | 서버의 요청을 받은 기기가 반납의 물리 조건을 새로 검사하는 것. 서버는 검사 결과와 점유 상태, 장애 상태로 종료를 결정한다 | `SafetyCheckRequest`, `SafetyCheckResult` | 안전 검사 |
 | 검사 ID | 서버가 반납 검사 시도마다 발급하는 고유 ID. 반납은 `use_id`로 식별한다 | `check_id` | |
-| 검사 기준 | 기기가 반납 검사에서 확인하는 물리 조건의 묶음. ID와 버전이 있고 점유 세션 생성 당시 종료 정책과 연결한다 | 미결 — #37 | |
+| 검사 기준 | 기기가 반납 검사에서 확인하는 물리 조건의 묶음. ID와 버전이 있다. 점유 세션은 생성 당시 종료 정책과 함께 검사 기준을 보존한다 | `CheckCriteria`, `UseSession.check_criteria` | |
 | 확인 불능 | 서버가 반납 검사의 결과를 확인하지 못한 상태. 응답 기한 초과, 유효하지 않은 결과, `unknown`이 원인이다. `not_ready`와 구분한다 | | |
 | 점유 세션 | 대여형 기기를 한 계정이 점유하는 기간의 기록 | `use_session`, `use_id` | 사용 세션 |
 | 신뢰 상태 | 소유자가 정한 기기의 신뢰 여부. `discovered`, `trusted`, `revoked` | `TrustState` | |
@@ -86,7 +86,9 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 종료 사유 | `release`, `leave`, `timeout`, `fault`, `cancelled` | `EndReason` |
 | 실행 진행 상태 | `pending`, `in_progress`, `succeeded`, `failed`, `unknown`, `not_sent` | `ExecutionStatus` |
 | 사건 반영 결과 | `applied`, `already_applied`, `conflict` | `StoreOutcome` |
-| 반납 검사 결과 | `passed`, `not_ready`, `fault`, `unknown` | 미결 — #37 |
+| 반납 검사 결과 | `passed`, `not_ready`, `fault`, `unknown` | `SafetyCheckOutcome` |
+| 기기 실행 결과 상태 | `accepted`, `running`, `succeeded`, `failed`, `unknown`, `rejected` | `NodeResultState` |
+| 거부 코드 | `SESSION_MISMATCH`, `COMMAND_EXPIRED`, `CLOCK_UNVERIFIED`, `UNSUPPORTED_ACTION`, `COMMAND_ID_CONFLICT`, `INVALID_MESSAGE`, `STORAGE_ERROR`, `DEVICE_BUSY` | `RejectCode` |
 | 승인 상태 | `pending`, `approved`, `denied` | `approval.status` |
 | 승인 사용분 상태 | `reserved`, `held`, `consumed`, `released` | `approval_usage.state` |
 

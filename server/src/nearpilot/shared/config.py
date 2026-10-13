@@ -41,6 +41,12 @@ class Settings:
     approval_ttl_sec: int = 3600  # 승인 기본 유효시간: 승인 시점부터. 접근 승인에만 쓴다 (FR-14)
     approval_pending_ttl_sec: int = 600  # 승인 대기 만료: 신청 시점부터 (FR-03)
 
+    # ── 반납 검사 시간 설정 (시연용 초기 기준, FR-07·FR-20) ──
+    safety_report_max_age_sec: float = 3.0  # 안전 보고 허용 나이: 검사 시각부터
+    safety_check_timeout_sec: float = 3.0  # 반납 검사 응답 기한: 검사 요청의 전송 시작부터
+    safety_check_retry_sec: float = 1.0  # 반납 재검사 대기 간격
+    safety_unconfirmed_limit_sec: float = 30.0  # 연속 안전 확인 불능 제한: 넘으면 FAULT 격리
+
     # ── 보존·한도 설정 (시연용 초기 기준, FR-21·FR-22) ──
     use_history_retention_days: int = 7  # 본인 종료 이력 조회: 종료 뒤부터
     audit_retention_days: int = 30  # 상세 실행·감사 기록 보존. 진행 중·미해결 기록은 지우지 않는다
@@ -54,6 +60,8 @@ class Settings:
             "beacon_recent_sec", "online_ttl_sec", "status_report_sec",
             "reservation_wait_sec", "exec_timeout_sec",
             "rental_duration_sec", "approval_ttl_sec", "approval_pending_ttl_sec",
+            "safety_report_max_age_sec", "safety_check_timeout_sec",
+            "safety_check_retry_sec", "safety_unconfirmed_limit_sec",
             "use_history_retention_days", "audit_retention_days",
             "request_dedup_ttl_sec", "dedup_entry_limit",
         ):
@@ -83,6 +91,10 @@ class Settings:
             "rental_duration_sec",
             "approval_ttl_sec",
             "approval_pending_ttl_sec",
+            "safety_report_max_age_sec",
+            "safety_check_timeout_sec",
+            "safety_check_retry_sec",
+            "safety_unconfirmed_limit_sec",
             "use_history_retention_days",
             "audit_retention_days",
             "request_dedup_ttl_sec",
@@ -103,3 +115,6 @@ class Settings:
         # 상태 보고 주기보다 짧은 온라인 유지 시간은 정상 기기를 오프라인으로 만든다
         if self.online_ttl_sec < self.status_report_sec:
             raise ValueError("online_ttl_sec 는 status_report_sec 이상이어야 한다")
+        # 응답 기한보다 짧은 확인 불능 제한은 첫 검사의 응답을 기다리지 못한다
+        if self.safety_unconfirmed_limit_sec < self.safety_check_timeout_sec:
+            raise ValueError("safety_unconfirmed_limit_sec 는 safety_check_timeout_sec 이상이어야 한다")
