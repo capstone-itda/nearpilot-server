@@ -79,7 +79,7 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 사후확률 | 근접 추정이 장소의 전체 상태로 계산한, 방문자가 한 기기 앞에 있을 확률. 후보끼리 다시 정규화하지 않는다 | `ProximityResult.posteriors` | |
 | 전체 상태 | 근접 추정이 사후확률을 계산하는 상태의 집합. 장소의 `trusted` 기기 앞 상태들과 "어느 기기 앞도 아님" 상태다 | | |
 | 후보 밖 상태 | 전체 상태 중 ②의 후보 기기 앞이 아닌 상태 | | |
-| 근접 임계값 | 판정이 ③에서 사후확률과 비교하는 설정 값. 명시적 지정 요청에는 별도 값을 쓴다 | `threshold_locker`, `threshold_light` | |
+| 근접 임계값 | 판정이 ③에서 사후확률과 비교하는 설정 값. 명시적 지정 요청에는 별도 값을 쓴다 | `threshold_locker`, `threshold_light`, `threshold_explicit_locker`, `threshold_explicit_light` | |
 | 내부 요청 ID | 서버가 외부 요청 ID에 연결하는 전역 고유 ID | `internal_request_id` | |
 | 명령 ID | 서버가 물리 명령마다 발급하는 고유 ID | `command_id` | |
 | 정규화 입력 | ⓪이 같은 요청인지 대조하는 입력. 대상 지정, 동작, 원 요청 연결 ID로 구성한다 | `input_digest` | |
