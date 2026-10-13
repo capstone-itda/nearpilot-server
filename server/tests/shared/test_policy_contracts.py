@@ -21,11 +21,18 @@ def test_fr14_fr18_need_approval_reasons_are_distinguishable():
         ReasonCode.APPROVAL_PENDING,
         ReasonCode.APPROVAL_REJECTED,
         ReasonCode.APPROVAL_EXPIRED,
+        ReasonCode.APPROVAL_REQUEST_EXPIRED,
         ReasonCode.APPROVAL_EXHAUSTED,
         ReasonCode.ACTION_NOT_ALLOWED,
     }
     results = [PolicyCheckResult(Verdict.NEED_APPROVAL, r, 1) for r in reasons]
-    assert len({r.reason for r in results}) == 6
+    assert len({r.reason for r in results}) == 7
+
+
+def test_fr03_pending_expiry_reason_is_separate_from_rejection_and_approval_expiry():
+    assert ReasonCode.APPROVAL_REQUEST_EXPIRED.value == "APPROVAL_REQUEST_EXPIRED"
+    assert ReasonCode.APPROVAL_REQUEST_EXPIRED is not ReasonCode.APPROVAL_REJECTED
+    assert ReasonCode.APPROVAL_REQUEST_EXPIRED is not ReasonCode.APPROVAL_EXPIRED
 
 
 def test_fr14_policy_check_result_allows_no_policy_version_on_deny():

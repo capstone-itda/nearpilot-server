@@ -42,6 +42,9 @@ class ReasonCode(StrEnum):
     INVALID_INPUT = "INVALID_INPUT"
     # ⓪
     REQUEST_ID_CONFLICT = "REQUEST_ID_CONFLICT"  # 같은 request_id, 다른 입력
+    # 신규 조작 접수 제한에만 쓴다. 판정은 DENY 와 함께 반환한다 (FR-22).
+    # 새 물리 조작 요청에만 쓴다. 재전송·조회·반납·복구는 이 사유로 거부하지 않는다.
+    CAPACITY_EXCEEDED = "CAPACITY_EXCEEDED"
     # ①
     BEACON_NOT_SEEN = "BEACON_NOT_SEEN"  # 원격 요청·관측 부재
     # ②
@@ -55,7 +58,8 @@ class ReasonCode(StrEnum):
     POLICY_DENIED = "POLICY_DENIED"
     APPROVAL_PENDING = "APPROVAL_PENDING"  # 소유자 응답 대기 (FR-03)
     APPROVAL_REJECTED = "APPROVAL_REJECTED"  # 소유자 거부
-    APPROVAL_EXPIRED = "APPROVAL_EXPIRED"  # 유효시간 만료
+    APPROVAL_EXPIRED = "APPROVAL_EXPIRED"  # 승인 유효시간 만료
+    APPROVAL_REQUEST_EXPIRED = "APPROVAL_REQUEST_EXPIRED"  # 대기 신청 만료. 소유자 거부와 구분한다 (FR-03)
     APPROVAL_EXHAUSTED = "APPROVAL_EXHAUSTED"  # 사용 횟수 소진
     ACTION_NOT_ALLOWED = "ACTION_NOT_ALLOWED"  # 승인과 다른 동작
     # ⑤⑥
