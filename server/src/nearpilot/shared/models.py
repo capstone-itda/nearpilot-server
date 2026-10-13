@@ -15,6 +15,9 @@ from typing import Any
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
+    ApprovalDecisionReason,
+    AdminWriteOutcome,
+    AdminWriteReason,
     ApprovalUsageState,
     ExecutionKind,
     StoreConflictReason,
@@ -277,6 +280,9 @@ class ReserveRequest:
     """`reserve_if_free` 입력. ⑤⑥ 검사·RESERVED 생성·승인 사용분 예약을 한 트랜잭션에서.
 
     대여시간 기준 `rental_due_at` 은 예약 때 정하지 않는다. 실행 성공 때 CORE 가 계산한다.
+    공용형도 이 입력으로 승인 사용분을 확보한다. DB 가 occupancy 로 ⑤⑥·세션 생성을 생략한다.
+    공용형 open 정책이고 approval_id 가 None 이면 쓰기 없이 RESERVED 를 반환한다.
+    무제한 기간형 승인도 요청별 사용분을 만든다. 횟수 검사만 생략한다.
     """
 
     internal_request_id: str
@@ -292,6 +298,8 @@ class ReserveRequest:
 
 @dataclass(frozen=True, slots=True)
 class ReserveResult:
+    """공용형 성공은 RESERVED 와 use_id=None. 재조작 성공은 REOPERATING 과 기존 use_id 다."""
+
     outcome: ReserveOutcome
     use_id: str | None = None  # 공용형은 세션이 없으므로 None
     usage_id: str | None = None  # 승인 사용분 ID
@@ -574,6 +582,11 @@ class SafetyCheckResult:
 
 @dataclass(frozen=True, slots=True)
 class AuditEvent:
+    """감사 테이블의 원본 사건. 호출자는 UUID 를 만들고 DB 는 event_id 중복을 막는다.
+
+    ExecutionStore 내부 사건의 ID 는 DB 가 만든다. JSONL 은 커밋 뒤의 사본이다.
+    """
+
     event_id: str
     step: Step
     payload: Mapping[str, Any]  # 입력·결과·버전·임계값·후보 확률
@@ -740,3 +753,93 @@ class RecoveryApprovalResult:
     reason_code: RecoveryReason
     readiness: RecoveryReadiness
     completed_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalRequest:
+    requester_user_id: str
+    node_id: str
+    action: Action
+    policy_id: str
+    policy_version: int
+    internal_request_id: str
+    created_at: datetime
+    settings: Settings
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalRequestResult:
+    approval_id: str
+    status: ApprovalStatus
+    created_at: datetime
+    pending_until: datetime
+    is_new: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalDecisionRequest:
+    approval_id: str
+    decided_by_user_id: str
+    decision: ApprovalStatus
+    decided_at: datetime
+
+    def __post_init__(self) -> None:
+        if self.decision not in (ApprovalStatus.APPROVED, ApprovalStatus.DENIED):
+            raise ValueError("소유자 결정은 approved 또는 denied 다")
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalDecisionResult:
+    applied: bool
+    reason: ApprovalDecisionReason
+    status: ApprovalStatus | None
+    valid_until: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionRecord:
+    """판정에 적용한 값의 불변 스냅샷 (FR-22). 근접 전에 끝났으면 버전·구간은 None 이다."""
+
+    settings: Settings
+    model_version: str | None = None
+    calib_version: str | None = None
+    policy_version: int | None = None
+    posteriors: Mapping[str, float] = field(default_factory=dict)
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "posteriors", _freeze(self.posteriors))
+
+
+@dataclass(frozen=True, slots=True)
+class AccountRegistration:
+    user_id: str
+    name: str
+    role: Role
+    token_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class BeaconRegistration:
+    beacon_id: str
+    user_id: str
+    beacon: BeaconKey
+    is_active: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class PlaceAssignment:
+    place_id: str
+    owner_user_id: str
+    name: str
+    node_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "node_ids", _freeze(self.node_ids))
+
+
+@dataclass(frozen=True, slots=True)
+class AdminWriteResult:
+    outcome: AdminWriteOutcome
+    reason: AdminWriteReason

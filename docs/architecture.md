@@ -221,7 +221,6 @@ api  ──▶  core  ──▶  db
 - 승인할 때 DB가 `valid_until`을 계산해서 저장한다. `valid_until`은 승인 시각에 `approval_ttl_sec`를 더한 값이다. `approval_ttl_sec`는 승인을 만든 당시 정책 리비전의 값이다.
 - 승인 권한, 대기 상태, 정책 버전은 CORE가 검증한다. DB의 조건부 갱신은 경합한 결정 가운데 하나만 반영한다.
 - 대기 승인의 만료 시간과 승인 유효시간의 값은 `requirements.md` FR-03, FR-14를 따른다 (#15).
-- 미결 — #28: 결과 객체의 타입 이름과 필드 이름, 실패 이유의 값 이름, `create_approval_request()`의 반환 타입 이름
 
 ### 토큰과 계정 조회
 
@@ -230,9 +229,8 @@ api  ──▶  core  ──▶  db
 - 서버가 토큰을 만든다. 토큰은 32바이트 무작위 값이다 (`secrets.token_urlsafe(32)`).
 - 토큰 해시는 SHA-256이다. 솔트를 쓰지 않는다. 해시는 소문자 hex 문자열이다.
 - `api/auth`가 호스트의 토큰으로 해시를 계산한다. `api/auth`는 해시를 `AccountLookup.account_by_token_hash()`에 넘긴다.
-- 해시 함수는 `shared`에 하나만 둔다. 토큰 발급(관리 API)과 계정 조회(`api/auth`)는 같은 함수를 쓴다.
+- 해시 함수는 `shared/tokens.py`의 `hash_token` 하나만 둔다. 토큰 발급(관리 API)과 계정 조회(`api/auth`)는 같은 함수를 쓴다.
 - DB는 토큰 원문을 저장하지 않는다. DB는 `user.token_hash`만 저장하고 비교한다.
-- 미결 — #29: `shared`에 두는 해시 함수의 이름
 
 ### 관리 기능의 DB 쓰기
 
@@ -251,8 +249,7 @@ api  ──▶  core  ──▶  db
 - `AdminRepository`는 반영 결과와 거부 사유를 반환한다. 거부 사유의 예는 비콘 중복과 상태 충돌이다.
 - `FAULT` 복구의 쓰기는 `AdminRepository`의 범위 밖이다. `FAULT` 복구의 쓰기는 #17과 #20을 따른다.
 - 기기 발표를 반영하는 쓰기는 `AdminRepository`와 다른 경로다 (#32).
-- 미결 — #32: 기기 상태가 `RESERVED`, `ACTIVE`, `CLOSING`일 때 소유자의 기기 설정 변경을 막을지 여부
-- 미결 — #30: `AdminRepository`의 함수 이름과 시그니처, 거부 사유의 값 이름
+- 미결: 점유 중인 기기의 장소·정책 설정 변경 제한. 관리 기능 담당 배정 뒤 경합 규칙을 정한다.
 
 ### 판정 기록
 
@@ -271,7 +268,6 @@ api  ──▶  core  ──▶  db
 - 같은 `internal_request_id`에 다른 판정이 다시 오면 DB는 기존 기록을 덮어쓰지 않는다. DB는 충돌로 거부한다.
 - 충돌 검사의 키는 `internal_request_id`다. 외부 `request_id`의 중복 방지 보존기간은 충돌 검사를 바꾸지 않는다.
 - DB는 `DecisionRecord`를 `request` 행의 `model`, `calib`, `policy_ver`, `config_ver`, `decision_context`에 저장한다.
-- 미결 — #33: `save_decision()`의 나머지 인자와 충돌을 알리는 방식
 
 ### 감사 로그의 원본과 JSONL
 
@@ -610,7 +606,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - 수집 라벨 `label`은 `tools/data_collection`만 쓴다. 운영 저장 경로에서는 `NULL`이다.
 - 근접 추정은 HMM 내부 상태를 메모리에 둔다. DB의 관측은 재현과 재시작 복원에 쓴다.
 - 진행 중인 점유(`RESERVED`, `ACTIVE`, `CLOSING`)가 있는 기기의 발표 내용이 바뀔 때 `isolate_device`로 격리할지는 상태 관리가 정한다. 이 판단은 상태 관리 영역의 내부 결정이다.
-- 미결: 신뢰 상태를 되돌린 변경을 기록하는 감사 로그의 `step` 값. 현재 `step` 값에는 기기 발표에 맞는 값이 없다. DB 담당이 감사 로그 계약에서 정한다.
+- 기기 발표의 신뢰 되돌림 감사는 `Step.ANNOUNCE`(`announce`)다. 관리 쓰기의 감사는 `Step.ADMIN`(`admin`)이다.
 
 ### 복구 준비 조회와 복구 승인
 
@@ -680,12 +676,6 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - 시뮬레이터(`tools/node_sim`)는 반납 검사 응답, 구동 명령의 직렬화, 대기열 없는 `DEVICE_BUSY` 거부를 구현한다.
 - DB는 `save_rssi`의 저장 범위와 중복 제약, `upsert_announced_node`의 신뢰 되돌림과 감사 기록, `touch_node`의 시각 비교, `set_node_session`, `finish_close`의 검사 연결 검사, `close_result`를 구현한다.
 - 미결: `Settings`의 시각 오차 허용값. 실제 기기의 시각 동기화 방식과 최대 오차를 검증한 뒤 정한다. 시뮬레이터는 서버와 같은 PC의 시계를 쓴다.
-- 현재 `Repository`에는 `create_approval_request()`와 `decide_approval()`이 없다. #28에 맞춰 두 함수와 결정 결과 객체를 추가한다.
-- 현재 `shared`에는 토큰 해시 함수가 없다. #29에 맞춰 함수 하나를 추가한다.
-- 현재 `shared`에는 `AdminRepository`가 없다. #30에 맞춰 Protocol과 반영 결과 모델을 추가한다.
-- 현재 `save_decision()`은 `context`와 `settings_version`을 받는다. #33에 맞춰 `DecisionRecord`를 추가하고 시그니처를 바꾼다.
-- 현재 `Repository`, `ReserveRequest`, `ReserveResult`의 주석은 공용형의 `reserve_if_free()` 동작을 설명하지 않는다. #27에 맞춰 주석을 고친다.
-- 현재 `AuditLog`와 `AuditEvent`의 주석은 원본과 `event_id` 생성 주체를 설명하지 않는다. #34에 맞춰 주석을 고친다.
 - 계정·비콘·관측 기기·장소·관측 시각·수신 시각·중복 정보의 전달은 #18의 장소 범위와 #19의 최신성 기준을 함께 따른다.
 - 개별 저장 함수의 연속 호출만으로 사건 전체의 원자성을 보장한다고 가정하지 않는다.
 
@@ -728,6 +718,30 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - `RecoveryOutcome`은 `completed`, `rejected`, `pending`이다. 호스트 판정의 `ReasonCode`와 관리 응답의 사유를 구분한다.
 - 상태 관리는 논리 정산의 `settlement_digest`를 계산한다. DB는 값을 저장하고 대조한다.
 - 미결: 정산 요약값의 직렬화와 해시 방식. 상태 관리와 DB 구현 담당이 spec에서 같은 방식을 정한다.
+
+### 판정·관리 저장의 공동 시그니처
+
+| 접점 | 입력 | 반환 |
+|---|---|---|
+| `Repository.create_approval_request` | `ApprovalRequest` | `ApprovalRequestResult` |
+| `Repository.decide_approval` | `ApprovalDecisionRequest` | `ApprovalDecisionResult` |
+| `Repository.save_decision` | `Decision`, `DecisionRecord` | `StoreResult` |
+| `AdminRepository.register_account` | `AccountRegistration` | `AdminWriteResult` |
+| `AdminRepository.register_beacon` | `BeaconRegistration` | `AdminWriteResult` |
+| `AdminRepository.set_node_trust` | 기기 ID, `TrustState` | `AdminWriteResult` |
+| `AdminRepository.assign_place` | `PlaceAssignment` | `AdminWriteResult` |
+| `AdminRepository.set_policy` | `PolicyRevision`, 예상 현재 버전 | `AdminWriteResult` |
+
+- `ApprovalRequest`는 요청자·기기·동작·정책·내부 요청 연결, 생성 시각, 적용 설정을 담는다.
+- `ApprovalRequestResult`는 승인 ID, 상태, 생성·대기 만료 시각과 새 신청 여부를 담는다.
+- `ApprovalDecisionRequest`는 승인 ID, 인증 결정자, 결정과 결정 시각을 담는다.
+- `ApprovalDecisionResult`는 반영 여부, `ApprovalDecisionReason`, 승인 상태와 `valid_until`을 담는다.
+- `ApprovalDecisionReason`은 `OK`, `NOT_FOUND`, `ALREADY_DECIDED`, `POLICY_VERSION_MISMATCH`, `REQUEST_EXPIRED`, `NOT_AUTHORIZED`다.
+- `DecisionRecord`는 설정, 모델·보정·정책 버전, 후보 확률과 관측 시작·끝 시각을 담는다.
+- 판정 저장은 같은 내부 요청·같은 내용이면 `already_applied`, 다른 내용이면 `conflict`와 `CONTENT_CONFLICT`다.
+- `AdminWriteResult`는 `AdminWriteOutcome`과 `AdminWriteReason`을 담는다. 반영, 거부와 충돌을 구분한다.
+- 관리 거부는 비콘 중복, 계정 중복, 없는 계정·기기·장소, 정책 버전 불일치와 상태 충돌을 구분한다.
+- 계정 등록에는 토큰 원문 대신 `token_hash`만 담는다. 장소 배치는 장소·소유자·이름과 기기 ID 목록을 담는다.
 
 ## 5. 외부 계약
 
@@ -986,7 +1000,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `node_command` | TEXT PK `command_id`, FK `internal_request_id`, `node_id`, 대상 동작과 입력 요약, 전송 시도, 실행 상태, 결과, 시각. 승인 사용분과 연결한다. 결과 불명은 실패, 미전송과 구분한다. 접수·실행 전 거부는 미전송, 실패와 구분한다. 기록은 재시작 뒤에도 보존한다. |
 | `use_session` | TEXT PK `use_id`, FK `internal_request_id`, `user_id`, `node_id`, `state` (`RESERVED`, `ACTIVE`, `CLOSING`, `CLOSED`), `end_reason` (`release`, `leave`, `timeout`, `fault`, `cancelled`), nullable `rental_due_at` (실행 성공 때 정한다), nullable `closed_at`, 생성 당시 종료 정책. 대여형 요청과 점유 세션은 1:0..1 관계다. |
 | 복구 건 | TEXT PK `recovery_id`, FK `node_id`, 관련 요청·명령·점유 세션 연결, 실행·안전·물리 상태 동기화 근거의 참조와 시각, 복구 승인 계정과 승인 시각, 정산 내용의 요약값, 완료 결과. 같은 복구 건의 대상 연결은 바꾸지 않는다. 엔터티의 코드 이름은 `recovery`다. |
-| `audit_log` | PK `log_id`, UNIQUE `event_id`, nullable FK `internal_request_id`, nullable 명령 참조, `step` (`auth`, ⓪~⑥, `exec`, `close`, `fault`), JSON `payload_json`. 인증 실패는 요청 참조 없이 기록한다. 같은 `event_id`는 한 번만 저장한다. |
+| `audit_log` | PK `log_id`, UNIQUE `event_id`, nullable FK `internal_request_id`, nullable 명령 참조, `step` (`auth`, ⓪~⑥, `exec`, `close`, `fault`, `announce`, `admin`), JSON `payload_json`. 인증 실패는 요청 참조 없이 기록한다. 같은 `event_id`는 한 번만 저장한다. |
 
 - 계정은 여러 비콘, 장소, 요청을 가진다. 장소는 여러 기기를 가진다.
 - 기기별, 비콘별 관측은 요청의 `decision_context`에서 재현할 수 있는 관측 구간으로 연결한다.

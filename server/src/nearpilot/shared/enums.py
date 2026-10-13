@@ -31,6 +31,8 @@ class Step(StrEnum):
     EXEC = "exec"
     CLOSE = "close"
     FAULT = "fault"
+    ANNOUNCE = "announce"  # 기기 발표의 신뢰 되돌림 감사 (FR-04, FR-22)
+    ADMIN = "admin"  # 관리 쓰기의 감사 (FR-12A, FR-22)
 
 
 class ReasonCode(StrEnum):
@@ -311,4 +313,30 @@ class RecoveryReason(StrEnum):
     NOT_OWNER = "NOT_OWNER"
     RECOVERY_MISMATCH = "RECOVERY_MISMATCH"
     NOT_READY = "NOT_READY"
+    STATE_CONFLICT = "STATE_CONFLICT"
+
+
+class ApprovalDecisionReason(StrEnum):
+    OK = "OK"
+    NOT_FOUND = "NOT_FOUND"
+    ALREADY_DECIDED = "ALREADY_DECIDED"
+    POLICY_VERSION_MISMATCH = "POLICY_VERSION_MISMATCH"
+    REQUEST_EXPIRED = "REQUEST_EXPIRED"
+    NOT_AUTHORIZED = "NOT_AUTHORIZED"
+
+
+class AdminWriteOutcome(StrEnum):
+    APPLIED = "applied"
+    REJECTED = "rejected"
+    CONFLICT = "conflict"
+
+
+class AdminWriteReason(StrEnum):
+    OK = "OK"
+    BEACON_ALREADY_REGISTERED = "BEACON_ALREADY_REGISTERED"
+    ACCOUNT_ALREADY_EXISTS = "ACCOUNT_ALREADY_EXISTS"
+    ACCOUNT_NOT_FOUND = "ACCOUNT_NOT_FOUND"
+    NODE_NOT_FOUND = "NODE_NOT_FOUND"
+    PLACE_NOT_FOUND = "PLACE_NOT_FOUND"
+    POLICY_VERSION_MISMATCH = "POLICY_VERSION_MISMATCH"
     STATE_CONFLICT = "STATE_CONFLICT"

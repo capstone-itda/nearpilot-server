@@ -40,6 +40,8 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | AI 호스트 | 사용자의 요청을 MCP로 서버에 전달하는 LLM 앱. Claude, ChatGPT, Gemini | `host_kind` | |
 | 판정 | core가 요청에 내리는 결과. `OK`, `BUSY`, `ASK`, `DENY`, `NEED_APPROVAL` | `Verdict` | |
 | 사유 코드 | 판정의 이유 | `ReasonCode` | |
+| 승인 결정 결과 | 소유자의 접근 승인 결정을 반영했는지와 그 사유 | `ApprovalDecisionResult`, `ApprovalDecisionReason` | |
+| 관리 쓰기 결과 | 관리 변경을 반영했는지와 그 사유 | `AdminWriteResult`, `AdminWriteOutcome`, `AdminWriteReason` | |
 | 판정 기록 | 판정 한 건에 적용한 버전, 설정, 후보별 사후확률, 관측 구간을 담은 값 객체 | `DecisionRecord` | |
 | 허가 | 판정 `OK`로 기기 실행을 허락하는 것 | `Verdict.OK` | 승인 |
 | 승인 | 소유자가 제한 기기의 접근 요청을 받아들이는 것 | `approval` | 허가 |
