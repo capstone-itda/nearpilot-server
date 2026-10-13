@@ -52,7 +52,7 @@ pytest tests/<계층>      # 계층 하나
 
 - 커밋하기 전에 전체 `pytest`를 통과시킨다.
 - 서버 실행 진입점: 미결
-- Mosquitto 기동 방법: 미결
+- Mosquitto 기동 방법: `mosquitto -c <설정 파일 경로>`. 설정 파일 경로는 미결 — #19
 
 ## 문서 갱신 조건
 
