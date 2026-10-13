@@ -6,13 +6,18 @@ from datetime import datetime
 import pytest
 
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import Capability, TargetKind, Verdict
+from nearpilot.shared.enums import Capability, ReasonCode, TargetKind, Verdict
 from nearpilot.shared.interfaces import ProximityEstimator
 from nearpilot.shared.models import Decision, ProximityResult, TargetSpec
 
 
 def test_fr18_verdict_values():
     assert {v.value for v in Verdict} == {"OK", "BUSY", "ASK", "DENY", "NEED_APPROVAL"}
+
+
+def test_fr18_internal_error_reason_is_separate_from_recheck_failed():
+    assert ReasonCode.INTERNAL_ERROR.value == "INTERNAL_ERROR"
+    assert ReasonCode.INTERNAL_ERROR is not ReasonCode.RECHECK_FAILED
 
 
 @pytest.mark.parametrize(

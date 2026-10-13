@@ -68,6 +68,9 @@ class ReasonCode(StrEnum):
     # 실행 직전 재검사의 검사 오류에만 쓴다. 판정은 DENY 와 함께 반환한다 (#16).
     # 정상 거부에는 쓰지 않는다. 재검사의 원래 판정과 사유를 그대로 전달한다.
     RECHECK_FAILED = "RECHECK_FAILED"
+    # 판정 중 예상하지 못한 예외에 쓴다. 판정은 DENY 와 함께 반환한다 (#25).
+    # 정상 거부에는 쓰지 않는다. 호스트에는 일반 안내만 보내고 예외 내용은 감사 기록에만 남긴다.
+    INTERNAL_ERROR = "INTERNAL_ERROR"
     EXEC_FAILED = "EXEC_FAILED"
     EXEC_UNKNOWN = "EXEC_UNKNOWN"  # 결과 불명 → FAULT 복구
 
