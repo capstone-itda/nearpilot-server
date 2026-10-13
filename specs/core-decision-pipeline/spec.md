@@ -17,7 +17,7 @@ spec 규칙
 - 상태: 작성 중
 - 담당: eunji719 (판정)
 - 요구사항: FR-18
-- 따르는 결정: #25
+- 따르는 결정: #24, #25
 
 ## 1. 왜
 
@@ -45,7 +45,7 @@ spec 규칙
 
 | 단계 | 실패 조건 | 판정 / 사유 코드 |
 |---|---|---|
-| ⓪ 중복 | 같은 `(계정, request_id)`에 다른 정규화 입력이 왔다 | `DENY` / `REQUEST_ID_CONFLICT` |
+| ⓪ 중복 | 같은 `(계정, request_id)`에 다른 정규화 입력이 왔다. 정규화 입력은 6절을 따른다 | `DENY` / `REQUEST_ID_CONFLICT` |
 | ① 비콘 | 최근 T초 안에 수신한 등록 비콘이 없다 | `DENY` / `BEACON_NOT_SEEN` |
 | ② 후보 | 신뢰, 온라인, 요청 종류를 만족하고 `FAULT`가 아닌 기기가 없다 | `DENY` / `NO_CANDIDATE` |
 | ② 후보 | 명시 지정 대상이 위 조건 밖이다 | `DENY` / `TARGET_UNAVAILABLE` |
@@ -112,6 +112,9 @@ spec 규칙
 
 ## 6. 결정
 
+- ⓪의 `input_digest`는 판정이 계산해서 `link_request()`에 넘긴다. DB는 저장하고 비교만 한다 (#24).
+  - 정규화 입력에 넣는 필드: `target`(정규화한 대상 지정), `action`, `parent_internal_request_id`
+  - 넣지 않는 필드: `request_id`(키 자체다), `received_at`, `host_kind`. 호스트가 바뀌어도 재전송은 같은 요청이다.
 - 예상하지 못한 예외는 `DENY`와 `INTERNAL_ERROR`로 거부한다 (#25). 호스트 응답에는 일반 안내만 넣고, 예외 내용은 감사 기록에만 남긴다.
 
 ## 7. 가정
@@ -120,7 +123,7 @@ spec 규칙
 - 미결: ④ 정책 검사의 경계. `core/policy`가 검사 함수를 제공하고 decision은 결과만 반영하는가, 아니면 decision이 `current_policy`와 `valid_approval`을 직접 조합하는가.
 - 미결: 실행 직전 재검사의 위치. decision이 제공하고 lifecycle이 호출하는가, 아니면 lifecycle 안에서 하는가. 재검사가 실패하면 예약과 승인 사용분 반환을 누가 시작하는가.
 - 미결: 오류로 거부한 요청을 같은 `request_id`로 재전송할 때 다시 판정할지. #25는 이 부분을 정하지 않았다.
-- 미결: ⓪ 정규화 입력에 넣을 필드(예: `target_spec`, `action`, 원 요청 연결 ID)와 `input_digest` 계산 방식. DB `request` 테이블의 정규화 입력 요약 컬럼과 맞춰야 한다.
+- 미결: `input_digest`의 직렬화와 해시 방식. #24는 필드와 계산 주체만 정했다. 구현할 때 담당자가 정해서 6절에 쓴다.
 - 미결: 공용 조명의 승인 사용분 확보. 공용 조명은 ⑤⑥을 건너뛰지만 승인 사용분은 원자적으로 확보해야 한다 (FR-18). `reserve_if_free()`로 처리할지, 다른 DB 호출이 필요한지 정해야 한다.
 
 ## 8. 테스트

@@ -53,6 +53,7 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 외부 요청 ID | 호스트가 보내는 계정 범위의 멱등 키 | `request_id` | |
 | 내부 요청 ID | 서버가 외부 요청 ID에 연결하는 전역 고유 ID | `internal_request_id` | |
 | 명령 ID | 서버가 물리 명령마다 발급하는 고유 ID | `command_id` | |
+| 정규화 입력 | ⓪이 같은 요청인지 대조하는 입력. 대상 지정, 동작, 원 요청 연결 ID로 구성한다 | `input_digest` | |
 | 실행 직전 재검사 | 기기에 명령을 보내기 직전에 허가, 근접, 대상을 다시 검사하는 것 | `DecisionRechecker.recheck` | |
 | 실행 인계 | 판정이 허가와 예약을 마친 요청의 실행을 상태 관리에 넘기는 것 | `ExecutionContext`, `ExecutionService.execute` | |
 | 사건별 저장 | 예약 이후의 사건 하나에 딸린 기록을 한 트랜잭션으로 반영하는 것 | `ExecutionStore` | |

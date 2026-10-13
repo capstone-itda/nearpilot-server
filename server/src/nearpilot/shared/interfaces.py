@@ -63,7 +63,13 @@ class Repository(Protocol):
     """DB → CORE 저장소. 쓰기는 이 인터페이스 한 경로로만 한다 (의존 규칙 5)."""
 
     # ⓪ 중복
-    def link_request(self, req: UseRequest, input_digest: str) -> RequestLink: ...
+    def link_request(self, req: UseRequest, input_digest: str) -> RequestLink:
+        """외부 키 (user_id, request_id) 를 내부 요청 ID 에 연결한다.
+
+        input_digest 는 판정이 정규화 입력(대상 지정, 동작, 원 요청 연결 ID)으로 계산해서 넘긴다 (#24).
+        DB 는 값을 저장하고 비교만 한다.
+        """
+        ...
 
     def save_decision(
         self, decision: Decision, context: Mapping[str, Any], settings_version: str
