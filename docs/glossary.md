@@ -41,6 +41,7 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 허가 | 판정 `OK`로 기기 실행을 허락하는 것 | `Verdict.OK` | 승인 |
 | 승인 | 소유자가 제한 기기의 접근 요청을 받아들이는 것 | `approval` | 허가 |
 | 승인 사용분 | 승인 하나에서 요청 하나가 쓰는 사용 횟수 | `approval_usage` | |
+| 복구 승인 | 소유자가 `FAULT` 기기의 복구 건 하나의 복구를 허용하는 것. 승인과 별개다. 승인의 유효시간을 적용하지 않는다 | | |
 | 정책 검사 | ④에서 접근 정책과 승인을 검사하는 것. 결과는 허용, 승인 필요, 거부다 | `PolicyChecker.check`, `PolicyCheckResult` | |
 | 접근 정책 | 기기의 승인 필요 여부. `open` 또는 `restricted` | `PolicyRevision.mode` | |
 | 공개 범위 | 기기를 주변 목록에 보일지 여부. `public` 또는 `private` | `Visibility` | |
@@ -75,6 +76,16 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 실행 직전 재검사 | 기기에 명령을 보내기 직전에 허가, 근접, 대상을 다시 검사하는 것 | `DecisionRechecker.recheck` | |
 | 실행 인계 | 판정이 허가와 예약을 마친 요청의 실행을 상태 관리에 넘기는 것 | `ExecutionContext`, `ExecutionService.execute` | |
 | 사건별 저장 | 예약 이후의 사건 하나에 딸린 기록을 한 트랜잭션으로 반영하는 것 | `ExecutionStore` | |
+| 실행 종류 | 실행 인계가 구분하는 조작의 종류. 최초 대여, 기존 대여의 재조작, 공용형 조작이다 | `execution_kind` | |
+| 최초 대여 | 점유 세션을 새로 만드는 대여형 조작 | | |
+| 재조작 | 대여 중인 본인이 기존 점유 세션의 기기에 하는 새 조작. 새 요청과 새 명령을 기존 `use_id`에 연결한다 | | |
+| 구동 중 | 기기의 구동부가 물리 동작을 하는 상태. 기기 상태 `ACTIVE`(대여 중)와 다르다 | `actuator_state`의 `busy` | |
+| 접수·실행 전 거부 | 기기가 새 명령을 접수하기 전에 검증된 `DEVICE_BUSY`로 거부한 결과. 서버의 확실한 미전송(`NOT_SENT`)과 다르다 | 미결 — #17 | |
+| 복원 조회 | 재시작한 서버가 끝나지 않은 요청, 명령, 점유 세션, 승인 사용분, 복구 건을 기기별로 읽는 조회 | `restore_pending` | |
+| 복원 묶음 | 복원 조회가 기기 하나에 반환하는 현재 기기 상태와 연결 기록의 목록 | 미결 — #17 | |
+| 복구 건 | 기기의 장애 격리 하나에 딸린 복구 업무의 기록. 근거와 복구 승인을 연결한다 | `recovery_id` | `store_event_id` |
+| 복구 준비 조회 | 복구 건의 준비 상태와 부족한 조건을 읽는 조회. 복구를 승인하지 않는다 | | |
+| 복구 정산 | 복구 승인 기록, 승인 사용분 정산, 점유 종료, 기기 복구, 감사 기록, 완료 결과를 한 트랜잭션으로 반영하는 것 | `settle_recovery` | |
 | 전역 할당 | 대기 구간 안의 `any:locker` 요청을 묶어 기기를 1:1로 배정하는 것 | | |
 
 ### 상태 값
@@ -89,6 +100,8 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 반납 검사 결과 | `passed`, `not_ready`, `fault`, `unknown` | `SafetyCheckOutcome` |
 | 기기 실행 결과 상태 | `accepted`, `running`, `succeeded`, `failed`, `unknown`, `rejected` | `NodeResultState` |
 | 거부 코드 | `SESSION_MISMATCH`, `COMMAND_EXPIRED`, `CLOCK_UNVERIFIED`, `UNSUPPORTED_ACTION`, `COMMAND_ID_CONFLICT`, `INVALID_MESSAGE`, `STORAGE_ERROR`, `DEVICE_BUSY` | `RejectCode` |
+| 복구 준비 상태 | `not_ready`, `ready`, `recovering`, `recovered` | 미결 — #20 |
+| 복구 승인 결과 | `completed`, `rejected`, `pending` | 미결 — #20 |
 | 승인 상태 | `pending`, `approved`, `denied` | `approval.status` |
 | 승인 사용분 상태 | `reserved`, `held`, `consumed`, `released` | `approval_usage.state` |
 
