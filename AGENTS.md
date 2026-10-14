@@ -83,6 +83,7 @@ pytest tests/<계층>      # 계층 하나
 
 ## Gotchas
 <!-- 에이전트가 한 실수와 올바른 방법을 한 줄씩 쓴다. -->
+- 제한된 환경의 기본 임시 폴더로 pytest를 실행해 임시 DB 테스트가 실패했다. `server/`에서 쓰기 가능한 `.pytest_cache/` 아래를 `--basetemp`로 지정한다.
 - 로컬 갱신 스크립트를 `server/`에서 저장소 루트 기준 경로로 실행해 실패했다. 스크립트의 기준 경로와 명령의 작업 디렉터리를 먼저 맞춘다.
 - decision PR 본문에 양식에 없는 절을 추가했다. `.github/PULL_REQUEST_TEMPLATE/decision.md`의 절을 따르고, `Closes`는 결정을 모두 반영한 이슈에만 쓴다.
 - worktree의 테스트를 저장소 루트에서 실행해 다른 checkout의 설치 경로를 읽었다. 테스트는 대상 worktree의 `server/`에서 실행한다.
