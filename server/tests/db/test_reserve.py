@@ -96,6 +96,39 @@ def test_FR19_reserve_reoperating(conn, repo):
     assert conn.execute("SELECT COUNT(*) AS c FROM use_session").fetchone()["c"] == 1
 
 
+def test_FR19_reserve_reoperating_fault(conn, repo):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="node1", occupancy="rental", device_state="FAULT")
+    _seed_request(conn, internal_request_id="rental-req")
+    insert_use_session(conn, use_id="use1", internal_request_id="rental-req", state="ACTIVE")
+    _seed_request(conn, internal_request_id="reop-req")
+
+    result = repo.reserve_if_free(_request(internal_request_id="reop-req"))
+
+    assert result.outcome == ReserveOutcome.DEVICE_BUSY
+    assert conn.execute("SELECT COUNT(*) AS c FROM use_session").fetchone()["c"] == 1
+    assert conn.execute("SELECT COUNT(*) AS c FROM approval_usage").fetchone()["c"] == 0
+
+
+def test_FR19_reserve_resend_after_active(conn, repo):
+    _setup_rental(conn)
+    _seed_request(conn, internal_request_id="req1")
+
+    first = repo.reserve_if_free(_request(internal_request_id="req1"))
+    assert first.outcome == ReserveOutcome.RESERVED
+
+    # 실행 성공(ExecutionStore 몫)을 흉내 내 세션과 기기를 ACTIVE로 바꾼다.
+    conn.execute("UPDATE use_session SET state = 'ACTIVE' WHERE use_id = ?", (first.use_id,))
+    conn.execute("UPDATE node SET device_state = 'ACTIVE' WHERE node_id = 'node1'")
+
+    retry = repo.reserve_if_free(_request(internal_request_id="req1"))
+
+    assert retry.outcome == ReserveOutcome.RESERVED
+    assert retry.use_id == first.use_id
+    assert conn.execute("SELECT COUNT(*) AS c FROM use_session").fetchone()["c"] == 1
+
+
 def test_FR19_reserve_reoperating_reserves_new_usage(conn, repo):
     insert_user(conn)
     insert_place(conn)

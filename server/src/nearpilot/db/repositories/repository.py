@@ -520,18 +520,8 @@ class SqliteRepository:
             if node is None:
                 raise LookupError(f"기기 {req.node_id} 가 없다")
 
-            own_active = self._conn.execute(
-                "SELECT use_id FROM use_session WHERE node_id = ? AND user_id = ? AND state = 'ACTIVE'",
-                (req.node_id, req.user_id),
-            ).fetchone()
-            if own_active is not None:
-                usage_id = self._reserve_usage(req.approval_id, req.internal_request_id)
-                if usage_id is _EXHAUSTED:
-                    return ReserveResult(outcome=ReserveOutcome.APPROVAL_EXHAUSTED)
-                return ReserveResult(
-                    outcome=ReserveOutcome.REOPERATING, use_id=own_active["use_id"], usage_id=usage_id
-                )
-
+            # 같은 internal_request_id의 기존 예약은 재조작 검사보다 먼저 본다. 최초 대여 요청이
+            # 이미 ACTIVE가 된 뒤 재전송되어도 REOPERATING이 아니라 기존 예약을 그대로 반환한다.
             existing_session = self._conn.execute(
                 "SELECT use_id FROM use_session WHERE internal_request_id = ?",
                 (req.internal_request_id,),
@@ -540,6 +530,22 @@ class SqliteRepository:
                 usage_id = self._lookup_usage(req.approval_id, req.internal_request_id)
                 return ReserveResult(
                     outcome=ReserveOutcome.RESERVED, use_id=existing_session["use_id"], usage_id=usage_id
+                )
+
+            own_active = self._conn.execute(
+                "SELECT use_id FROM use_session WHERE node_id = ? AND user_id = ? AND state = 'ACTIVE'",
+                (req.node_id, req.user_id),
+            ).fetchone()
+            if own_active is not None:
+                # 세션은 ACTIVE로 보존돼도 기기가 FAULT로 격리됐으면(isolate_device) 재조작을
+                # 통과시키지 않는다. RESERVED·CLOSING·FAULT는 DEVICE_BUSY다 (interfaces.py).
+                if node["device_state"] != DeviceState.ACTIVE.value:
+                    return ReserveResult(outcome=ReserveOutcome.DEVICE_BUSY)
+                usage_id = self._reserve_usage(req.approval_id, req.internal_request_id)
+                if usage_id is _EXHAUSTED:
+                    return ReserveResult(outcome=ReserveOutcome.APPROVAL_EXHAUSTED)
+                return ReserveResult(
+                    outcome=ReserveOutcome.REOPERATING, use_id=own_active["use_id"], usage_id=usage_id
                 )
 
             if node["occupancy"] == Occupancy.SHARED.value:

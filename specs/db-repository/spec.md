@@ -22,7 +22,7 @@
   - `request`, `rssi_observation`, `node`, `use_session`, `approval`, `approval_usage`, `audit_log` 행이 생기거나 바뀐다.
 - 약속:
   - `Repository`, `AccountLookup`, `AuditLog`의 모든 함수를 구현한다. 시그니처는 `shared`와 같다.
-  - `reserve_if_free()`는 본인 `ACTIVE` 세션이면 `REOPERATING`과 기존 `use_id`를 반환한다. 그 외에는 ⑤⑥ 검사, `RESERVED` 생성, 승인 사용분 예약을 `BEGIN IMMEDIATE` 트랜잭션 하나에서 처리한다.
+  - `reserve_if_free()`는 같은 `internal_request_id`의 기존 예약이 없고 본인 기기가 `ACTIVE`이면 `REOPERATING`과 기존 `use_id`를 반환한다. 그 외에는 ⑤⑥ 검사, `RESERVED` 생성, 승인 사용분 예약을 `BEGIN IMMEDIATE` 트랜잭션 하나에서 처리한다.
   - 동시 요청이 같은 기기를 예약하면 한 요청만 `RESERVED`를 받는다.
   - 같은 `internal_request_id`로 다시 예약하면 기존 예약을 반환한다. 새 행을 만들지 않는다.
   - `create_approval_request()`는 같은 요청자·기기·동작·정책 버전에 유효한 `pending` 신청이 있으면 기존 신청을 반환한다. `decide_approval()`은 `pending`·정책 버전·대기 만료를 조건부로 검사하고 결정을 한 번만 반영한다.
@@ -49,6 +49,8 @@
 - DB 쓰기 경로는 이 저장소 하나다. 대여형의 ⑤⑥, `RESERVED` 생성, 승인 사용분 예약은 `BEGIN IMMEDIATE` 하나에서 처리한다 (`AGENTS.md` 의존 규칙 5, FR-19).
 - 동시 요청과 재전송에서 이중 점유는 0건이다 (NFR-03).
 - 본인 `ACTIVE` 세션에 재조작을 요청하면 `reserve_if_free()`는 `REOPERATING`을 반환하고 새 세션을 만들지 않는다. 이번 요청의 승인 사용분만 새로 예약한다 (FR-19, FR-21).
+- 본인 `ACTIVE` 세션이 있어도 기기가 `FAULT`로 격리됐으면 `reserve_if_free()`는 `DEVICE_BUSY`를 반환한다. 세션은 `ACTIVE`로 보존되고 기기만 격리될 수 있기 때문이다 (FR-19, NFR-04).
+- 최초 대여 요청이 `ACTIVE`가 된 뒤 같은 `internal_request_id`로 다시 예약을 호출하면 `reserve_if_free()`는 본인 재조작 검사보다 기존 예약 조회를 먼저 해서 기존 `use_id`로 `RESERVED`를 반환한다 (FR-19).
 - `input_digest`는 판정이 계산해서 넘긴다. DB는 값을 저장하고 비교만 한다 (#24).
 - 다른 계정에 이미 있는 `(uuid, major, minor)`는 저장하지 않는다 (FR-01).
 - 토큰 원문은 저장하지 않는다. `token_hash`만 저장하고 UNIQUE로 둔다 (NFR-08, §1.3).
@@ -109,7 +111,9 @@
 | 같은 `internal_request_id`에 같은 판정을 다시 저장한다 | `StoreResult(ALREADY_APPLIED)`를 반환한다. | `test_FR22_save_decision_already_applied` |
 | 두 요청이 같은 대여형 기기를 동시에 예약한다 | 한 요청만 `RESERVED`다. 나머지는 `DEVICE_BUSY`다. | `test_FR19_reserve_concurrent` |
 | 같은 `internal_request_id`로 예약을 다시 호출한다 | 기존 `use_id`와 `usage_id`로 `RESERVED`를 반환한다. 행을 새로 만들지 않는다. | `test_FR19_reserve_idempotent` |
+| 최초 대여 요청이 `ACTIVE`가 된 뒤 같은 `internal_request_id`로 다시 호출한다 | 재조작 검사보다 기존 예약 조회를 먼저 한다. `REOPERATING`이 아니라 기존 `use_id`로 `RESERVED`를 반환한다. | `test_FR19_reserve_resend_after_active` |
 | 본인 `ACTIVE` 세션이 있는 기기에 재조작을 요청한다 | `REOPERATING`과 기존 `use_id`를 반환한다. 새 세션을 만들지 않는다. 승인이 있으면 이번 요청의 사용분만 예약한다. | `test_FR19_reserve_reoperating` |
+| 본인 `ACTIVE` 세션이 있지만 기기가 `FAULT`로 격리됐다 | `REOPERATING`이 아니라 `DEVICE_BUSY`를 반환한다. 사용분을 예약하지 않는다. | `test_FR19_reserve_reoperating_fault` |
 | 계정이 같은 `exclusive_group`의 다른 기기를 점유 중이다 | `USER_BUSY`를 반환한다. 아무 행도 만들지 않는다. | `test_FR19_reserve_user_busy` |
 | 승인 남은 횟수가 0이다 | `APPROVAL_EXHAUSTED`를 반환한다. 세션과 사용분을 만들지 않는다. | `test_FR19_reserve_approval_exhausted` |
 | 대상 기기가 `AVAILABLE`이 아니다 (`FAULT` 포함) | `DEVICE_BUSY`를 반환한다. | `test_FR19_reserve_not_available` |
@@ -140,7 +144,10 @@
 - 스키마 버전은 `PRAGMA user_version`으로 관리한다. DDL은 `db/schema/`의 SQL 파일에 둔다 — 마이그레이션 도구를 추가하지 않는다.
 - 내부 ID (`internal_request_id`, `use_id`, `usage_id`)는 DB가 UUID4 문자열로 만든다.
 - `nodes()`는 신뢰, 온라인, `FAULT`, 장소로 거르지 않고 모든 기기를 반환한다 — 후보 조건은 판정의 ②가, 장소 범위는 근접 추정이 `place_id`로 정한다.
-- `reserve_if_free()`는 본인 `ACTIVE` 세션 확인 → ⑤ 기기 점유 → ⑥ 사용자 점유 → 승인 남은 횟수 순서로 검사한다. 본인 `ACTIVE` 세션이면 나머지 검사를 생략하고 `REOPERATING`을 반환한다 — 재조작이 타인 점유 검사(`DEVICE_BUSY`)에 걸리지 않아야 한다. `exclusive_group`이 NULL이면 ⑥을 검사하지 않는다.
+- `reserve_if_free()`는 같은 `internal_request_id`의 기존 예약 조회 → 본인 `ACTIVE` 세션 확인 → ⑤ 기기 점유 → ⑥ 사용자 점유 → 승인 남은 횟수 순서로 검사한다.
+  - 기존 예약 조회를 가장 먼저 한다 — 최초 대여 요청이 실행 성공으로 `ACTIVE`가 된 뒤 같은 `internal_request_id`로 재전송되면, 본인 `ACTIVE` 세션 확인이 이를 재조작으로 착각해 `REOPERATING`을 반환하면 안 된다. 멱등 재호출은 항상 기존 예약을 그대로 반환한다.
+  - 본인 `ACTIVE` 세션이 있어도 기기 `device_state`가 `ACTIVE`가 아니면(`FAULT` 등) `REOPERATING`이 아니라 `DEVICE_BUSY`를 반환한다 — `isolate_device()`는 점유 세션을 바꾸지 않고 기기만 `FAULT`로 격리하므로, 세션은 `ACTIVE`로 남아도 기기는 격리된 상태일 수 있다. `interfaces.py`의 "타인 점유 또는 RESERVED·CLOSING·FAULT는 DEVICE_BUSY"는 본인 재조작에도 똑같이 적용한다.
+  - `exclusive_group`이 NULL이면 ⑥을 검사하지 않는다.
 - `valid_approval()`에 조건을 만족하는 승인이 여럿이면 `valid_until`이 가장 늦은 승인을 반환한다. 같으면 `approval_id` 순이다.
 - `link_request()`는 감사 기록을 쓰지 않는다 — 충돌 이벤트는 판정이 `AuditLog.append()`로 남긴다.
 - 같은 `internal_request_id`에 다른 판정을 저장하면 기존 판정을 보존하고 `StoreResult(CONFLICT, CONTENT_CONFLICT)`를 반환한다. 같은 판정이면 `StoreResult(ALREADY_APPLIED)`를 반환하고 아무것도 바꾸지 않는다 — `interfaces.py`의 `save_decision` docstring이 이미 값 객체로 구분하라고 정했다. 예외로 던지지 않는다.
