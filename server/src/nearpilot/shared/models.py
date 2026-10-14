@@ -118,13 +118,11 @@ class NodeInfo:
     exclusive_group: str | None
     last_seen_at: datetime | None
     release_policy: Mapping[str, Any] = field(default_factory=dict)
-    anchor_params: Mapping[str, float] = field(default_factory=dict)  # A, n, σ
     session_id: str | None = None  # 현재 기기 연결 ID. 확인한 연결이 없으면 None
     session_first_seen_at: datetime | None = None  # 현재 연결의 첫 수신 시각
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "release_policy", _freeze(self.release_policy))
-        object.__setattr__(self, "anchor_params", _freeze(self.anchor_params))
 
 
 @dataclass(frozen=True, slots=True)
