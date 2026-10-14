@@ -29,7 +29,7 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 용어 | 뜻 | 코드 이름 | 쓰지 않는 말 |
 |---|---|---|---|
 | 기기 | ESP32 보드 하나와 그 보드가 제어하는 사물함 또는 조명. 앵커 역할도 한다 | `node`, `NodeInfo` | 장치, 노드 |
-| 앵커 | 비콘의 RSSI를 측정해서 보고하는 기기의 역할 | `anchor_params` | |
+| 앵커 | 비콘의 RSSI를 측정해서 보고하는 기기의 역할 | | |
 | 비콘 | 방문자 폰이 송출하는 iBeacon 식별자 `(uuid, major, minor)` | `beacon`, `BeaconKey` | |
 | 계정 | 토큰으로 식별하는 사용자. 역할은 방문자 또는 소유자다 | `user`, `Account` | |
 | 토큰 | 서버가 계정에 발급하는 32바이트 무작위 값. AI 호스트와 앱이 인증에 쓴다 | | |
@@ -78,6 +78,7 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 신규 조작 접수 제한 | 서버 전체의 중복 방지 항목 수가 한도 이상일 때 새 물리 조작 요청을 거부하는 기준 | `dedup_entry_limit`, `ReasonCode.CAPACITY_EXCEEDED` | |
 | 사후확률 | 근접 추정이 장소의 전체 상태로 계산한, 방문자가 한 기기 앞에 있을 확률. 후보끼리 다시 정규화하지 않는다 | `ProximityResult.posteriors` | |
 | 전체 상태 | 근접 추정이 사후확률을 계산하는 상태의 집합. 장소의 `trusted` 기기 앞 상태들과 "어느 기기 앞도 아님" 상태다 | | |
+| 모델 파일 | 장소별 근접 파라미터, 기기 배치, HMM 전이와 보정 값을 버전으로 묶은 파일 | `model_version`, `calib_version` | |
 | 후보 밖 상태 | 전체 상태 중 ②의 후보 기기 앞이 아닌 상태 | | |
 | 근접 임계값 | 판정이 ③에서 사후확률과 비교하는 설정 값. 명시적 지정 요청에는 별도 값을 쓴다 | `threshold_locker`, `threshold_light`, `threshold_explicit_locker`, `threshold_explicit_light` | |
 | 내부 요청 ID | 서버가 외부 요청 ID에 연결하는 전역 고유 ID | `internal_request_id` | |

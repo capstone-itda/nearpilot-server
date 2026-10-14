@@ -520,6 +520,22 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - 미결: DB가 한도 초과를 판정에 알리는 접점과 거부한 요청을 기록하는 방식. DB가 항목을 세고 판정이 거부하므로 두 담당이 spec에서 정한다.
 - 미결: 명령 중복 방지 항목의 보존기간과 한도 도달 때의 정리 기준. 실제 기기의 명령 기록 저장 방식을 검증한 뒤 정한다.
 
+### 근접 모델 파일과 버전
+
+[#40](https://github.com/capstone-itda/nearpilot-server/issues/40)의 B안을 따른다.
+근접 추정은 장소마다 버전이 붙은 모델 파일을 시작할 때 읽는다.
+
+- 파일은 앵커별 경로손실 값 `A`, `n`, `σ`, 기기 배치, HMM 전이와 보정 값을 묶는다.
+- 장소 ID와 기기 ID가 앵커와 기기 배치를 식별한다. 소유자는 파라미터를 직접 바꾸지 않는다.
+- 운영 임계값은 `Settings`에 둔다. 파일에는 검증에 쓴 임계값을 함께 기록한다.
+- 파일의 모델 버전과 보정 버전을 `ProximityResult.model_version`, `calib_version`으로 반환한다.
+- 파일 내용을 바꾸면 새 버전을 만든다. 같은 버전의 파일을 덮어쓰지 않는다.
+- 근접 추정은 판정 기록이 참조하는 과거 버전 파일과 검증 결과를 보존한다.
+- DB는 판정에 적용한 버전을 기록한다. 파라미터와 기기 배치를 `node`에 저장하지 않는다.
+- `NodeInfo.anchor_params`와 논리 데이터 계약의 `node.anchor_params`를 제거한다. 관리 쓰기 접점은 추가하지 않는다.
+- 배포한 DB 스키마가 없어서 데이터 이전은 필요 없다. 후속 DB 구현은 제거한 필드를 만들지 않는다.
+- 미결: 모델 파일의 경로와 형식. 근접 추정 구현 담당이 spec의 "결정" 절에 쓴다.
+
 ### 기기 보고의 인계
 
 [#38](https://github.com/capstone-itda/nearpilot-server/issues/38)의 A안을 따른다.
@@ -1022,7 +1038,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `user` | PK `user_id`, `name`, UNIQUE `token_hash`, `role` (`visitor`, `owner`). `token_hash`는 토큰의 SHA-256 해시를 소문자 hex 문자열로 쓴 값이다. 토큰 원문은 저장하지 않는다. |
 | `beacon` | PK `beacon_id`, FK `user_id`, `(uuid, major, minor)` 조합 UNIQUE, `is_active` |
 | `place` | PK `place_id`, FK `owner_user_id`, `name` |
-| `node` | TEXT PK `node_id`, FK `place_id`, `capability`, `occupancy`, `trust_state`, `device_state`, `exclusive_group`, JSON `release_policy`, JSON `anchor_params`, `last_seen_at`, 현재 기기 연결 ID `session_id`, 그 연결의 첫 수신 시각 `session_first_seen_at` |
+| `node` | TEXT PK `node_id`, FK `place_id`, `capability`, `occupancy`, `trust_state`, `device_state`, `exclusive_group`, JSON `release_policy`, `last_seen_at`, 현재 기기 연결 ID `session_id`, 그 연결의 첫 수신 시각 `session_first_seen_at` |
 | `access_policy` | PK `policy_id`, UNIQUE FK `node_id` (기기당 하나), `current_version`. 현재 접근 정책 리비전을 참조한다. 정책 변경은 새 리비전 추가와 `current_version` 갱신을 한 트랜잭션에서 한다. |
 | `policy_revision` | 복합 PK `(policy_id, version)`, `visibility` (`public`, `private`), `mode` (`open`, `restricted`), FK `approver_user_id`, `approval_ttl_sec`, `approval_mode` (`one_time`, `time_window`), `max_uses` (기간형이 무제한이면 NULL). 과거 리비전은 바꾸지 않는다. |
 | `approval` | PK `approval_id`, FK `node_id`, `requester_user_id`, `internal_request_id`, `approved_by_user_id`, `action`, 정책 리비전 참조, `status` (`pending`, `approved`, `denied`), `valid_until`, `used_count`. 요청 참조는 승인 신청의 출처다. 허용 범위는 요청자, 기기, 동작, 정책 버전으로 검사한다. |
@@ -1037,7 +1053,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 계정은 여러 비콘, 장소, 요청을 가진다. 장소는 여러 기기를 가진다.
 - 계정의 활성 비콘은 하나 이하다. 비활성 비콘의 식별자와 계정 연결은 보존한다.
 - 기기별, 비콘별 관측은 요청의 `decision_context`에서 재현할 수 있는 관측 구간으로 연결한다.
-- `anchor_params`는 경로손실 파라미터 `A`, `n`, `σ`를 보존한다.
+- 근접 파라미터와 기기 배치는 장소별 모델 파일이 보존한다. DB는 판정에 적용한 모델·보정 버전만 기록한다.
 - `decision_context`와 감사 payload는 임계값, 후보별 확률, 관측 참조, 모델 버전, 보정 버전, 정책 버전을 담는다.
 - DB는 `DecisionRecord`의 명시 필드로 `request` 행의 버전 컬럼과 `decision_context`를 채운다. `request` 행의 판정은 한 번만 저장한다.
 - `approval.valid_until`은 DB가 승인 시각과 승인을 만든 당시 리비전의 `approval_ttl_sec`로 계산한다.
