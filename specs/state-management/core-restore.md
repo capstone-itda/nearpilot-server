@@ -35,12 +35,13 @@
 | 기록 | 처리 |
 |---|---|
 | 전송을 시작하지 않은 명령 (`pending`) | 예약 시각부터 `reservation_wait_sec`가 지났으면 `cancel_not_sent(expected=PENDING)`로 취소한다. 지나지 않았으면 남은 시간 뒤 취소한다 |
+| 명령을 연결하기 전의 예약 요청 | `RestoreBundle.requests`의 `reserved_at`으로 남은 대기 시간을 계산한다. 명령 부재를 처리 완료로 보지 않는다. 확실한 미전송 취소 대상에 포함한다 |
 | 전송을 시작했고 결과가 없는 명령 (`in_progress`) | 실행 여부가 불명이다. `record_result(UNKNOWN)`으로 격리하고 복구 건을 만든다 |
-| `RESERVED` 세션 | 연결된 명령의 처리를 따른다 |
+| `RESERVED` 세션 | 연결된 요청과 명령의 처리를 따른다. 명령이 없으면 예약 요청의 만료 처리를 따른다 |
 | `ACTIVE` 세션 | 점유를 유지한다. `rental_due_at`을 바꾸지 않는다 |
 | `CLOSING` 세션 | 이전 검사 결과로 종료하지 않는다. 기기 확인 뒤 새 `check_id`로 반납 검사를 다시 요청한다 |
-| 미해결 `FAULT` 기기와 미완료 복구 건 | 복구 건을 복원한다. 현재 유효한 근거를 다시 확인한다 |
-| 승인 사용분 | 연결된 명령과 복구 건의 처리를 따른다. 단독으로 반환하지 않는다 |
+| 미해결 `FAULT` 기기와 미완료 복구 건 | 기존 복구 건을 복원한다. 복구 건 저장 전에 중단됐다면 누락된 복구 건을 보완한다. 현재 유효한 근거를 다시 확인한다 |
+| 승인 사용분 | 연결된 요청·명령·복구 건의 처리를 따른다. 명령이 없는 공용형 예약도 포함한다. 사용분만 따로 반환하지 않는다 |
 
 - 서버 중단 시간은 예약 대기와 대여시간·초과시간 계산에 포함한다 (FR-20 재시작).
 - 대여시간 초과만으로 점유를 종료하지 않는다 (FR-20).
@@ -80,6 +81,9 @@
 |---|---|---|
 | `restore_pending()`이 예외를 던진다 | 모든 기기의 새 실행을 막는다. 빈 목록으로 보지 않는다 | `test_FR19_restore_failure_blocks_all` |
 | `pending` 명령의 예약 대기 제한이 서버 중단 중에 지났다 | `cancel_not_sent(expected=PENDING)`로 취소한다 | `test_FR19_restore_expired_pending_cancelled` |
+| 예약 뒤 명령 연결 전에 서버가 중단됐다 | 요청의 예약 시각으로 만료를 처리한다. 세션과 사용분을 남겨 두지 않는다 | `test_FR19_restore_request_without_command` |
+| 공용형 예약에 요청과 사용분만 있다 | 점유 세션 없이 요청의 만료 처리를 따른다 | `test_FR19_restore_shared_usage_without_command` |
+| 기기 격리 뒤 복구 건 저장 전에 서버가 중단됐다 | 격리를 유지하고 누락된 복구 건을 보완한다 | `test_NFR04_restore_fault_without_recovery` |
 | `in_progress` 명령이 있다 | 새 명령을 보내지 않는다. `UNKNOWN`으로 격리하고 복구 건을 만든다 | `test_FR19_restore_in_progress_isolated` |
 | `in_progress` 명령의 늦은 성공 결과가 재시작 뒤 온다 | `record_result`로 넘긴다. `FAULT`를 자동으로 해제하지 않는다 | `test_FR07_restore_late_success_keeps_fault` |
 | `ACTIVE` 세션의 `rental_due_at`이 서버 중단 중에 지났다 | 점유를 유지한다. 초과시간에 중단 시간을 포함한다 | `test_FR20_restore_overdue_kept` |
@@ -94,6 +98,7 @@
 
 - 미결: 판정이 기기별 복원 상태를 확인하는 접점. `shared`에 접점이 없다. 이 spec은 `core-execution`의 전송 시작 전에 복원 상태를 검사한다. 판정의 ②에서 복원 중인 기기를 후보에서 뺄지는 판정 담당과 정한다. 이슈 초안을 담당자에게 넘긴다.
 - 미결: 예약 대기 제한 만료 취소의 사유 코드. `core-execution`의 7절과 같은 이슈다.
+- DB 계약 확인 대기: 명령 미연결 요청의 `cancel_not_sent(expected=PENDING)` 처리다. 현재 인터페이스는 명령 부재 때의 기대 상태를 명시하지 않는다. 임의로 명령을 만들어 우회하지 않는다. DB 담당과 확인하고 공동 계약 보완이 필요하면 팀 결정으로 넘긴다.
 - 미결: 서버 실행 진입점. 복원은 서버 시작 때 게이트웨이 구독 뒤, 요청 수신 전에 한 번 실행한다고 가정한다.
 - `in_progress` 명령을 `record_result(UNKNOWN)`으로 저장하는 근거는 서버의 재시작이다. 기기가 보고한 `unknown`과 구분하도록 근거에 출처를 남긴다 (FR-07).
 

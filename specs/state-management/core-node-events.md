@@ -43,6 +43,8 @@
 - RSSI 저장과 근접 추정 전달은 별개다. 근접 추정이 예외를 던져도 저장한 관측은 그대로 둔다.
 - RSSI는 `core-shared-light`의 이탈 판단에도 넘긴다 (architecture.md §4 "이탈 판단의 관측 계약").
 - `status`의 `sensor_fault`가 `true`이면 `isolate_device()`로 격리하고 새 복구 건을 만든다. 점유 세션과 승인 사용분은 바꾸지 않는다 (architecture.md §4 "예약 이후 저장").
+- 격리와 복구 건 저장은 별개다. `ALREADY_APPLIED`만으로 복구 건의 저장 완료를 추정하지 않는다 (architecture.md §4 "복구 건과 복구 정산").
+- 복구 건 저장에 실패하면 재인계에서도 같은 장애의 저장을 계속한다. `core-fault-recovery`가 같은 복구 ID로 저장 여부를 확인한다 (NFR-04).
 - `actuator_state=busy`는 이상이 아니다. 기기 상태 `ACTIVE`와 구분한다 (FR-19).
 - 일반 `status`는 종료 안전의 근거가 아니다. 반납 종료는 반납 검사 결과로만 결정한다 (FR-07).
 - 기기별 관측, 장애 반영, 복구는 같은 기기 잠금으로 직렬화한다 (architecture.md §4 "복구 준비 조회와 복구 승인").
@@ -78,10 +80,11 @@
 |---|---|---|
 | 처음 보는 기기가 발표한다 | `upsert_announced_node()`를 부른다. 신뢰 상태를 바꾸지 않는다 | `test_FR04_announce_upserts_node` |
 | 신뢰한 기기가 다른 기능으로 발표한다 | `upsert_announced_node()`를 부른다. 신뢰 되돌림은 DB가 한다 | `test_FR04_changed_announce_forwarded` |
-| 진행 중인 점유가 있는 기기가 다른 기능으로 발표한다 | 6절의 결정을 따른다 | `test_FR04_changed_announce_during_occupancy` |
+| 진행 중인 점유가 있는 기기가 다른 기능으로 발표한다 | DB의 신뢰 되돌림을 적용한다. 점유를 임의로 종료하지 않는다. 추가 격리 여부는 6절에서 정한다 | `test_FR04_changed_announce_during_occupancy` |
 | 발표만 오고 `status`가 없다 | `touch_node()`와 `set_node_session()`을 부르지 않는다 | `test_FR13_announce_does_not_touch` |
 | `status`의 `sensor_fault`가 `true`다 | `isolate_device()`를 부르고 복구 건을 만든다 | `test_NFR04_sensor_fault_isolates` |
-| 이미 `FAULT`인 기기가 `sensor_fault`를 다시 보고한다 | `isolate_device()`가 `ALREADY_APPLIED`다. 새 복구 건을 만들지 않는다 | `test_NFR04_repeat_fault_same_recovery` |
+| 이미 `FAULT`인 기기가 `sensor_fault`를 다시 보고한다 | 같은 장애의 복구 건 저장을 확인한다. 저장이 끝났으면 같은 복구 건을 유지한다 | `test_NFR04_repeat_fault_same_recovery` |
+| 격리는 성공했지만 복구 건 저장에 실패했다 | 재인계에서 같은 복구 ID로 저장을 재시도한다. `ALREADY_APPLIED`를 이유로 생략하지 않는다 | `test_NFR04_retry_missing_recovery_after_isolation` |
 | `actuator_state`가 `busy`다 | 격리하지 않는다 | `test_FR19_busy_actuator_not_fault` |
 | 결과 대기가 끝난 뒤 `on_result()`가 온다 | `touch_node()`를 부르지 않는다. `core-execution`으로 넘긴다 | `test_FR13_result_does_not_touch` |
 | `save_rssi()`가 `StoreNotApplied`를 던진다 | 예외를 다시 던진다 | `test_FR05_rssi_store_error_propagates` |
@@ -90,10 +93,13 @@
 
 ## 6. 결정
 
+- 담당자 선택 대기: 점유 중 기능·점유 방식 변경 발표에 추가 격리를 적용할지 정한다. 신뢰 되돌림과 점유 보존은 기존 계약을 따른다. DB의 발표 저장 동작을 바꾸는 선택은 팀 결정이다.
+
 ## 7. 가정
 
 - 미결: `NodeEventSink`의 구현 담당. architecture.md §4는 제공 영역을 CORE로만 쓴다. 이 spec은 IOT와 장애 반영을 맡은 상태 관리가 구현한다고 가정한다.
 - 미결: 시각 오차 허용값. 관측의 최신성 검사는 `iot-mqtt-gateway`가 한다. 이 spec은 넘겨받은 보고를 신선한 보고로 본다.
+- 선행 의존: 실행 결과는 `core-execution`, 반납 검사는 `core-release`, 복구 건은 `core-fault-recovery`, 이탈 관측은 `core-shared-light`를 쓴다. 연결할 내부 접점과 조립 순서는 담당자가 정한다. fake 검증만으로 실제 연결의 완료를 대신하지 않는다.
 
 ## 8. 테스트
 

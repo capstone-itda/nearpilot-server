@@ -20,9 +20,13 @@
 - 입력:
   - 기기 → 서버: 토픽 종류와 UTF-8 JSON 본문 (`announce`, `rssi`, `status`, `result`, `safety_check_result`)
   - 서버 → 기기: `NodeCommand`, `SafetyCheckRequest`
+  - 시뮬레이터 수신: `cmd`, `safety_check`의 UTF-8 JSON 본문
+  - 시뮬레이터 송신: 기기 보고의 필드 값. 연결 ID, 순번, 발행 시각은 시뮬레이터가 제공한다.
 - 출력:
   - 기기 → 서버: `shared` 모델 (`NodeAnnounce`, `RssiFrame` 목록, `NodeStatus`, `NodeResult`, `SafetyCheckResult`) 또는 거부 사유
   - 서버 → 기기: `cmd`, `safety_check` 본문
+  - 시뮬레이터 수신: 명령·검사 요청의 파싱 결과 또는 형식 오류
+  - 시뮬레이터 송신: `announce`, `rssi`, `status`, `result`, `safety_check_result` 본문
 - 바뀌는 상태: 없음. 순수 변환 함수다.
 - 약속:
   - 계약 v1의 필수 필드, 타입, 값 범위를 모두 검사한다.
@@ -46,6 +50,9 @@
 - `cmd`의 `action`은 기능에 맞아야 한다. `open`은 사물함, `on`과 `off`는 조명이다 (§5 MQTT 3절).
 - `cmd`의 `expires_at`은 `issued_at`보다 뒤여야 한다. `safety_check`도 같다 (§5 MQTT 6절).
 - 직렬화한 `cmd` 본문은 같은 `NodeCommand`에 대해 항상 같다. 재전송은 내용을 바꾸지 않는다 (§5 MQTT 4절).
+- 시뮬레이터용 파싱과 직렬화도 같은 MQTT v1 필드 정의를 사용한다. MQTT 필드나 `shared` 모델을 추가하지 않는다 (§5 MQTT 2절, 3절).
+- 시뮬레이터의 명령 파싱은 접수 허가가 아니다. 명령 기록 대조, 구동 중 검사, 연결·동작·유효 시간 검사는 `iot-node-sim`의 접수 순서를 따른다 (§5 MQTT 4절).
+- 서버의 송신 검증을 시뮬레이터의 접수 순서보다 먼저 적용하지 않는다. 오래된 중복 명령도 기존 기록을 먼저 조회할 수 있어야 한다 (§5 MQTT 4절).
 - 스키마 코드는 `shared` 모델에만 의존한다. paho-mqtt와 CORE에 의존하지 않는다 (AGENTS.md 의존 규칙 4).
 
 ## 4. 경계
@@ -105,4 +112,9 @@
 | FR-07 | `test_FR07_parse_result` | `state`, `error_code`, `event_id`, `occurred_at`을 그대로 담는다 |
 | FR-07 | `test_FR07_parse_safety_check_result` | `check_id`, 검사 기준, `outcome`, `evidence`를 담는다 |
 | FR-07 | `test_FR07_serialize_safety_check` | 검사 기준 ID와 버전, 대상 연결, 만료 시각을 담는다 |
+| FR-04 | `test_FR04_serialize_announce` | 시뮬레이터 발표를 기존 MQTT v1 본문으로 만든다 |
+| FR-05 | `test_FR05_serialize_rssi` | 빈 관측과 여러 관측을 프레임 본문으로 만든다 |
+| FR-06 | `test_FR06_parse_sim_command` | 명령 필드를 읽는다. 접수 순서를 앞질러 연결·만료 여부로 거부하지 않는다 |
+| FR-07 | `test_FR07_parse_sim_safety_check` | 시뮬레이터가 검사 요청의 기존 필드를 읽는다 |
+| FR-07 | `test_FR07_serialize_sim_reports` | 상태·실행 결과·검사 결과를 직렬화한다. 서버 수신 시각은 본문에 넣지 않는다 |
 | NFR-08 | `test_NFR08_outbound_has_no_account_fields` | 서버 → 기기 본문에 사용자 ID와 점유 주체가 없다 |

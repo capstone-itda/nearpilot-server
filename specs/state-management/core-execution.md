@@ -59,6 +59,10 @@ sequenceDiagram
 - 전송 직전에 `DecisionRechecker.recheck(context)`를 부른다. `OK` 외 판정과 `recheck()`의 예외는 모두 전송을 막는다 (architecture.md §4 "실행 인계와 재검사").
 - `recheck()`의 예외는 `DENY`와 `RECHECK_FAILED`의 검사 오류와 같게 다룬다 (§4 "실행 인계와 재검사").
 - 재검사가 전송을 막으면 `cancel_not_sent(expected=PENDING)`로 이번 요청을 정리한다 (§4 "예약 이후 저장").
+- 정상 운영 중 예약 대기 만료도 이 spec이 처리한다. 재시작 때의 만료 처리는 `core-restore`가 맡는다 (FR-19).
+- 예약 대기는 저장된 예약 시각부터 잰다. 실행 인계나 재검사 시각부터 다시 세지 않는다 (FR-19).
+- 예약 대기 제한을 넘긴 확실한 미전송 요청은 `cancel_not_sent(expected=PENDING)`로 취소한다. 전송 직전에도 기한을 확인한다 (FR-19).
+- 만료 취소와 `begin_send()`가 경합하면 DB의 조건부 저장 결과를 따른다. 취소가 충돌하면 사용분을 임의로 반환하지 않는다 (architecture.md §4 "예약 이후 저장").
 - `begin_send()`가 `APPLIED`일 때만 `NodeCommandGateway.send()`를 부른다. `ALREADY_APPLIED`는 재전송 허가가 아니다 (§4 "예약 이후 저장").
 - `begin_send()`가 `CONFLICT`와 `COMMAND_IN_PROGRESS`이면 새 명령을 시작하지 않는다. 판정은 `BUSY`와 `COMMAND_IN_PROGRESS`로 응답한다 (§4 "실행·복원·복구의 공동 모델").
 - `begin_send()`가 `CONFLICT`와 `STATE_CONFLICT`이면 전송하지 않는다. 기기가 `CLOSING` 또는 `FAULT`인 경우다 (FR-19 본인 재조작).
@@ -122,6 +126,9 @@ sequenceDiagram
 | 같은 `internal_request_id`를 두 스레드가 동시에 인계한다 | `send()`를 한 번만 부른다 | `test_NFR03_concurrent_handover_sends_once` |
 | 재검사가 `ASK`를 반환한다 | 전송하지 않는다. `cancel_not_sent(expected=PENDING)`를 부른다. `recheck`에 그 판정을 담는다 | `test_FR18_recheck_reject_blocks_send` |
 | `recheck()`가 예외를 던진다 | 전송하지 않는다. `RECHECK_FAILED`로 정리한다 | `test_FR18_recheck_exception_blocks_send` |
+| 정상 운영 중 미전송 예약의 대기 제한이 지난다 | 예약 시각 기준으로 만료 취소한다. 재시작을 기다리지 않는다 | `test_FR19_live_pending_expires` |
+| 재검사 중 예약 대기 제한이 지난다 | 전송하지 않고 조건부 취소한다 | `test_FR19_expiry_during_recheck_blocks_send` |
+| 만료 취소와 전송 시작이 경합한다 | DB에서 성공한 상태 전이만 따른다. 전송 시작 뒤 임의로 사용분을 반환하지 않는다 | `test_FR19_expiry_races_begin_send` |
 | 다른 명령이 같은 기기에서 진행 중이다 | `begin_send()`가 `COMMAND_IN_PROGRESS`다. 전송하지 않는다 | `test_FR19_command_in_progress_not_sent` |
 | 반납이 시작되어 기기가 `CLOSING`이다 | `begin_send()`가 `STATE_CONFLICT`다. 전송하지 않는다 | `test_FR19_closing_blocks_send` |
 | 기기의 현재 연결 ID가 없다 | 전송하지 않는다. 미전송으로 정리한다 | `test_FR06_no_session_not_sent` |
@@ -137,15 +144,20 @@ sequenceDiagram
 
 ## 6. 결정
 
+- 담당자 선택 대기: 성공 시각은 기기의 `occurred_at`과 서버의 결과 확정 시각 중 하나로 정한다. 선택 뒤 `rental_due_at` 계산과 재시도에 같은 기준을 적용한다.
+- 담당자 선택 대기: 예약 만료 감시 방식과 상태 관리 내부 접점의 모듈 구성을 정한다. 예약 시각의 확보 경로는 7절의 계약 확인을 먼저 마친다.
+
 ## 7. 가정
 
 - 미결: 아래 취소에 쓰는 사유 코드. `cancel_not_sent`는 `ReasonCode`를 받지만 세 경우에 맞는 값이 없다.
   - 예약 대기 제한의 만료 취소
   - 기기의 현재 연결 ID가 없어서 보내지 않은 명령의 취소
   - IOT가 미전송을 증명한 명령의 취소
-- 위 사유 코드 추가는 팀 결정이다. `ReasonCode` 추가는 팀 결정이다. 이슈 초안을 담당자에게 넘긴다.
+- 위 사유 코드 추가는 팀 결정이다. 이슈 초안을 담당자에게 넘긴다.
 - 미결: 재검사가 아닌 이유로 전송을 막았을 때 판정에 사유를 알리는 방법. `ExecutionResult`에는 사유 필드가 없다. `COMMAND_IN_PROGRESS`, `STATE_CONFLICT`, 연결 없음을 판정이 구분할 수 없다. 이슈 초안을 담당자에게 넘긴다.
-- 위 두 미결이 정해질 때까지 해당 경로는 전송을 막고 `not_sent`를 반환한다. 취소 저장은 정해진 사유 코드로 구현한다.
+- 위 두 미결이 정해지기 전에는 그 경로의 구현을 보류한다. 임시 `not_sent` 반환으로 취소 저장과 사유 전달의 완료를 대신하지 않는다.
+- 계약 확인 대기: 인계 전 예약과 명령 미연결 예약의 시각을 정상 운영 중 확보하는 경로다. `ExecutionContext`와 기존 조회 계약으로 충족하지 못하면 판정·DB 담당과 접점을 정한다.
+- 선행 의존: 복구 건 생성은 `core-fault-recovery`, 복원 상태는 `core-restore`가 제공한다. 이 spec은 두 spec보다 먼저 단독 완료할 수 있다고 가정하지 않는다.
 
 ## 8. 테스트
 

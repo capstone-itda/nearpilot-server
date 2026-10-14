@@ -55,6 +55,9 @@
 - 기기 재접속이나 새 장애로 기존 근거가 무효이면 새 유효 근거를 먼저 확인한다 (NFR-04).
 - 확인 불가를 미실행으로 보지 않는다. 확인 불가만으로 승인 사용분을 반환하지 않는다 (NFR-04).
 - 같은 기기의 복구, 관측, 장애 반영은 같은 기기 잠금으로 직렬화한다 (NFR-04).
+- 격리 성공과 복구 건 저장 성공을 따로 확인한다. 이미 `FAULT`여도 복구 건이 없으면 저장을 보완한다 (NFR-04).
+- `save_recovery`가 실패하면 같은 장애의 `recovery_id`와 대상 연결을 유지한다. 반영 여부가 불명이면 `recovery(recovery_id)`로 확인한다 (architecture.md §4 "복구 건과 복구 정산").
+- 재시작으로 사라진 저장 대기는 `core-restore`의 복원 묶음으로 확인한다. 기존 미완료 복구 건이 있으면 그 ID를 재사용한다 (NFR-04).
 - `settlement_digest`는 상태 관리가 논리 정산으로 계산한다. 호출 시각은 넣지 않는다 (architecture.md §4 "복구 건과 복구 정산").
 - `settle_recovery` 결과는 아래 표로 바꾼다 (§4 "복구 준비 조회와 복구 승인").
 
@@ -109,6 +112,8 @@
 | `settle_recovery`가 `StoreNotApplied`를 던진다 | `rejected`와 `STORE_NOT_APPLIED`다. 복구 건을 유지한다 | `test_NFR04_settle_not_applied` |
 | 승인 직전에 기기가 재접속한다 | 기존 근거를 무효로 한다. `NOT_READY`다 | `test_NFR04_reconnect_invalidates_evidence` |
 | 미해결 장애 중 같은 기기가 다시 이상을 보고한다 | 같은 `recovery_id`에 근거를 더한다 | `test_NFR04_same_fault_same_recovery_id` |
+| 격리 뒤 `save_recovery`가 실패한다 | 기기 격리를 유지한다. 같은 복구 ID로 저장을 재시도한다 | `test_NFR04_retry_save_recovery_same_id` |
+| `save_recovery`의 반영 여부가 불명이다 | 같은 ID로 조회한다. 다른 ID로 중복 생성하지 않는다 | `test_NFR04_save_recovery_unknown_requeries` |
 | 복구를 마친 기기가 새로 장애를 낸다 | 새 `recovery_id`를 만든다. 이전 승인을 적용하지 않는다 | `test_NFR04_new_fault_new_recovery_id` |
 | 정산 뒤 늦은 성공 결과가 온다 | 완료 정산을 뒤집지 않는다 | `test_NFR04_late_result_after_settle` |
 
@@ -120,7 +125,7 @@
 - 미결: 장소 소유권을 조회하는 접점. `NodeInfo`는 `place_id`를 담지만 장소 소유자를 담지 않는다. `Repository`에는 장소 조회 함수가 없다. 이슈 초안을 담당자에게 넘긴다.
 - 미결: 복구의 안전 확인과 물리 상태 동기화의 근거. 반납 검사는 `UseSession.check_criteria`를 쓴다. 점유 세션이 없는 공용형과 세션이 끝난 기기의 검사 기준은 정하지 않았다. 이슈 초안을 담당자에게 넘긴다.
 - 미결: 관리 API의 구현 담당 (architecture.md §4 "복구 준비 조회와 복구 승인"). 이 spec은 `RecoveryService`만 제공한다.
-- 위 미결이 정해질 때까지 이 spec은 복구 건 생성, 조회의 준비 판단, 승인 재검사의 틀을 구현한다. 정해지지 않은 조건은 `blockers`에 남겨서 `ready`가 되지 않게 한다.
+- 복구 건 생성과 저장 실패 처리는 기존 계약으로 보완한다. 장소 소유권과 안전 근거의 계약이 정해지기 전에는 조회·승인 경로의 구현을 보류한다. 틀이나 항상 거부하는 구현을 완료로 보지 않는다.
 
 ## 8. 테스트
 
