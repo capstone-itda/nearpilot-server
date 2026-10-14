@@ -75,6 +75,7 @@ class ReasonCode(StrEnum):
     # 판정 중 예상하지 못한 예외에 쓴다. 판정은 DENY 와 함께 반환한다 (#25).
     # 정상 거부에는 쓰지 않는다. 호스트에는 일반 안내만 보내고 예외 내용은 감사 기록에만 남긴다.
     INTERNAL_ERROR = "INTERNAL_ERROR"
+    COMMAND_IN_PROGRESS = "COMMAND_IN_PROGRESS"  # BUSY: 다른 구동 명령이 진행 중이다. 점유 충돌과 구분한다.
     EXEC_FAILED = "EXEC_FAILED"
     EXEC_UNKNOWN = "EXEC_UNKNOWN"  # 결과 불명 → FAULT 복구
 
@@ -180,6 +181,7 @@ class ApprovalUsageState(StrEnum):
 
 
 class CommandOutcome(StrEnum):
+    REJECTED = "rejected"  # 검증된 DEVICE_BUSY 접수·실행 전 거부. NOT_SENT 와 구분한다.
     NOT_SENT = "not_sent"  # 확실한 미전송 → 예약·승인 사용분 자동 반환 가능
     SUCCEEDED = "succeeded"
     FAILED = "failed"  # 노드가 실패를 보고
@@ -245,6 +247,7 @@ class ExecutionStatus(StrEnum):
     FAILED = "failed"  # 기기가 실패를 보고했다. FAULT 로 격리한다.
     UNKNOWN = "unknown"  # 실행 여부를 확정하지 못했다. FAULT 로 격리한다.
     NOT_SENT = "not_sent"  # 확실한 미전송으로 취소했다.
+    REJECTED = "rejected"  # 검증된 DEVICE_BUSY. 격리하지 않고 이번 사용분만 반환한다.
 
 
 class StoreOutcome(StrEnum):
@@ -259,6 +262,53 @@ class ReserveOutcome(StrEnum):
     """`Repository.reserve_if_free` 결과 (⑤⑥ + 승인 사용분 예약)."""
 
     RESERVED = "reserved"
+    REOPERATING = "reoperating"  # 본인 ACTIVE 세션에 새 요청을 연결했다. 새 세션을 만들지 않는다.
     DEVICE_BUSY = "device_busy"
     USER_BUSY = "user_busy"
     APPROVAL_EXHAUSTED = "approval_exhausted"
+
+
+class ExecutionKind(StrEnum):
+    RENTAL_INITIAL = "rental_initial"
+    RENTAL_REOPERATION = "rental_reoperation"
+    SHARED = "shared"
+
+
+class StoreConflictReason(StrEnum):
+    COMMAND_IN_PROGRESS = "COMMAND_IN_PROGRESS"
+    STATE_CONFLICT = "STATE_CONFLICT"
+    CONTENT_CONFLICT = "CONTENT_CONFLICT"
+    LINK_MISMATCH = "LINK_MISMATCH"
+
+
+class RecoveryStatus(StrEnum):
+    NOT_READY = "not_ready"
+    READY = "ready"
+    RECOVERING = "recovering"
+    RECOVERED = "recovered"
+
+
+class RecoveryBlocker(StrEnum):
+    NO_RECOVERY_REQUIRED = "NO_RECOVERY_REQUIRED"
+    EXECUTION_UNCONFIRMED = "EXECUTION_UNCONFIRMED"
+    SAFETY_UNCONFIRMED = "SAFETY_UNCONFIRMED"
+    PHYSICAL_STATE_UNSYNCED = "PHYSICAL_STATE_UNSYNCED"
+    OFFLINE = "OFFLINE"
+    NOT_TRUSTED = "NOT_TRUSTED"
+    STORE_OUTCOME_UNKNOWN = "STORE_OUTCOME_UNKNOWN"
+
+
+class RecoveryOutcome(StrEnum):
+    COMPLETED = "completed"
+    REJECTED = "rejected"
+    PENDING = "pending"
+
+
+class RecoveryReason(StrEnum):
+    OK = "OK"
+    STORE_NOT_APPLIED = "STORE_NOT_APPLIED"
+    STORE_OUTCOME_UNKNOWN = "STORE_OUTCOME_UNKNOWN"
+    NOT_OWNER = "NOT_OWNER"
+    RECOVERY_MISMATCH = "RECOVERY_MISMATCH"
+    NOT_READY = "NOT_READY"
+    STATE_CONFLICT = "STATE_CONFLICT"

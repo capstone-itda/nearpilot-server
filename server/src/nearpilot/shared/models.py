@@ -15,6 +15,13 @@ from typing import Any
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
+    ApprovalUsageState,
+    ExecutionKind,
+    StoreConflictReason,
+    RecoveryStatus,
+    RecoveryBlocker,
+    RecoveryOutcome,
+    RecoveryReason,
     AccessMode,
     Action,
     ActuatorState,
@@ -345,6 +352,11 @@ class ExecutionContext:
     use_id: str | None  # 공용형이면 None
     usage_id: str | None  # 승인이 필요 없으면 None
     settings: Settings  # 판정에 적용한 설정. 실행과 대여시간 계산도 이 값을 쓴다.
+    execution_kind: ExecutionKind = ExecutionKind.RENTAL_INITIAL
+
+    def __post_init__(self) -> None:
+        if (self.execution_kind == ExecutionKind.SHARED) != (self.use_id is None):
+            raise ValueError("공용형은 use_id 가 없고 대여형은 use_id 가 있어야 한다")
 
 
 @dataclass(frozen=True, slots=True)
@@ -367,6 +379,18 @@ class CommandRecord:
     node_id: str
     action: Action
     status: ExecutionStatus
+    execution_kind: ExecutionKind = ExecutionKind.RENTAL_INITIAL
+    use_id: str | None = None
+    usage_id: str | None = None
+    reserved_at: datetime | None = None
+    send_started_at: datetime | None = None
+    send_attempted: bool = False
+    outcome: CommandOutcome | None = None
+    occurred_at: datetime | None = None
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evidence", _freeze(self.evidence))
 
 
 @dataclass(frozen=True, slots=True)
@@ -376,6 +400,8 @@ class StoreResult:
     outcome: StoreOutcome
     command: CommandRecord | None = None
     session: UseSession | None = None
+    conflict_reason: StoreConflictReason | None = None
+    recovery: RecoveryRecord | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -556,3 +582,161 @@ class AuditEvent:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "payload", _freeze(self.payload))
+
+
+# ── 복원·복구 (FR-19, NFR-04) ───────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class PendingRequestRecord:
+    internal_request_id: str
+    request: UseRequest
+    input_digest: str
+    execution_kind: ExecutionKind
+    use_id: str | None
+    usage_id: str | None
+    reserved_at: datetime
+    decision: Decision | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RestoredSession:
+    session: UseSession
+    user_id: str
+    created_at: datetime
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evidence", _freeze(self.evidence))
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalUsageRecord:
+    usage_id: str
+    approval_id: str
+    internal_request_id: str
+    command_id: str | None
+    state: ApprovalUsageState
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryEvidence:
+    """근거 참조와 시각. None 은 확인하지 못했다는 뜻이다. 현재성은 CORE 가 검사한다."""
+
+    evidence_id: str
+    session_id: str
+    observed_at: datetime
+    execution_outcome: CommandOutcome | None = None
+    safety_confirmed: bool | None = None
+    physical_state_synced: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalUsageSettlement:
+    usage_id: str
+    expected_state: ApprovalUsageState
+    state: ApprovalUsageState
+
+    def __post_init__(self) -> None:
+        if self.state not in (ApprovalUsageState.CONSUMED, ApprovalUsageState.RELEASED):
+            raise ValueError("복구 정산의 사용분 결과는 consumed 또는 released 다")
+
+
+@dataclass(frozen=True, slots=True)
+class RecoverySettlement:
+    """CORE → DB 논리 정산. digest 는 CORE 가 계산하고 DB 는 저장·대조한다.
+
+    digest 는 대상 연결, 채택한 근거, 사용분 정산, 종료 내용으로 계산한다.
+    승인 호출 시각은 제외한다. 실제 직렬화 방식은 구현 담당자가 spec 에 정한다.
+    """
+
+    recovery_id: str
+    node_id: str
+    approved_by_user_id: str
+    approved_at: datetime
+    settlement_digest: str
+    expected_node_state: DeviceState
+    expected_recovery_status: RecoveryStatus
+    expected_commands: Mapping[str, ExecutionStatus]
+    expected_sessions: Mapping[str, SessionState]
+    evidence: tuple[RecoveryEvidence, ...]
+    usage_settlements: tuple[ApprovalUsageSettlement, ...]
+    use_id: str | None = None
+    closed_at: datetime | None = None
+    end_reason: EndReason | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("expected_commands", "expected_sessions", "evidence", "usage_settlements"):
+            object.__setattr__(self, name, _freeze(getattr(self, name)))
+        if not self.settlement_digest:
+            raise ValueError("정산 요약값은 비어 있을 수 없다")
+        if self.use_id is None:
+            if self.closed_at is not None or self.end_reason is not None:
+                raise ValueError("공용형 복구에는 점유 종료가 없다")
+        elif self.closed_at is None or self.end_reason is None:
+            raise ValueError("대여형 복구에는 종료 시각과 사유가 필요하다")
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryCompletion:
+    settlement: RecoverySettlement
+    completed_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryRecord:
+    recovery_id: str
+    node_id: str
+    internal_request_ids: tuple[str, ...]
+    command_ids: tuple[str, ...]
+    use_id: str | None
+    created_at: datetime
+    status: RecoveryStatus
+    evidence: tuple[RecoveryEvidence, ...] = ()
+    completion: RecoveryCompletion | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("internal_request_ids", "command_ids", "evidence"):
+            object.__setattr__(self, name, _freeze(getattr(self, name)))
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreBundle:
+    """기기 하나의 일관된 DB 읽기 시점. 내부 조회이며 호스트 응답이 아니다."""
+
+    node: NodeInfo
+    read_at: datetime
+    requests: tuple[PendingRequestRecord, ...] = ()
+    commands: tuple[CommandRecord, ...] = ()
+    sessions: tuple[RestoredSession, ...] = ()
+    approval_usages: tuple[ApprovalUsageRecord, ...] = ()
+    recoveries: tuple[RecoveryRecord, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name in ("requests", "commands", "sessions", "approval_usages", "recoveries"):
+            object.__setattr__(self, name, _freeze(getattr(self, name)))
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryReadiness:
+    """상태 관리 → API. 다른 계정의 점유 정보와 사용자 ID 를 담지 않는다."""
+
+    node_id: str
+    recovery_id: str | None
+    status: RecoveryStatus
+    blockers: tuple[RecoveryBlocker, ...]
+    evidence: tuple[RecoveryEvidence, ...]
+    checked_at: datetime
+
+    def __post_init__(self) -> None:
+        for name in ("blockers", "evidence"):
+            object.__setattr__(self, name, _freeze(getattr(self, name)))
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryApprovalResult:
+    recovery_id: str
+    outcome: RecoveryOutcome
+    reason_code: RecoveryReason
+    readiness: RecoveryReadiness
+    completed_at: datetime | None = None
