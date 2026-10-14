@@ -72,7 +72,7 @@
 - 실행 결과의 정산 (`core-execution`)
 - 반납 검사 결과의 처리 (`core-release`)
 - 공용 조명의 이탈 판단 (`core-shared-light`)
-- 보고의 형식, 연결, 순번, 최신성 검사 (`iot-mqtt-gateway`)
+- 보고의 형식, 연결, 순번, 최신성 검사 (IOT 담당의 별도 작업)
 
 ## 5. 예외 상황
 
@@ -97,8 +97,8 @@
 
 ## 7. 가정
 
-- 미결: `NodeEventSink`의 구현 담당. architecture.md §4는 제공 영역을 CORE로만 쓴다. 이 spec은 IOT와 장애 반영을 맡은 상태 관리가 구현한다고 가정한다.
-- 미결: 시각 오차 허용값. 관측의 최신성 검사는 `iot-mqtt-gateway`가 한다. 이 spec은 넘겨받은 보고를 신선한 보고로 본다.
+- 미결: `NodeEventSink`의 구현 담당. architecture.md §4는 제공 영역을 CORE로만 쓴다. 이 spec은 장애 반영을 맡은 상태 관리가 CORE 쪽 수신 접점을 구현한다고 가정한다. IOT 구현 담당을 맡는다는 뜻은 아니다.
+- 관측의 형식과 최신성 검사는 IOT의 계약을 따른다. 이 spec은 검증을 마친 보고를 받는다. 시각 오차는 근접 추정 담당에게 맡기며 이 작업에서 결정하지 않는다.
 - 선행 의존: 실행 결과는 `core-execution`, 반납 검사는 `core-release`, 복구 건은 `core-fault-recovery`, 이탈 관측은 `core-shared-light`를 쓴다. 연결할 내부 접점과 조립 순서는 담당자가 정한다. fake 검증만으로 실제 연결의 완료를 대신하지 않는다.
 
 ## 8. 테스트
