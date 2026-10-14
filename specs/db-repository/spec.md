@@ -3,7 +3,7 @@
 - 상태: 작성 중
 - 담당: paiwhy (DB)
 - 요구사항: FR-01, FR-03, FR-05, FR-13, FR-14, FR-15, FR-19, FR-21, FR-22, NFR-03, NFR-08
-- 따르는 결정: #15, #17, #20, #24, #27, #28, #29, #31, #32, #33, #34, #39, #44
+- 따르는 결정: #15, #17, #20, #24, #27, #28, #29, #31, #32, #33, #34, #39, #40, #41, #42, #44, #54
 
 ## 1. 왜
 
@@ -32,13 +32,13 @@
 
 | 테이블 | 이 작업에서 쓰는가 | 비고 |
 |---|---|---|
-| `user`, `beacon`, `place`, `node` | 읽기, 발표 반영 | 계정당 활성 비콘은 하나다 (7절 #42) |
+| `user`, `beacon`, `place`, `node` | 읽기, 발표 반영 | 계정당 활성 비콘은 하나다 (6절 #42). `node`에는 `anchor_params`를 두지 않는다 (6절 #40) |
 | `access_policy`, `policy_revision` | 읽기 | 정책 변경 쓰기는 후속 작업이다 (#30) |
 | `approval` | 읽기, 신청·결정 쓰기 | `create_approval_request`·`decide_approval`로 쓴다 (#28) |
 | `approval_usage` | 예약 | 소진·보류·반환은 후속 작업이다 (#17) |
 | `request` | 연결, 판정 저장 | 외부 `request_id`는 비울 수 있다 (7절 #15) |
-| `rssi_observation` | 저장, 조회 | `label` 컬럼을 두지 않는다. `collection_session_id`로 수집 회차를 식별한다 (7절 #41) |
-| `collection_session` | 진행 중 회차 조회 | 회차 쓰기는 후속 작업이다 (#41) |
+| `rssi_observation` | 저장, 조회 | `label` 컬럼을 두지 않는다. `collection_id`로 수집 회차를 식별한다 (6절 #41) |
+| `collection_run` | 진행 중 회차 조회 | `label`, `started_at`, `ended_at`을 둔다. 회차 쓰기는 후속 작업이다 (#41) |
 | `use_session` | 예약, 조회 | `rental_due_at`, `closed_at`, 생성 당시 종료 정책 |
 | `node_command` | 컬럼 전체를 만든다. 행 쓰기는 안 한다 | `ExecutionStore`(`db-execution-store`)가 쓴다. 지금 전체 컬럼을 만들어 후속 마이그레이션을 없앤다 |
 | `recovery` | 만들기만 한다 | 복원 조회와 복구 정산 후속 작업 (#17, #20) |
@@ -65,6 +65,8 @@
 - 초과시간은 저장하지 않는다. `rental_due_at`과 `closed_at`만 저장한다 (FR-19).
 - 등록된 활성 비콘의 프레임은 기기 신뢰 여부와 관계없이 저장한다. 신뢰로 거르는 일은 근접 추정이 한다 (FR-05, #31, #39).
 - `rssi_observation`에는 `(node_id, session_id, seq, beacon)` UNIQUE를 둔다. 같은 조합은 한 번만 저장한다 (FR-05).
+- 수집 회차 조회는 `started_at <= frame_ts < ended_at`로 한다. 시작은 포함하고 끝은 포함하지 않는다. 회차 찾기와 관측 저장은 같은 트랜잭션에서 한다 (FR-05, #41).
+- `node`에는 근접 파라미터(`anchor_params`)를 저장하지 않는다. 장소별 모델 파일이 보존한다 (#40).
 - 임계값과 시간 값은 코드 상수로 쓰지 않는다. 설정에서 받는다 (`AGENTS.md`).
 
 ## 4. 경계
@@ -119,7 +121,8 @@
 | 대상 기기가 `AVAILABLE`이 아니다 (`FAULT` 포함) | `DEVICE_BUSY`를 반환한다. | `test_FR19_reserve_not_available` |
 | 등록하지 않았거나 비활성인 비콘의 RSSI가 온다 | 저장하지 않는다. 예외를 던지지 않는다. | `test_FR05_save_rssi_unknown_beacon` |
 | 등록하지 않은 기기의 RSSI가 온다 | 저장하지 않는다. 예외를 던지지 않는다. | `test_FR05_save_rssi_unknown_node` |
-| 비콘에 진행 중인 수집 회차가 있을 때 RSSI가 온다 | 관측 행에 그 회차 ID를 함께 저장한다. | `test_FR05_save_rssi_collection_session` |
+| 비콘에 진행 중인 수집 회차가 있을 때 RSSI가 온다 | 관측 행에 그 회차 ID를 함께 저장한다. | `test_FR05_save_rssi_collection_run` |
+| 관측 시각이 수집 회차의 끝 시각과 같다 | 끝은 미포함이다. 그 회차에 연결하지 않는다. | `test_FR05_save_rssi_collection_run_end_exclusive` |
 | 같은 `(node_id, session_id, seq, beacon)`의 RSSI가 다시 온다 | 한 번만 저장한다. 예외를 던지지 않는다. | `test_FR05_save_rssi_duplicate` |
 | 저장된 값보다 오래된 시각으로 `touch_node()`를 호출한다 | `last_seen_at`을 바꾸지 않는다. | `test_FR13_touch_node_older` |
 | 신뢰한 기기가 다른 기능이나 점유 방식으로 발표한다 | 신뢰 상태를 `discovered`로 되돌린다. 같은 트랜잭션에서 감사 로그를 남긴다. | `test_FR13_announce_changed` |
@@ -156,14 +159,14 @@
 - `approval` 테이블에는 `architecture.md`가 명시하지 않은 구현 컬럼으로 `created_at`, `pending_until`을 둔다 — `create_approval_request()`의 멱등 판단과 만료 계산에 필요하다 (`architecture.md` §6 "저장 필드와 스키마는 구현할 때 구체화한다").
 - `node_command`는 `CommandRecord`의 모든 필드에 대응하는 컬럼을 지금 만든다 — 후속 작업이 컬럼을 추가하면서 마이그레이션하지 않도록 한다. 행 쓰기 함수는 `db-execution-store`가 만든다.
 - 테스트 데이터는 `tests/db/`의 fixture가 SQL로 직접 넣는다 — `AdminRepository`의 DB 구현은 아직 없다. `#30`의 결정은 `Protocol`까지만 반영됐고, 구현은 `db-approval-admin`이 한다.
+- 공용형 기기는 `reserve_if_free()`에서 ⑤⑥과 세션 생성을 건너뛴다. 승인 사용분만 예약한다. `approval_id`가 `None`이면 아무것도 쓰지 않고 `RESERVED`를 반환한다 (#27).
+- 기간형이고 `max_uses`가 NULL이어도 요청별 사용분 행을 만든다. 횟수 검사만 생략한다 (#27).
+- `node`에 `anchor_params` 컬럼을 두지 않는다. `NodeInfo`에서 필드 자체가 빠졌다. 근접 파라미터는 장소별 모델 파일이 보존하고, DB는 판정에 적용한 모델·보정 버전만 기록한다 (#40, PR #54).
+- `rssi_observation`은 `collection_id`로 수집 회차를 연결한다. 회차는 `collection_run` 테이블(`collection_id`, `beacon_id`, `label`, `started_at`, `ended_at`)에 둔다. `label`은 관측이 아니라 회차에 있다 (#41, PR #54).
+- 계정당 활성 비콘은 하나다. DB는 `(user_id) WHERE is_active=1` 부분 UNIQUE 인덱스로 막는다. `beacons_of()`는 활성 비콘 0개 또는 1개만 반환한다 (#42, PR #54).
 
 ## 7. 가정
 
-- 공용형 기기는 `reserve_if_free()`에서 ⑤⑥과 세션 생성을 건너뛴다. 승인 사용분만 예약한다. `approval_id`가 `None`이면 아무것도 쓰지 않고 `RESERVED`를 반환한다 — #27
-- 기간형이고 `max_uses`가 NULL이어도 요청별 사용분 행을 만든다. 횟수 검사만 생략한다 — #27
-- `node.anchor_params`에는 값을 쓰지 않는다. `nodes()`는 빈 `anchor_params`를 반환한다. 컬럼은 데이터 계약에서 지울 때까지 NULL로 둔다 — #40
-- `rssi_observation`에는 `collection_session_id`를 둔다. 같은 비콘의 회차 시간은 겹치지 않는다 — #41
-- 계정당 활성 비콘은 하나다. DB는 `(user_id) WHERE is_active=1` 부분 UNIQUE 인덱스로 막는다 — #42
 - `request.request_id`는 NULL을 허용한다. 완료 후 20분이 지나면 후속 작업이 값을 비운다. 이 작업은 비우는 처리를 만들지 않는다 — #15
 - `recovery` 테이블은 복구 건 ID, 기기와 명령·세션 연결, 근거 참조, 승인 기록, 정산 결과, 정산 내용 요약값을 담는다 — #17, #20
 

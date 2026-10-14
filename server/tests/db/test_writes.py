@@ -200,20 +200,36 @@ def test_FR05_save_rssi_duplicate(conn, repo):
     assert conn.execute("SELECT COUNT(*) AS c FROM rssi_observation").fetchone()["c"] == 1
 
 
-def test_FR05_save_rssi_collection_session(conn, repo):
+def test_FR05_save_rssi_collection_run(conn, repo):
     insert_user(conn)
     insert_beacon(conn, beacon_id="b1")
     insert_place(conn)
     insert_node(conn)
     conn.execute(
-        "INSERT INTO collection_session (collection_session_id, beacon_id, started_at, ended_at) "
-        "VALUES ('cs1', 'b1', '2025-12-31T00:00:00+00:00', '2026-12-31T00:00:00+00:00')"
+        "INSERT INTO collection_run (collection_id, beacon_id, label, started_at, ended_at) "
+        "VALUES ('cr1', 'b1', '1-front', '2025-12-31T00:00:00+00:00', '2026-12-31T00:00:00+00:00')"
     )
 
     repo.save_rssi(_frame())
 
-    row = conn.execute("SELECT collection_session_id FROM rssi_observation").fetchone()
-    assert row["collection_session_id"] == "cs1"
+    row = conn.execute("SELECT collection_id FROM rssi_observation").fetchone()
+    assert row["collection_id"] == "cr1"
+
+
+def test_FR05_save_rssi_collection_run_end_exclusive(conn, repo):
+    insert_user(conn)
+    insert_beacon(conn, beacon_id="b1")
+    insert_place(conn)
+    insert_node(conn)
+    conn.execute(
+        "INSERT INTO collection_run (collection_id, beacon_id, label, started_at, ended_at) "
+        "VALUES ('cr1', 'b1', 'none', '2025-12-31T00:00:00+00:00', '2026-01-01T00:00:00+00:00')"
+    )
+
+    repo.save_rssi(_frame(received_at=NOW))
+
+    row = conn.execute("SELECT collection_id FROM rssi_observation").fetchone()
+    assert row["collection_id"] is None
 
 
 def test_FR05_save_rssi_trusts_regardless_of_node_trust(conn, repo):

@@ -136,7 +136,6 @@ class SqliteRepository:
             exclusive_group=row["exclusive_group"],
             last_seen_at=parse_iso(row["last_seen_at"]) if row["last_seen_at"] else None,
             release_policy=from_json(row["release_policy"]),
-            anchor_params=from_json(row["anchor_params"]) if row["anchor_params"] else {},
             session_id=row["session_id"],
             session_first_seen_at=(
                 parse_iso(row["session_first_seen_at"]) if row["session_first_seen_at"] else None
@@ -343,22 +342,25 @@ class SqliteRepository:
         if node_row is None:
             return
         beacon_id = beacon_row["beacon_id"]
-        collection_row = self._conn.execute(
-            "SELECT collection_session_id FROM collection_session "
-            "WHERE beacon_id = ? AND started_at <= ? AND (ended_at IS NULL OR ended_at >= ?)",
-            (beacon_id, iso(frame.received_at), iso(frame.received_at)),
-        ).fetchone()
-        collection_session_id = collection_row["collection_session_id"] if collection_row else None
-        self._conn.execute(
-            "INSERT OR IGNORE INTO rssi_observation "
-            "(obs_id, node_id, beacon_id, rssi, frame_ts, received_at, sent_at, session_id, seq, "
-            "collection_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                new_id(), frame.node_id, beacon_id, frame.rssi, iso(frame.frame_ts),
-                iso(frame.received_at), iso(frame.sent_at), frame.session_id, frame.seq,
-                collection_session_id,
-            ),
-        )
+        with immediate_transaction(self._conn):
+            # 구간은 started_at <= frame_ts < ended_at다(시작 포함, 끝 미만). 회차 찾기와 관측
+            # 저장을 같은 트랜잭션에서 한다 (architecture.md §4 "RSSI 수집 회차").
+            collection_row = self._conn.execute(
+                "SELECT collection_id FROM collection_run "
+                "WHERE beacon_id = ? AND started_at <= ? AND (ended_at IS NULL OR ended_at > ?)",
+                (beacon_id, iso(frame.frame_ts), iso(frame.frame_ts)),
+            ).fetchone()
+            collection_id = collection_row["collection_id"] if collection_row else None
+            self._conn.execute(
+                "INSERT OR IGNORE INTO rssi_observation "
+                "(obs_id, node_id, beacon_id, rssi, frame_ts, received_at, sent_at, session_id, seq, "
+                "collection_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    new_id(), frame.node_id, beacon_id, frame.rssi, iso(frame.frame_ts),
+                    iso(frame.received_at), iso(frame.sent_at), frame.session_id, frame.seq,
+                    collection_id,
+                ),
+            )
 
     # ── ② 발표와 기기 연결 (FR-04, FR-13) ─────────────────────────────
 

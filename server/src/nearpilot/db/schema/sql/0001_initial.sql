@@ -41,7 +41,6 @@ CREATE TABLE node (
     device_state TEXT NOT NULL,
     exclusive_group TEXT,
     release_policy TEXT NOT NULL DEFAULT '{}',
-    anchor_params TEXT,
     last_seen_at TEXT,
     session_id TEXT,
     session_first_seen_at TEXT
@@ -99,16 +98,17 @@ CREATE INDEX approval_usage_by_approval ON approval_usage (approval_id);
 CREATE INDEX approval_usage_by_request ON approval_usage (internal_request_id);
 
 -- 진행 중 수집 회차 조회만 이 작업에서 쓴다. 회차 쓰기는 db-approval-admin이 한다 (#41).
-CREATE TABLE collection_session (
-    collection_session_id TEXT PRIMARY KEY,
+CREATE TABLE collection_run (
+    collection_id TEXT PRIMARY KEY,
     beacon_id TEXT NOT NULL REFERENCES beacon (beacon_id),
+    label TEXT,
     started_at TEXT NOT NULL,
     ended_at TEXT
 );
 
-CREATE INDEX collection_session_by_beacon ON collection_session (beacon_id, started_at);
+CREATE INDEX collection_run_by_beacon ON collection_run (beacon_id, started_at);
 
--- label 컬럼을 두지 않는다. collection_session_id로 수집 회차를 식별한다 (#41, 담당자 지시).
+-- label은 rssi_observation에 두지 않는다. 연결한 수집 회차(collection_run.label)에서 읽는다 (#41).
 CREATE TABLE rssi_observation (
     obs_id TEXT PRIMARY KEY,
     node_id TEXT NOT NULL REFERENCES node (node_id),
@@ -119,7 +119,7 @@ CREATE TABLE rssi_observation (
     sent_at TEXT NOT NULL,
     session_id TEXT NOT NULL,
     seq INTEGER NOT NULL,
-    collection_session_id TEXT REFERENCES collection_session (collection_session_id),
+    collection_id TEXT REFERENCES collection_run (collection_id),
     UNIQUE (node_id, session_id, seq, beacon_id)
 );
 
