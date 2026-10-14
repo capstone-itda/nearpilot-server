@@ -186,6 +186,53 @@ class CommandOutcome(StrEnum):
     UNKNOWN = "unknown"  # 시간 초과·연결 끊김. 미실행으로 간주하지 않음 → FAULT
 
 
+class NodeResultState(StrEnum):
+    """기기가 `result` 토픽으로 보고한 상태 (architecture.md §5 MQTT 5절).
+
+    기기 보고 값을 그대로 옮긴다. 서버가 정리한 전송 결과는 `CommandOutcome` 이다.
+    """
+
+    ACCEPTED = "accepted"  # 접수 기록을 저장했다. 완료가 아니다.
+    RUNNING = "running"  # 물리 동작을 시작했다. 완료가 아니다.
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    UNKNOWN = "unknown"  # 기기가 실행·완료 여부를 증명하지 못했다. 서버 타임아웃과 구분한다.
+    REJECTED = "rejected"  # 접수 검사에서 거부했다. 사유는 error_code 에 있다.
+
+
+class RejectCode(StrEnum):
+    """`result.state=rejected` 의 `error_code` (architecture.md §5 MQTT 4절).
+
+    기기 통신의 근거다. 외부 응답의 `ReasonCode` 와 다른 값이다.
+    """
+
+    SESSION_MISMATCH = "SESSION_MISMATCH"
+    COMMAND_EXPIRED = "COMMAND_EXPIRED"
+    CLOCK_UNVERIFIED = "CLOCK_UNVERIFIED"
+    UNSUPPORTED_ACTION = "UNSUPPORTED_ACTION"
+    COMMAND_ID_CONFLICT = "COMMAND_ID_CONFLICT"
+    INVALID_MESSAGE = "INVALID_MESSAGE"
+    STORAGE_ERROR = "STORAGE_ERROR"
+    DEVICE_BUSY = "DEVICE_BUSY"  # 다른 구동 명령이 진행 중이다. 이번 명령의 미접수·미실행이다.
+
+
+class ActuatorState(StrEnum):
+    """`status` 의 `physical_state.actuator_state` (architecture.md §5 MQTT 3절)."""
+
+    IDLE = "idle"
+    BUSY = "busy"
+    UNKNOWN = "unknown"
+
+
+class SafetyCheckOutcome(StrEnum):
+    """반납 검사 결과 (FR-07, FR-20, architecture.md §4 반납 검사와 종료)."""
+
+    PASSED = "passed"  # 검사 기준 충족. 종료 결정은 CORE 가 한다.
+    NOT_READY = "not_ready"  # 종료 조건 미충족 (예: 문 열림). 정상 대기다.
+    FAULT = "fault"  # 기기가 고장을 확인했다. 즉시 격리한다.
+    UNKNOWN = "unknown"  # 기기가 결과를 확인하지 못했다. 통과로 보지 않는다.
+
+
 class ExecutionStatus(StrEnum):
     """요청 하나의 저장된 실행 진행 상태 (#16, architecture.md §4).
 

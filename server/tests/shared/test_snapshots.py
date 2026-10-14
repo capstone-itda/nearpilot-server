@@ -8,11 +8,13 @@ import operator
 
 import pytest
 
-from nearpilot.shared.enums import Action, Capability, DeviceState, Occupancy, Step, TrustState
+from nearpilot.shared.enums import Action, ActuatorState, Capability, DeviceState, Occupancy, Step, TrustState
 from nearpilot.shared.enums import SessionState
 from nearpilot.shared.models import (
-    AuditEvent, NodeInfo, NodeStatus, ProximityResult, ReserveRequest, UseSession,
+    AuditEvent, CloseResult, NodeInfo, NodeResult, NodeStatus, PhysicalState, ProximityResult,
+    ReserveRequest, SafetyCheckResult, CheckCriteria, UseSession,
 )
+from nearpilot.shared.enums import EndReason, NodeResultState, SafetyCheckOutcome
 
 
 NOW = datetime(2026, 10, 1)
@@ -21,6 +23,15 @@ NODE = NodeInfo(
     TrustState.TRUSTED, DeviceState.AVAILABLE, None, None,
 )
 RESERVATION = ReserveRequest("r1", "u1", "locker-1", Action.OPEN, None)
+PHYSICAL = PhysicalState(True, None, ActuatorState.IDLE, False)
+STATUS = NodeStatus("locker-1", NOW, "sess-1", 1, NOW, NOW, PHYSICAL)
+RESULT = NodeResult(
+    "locker-1", "sess-1", 1, NOW, NOW, "cmd-1", "evt-1", NodeResultState.SUCCEEDED, NOW,
+)
+CHECK = SafetyCheckResult(
+    "locker-1", "sess-1", 1, NOW, NOW, "chk-1", "evt-2",
+    CheckCriteria("locker-door", 1), NOW, SafetyCheckOutcome.PASSED,
+)
 
 
 @pytest.mark.parametrize(
@@ -31,7 +42,10 @@ RESERVATION = ReserveRequest("r1", "u1", "locker-1", Action.OPEN, None)
         (ProximityResult({}, NOW, NOW, "m0", "c0"), "posteriors"),
         (RESERVATION, "release_policy"),
         (UseSession("s1", "r1", "locker-1", SessionState.RESERVED), "release_policy"),
-        (NodeStatus("locker-1", NOW, True), "detail"),
+        (STATUS, "detail"),
+        (RESULT, "detail"),
+        (CHECK, "evidence"),
+        (CloseResult("s1", NOW, EndReason.RELEASE, "chk-1"), "evidence"),
         (AuditEvent("e1", Step.CLOSE, {}), "payload"),
     ],
 )

@@ -116,8 +116,11 @@ def test_fr19_fake_store_satisfies_protocol():
         def begin_close(self, use_id, reason):
             return StoreResult(StoreOutcome.APPLIED)
 
-        def finish_close(self, use_id, closed_at, evidence):
+        def finish_close(self, use_id, closed_at, check_id, evidence):
             return StoreResult(StoreOutcome.APPLIED)
+
+        def close_result(self, use_id):
+            return None
 
         def execution(self, internal_request_id):
             return record
