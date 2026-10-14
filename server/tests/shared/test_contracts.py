@@ -20,6 +20,12 @@ def test_fr18_internal_error_reason_is_separate_from_recheck_failed():
     assert ReasonCode.INTERNAL_ERROR is not ReasonCode.RECHECK_FAILED
 
 
+def test_fr22_capacity_exceeded_reason_is_separate_from_request_conflict():
+    assert ReasonCode.CAPACITY_EXCEEDED.value == "CAPACITY_EXCEEDED"
+    assert ReasonCode.CAPACITY_EXCEEDED is not ReasonCode.REQUEST_ID_CONFLICT
+    assert ReasonCode.CAPACITY_EXCEEDED is not ReasonCode.INTERNAL_ERROR
+
+
 @pytest.mark.parametrize(
     ("raw", "kind", "node_id"),
     [
