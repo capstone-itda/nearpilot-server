@@ -114,7 +114,13 @@ class Repository(Protocol):
         ...
 
     # ① 비콘
-    def beacons_of(self, user_id: str) -> Sequence[BeaconKey]: ...
+    def beacons_of(self, user_id: str) -> Sequence[BeaconKey]:
+        """본 계정의 활성 비콘만 반환한다. 개수는 0 또는 1 이다 (FR-01, FR-15, #42).
+
+        비활성 비콘의 등록 이력은 반환하지 않는다. 활성 비콘이 없으면 빈 시퀀스다.
+        여러 활성 비콘을 발견하면 저장 불변 조건 위반이다. 임의로 하나를 골라 반환하지 않는다.
+        """
+        ...
 
     def save_rssi(self, frame: RssiFrame) -> None:
         """등록된 활성 비콘의 프레임만 저장한다. 그 밖의 비콘은 저장하지 않는다 (FR-05).
@@ -390,6 +396,8 @@ class ProximityEstimator(Protocol):
         TRUSTED 기기는 FAULT·오프라인·다른 기능이어도 전체 상태에 넣고 '어느 기기 앞도 아님'을 더한다.
         후보 확률을 다시 정규화하지 않는다. 후보 밖 확률을 후보에 더하지 않는다. 합은 1 이하다.
         후보와 전체 기기는 같은 장소의 조회다. 관계가 맞지 않으면 실행 허가에 쓸 결과를 만들지 않는다.
+        beacons 는 Repository.beacons_of() 가 반환한 본 계정의 활성 비콘 하나다 (#42).
+        여러 비콘의 확률을 합치거나 최댓값으로 고르지 않는다. 인자 타입은 Sequence 를 유지한다.
 
         판정은 명시 지정 요청에도 ② 의 전체 후보를 넘긴다 (#26). 지정 대상은 인자로 받지 않는다.
         같은 입력에는 지정 여부와 상관없이 같은 출력을 낸다 (NFR-09).
