@@ -22,6 +22,7 @@ from nearpilot.shared.enums import (
     EndReason,
     ExecutionStatus,
     ReasonCode,
+    TrustState,
 )
 from nearpilot.shared.models import (
     RecoveryRecord,
@@ -29,6 +30,15 @@ from nearpilot.shared.models import (
     RestoreBundle,
     RecoveryReadiness,
     RecoveryApprovalResult,
+    ApprovalRequest,
+    ApprovalRequestResult,
+    ApprovalDecisionRequest,
+    ApprovalDecisionResult,
+    DecisionRecord,
+    AccountRegistration,
+    BeaconRegistration,
+    PlaceAssignment,
+    AdminWriteResult,
     Account,
     Approval,
     AuditEvent,
@@ -95,9 +105,13 @@ class Repository(Protocol):
         """
         ...
 
-    def save_decision(
-        self, decision: Decision, context: Mapping[str, Any], settings_version: str
-    ) -> None: ...
+    def save_decision(self, decision: Decision, record: DecisionRecord) -> StoreResult:
+        """판정과 적용값을 internal_request_id 별로 한 번 저장한다 (FR-22).
+
+        같은 판정·기록은 ALREADY_APPLIED, 다른 내용은 CONFLICT·CONTENT_CONFLICT다.
+        외부 request_id 보존기간과 관계없이 기존 기록을 보존한다. 저장 장애는 StoreError 로 알린다.
+        """
+        ...
 
     # ① 비콘
     def beacons_of(self, user_id: str) -> Sequence[BeaconKey]: ...
@@ -143,11 +157,33 @@ class Repository(Protocol):
         self, user_id: str, node_id: str, action: Action, policy_version: int, now: datetime
     ) -> Approval | None: ...
 
+    def create_approval_request(self, req: ApprovalRequest) -> ApprovalRequestResult:
+        """요청자·기기·동작·정책 버전이 같고 유효한 pending 이 있으면 기존 신청을 반환한다 (FR-03).
+
+        새 신청의 pending_until 은 created_at + settings.approval_pending_ttl_sec 다.
+        중복 호출은 시각을 연장하지 않는다. 만료한 신청은 새 신청을 막지 않는다.
+        """
+        ...
+
+    def decide_approval(self, req: ApprovalDecisionRequest) -> ApprovalDecisionResult:
+        """pending·현재 정책 버전·대기 만료를 조건부로 검사하고 결정 하나만 반영한다 (FR-03).
+
+        승인 권한은 CORE 가 검사한다. approved 의 valid_until 은 decided_at 에 생성 당시
+        정책 리비전의 approval_ttl_sec 를 더한다. 이미 결정·버전 불일치·대기 만료를 구분한다.
+        권한 검사 뒤 같은 승인 ID·결정자·결정의 재호출은 ALREADY_APPLIED 다.
+        호출 시각은 비교하지 않는다. applied 는 False, succeeded 는 True 다.
+        기존 상태와 valid_until 을 반환한다. 결정·유효시간·감사를 다시 쓰지 않는다.
+        반대 결정 또는 다른 결정자의 호출은 ALREADY_DECIDED 다. 기존 기록을 보존한다.
+        """
+        ...
+
     # ⑤⑥ — BEGIN IMMEDIATE 한 트랜잭션 (FR-19)
     def reserve_if_free(self, req: ReserveRequest) -> ReserveResult:
         """⑤⑥ 검사와 승인 사용분 예약은 BEGIN IMMEDIATE 하나에서 한다 (FR-19).
 
         본인 ACTIVE 점유이면 요청·계정·기기 연결을 검사하고 REOPERATING 과 기존 use_id 를 반환한다.
+        공용형은 ⑤⑥·세션 생성을 생략하고 승인 사용분만 예약한다. open·승인 없음은 쓰기 없이 RESERVED 다.
+        무제한 기간형 승인도 요청별 사용분을 만든다. 횟수 검사만 생략한다.
         이번 요청의 사용분만 예약한다. 새 세션을 만들거나 rental_due_at 을 바꾸지 않는다.
         타인 점유 또는 RESERVED·CLOSING·FAULT 는 DEVICE_BUSY 다. 같은 요청의 중복은 기존 연결을 반환한다.
         """
@@ -290,7 +326,12 @@ class ExecutionStore(Protocol):
 
 @runtime_checkable
 class AuditLog(Protocol):
-    """DB → CORE 감사 로그 (FR-22). 테이블 + JSONL."""
+    """DB → CORE 감사 로그 (FR-22). 테이블이 원본이고 JSONL 은 커밋 뒤 사본이다.
+
+    호출자가 UUID event_id 를 만든다. DB 는 같은 ID 를 한 번만 저장한다.
+    JSONL 실패는 저장 오류가 아니다. 커밋 순서로 내보내고 원본 테이블에서 다시 만들 수 있다.
+    평가 스크립트는 테이블을 읽는다.
+    """
 
     def append(self, event: AuditEvent) -> None: ...
 
@@ -435,3 +476,39 @@ class RecoveryService(Protocol):
     def readiness(self, user_id: str, node_id: str) -> RecoveryReadiness: ...
 
     def approve(self, user_id: str, node_id: str, recovery_id: str) -> RecoveryApprovalResult: ...
+
+
+@runtime_checkable
+class AdminRepository(Protocol):
+    """DB → 관리 기능·시드 스크립트의 쓰기 접점 (FR-01, FR-12A).
+
+    API 가 직접 호출하지 않는다. 인증·권한 검사는 CORE 관리 기능이 맡는다.
+    각 쓰기는 감사와 함께 한 트랜잭션으로 반영한다. FAULT 복구는 ExecutionStore 로 한다.
+    """
+
+    def register_account(self, req: AccountRegistration) -> AdminWriteResult: ...
+
+    def register_beacon(self, req: BeaconRegistration) -> AdminWriteResult:
+        """다른 계정의 동일 BeaconKey 는 BEACON_ALREADY_REGISTERED 로 거부한다 (FR-01).
+
+        계정당 활성 비콘은 하나 이하다. is_active=True 이면 같은 계정의 다른 비콘을 끈다.
+        중복 검사·기존 비콘 비활성화·등록 또는 활성화·감사는 한 트랜잭션으로 반영한다.
+        거부하거나 저장에 실패하면 기존 활성 비콘을 유지한다.
+        is_active=False 인 등록은 같은 계정의 다른 비콘을 끄지 않는다.
+        """
+        ...
+
+    def set_node_trust(self, node_id: str, trust_state: TrustState) -> AdminWriteResult:
+        """신뢰 상태만 바꾼다. device_state·점유 세션은 바꾸지 않는다."""
+        ...
+
+    def assign_place(self, req: PlaceAssignment) -> AdminWriteResult:
+        """장소를 등록하고 기기를 연결한다. 점유 상태는 바꾸지 않는다."""
+        ...
+
+    def set_policy(self, revision: PolicyRevision, expected_version: int | None) -> AdminWriteResult:
+        """새 리비전 추가와 current_version 갱신은 원자적이다. 과거 리비전은 바꾸지 않는다.
+
+        expected_version 은 현재 버전의 기대값이다. 정책 최초 등록이면 None 이다.
+        """
+        ...
