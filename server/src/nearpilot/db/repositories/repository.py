@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from nearpilot.db.repositories._common import from_json, immediate_transaction, iso, new_id, parse_iso, to_json
 from nearpilot.shared.enums import (
     AccessMode,
     Action,
+    ApprovalDecisionReason,
     ApprovalMode,
     ApprovalStatus,
     Capability,
@@ -34,6 +35,10 @@ from nearpilot.shared.enums import (
 from nearpilot.shared.models import (
     Account,
     Approval,
+    ApprovalDecisionRequest,
+    ApprovalDecisionResult,
+    ApprovalRequest,
+    ApprovalRequestResult,
     BeaconKey,
     Decision,
     DecisionRecord,
@@ -404,3 +409,96 @@ class SqliteRepository:
             "WHERE node_id = ? AND (session_id IS NULL OR session_id != ?)",
             (session_id, iso(first_seen_at), node_id, session_id),
         )
+
+    # ── 승인 신청과 결정 (FR-03, FR-14) ────────────────────────────────
+
+    def create_approval_request(self, req: ApprovalRequest) -> ApprovalRequestResult:
+        with immediate_transaction(self._conn):
+            existing = self._conn.execute(
+                "SELECT approval_id, created_at, pending_until FROM approval "
+                "WHERE requester_user_id = ? AND node_id = ? AND action = ? AND policy_version = ? "
+                "AND status = 'pending' AND pending_until > ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (req.requester_user_id, req.node_id, req.action.value, req.policy_version, iso(req.created_at)),
+            ).fetchone()
+            if existing is not None:
+                return ApprovalRequestResult(
+                    approval_id=existing["approval_id"],
+                    status=ApprovalStatus.PENDING,
+                    created_at=parse_iso(existing["created_at"]),
+                    pending_until=parse_iso(existing["pending_until"]),
+                    is_new=False,
+                )
+            approval_id = new_id()
+            pending_until = req.created_at + timedelta(seconds=req.settings.approval_pending_ttl_sec)
+            self._conn.execute(
+                "INSERT INTO approval (approval_id, node_id, requester_user_id, internal_request_id, "
+                "approved_by_user_id, action, policy_id, policy_version, status, created_at, "
+                "pending_until, valid_until, used_count) "
+                "VALUES (?, ?, ?, ?, NULL, ?, ?, ?, 'pending', ?, ?, NULL, 0)",
+                (
+                    approval_id, req.node_id, req.requester_user_id, req.internal_request_id,
+                    req.action.value, req.policy_id, req.policy_version,
+                    iso(req.created_at), iso(pending_until),
+                ),
+            )
+            return ApprovalRequestResult(
+                approval_id=approval_id,
+                status=ApprovalStatus.PENDING,
+                created_at=req.created_at,
+                pending_until=pending_until,
+                is_new=True,
+            )
+
+    def decide_approval(self, req: ApprovalDecisionRequest) -> ApprovalDecisionResult:
+        with immediate_transaction(self._conn):
+            row = self._conn.execute(
+                "SELECT a.status, a.valid_until, a.approved_by_user_id, a.policy_id, a.policy_version, "
+                "a.pending_until, a.node_id, pr.approval_ttl_sec, ap.current_version "
+                "FROM approval a "
+                "JOIN policy_revision pr ON pr.policy_id = a.policy_id AND pr.version = a.policy_version "
+                "JOIN access_policy ap ON ap.policy_id = a.policy_id "
+                "WHERE a.approval_id = ?",
+                (req.approval_id,),
+            ).fetchone()
+            if row is None:
+                return ApprovalDecisionResult(
+                    applied=False, reason=ApprovalDecisionReason.NOT_FOUND, status=None, valid_until=None
+                )
+            if row["status"] != "pending":
+                current_status = ApprovalStatus(row["status"])
+                if current_status == req.decision and row["approved_by_user_id"] == req.decided_by_user_id:
+                    return ApprovalDecisionResult(
+                        applied=False,
+                        reason=ApprovalDecisionReason.ALREADY_APPLIED,
+                        status=current_status,
+                        valid_until=parse_iso(row["valid_until"]) if row["valid_until"] else None,
+                    )
+                return ApprovalDecisionResult(
+                    applied=False,
+                    reason=ApprovalDecisionReason.ALREADY_DECIDED,
+                    status=current_status,
+                    valid_until=parse_iso(row["valid_until"]) if row["valid_until"] else None,
+                )
+            if row["pending_until"] is not None and iso(req.decided_at) > row["pending_until"]:
+                return ApprovalDecisionResult(
+                    applied=False, reason=ApprovalDecisionReason.REQUEST_EXPIRED, status=None, valid_until=None
+                )
+            if row["policy_version"] != row["current_version"]:
+                return ApprovalDecisionResult(
+                    applied=False,
+                    reason=ApprovalDecisionReason.POLICY_VERSION_MISMATCH,
+                    status=None,
+                    valid_until=None,
+                )
+            valid_until = None
+            if req.decision == ApprovalStatus.APPROVED and row["approval_ttl_sec"] is not None:
+                valid_until = req.decided_at + timedelta(seconds=row["approval_ttl_sec"])
+            self._conn.execute(
+                "UPDATE approval SET status = ?, approved_by_user_id = ?, valid_until = ? "
+                "WHERE approval_id = ? AND status = 'pending'",
+                (req.decision.value, req.decided_by_user_id, iso(valid_until) if valid_until else None, req.approval_id),
+            )
+            return ApprovalDecisionResult(
+                applied=True, reason=ApprovalDecisionReason.OK, status=req.decision, valid_until=valid_until
+            )
