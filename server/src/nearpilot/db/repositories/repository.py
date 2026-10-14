@@ -10,7 +10,7 @@ import sqlite3
 from collections.abc import Sequence
 from datetime import datetime
 
-from nearpilot.db.repositories._common import from_json, iso, parse_iso
+from nearpilot.db.repositories._common import from_json, immediate_transaction, iso, new_id, parse_iso, to_json
 from nearpilot.shared.enums import (
     AccessMode,
     Action,
@@ -20,18 +20,31 @@ from nearpilot.shared.enums import (
     DeviceState,
     EndReason,
     Occupancy,
+    ReasonCode,
     Role,
     SessionState,
+    Step,
+    StoreConflictReason,
+    StoreOutcome,
+    TargetKind,
     TrustState,
+    Verdict,
     Visibility,
 )
 from nearpilot.shared.models import (
     Account,
     Approval,
     BeaconKey,
+    Decision,
+    DecisionRecord,
+    NodeAnnounce,
     NodeInfo,
     PolicyRevision,
+    RequestLink,
     RssiFrame,
+    StoreResult,
+    TargetSpec,
+    UseRequest,
     UseSession,
 )
 
@@ -206,3 +219,188 @@ class SqliteRepository:
             "SELECT 1 FROM use_session WHERE use_id = ? AND user_id = ?", (use_id, user_id)
         ).fetchone()
         return row is not None
+
+    # ── ⓪ 중복 (FR-22) ──────────────────────────────────────────────
+
+    def link_request(self, req: UseRequest, input_digest: str) -> RequestLink:
+        target_spec = self._serialize_target(req.target)
+        internal_request_id = new_id()
+        try:
+            self._conn.execute(
+                "INSERT INTO request (internal_request_id, user_id, request_id, input_digest, "
+                "parent_internal_request_id, node_id, target_spec, action, host_kind, received_at) "
+                "VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
+                (
+                    internal_request_id, req.user_id, req.request_id, input_digest,
+                    req.parent_internal_request_id, target_spec, req.action.value,
+                    req.host_kind, iso(req.received_at),
+                ),
+            )
+        except sqlite3.IntegrityError:
+            return self._link_existing(req, input_digest)
+        return RequestLink(internal_request_id=internal_request_id, is_new=True, conflict=False)
+
+    def _serialize_target(self, target: TargetSpec) -> str:
+        if target.kind == TargetKind.EXPLICIT and target.node_id:
+            return target.node_id
+        return f"{target.kind.value}:{target.capability.value}"
+
+    def _link_existing(self, req: UseRequest, input_digest: str) -> RequestLink:
+        row = self._conn.execute(
+            "SELECT internal_request_id, input_digest, verdict, reason_code, node_id, p_max "
+            "FROM request WHERE user_id = ? AND request_id = ?",
+            (req.user_id, req.request_id),
+        ).fetchone()
+        if row["input_digest"] != input_digest:
+            return RequestLink(internal_request_id=row["internal_request_id"], is_new=False, conflict=True)
+        previous = None
+        if row["verdict"] is not None:
+            use_row = self._conn.execute(
+                "SELECT use_id FROM use_session WHERE internal_request_id = ?",
+                (row["internal_request_id"],),
+            ).fetchone()
+            previous = Decision(
+                internal_request_id=row["internal_request_id"],
+                request_id=req.request_id,
+                verdict=Verdict(row["verdict"]),
+                reason=ReasonCode(row["reason_code"]),
+                node_id=row["node_id"],
+                use_id=use_row["use_id"] if use_row else None,
+                p_max=row["p_max"],
+            )
+        return RequestLink(
+            internal_request_id=row["internal_request_id"], is_new=False, conflict=False, previous=previous
+        )
+
+    def save_decision(self, decision: Decision, record: DecisionRecord) -> StoreResult:
+        row = self._conn.execute(
+            "SELECT verdict, reason_code, node_id, p_max, model, calib, policy_ver, config_ver "
+            "FROM request WHERE internal_request_id = ?",
+            (decision.internal_request_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"요청 {decision.internal_request_id} 가 없다")
+        if row["verdict"] is not None:
+            if self._decision_matches(row, decision, record):
+                return StoreResult(outcome=StoreOutcome.ALREADY_APPLIED)
+            return StoreResult(outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.CONTENT_CONFLICT)
+        decision_context = to_json(
+            {
+                "posteriors": dict(record.posteriors),
+                "window_start": iso(record.window_start) if record.window_start else None,
+                "window_end": iso(record.window_end) if record.window_end else None,
+                "message": decision.message,
+            }
+        )
+        updated = self._conn.execute(
+            "UPDATE request SET verdict = ?, reason_code = ?, node_id = ?, p_max = ?, model = ?, "
+            "calib = ?, policy_ver = ?, config_ver = ?, decision_context = ? "
+            "WHERE internal_request_id = ? AND verdict IS NULL",
+            (
+                decision.verdict.value, decision.reason.value, decision.node_id, decision.p_max,
+                record.model_version, record.calib_version, record.policy_version, record.settings.version,
+                decision_context, decision.internal_request_id,
+            ),
+        )
+        if updated.rowcount == 0:
+            return self.save_decision(decision, record)
+        return StoreResult(outcome=StoreOutcome.APPLIED)
+
+    @staticmethod
+    def _decision_matches(row: sqlite3.Row, decision: Decision, record: DecisionRecord) -> bool:
+        return (
+            row["verdict"] == decision.verdict.value
+            and row["reason_code"] == decision.reason.value
+            and row["node_id"] == decision.node_id
+            and row["p_max"] == decision.p_max
+            and row["model"] == record.model_version
+            and row["calib"] == record.calib_version
+            and row["policy_ver"] == record.policy_version
+            and row["config_ver"] == record.settings.version
+        )
+
+    # ── ① 비콘 저장 (FR-05) ──────────────────────────────────────────
+
+    def save_rssi(self, frame: RssiFrame) -> None:
+        beacon_row = self._conn.execute(
+            "SELECT beacon_id, is_active FROM beacon WHERE uuid = ? AND major = ? AND minor = ?",
+            (frame.beacon.uuid, frame.beacon.major, frame.beacon.minor),
+        ).fetchone()
+        if beacon_row is None or not beacon_row["is_active"]:
+            return
+        node_row = self._conn.execute("SELECT 1 FROM node WHERE node_id = ?", (frame.node_id,)).fetchone()
+        if node_row is None:
+            return
+        beacon_id = beacon_row["beacon_id"]
+        collection_row = self._conn.execute(
+            "SELECT collection_session_id FROM collection_session "
+            "WHERE beacon_id = ? AND started_at <= ? AND (ended_at IS NULL OR ended_at >= ?)",
+            (beacon_id, iso(frame.received_at), iso(frame.received_at)),
+        ).fetchone()
+        collection_session_id = collection_row["collection_session_id"] if collection_row else None
+        self._conn.execute(
+            "INSERT OR IGNORE INTO rssi_observation "
+            "(obs_id, node_id, beacon_id, rssi, frame_ts, received_at, sent_at, session_id, seq, "
+            "collection_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                new_id(), frame.node_id, beacon_id, frame.rssi, iso(frame.frame_ts),
+                iso(frame.received_at), iso(frame.sent_at), frame.session_id, frame.seq,
+                collection_session_id,
+            ),
+        )
+
+    # ── ② 발표와 기기 연결 (FR-04, FR-13) ─────────────────────────────
+
+    def upsert_announced_node(self, announce: NodeAnnounce) -> None:
+        with immediate_transaction(self._conn):
+            row = self._conn.execute(
+                "SELECT capability, occupancy FROM node WHERE node_id = ?", (announce.node_id,)
+            ).fetchone()
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO node (node_id, place_id, capability, occupancy, trust_state, "
+                    "device_state, exclusive_group, release_policy) "
+                    "VALUES (?, NULL, ?, ?, 'discovered', 'AVAILABLE', NULL, '{}')",
+                    (announce.node_id, announce.capability.value, announce.occupancy.value),
+                )
+                return
+            if row["capability"] == announce.capability.value and row["occupancy"] == announce.occupancy.value:
+                return
+            self._conn.execute(
+                "UPDATE node SET capability = ?, occupancy = ?, trust_state = 'discovered' "
+                "WHERE node_id = ?",
+                (announce.capability.value, announce.occupancy.value, announce.node_id),
+            )
+            self._conn.execute(
+                "INSERT INTO audit_log (log_id, event_id, internal_request_id, command_id, step, "
+                "payload_json, created_at) VALUES (?, ?, NULL, NULL, ?, ?, ?)",
+                (
+                    new_id(),
+                    new_id(),
+                    Step.ANNOUNCE.value,
+                    to_json(
+                        {
+                            "node_id": announce.node_id,
+                            "previous_capability": row["capability"],
+                            "previous_occupancy": row["occupancy"],
+                            "capability": announce.capability.value,
+                            "occupancy": announce.occupancy.value,
+                        }
+                    ),
+                    iso(announce.received_at),
+                ),
+            )
+
+    def touch_node(self, node_id: str, seen_at: datetime) -> None:
+        self._conn.execute(
+            "UPDATE node SET last_seen_at = ? "
+            "WHERE node_id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)",
+            (iso(seen_at), node_id, iso(seen_at)),
+        )
+
+    def set_node_session(self, node_id: str, session_id: str, first_seen_at: datetime) -> None:
+        self._conn.execute(
+            "UPDATE node SET session_id = ?, session_first_seen_at = ? "
+            "WHERE node_id = ? AND (session_id IS NULL OR session_id != ?)",
+            (session_id, iso(first_seen_at), node_id, session_id),
+        )
