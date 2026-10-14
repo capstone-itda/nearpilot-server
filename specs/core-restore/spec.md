@@ -1,0 +1,106 @@
+# 재시작 복원
+
+- 상태: 작성 중
+- 담당: JM-220 (상태 관리)
+- 요구사항: FR-19, FR-20, NFR-04
+- 따르는 결정: #15, #17
+
+## 1. 왜
+
+- 서버가 재시작하면 메모리의 실행, 반납, 타이머 상태가 사라진다.
+- 끝나지 않은 명령과 점유 세션을 확인하지 않고 새 실행을 허가하면 중복 실행이나 이중 점유가 생긴다 (FR-19).
+- DB는 `restore_pending()`으로 기기별 복원 묶음을 반환한다. 복원 뒤의 동작은 상태 관리가 정한다 (architecture.md §4 "재시작 복원 조회").
+- 저장소에는 복원 뒤 동작의 구현이 없다.
+
+## 2. 무엇
+
+- 입력: `ExecutionStore.restore_pending()`이 반환한 `RestoreBundle` 목록, 재시작 뒤의 기기 보고
+- 출력: 기기별 복원 상태. `core-execution`과 판정은 복원 상태로 새 실행을 막는다.
+- 바뀌는 상태:
+  - 전송을 시작하지 않은 예약 중 예약 대기 제한을 넘긴 예약의 취소 (`cancel_not_sent`)
+  - 결과를 확정하지 못한 명령의 기기 `FAULT`와 복구 건
+  - `CLOSING` 세션의 반납 검사 재개
+  - 상태 관리 메모리의 기기별 복원 상태
+- 약속:
+  - 기기별 복원과 현재 상태 확인을 마치기 전에는 그 기기의 새 실행과 재사용을 허가하지 않는다.
+  - 저장한 시각을 재시작 시각으로 덮어쓰지 않는다.
+  - 전송 시작 기록만으로 실행과 미전송을 판단하지 않는다.
+  - 결과가 불명인 명령에 새 명령을 자동으로 보내지 않는다.
+
+## 3. 제약
+
+- `restore_pending()`의 오류를 빈 목록으로 바꾸지 않는다. 조회가 실패하면 모든 기기의 새 실행을 막는다 (FR-19 재시작 복원).
+- 복원 묶음의 기록별 처리는 아래 표를 따른다 (FR-19, FR-20, NFR-04).
+
+| 기록 | 처리 |
+|---|---|
+| 전송을 시작하지 않은 명령 (`pending`) | 예약 시각부터 `reservation_wait_sec`가 지났으면 `cancel_not_sent(expected=PENDING)`로 취소한다. 지나지 않았으면 남은 시간 뒤 취소한다 |
+| 전송을 시작했고 결과가 없는 명령 (`in_progress`) | 실행 여부가 불명이다. `record_result(UNKNOWN)`으로 격리하고 복구 건을 만든다 |
+| `RESERVED` 세션 | 연결된 명령의 처리를 따른다 |
+| `ACTIVE` 세션 | 점유를 유지한다. `rental_due_at`을 바꾸지 않는다 |
+| `CLOSING` 세션 | 이전 검사 결과로 종료하지 않는다. 기기 확인 뒤 새 `check_id`로 반납 검사를 다시 요청한다 |
+| 미해결 `FAULT` 기기와 미완료 복구 건 | 복구 건을 복원한다. 현재 유효한 근거를 다시 확인한다 |
+| 승인 사용분 | 연결된 명령과 복구 건의 처리를 따른다. 단독으로 반환하지 않는다 |
+
+- 서버 중단 시간은 예약 대기와 대여시간·초과시간 계산에 포함한다 (FR-20 재시작).
+- 대여시간 초과만으로 점유를 종료하지 않는다 (FR-20).
+- 서버 중단 중 비콘을 받지 못한 시간으로 이탈을 확정하지 않는다 (FR-20).
+- 과거의 안전 근거는 복원 자료다. 현재 안전 확인을 대신하지 않는다 (FR-19).
+- 기기의 현재 상태 확인은 재시작 뒤 현재 연결의 신선한 `status` 수신이다. 확인 전에는 복원 상태를 끝내지 않는다 (architecture.md §5 MQTT 6절).
+- 오프라인, `FAULT`, 현재 상태를 확인하지 못한 기기에는 공용 조명 규칙만으로 새 명령을 보내지 않는다 (FR-20).
+- 공용 조명의 유지 대상자를 복원하지 않는다. 기기별 복원을 마친 뒤 `core-shared-light`에 관측 재개를 알린다 (FR-20).
+- 공용 조명의 규칙은 대여형 점유 세션의 복원을 생략하지 않는다 (FR-19).
+
+## 4. 경계
+
+### 고치는 곳
+- `server/src/nearpilot/core/lifecycle/`
+- `server/tests/core/lifecycle/`
+
+### 고치지 않는 곳
+- 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
+- 이 작업: `core/decision/`, `core/proximity/`, `core/policy/`, `core/allocation/`, `db/`, `api/`, `iot/`
+
+### 다른 영역과 닿는 곳
+| 계약 | 사용 또는 제공 | 상대 영역 |
+|---|---|---|
+| `ExecutionStore.restore_pending`, `cancel_not_sent`, `record_result`, `save_recovery`, `recovery` | 사용 | DB |
+| `SafetyCheckGateway.request_check` | 사용 (`core-release`를 거친다) | IOT |
+| 기기별 복원 상태 조회 | 제공. 판정이 쓸 접점은 계약이 없다 (7절) | 판정 |
+
+### 만들지 않는 것
+- 복원 묶음의 조회 (DB)
+- 반납 검사의 판단 (`core-release`)
+- 복구 정산 (`core-fault-recovery`)
+- 근접 추정의 HMM 복원 (근접 추정)
+
+## 5. 예외 상황
+
+| 상황 | 기대 동작 | 테스트 |
+|---|---|---|
+| `restore_pending()`이 예외를 던진다 | 모든 기기의 새 실행을 막는다. 빈 목록으로 보지 않는다 | `test_FR19_restore_failure_blocks_all` |
+| `pending` 명령의 예약 대기 제한이 서버 중단 중에 지났다 | `cancel_not_sent(expected=PENDING)`로 취소한다 | `test_FR19_restore_expired_pending_cancelled` |
+| `in_progress` 명령이 있다 | 새 명령을 보내지 않는다. `UNKNOWN`으로 격리하고 복구 건을 만든다 | `test_FR19_restore_in_progress_isolated` |
+| `in_progress` 명령의 늦은 성공 결과가 재시작 뒤 온다 | `record_result`로 넘긴다. `FAULT`를 자동으로 해제하지 않는다 | `test_FR07_restore_late_success_keeps_fault` |
+| `ACTIVE` 세션의 `rental_due_at`이 서버 중단 중에 지났다 | 점유를 유지한다. 초과시간에 중단 시간을 포함한다 | `test_FR20_restore_overdue_kept` |
+| `CLOSING` 세션이 있다 | 새 `check_id`로 반납 검사를 다시 요청한다 | `test_FR20_restore_closing_new_check` |
+| 기기가 재시작 뒤 `status`를 보내지 않는다 | 복원 상태를 끝내지 않는다. 새 실행을 막는다 | `test_FR19_restore_waits_fresh_status` |
+| 미완료 복구 건이 있다 | 같은 `recovery_id`로 복원한다. 새 복구 건을 만들지 않는다 | `test_NFR04_restore_keeps_recovery_id` |
+| 저장한 생성 시각과 기준 시각이 있다 | 재시작 시각으로 바꾸지 않는다 | `test_FR20_restore_keeps_stored_times` |
+
+## 6. 결정
+
+## 7. 가정
+
+- 미결: 판정이 기기별 복원 상태를 확인하는 접점. `shared`에 접점이 없다. 이 spec은 `core-execution`의 전송 시작 전에 복원 상태를 검사한다. 판정의 ②에서 복원 중인 기기를 후보에서 뺄지는 판정 담당과 정한다. 이슈 초안을 담당자에게 넘긴다.
+- 미결: 예약 대기 제한 만료 취소의 사유 코드. `core-execution`의 7절과 같은 이슈다.
+- 미결: 서버 실행 진입점. 복원은 서버 시작 때 게이트웨이 구독 뒤, 요청 수신 전에 한 번 실행한다고 가정한다.
+- `in_progress` 명령을 `record_result(UNKNOWN)`으로 저장하는 근거는 서버의 재시작이다. 기기가 보고한 `unknown`과 구분하도록 근거에 출처를 남긴다 (FR-07).
+
+## 8. 테스트
+
+| 요구사항 | 테스트 | 확인하는 것 |
+|---|---|---|
+| FR-19 | `test_FR19_restore_blocks_new_execution_until_confirmed` | 복원과 확인 전에는 그 기기의 전송을 시작하지 않는다 |
+| FR-20 | `test_FR20_restore_does_not_restore_light_holders` | 공용 조명의 유지 대상자를 복원하지 않는다 |
+| NFR-04 | `test_NFR04_restore_reverifies_evidence` | 과거 안전 근거로 복구 준비를 `ready`로 만들지 않는다 |
