@@ -125,13 +125,28 @@ spec 규칙
   - 판정이 `posteriors[지정 대상]`을 읽어 임계값과 비교한다. 미만이면 `ASK` / `MOVE_CLOSER`다.
   - 지정 대상이 후보에 없으면 `posterior()`를 부르지 않고 `DENY` / `TARGET_UNAVAILABLE`로 거부한다.
 
+- `input_digest`는 정규화 입력을 JSON으로 직렬화한 문자열의 SHA-256 16진 문자열이다.
+  - 직렬화: 키를 정렬하고 공백 없이(`separators=(",", ":")`), `ensure_ascii=False`로 쓴다.
+  - 내용: `{"action", "parent_internal_request_id", "target": {"capability", "kind", "node_id"}}`. 값은 enum의 문자열 값이다.
+- 구조: `core/decision/pipeline.py`의 `DecisionPipeline` 클래스 하나가 ⓪~⑥을 순서대로 실행한다. 의존하는 계층과 `Settings`는 생성자로 받는다. `input_digest` 계산은 `digest.py`에 둔다.
+- 판정 시각은 `UseRequest.received_at`이다. 시계를 따로 읽지 않으므로 같은 입력에는 같은 판정이 나온다 (NFR-09).
+
 ## 7. 가정
 
+- ① T와 ② 온라인 TTL은 `Settings.beacon_recent_sec`, `Settings.online_ttl_sec`를 쓴다. 값은 미결(#15)이고 판정 코드는 값을 모른다.
+- ②는 `trust_state == TRUSTED`, `last_seen_at`이 TTL 안, `device_state != FAULT`, `capability` 일치를 후보 조건으로 본다. `RESERVED`·`ACTIVE` 기기도 후보다. 점유는 ⑤에서 검사한다.
+- 대상 지정이 `any:`면 전역 할당(FR-23)이 맡는다. 이 작업은 만들지 않으므로 ②에서 `DENY` / `INVALID_INPUT`으로 거부한다.
+- 임계값은 후보가 아니라 요청한 `capability`의 설정(`threshold_locker`, `threshold_light`)을 쓴다.
+- ③ `ASK` / `LOW_CONFIDENCE`의 `node_id`는 `None`, `p_max`는 최대 확률이다. `MOVE_CLOSER`의 `node_id`는 지정 대상이다.
+- ⓪에서 같은 키에 판정이 이미 끝났으면(`previous`) 그 판정을 반환하고 다시 저장하지 않는다. 충돌(`conflict`)이면 `save_decision()`을 부르지 않는다. 기존 판정을 덮어쓰지 않기 위해서다.
+- ⓪에서 같은 키가 이미 있는데 판정이 아직 없으면(진행 중) `DENY` / `INTERNAL_ERROR`로 거부한다. 두 번째 판정 실행이 이중 예약을 만들지 않게 하기 위해서다.
+- `reserve_if_free()`가 예외를 내면 `INTERNAL_ERROR`로 거부한다. 반영 여부가 불명인 예약의 정리는 이 작업 밖이다.
+- 공용형 기기에서 정책이 `approval_id`를 반환하면(승인 사용분 필요) `DENY` / `POLICY_DENIED`로 거부한다. 승인 사용분 확보 접점이 정해지기 전까지 원자적 확보를 보장할 수 없어서다 (아래 미결).
+- 이 작업은 `Decision`만 반환한다. 실행 인계(`ExecutionService.execute`)와 `ExecutionContext` 조립은 만들지 않는다. 실행 직전 재검사 위치가 미결이다 (아래).
 - 미결: ① T 값과 ② 온라인 TTL 값. requirements.md FR-15, FR-13의 미결과 같다.
 - 미결: 후보가 있는데 관측이 없을 때 `posterior()`가 빈 `posteriors`를 반환하는가, 균등 분포를 반환하는가. 판정은 빈 `posteriors`를 `LOW_CONFIDENCE`로 처리하려 한다. 근접 추정 담당에게 확인한다 (#26).
 - 미결: 실행 직전 재검사의 위치. decision이 제공하고 lifecycle이 호출하는가, 아니면 lifecycle 안에서 하는가. 재검사가 실패하면 예약과 승인 사용분 반환을 누가 시작하는가.
 - 미결: 오류로 거부한 요청을 같은 `request_id`로 재전송할 때 다시 판정할지. #25는 이 부분을 정하지 않았다.
-- 미결: `input_digest`의 직렬화와 해시 방식. #24는 필드와 계산 주체만 정했다. 구현할 때 담당자가 정해서 6절에 쓴다.
 - 미결: 공용 조명의 승인 사용분 확보. 공용 조명은 ⑤⑥을 건너뛰지만 승인 사용분은 원자적으로 확보해야 한다 (FR-18). `reserve_if_free()`로 처리할지, 다른 DB 호출이 필요한지 정해야 한다.
 
 ## 8. 테스트
