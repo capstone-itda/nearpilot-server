@@ -105,6 +105,8 @@
 | 같은 `(계정, request_id)`에 다른 `input_digest`가 온다 | `conflict=True`다. 기존 행을 바꾸지 않는다. | `test_FR22_link_request_conflict` |
 | 다른 계정이 같은 `request_id`를 보낸다 | 새 내부 요청을 만든다. 다른 계정의 판정을 돌려주지 않는다. | `test_FR22_link_request_other_user` |
 | 외부 `request_id`를 비운 요청과 같은 `request_id`가 다시 온다 | 새 내부 요청을 만든다. 비운 행은 그대로 둔다. | `test_FR22_link_request_after_clear` |
+| 같은 `internal_request_id`에 이미 다른 판정이 저장돼 있다 | `StoreResult(CONFLICT, CONTENT_CONFLICT)`를 반환한다. 기존 판정을 바꾸지 않는다. | `test_FR22_save_decision_conflict` |
+| 같은 `internal_request_id`에 같은 판정을 다시 저장한다 | `StoreResult(ALREADY_APPLIED)`를 반환한다. | `test_FR22_save_decision_already_applied` |
 | 두 요청이 같은 대여형 기기를 동시에 예약한다 | 한 요청만 `RESERVED`다. 나머지는 `DEVICE_BUSY`다. | `test_FR19_reserve_concurrent` |
 | 같은 `internal_request_id`로 예약을 다시 호출한다 | 기존 `use_id`와 `usage_id`로 `RESERVED`를 반환한다. 행을 새로 만들지 않는다. | `test_FR19_reserve_idempotent` |
 | 본인 `ACTIVE` 세션이 있는 기기에 재조작을 요청한다 | `REOPERATING`과 기존 `use_id`를 반환한다. 새 세션을 만들지 않는다. 승인이 있으면 이번 요청의 사용분만 예약한다. | `test_FR19_reserve_reoperating` |
@@ -141,7 +143,7 @@
 - `reserve_if_free()`는 본인 `ACTIVE` 세션 확인 → ⑤ 기기 점유 → ⑥ 사용자 점유 → 승인 남은 횟수 순서로 검사한다. 본인 `ACTIVE` 세션이면 나머지 검사를 생략하고 `REOPERATING`을 반환한다 — 재조작이 타인 점유 검사(`DEVICE_BUSY`)에 걸리지 않아야 한다. `exclusive_group`이 NULL이면 ⑥을 검사하지 않는다.
 - `valid_approval()`에 조건을 만족하는 승인이 여럿이면 `valid_until`이 가장 늦은 승인을 반환한다. 같으면 `approval_id` 순이다.
 - `link_request()`는 감사 기록을 쓰지 않는다 — 충돌 이벤트는 판정이 `AuditLog.append()`로 남긴다.
-- 같은 `internal_request_id`에 다른 판정을 저장하면 기존 판정을 보존하고 `ValueError`를 던진다. 같은 판정이면 아무것도 하지 않는다 — 버그를 숨기지 않는다.
+- 같은 `internal_request_id`에 다른 판정을 저장하면 기존 판정을 보존하고 `StoreResult(CONFLICT, CONTENT_CONFLICT)`를 반환한다. 같은 판정이면 `StoreResult(ALREADY_APPLIED)`를 반환하고 아무것도 바꾸지 않는다 — `interfaces.py`의 `save_decision` docstring이 이미 값 객체로 구분하라고 정했다. 예외로 던지지 않는다.
 - `upsert_announced_node()`의 신뢰 되돌림 감사는 `Step.ANNOUNCE`를 쓴다 — `architecture.md` §4 "기기 발표와 관측의 저장"이 이미 정했다.
 - `create_approval_request()`와 `decide_approval()`은 CORE가 넘긴 값을 그대로 조건 검사에 쓴다. 승인 권한 검사는 CORE가 하고 DB는 조건부 갱신만 한다.
 - `approval` 테이블에는 `architecture.md`가 명시하지 않은 구현 컬럼으로 `created_at`, `pending_until`을 둔다 — `create_approval_request()`의 멱등 판단과 만료 계산에 필요하다 (`architecture.md` §6 "저장 필드와 스키마는 구현할 때 구체화한다").
