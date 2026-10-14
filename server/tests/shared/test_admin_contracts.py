@@ -34,12 +34,33 @@ def test_FR03_owner_decision_cannot_be_pending():
         ApprovalDecisionRequest('ap1', 'owner', ApprovalStatus.PENDING, datetime(2026, 10, 13))
 
 
-@pytest.mark.parametrize('reason', [ApprovalDecisionReason.ALREADY_DECIDED,
+@pytest.mark.parametrize('reason', [ApprovalDecisionReason.NOT_FOUND,
+                                   ApprovalDecisionReason.ALREADY_DECIDED,
                                    ApprovalDecisionReason.POLICY_VERSION_MISMATCH,
-                                   ApprovalDecisionReason.REQUEST_EXPIRED])
+                                   ApprovalDecisionReason.REQUEST_EXPIRED,
+                                   ApprovalDecisionReason.NOT_AUTHORIZED])
 def test_FR03_conditional_decision_retains_failure_reason(reason):
     result = ApprovalDecisionResult(False, reason, ApprovalStatus.PENDING, None)
     assert not result.applied and result.reason == reason
+    assert not result.succeeded
+
+
+@pytest.mark.parametrize('status', [ApprovalStatus.APPROVED, ApprovalStatus.DENIED])
+def test_FR03_same_decision_retry_succeeds_without_reapplying(status):
+    valid_until = datetime(2026, 10, 13, 13) if status == ApprovalStatus.APPROVED else None
+    original = ApprovalDecisionResult(True, ApprovalDecisionReason.OK, status, valid_until)
+    retry = replace(original, applied=False, reason=ApprovalDecisionReason.ALREADY_APPLIED)
+    assert original.succeeded and original.applied
+    assert retry.succeeded and not retry.applied
+    assert (retry.status, retry.valid_until) == (original.status, original.valid_until)
+
+
+@pytest.mark.parametrize('status', [ApprovalStatus.APPROVED, ApprovalStatus.DENIED])
+def test_FR03_opposite_decision_conflict_preserves_existing_result(status):
+    valid_until = datetime(2026, 10, 13, 13) if status == ApprovalStatus.APPROVED else None
+    conflict = ApprovalDecisionResult(False, ApprovalDecisionReason.ALREADY_DECIDED, status, valid_until)
+    assert not conflict.succeeded and not conflict.applied
+    assert conflict.status == status and conflict.valid_until == valid_until
 
 
 def test_FR22_decision_record_freezes_probabilities_and_keeps_applied_settings():

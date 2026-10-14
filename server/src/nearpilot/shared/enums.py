@@ -318,6 +318,7 @@ class RecoveryReason(StrEnum):
 
 class ApprovalDecisionReason(StrEnum):
     OK = "OK"
+    ALREADY_APPLIED = "ALREADY_APPLIED"
     NOT_FOUND = "NOT_FOUND"
     ALREADY_DECIDED = "ALREADY_DECIDED"
     POLICY_VERSION_MISMATCH = "POLICY_VERSION_MISMATCH"

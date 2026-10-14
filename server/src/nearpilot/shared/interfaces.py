@@ -170,6 +170,10 @@ class Repository(Protocol):
 
         승인 권한은 CORE 가 검사한다. approved 의 valid_until 은 decided_at 에 생성 당시
         정책 리비전의 approval_ttl_sec 를 더한다. 이미 결정·버전 불일치·대기 만료를 구분한다.
+        권한 검사 뒤 같은 승인 ID·결정자·결정의 재호출은 ALREADY_APPLIED 다.
+        호출 시각은 비교하지 않는다. applied 는 False, succeeded 는 True 다.
+        기존 상태와 valid_until 을 반환한다. 결정·유효시간·감사를 다시 쓰지 않는다.
+        반대 결정 또는 다른 결정자의 호출은 ALREADY_DECIDED 다. 기존 기록을 보존한다.
         """
         ...
 
@@ -485,7 +489,13 @@ class AdminRepository(Protocol):
     def register_account(self, req: AccountRegistration) -> AdminWriteResult: ...
 
     def register_beacon(self, req: BeaconRegistration) -> AdminWriteResult:
-        """다른 계정의 동일 BeaconKey 는 BEACON_ALREADY_REGISTERED 로 거부한다."""
+        """다른 계정의 동일 BeaconKey 는 BEACON_ALREADY_REGISTERED 로 거부한다 (FR-01).
+
+        계정당 활성 비콘은 하나 이하다. is_active=True 이면 같은 계정의 다른 비콘을 끈다.
+        중복 검사·기존 비콘 비활성화·등록 또는 활성화·감사는 한 트랜잭션으로 반영한다.
+        거부하거나 저장에 실패하면 기존 활성 비콘을 유지한다.
+        is_active=False 인 등록은 같은 계정의 다른 비콘을 끄지 않는다.
+        """
         ...
 
     def set_node_trust(self, node_id: str, trust_state: TrustState) -> AdminWriteResult:

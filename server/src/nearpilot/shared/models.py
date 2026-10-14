@@ -790,10 +790,17 @@ class ApprovalDecisionRequest:
 
 @dataclass(frozen=True, slots=True)
 class ApprovalDecisionResult:
+    """applied 는 이번 호출의 갱신 여부다. 같은 결정의 재호출도 성공이다 (FR-03)."""
+
     applied: bool
     reason: ApprovalDecisionReason
     status: ApprovalStatus | None
     valid_until: datetime | None
+
+    @property
+    def succeeded(self) -> bool:
+        """새 결정 반영과 같은 결정의 재호출을 성공으로 구분한다."""
+        return self.reason in (ApprovalDecisionReason.OK, ApprovalDecisionReason.ALREADY_APPLIED)
 
 
 @dataclass(frozen=True, slots=True)

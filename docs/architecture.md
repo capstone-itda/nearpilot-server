@@ -217,6 +217,10 @@ api  ──▶  core  ──▶  db
 - 만료된 `pending` 승인은 새 승인 요청을 막지 않는다.
 - `decide_approval()`은 조건부 갱신이다. 승인이 `pending`이고 승인의 정책 버전이 현재 정책 버전과 같을 때만 승인 상태를 바꾼다.
 - `decide_approval()`은 bool을 반환하지 않는다. 결과 객체는 반영 여부, 실패 이유, 승인 상태, `valid_until`을 담는다.
+- CORE가 승인 권한을 검사한 뒤 같은 승인 ID·결정자·결정의 재호출은 기존 결과를 성공으로 반환한다.
+- 같은 결정인지는 호출 시각을 제외하고 비교한다. DB는 기존 결정, `valid_until`, 감사 기록을 다시 쓰지 않는다.
+- 같은 결정의 재호출은 `ALREADY_APPLIED`다. 반대 결정이나 다른 결정자의 재호출은 `ALREADY_DECIDED`다.
+- 이미 반영한 결정의 재호출에는 기존 결과를 반환한다. 현재 정책이나 유효시간으로 과거 결과를 바꾸지 않는다.
 - 실패 이유는 이미 결정한 승인, 정책 버전 불일치, 대기 만료를 구분한다. DB는 만료된 `pending` 승인에 결정을 반영하지 않는다.
 - 승인할 때 DB가 `valid_until`을 계산해서 저장한다. `valid_until`은 승인 시각에 `approval_ttl_sec`를 더한 값이다. `approval_ttl_sec`는 승인을 만든 당시 정책 리비전의 값이다.
 - 승인 권한, 대기 상태, 정책 버전은 CORE가 검증한다. DB의 조건부 갱신은 경합한 결정 가운데 하나만 반영한다.
@@ -247,6 +251,9 @@ api  ──▶  core  ──▶  db
 - DB는 `AdminRepository`를 지금 구현한다. 관리 API와 `AdminService`는 담당을 배정한 뒤 `AdminRepository` 위에 만든다.
 - 시드 스크립트도 `AdminRepository`로 시연 데이터와 시험 데이터를 넣는다. 시드 스크립트는 SQL을 직접 실행하지 않는다.
 - `AdminRepository`는 반영 결과와 거부 사유를 반환한다. 거부 사유의 예는 비콘 중복과 상태 충돌이다.
+- 계정당 활성 비콘은 하나 이하다. `register_beacon()`은 활성 등록 때 같은 계정의 다른 비콘을 비활성화한다.
+- DB는 중복 검사, 기존 비콘 비활성화, 등록 또는 활성화, 감사 기록을 한 트랜잭션에서 반영한다.
+- 거부하거나 저장에 실패하면 DB는 기존 활성 비콘을 유지한다. 비활성 등록은 다른 비콘을 비활성화하지 않는다.
 - `FAULT` 복구의 쓰기는 `AdminRepository`의 범위 밖이다. `FAULT` 복구의 쓰기는 #17과 #20을 따른다.
 - 기기 발표를 반영하는 쓰기는 `AdminRepository`와 다른 경로다 (#32).
 - 미결: 점유 중인 기기의 장소·정책 설정 변경 제한. 관리 기능 담당 배정 뒤 경합 규칙을 정한다.
@@ -736,7 +743,9 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - `ApprovalRequestResult`는 승인 ID, 상태, 생성·대기 만료 시각과 새 신청 여부를 담는다.
 - `ApprovalDecisionRequest`는 승인 ID, 인증 결정자, 결정과 결정 시각을 담는다.
 - `ApprovalDecisionResult`는 반영 여부, `ApprovalDecisionReason`, 승인 상태와 `valid_until`을 담는다.
-- `ApprovalDecisionReason`은 `OK`, `NOT_FOUND`, `ALREADY_DECIDED`, `POLICY_VERSION_MISMATCH`, `REQUEST_EXPIRED`, `NOT_AUTHORIZED`다.
+- `applied`는 이번 호출의 갱신 여부다. `succeeded`는 새 결정 반영과 같은 결정 재호출의 성공 여부다.
+- 새 결정은 `applied=True`와 `OK`다. 같은 결정 재호출은 `applied=False`와 `ALREADY_APPLIED`다. 둘 다 `succeeded=True`다.
+- `ApprovalDecisionReason`은 `OK`, `ALREADY_APPLIED`, `NOT_FOUND`, `ALREADY_DECIDED`, `POLICY_VERSION_MISMATCH`, `REQUEST_EXPIRED`, `NOT_AUTHORIZED`다.
 - `DecisionRecord`는 설정, 모델·보정·정책 버전, 후보 확률과 관측 시작·끝 시각을 담는다.
 - 판정 저장은 같은 내부 요청·같은 내용이면 `already_applied`, 다른 내용이면 `conflict`와 `CONTENT_CONFLICT`다.
 - `AdminWriteResult`는 `AdminWriteOutcome`과 `AdminWriteReason`을 담는다. 반영, 거부와 충돌을 구분한다.
@@ -1003,6 +1012,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `audit_log` | PK `log_id`, UNIQUE `event_id`, nullable FK `internal_request_id`, nullable 명령 참조, `step` (`auth`, ⓪~⑥, `exec`, `close`, `fault`, `announce`, `admin`), JSON `payload_json`. 인증 실패는 요청 참조 없이 기록한다. 같은 `event_id`는 한 번만 저장한다. |
 
 - 계정은 여러 비콘, 장소, 요청을 가진다. 장소는 여러 기기를 가진다.
+- 계정의 활성 비콘은 하나 이하다. 비활성 비콘의 식별자와 계정 연결은 보존한다.
 - 기기별, 비콘별 관측은 요청의 `decision_context`에서 재현할 수 있는 관측 구간으로 연결한다.
 - `anchor_params`는 경로손실 파라미터 `A`, `n`, `σ`를 보존한다.
 - `decision_context`와 감사 payload는 임계값, 후보별 확률, 관측 참조, 모델 버전, 보정 버전, 정책 버전을 담는다.
