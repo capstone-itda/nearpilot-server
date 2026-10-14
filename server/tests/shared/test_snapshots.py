@@ -38,7 +38,6 @@ CHECK = SafetyCheckResult(
     ("template", "field_name"),
     [
         (NODE, "release_policy"),
-        (NODE, "anchor_params"),
         (ProximityResult({}, NOW, NOW, "m0", "c0"), "posteriors"),
         (RESERVATION, "release_policy"),
         (UseSession("s1", "r1", "locker-1", SessionState.RESERVED), "release_policy"),

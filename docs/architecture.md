@@ -40,7 +40,7 @@ flowchart TB
 | **API** | MCP Streamable HTTP 엔드포인트와 도구 6개, 토큰으로 계정 식별, 앱과 대시보드용 REST, 실시간 모니터링 WebSocket, 소유자 앱 승인 알림 전달, 응답에서 사용자 ID 제거 | FR-08, FR-09, FR-10, FR-11. 서버 측: FR-01, FR-03, FR-12A, FR-12B. NFR-01, NFR-07, NFR-08, NFR-09, NFR-11 |
 | **CORE** | ⓪~⑥ 결정론적 판정, 실행 직전 재검사, 근접 추정 (관측 모델과 HMM), 재질문, 접근 정책과 승인, 전역 할당, 상태 머신, 해제, `FAULT` 복구 | FR-13~FR-21, FR-23, NFR-02, NFR-04, NFR-05, NFR-06 |
 | **DB** | SQLite 스키마, 단일 쓰기 경로와 `BEGIN IMMEDIATE` 원자적 점유, 저장소 조회, 감사 로그 (테이블과 JSONL), 공개용 데이터셋 추출 | FR-19 (원자성), FR-22, NFR-03, NFR-13 |
-| **IOT** | MQTT 브로커 연결, 기기 발견, RSSI, 상태, 실행 결과, 반납 검사 결과의 수신과 검증, 실행 명령 전송과 결과 대기 (타임아웃), 반납 검사 요청 전송, 기기별 자격정보, 기기 시뮬레이터 | 서버 측: FR-04~FR-07. NFR-08, NFR-10, NFR-12, 지표 8 수집 |
+| **IOT** | MQTT 브로커 연결, 기기 발견, RSSI, 상태, 실행 결과, 반납 검사 결과의 수신과 검증, 실행 명령 전송과 결과 대기 (타임아웃), 반납 검사 요청 전송, 기기별 자격정보, 기기 시뮬레이터 | 서버 측: FR-04~FR-07. NFR-08, NFR-10, NFR-12, 지표 8 수집 데이터의 수신과 검증 |
 | **shared** | 계층 사이에서 오가는 데이터 모델, 열거형, 인터페이스의 정의. 4인이 공동으로 소유한다. | FR-09, FR-18, FR-19 |
 
 ## 2. 영역과 담당
@@ -96,7 +96,7 @@ nearpilot-server/
 | 역할 | 담당 폴더 | 책임 |
 |---|---|---|
 | **판정** | `src/nearpilot/core/decision/`, `core/allocation/`, `api/mcp/`, `api/auth/` | 판정 ⓪~⑥ 조합, 근접, 정책, 점유 결과의 반영, 실행 직전 재검사, 전역 할당, MCP 도구 6개, 토큰으로 계정 식별 |
-| **근접 추정** | `src/nearpilot/core/proximity/`, `tools/data_collection/` | 관측 모델과 HMM, 사후확률 계산, 근접 추정 인터페이스, RSSI 라벨 수집 |
+| **근접 추정** | `src/nearpilot/core/proximity/`, `tools/data_collection/` | 관측 모델과 HMM, 사후확률 계산, 근접 추정 인터페이스, 수집 회차와 라벨 기록 |
 | **상태 관리** | `src/nearpilot/core/lifecycle/`, `iot/`, `tools/node_sim/` | 예약 뒤의 상태 전이, 대여 점유 유지와 초과시간 계산, 명시적 해제, `FAULT` 복구, MQTT 게이트웨이, 기기 시뮬레이터 |
 | **DB** | `src/nearpilot/db/`, `core/policy/`, `tools/evaluation/` | 스키마, 저장소, 원자적 점유와 승인 사용분, 감사 로그, 평가 스크립트, 접근 정책과 승인 검사, 토큰 해시로 계정 조회 (`AccountLookup`), 관리 쓰기 접점 (`AdminRepository`) |
 | **공동** | `src/nearpilot/shared/`, `tests/integration/` | 계층 간 계약, 계층을 합친 시나리오 테스트 |
@@ -520,6 +520,35 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - 미결: DB가 한도 초과를 판정에 알리는 접점과 거부한 요청을 기록하는 방식. DB가 항목을 세고 판정이 거부하므로 두 담당이 spec에서 정한다.
 - 미결: 명령 중복 방지 항목의 보존기간과 한도 도달 때의 정리 기준. 실제 기기의 명령 기록 저장 방식을 검증한 뒤 정한다.
 
+### 활성 비콘 조회와 판정
+
+[#42](https://github.com/capstone-itda/nearpilot-server/issues/42)의 A안을 따른다.
+등록 이력은 여러 비콘을 보존하지만 계정의 활성 비콘은 하나 이하다.
+
+- `AdminRepository.register_beacon`의 활성 교체는 §4 "관리 기능의 DB 쓰기"를 따른다.
+- `Repository.beacons_of(user_id)`는 토큰 계정의 활성 비콘만 반환한다. 결과는 0개 또는 1개다.
+- 활성 비콘이 없으면 빈 시퀀스를 반환한다. CORE는 비콘 관측이 없는 요청을 FR-15에 따라 거부한다.
+- 활성 비콘이 여러 개면 저장 불변 조건 위반이다. DB는 임의로 하나를 고르지 않고 CORE는 판정을 거부한다.
+- ①은 조회한 활성 비콘만 대조한다. ③에는 같은 활성 비콘 하나를 넘긴다.
+- `ProximityEstimator.posterior`의 `beacons: Sequence[BeaconKey]`는 유지한다. 여러 비콘의 합산이나 후보별 최댓값은 쓰지 않는다.
+- 비활성 비콘의 식별자와 계정 연결은 등록 이력으로 보존한다. 과거 관측은 새 요청의 근접 근거로 쓰지 않는다.
+
+### 근접 모델 파일과 버전
+
+[#40](https://github.com/capstone-itda/nearpilot-server/issues/40)의 B안을 따른다.
+근접 추정은 장소마다 버전이 붙은 모델 파일을 시작할 때 읽는다.
+
+- 파일은 앵커별 경로손실 값 `A`, `n`, `σ`, 기기 배치, HMM 전이와 보정 값을 묶는다.
+- 장소 ID와 기기 ID가 앵커와 기기 배치를 식별한다. 소유자는 파라미터를 직접 바꾸지 않는다.
+- 운영 임계값은 `Settings`에 둔다. 파일에는 검증에 쓴 임계값을 함께 기록한다.
+- 파일의 모델 버전과 보정 버전을 `ProximityResult.model_version`, `calib_version`으로 반환한다.
+- 파일 내용을 바꾸면 새 버전을 만든다. 같은 버전의 파일을 덮어쓰지 않는다.
+- 근접 추정은 판정 기록이 참조하는 과거 버전 파일과 검증 결과를 보존한다.
+- DB는 판정에 적용한 버전을 기록한다. 파라미터와 기기 배치를 `node`에 저장하지 않는다.
+- `NodeInfo.anchor_params`와 논리 데이터 계약의 `node.anchor_params`를 제거한다. 관리 쓰기 접점은 추가하지 않는다.
+- 배포한 DB 스키마가 없어서 데이터 이전은 필요 없다. 후속 DB 구현은 제거한 필드를 만들지 않는다.
+- 미결: 모델 파일의 경로와 형식. 근접 추정 구현 담당이 spec의 "결정" 절에 쓴다.
+
 ### 기기 보고의 인계
 
 [#38](https://github.com/capstone-itda/nearpilot-server/issues/38)의 A안을 따른다.
@@ -632,10 +661,37 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - DB는 등록된 활성 비콘의 RSSI 관측만 저장한다. DB는 등록하지 않은 비콘의 관측을 저장하지 않는다.
 - DB는 RSSI 관측에 서버 수신 시각, 기기 연결 ID, 순번을 함께 저장한다.
 - DB는 `(node_id, 기기 연결 ID, 순번, 비콘)`이 같은 관측을 한 번만 저장한다. `RssiFrame`의 필드 이름은 `session_id`, `seq`, `sent_at`, `received_at`이다.
-- 수집 라벨 `label`은 `tools/data_collection`만 쓴다. 운영 저장 경로에서는 `NULL`이다.
+- `tools/data_collection`이 수집 회차와 라벨을 기록한다. DB는 저장한 관측에 수집 회차 ID를 연결한다.
 - 근접 추정은 HMM 내부 상태를 메모리에 둔다. DB의 관측은 재현과 재시작 복원에 쓴다.
 - 진행 중인 점유(`RESERVED`, `ACTIVE`, `CLOSING`)가 있는 기기의 발표 내용이 바뀔 때 `isolate_device`로 격리할지는 상태 관리가 정한다. 이 판단은 상태 관리 영역의 내부 결정이다.
 - 기기 발표의 신뢰 되돌림 감사는 `Step.ANNOUNCE`(`announce`)다. 관리 쓰기의 감사는 `Step.ADMIN`(`admin`)이다.
+
+### RSSI 수집 회차
+
+[#41](https://github.com/capstone-itda/nearpilot-server/issues/41)의 A안과 회차 ID 연결을 따른다.
+수집 데이터도 운영과 같은 IOT 검증과 DB 저장을 거친다.
+
+| 담당 | 책임 |
+|---|---|
+| IOT | 운영과 같은 기기 식별, 최신성, 형식 검증을 거쳐 RSSI를 전달한다. 수집 여부를 알지 못한다. |
+| 근접 추정의 `tools/data_collection` | 비콘, 라벨, 시작·끝 시각을 담은 수집 회차를 기록한다. 브로커를 별도로 구독하지 않는다. |
+| DB | 회차 중복과 구간 겹침을 검사한다. 관측을 한 회차에 연결하고 별도로 보존한다. |
+| DB의 `tools/evaluation` | 수집 회차 ID 단위로 학습·검증·시험 분할과 평가를 수행한다. |
+
+- 회차는 `collection_id`, `beacon_id`, `label`, `started_at`, `ended_at`을 담는다.
+- 라벨은 기기 1~6 앞 또는 `none`이다. "앞"의 거리 기준은 근접 추정 구현 담당이 spec에서 정한다.
+- 수집 구간은 `started_at <= frame_ts < ended_at`이다. 구간의 시작은 포함하고 끝은 제외한다.
+- 진행 중인 회차의 `ended_at`은 `NULL`이다. 같은 비콘의 다른 진행 중 회차와 겹치는 회차는 거부한다.
+- 끝 시각은 시작 시각보다 뒤여야 한다. 유효하지 않은 구간은 DB가 거부한다.
+- DB는 비콘과 관측 시각으로 회차를 찾아 `rssi_observation.collection_id`를 저장한다.
+- 종료 뒤 늦게 받은 관측도 관측 시각이 구간 안이면 같은 회차에 연결한다. 연결과 관측 저장은 같은 트랜잭션에서 한다.
+- 같은 비콘의 구간이 겹치면 DB는 새 회차를 거부한다. 끝 시각과 다음 시작 시각이 같으면 겹치지 않는다.
+- 회차의 라벨을 관측마다 저장하지 않는다. `rssi_observation.label`을 제거한다.
+- 연결된 관측은 운영 관측의 보존기간으로 삭제하지 않는다. 회차 ID로 평가용 관측을 찾는다.
+- 평가가 끝나면 계정 ID를 지운다. 공개용 데이터는 회차 구분을 유지한다. 비콘 식별자의 폐기는 requirements.md §1.4를 따른다.
+- 배포한 DB 스키마가 없어서 데이터 이전은 필요 없다. MQTT와 `RssiFrame`에는 회차 ID나 라벨을 추가하지 않는다.
+- 수집 회차의 저장·종료·조회 접점과 구간 변경의 처리는 후속 DB·수집 도구 spec에서 맞춘다.
+- 미결: 지표 8의 세부 측정 정의. 별도 이슈에서 정한다.
 
 ### 복구 준비 조회와 복구 승인
 
@@ -1022,12 +1078,13 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `user` | PK `user_id`, `name`, UNIQUE `token_hash`, `role` (`visitor`, `owner`). `token_hash`는 토큰의 SHA-256 해시를 소문자 hex 문자열로 쓴 값이다. 토큰 원문은 저장하지 않는다. |
 | `beacon` | PK `beacon_id`, FK `user_id`, `(uuid, major, minor)` 조합 UNIQUE, `is_active` |
 | `place` | PK `place_id`, FK `owner_user_id`, `name` |
-| `node` | TEXT PK `node_id`, FK `place_id`, `capability`, `occupancy`, `trust_state`, `device_state`, `exclusive_group`, JSON `release_policy`, JSON `anchor_params`, `last_seen_at`, 현재 기기 연결 ID `session_id`, 그 연결의 첫 수신 시각 `session_first_seen_at` |
+| `node` | TEXT PK `node_id`, FK `place_id`, `capability`, `occupancy`, `trust_state`, `device_state`, `exclusive_group`, JSON `release_policy`, `last_seen_at`, 현재 기기 연결 ID `session_id`, 그 연결의 첫 수신 시각 `session_first_seen_at` |
 | `access_policy` | PK `policy_id`, UNIQUE FK `node_id` (기기당 하나), `current_version`. 현재 접근 정책 리비전을 참조한다. 정책 변경은 새 리비전 추가와 `current_version` 갱신을 한 트랜잭션에서 한다. |
 | `policy_revision` | 복합 PK `(policy_id, version)`, `visibility` (`public`, `private`), `mode` (`open`, `restricted`), FK `approver_user_id`, `approval_ttl_sec`, `approval_mode` (`one_time`, `time_window`), `max_uses` (기간형이 무제한이면 NULL). 과거 리비전은 바꾸지 않는다. |
 | `approval` | PK `approval_id`, FK `node_id`, `requester_user_id`, `internal_request_id`, `approved_by_user_id`, `action`, 정책 리비전 참조, `status` (`pending`, `approved`, `denied`), `valid_until`, `used_count`. 요청 참조는 승인 신청의 출처다. 허용 범위는 요청자, 기기, 동작, 정책 버전으로 검사한다. |
 | `approval_usage` | PK `usage_id`, FK `approval_id`, `internal_request_id`, 명령 연결, `state` (`reserved`, `held`, `consumed`, `released`). 요청별로 중복 예약을 막는다. 허용 횟수는 예약, 보류, 소진을 합쳐서 검사한다. `used_count`는 소진 집계값이며 중복으로 계산하지 않는다. 미전송이 확정되면 자동으로 반환한다. 결과가 실패하거나 불명이면 보류하고 복구 뒤 정산한다. 검증된 `DEVICE_BUSY`의 접수·실행 전 거부이면 이번 요청의 사용분을 반환한다. 공용형 제한 기기의 요청에도 행을 만든다. 무제한이면 횟수 검사만 생략한다. |
-| `rssi_observation` | PK `obs_id`, FK `node_id`, `beacon_id`, `rssi` (dBm), `frame_ts` (약 1초 프레임), 서버 수신 시각 `received_at`, 발행 시각 `sent_at`, 기기 연결 ID `session_id`, 순번 `seq`, `(node_id, session_id, seq, beacon_id)` UNIQUE, nullable `label` (기기 1~6 앞 또는 none). 등록된 활성 비콘의 관측만 저장한다. `label`은 `tools/data_collection`만 쓴다. |
+| `collection_run` | PK `collection_id`, FK `beacon_id`, `label` (기기 1~6 앞 또는 none), `started_at`, nullable `ended_at`. 같은 비콘의 수집 구간은 겹치지 않는다. |
+| `rssi_observation` | PK `obs_id`, FK `node_id`, `beacon_id`, `rssi` (dBm), `frame_ts` (약 1초 프레임), 서버 수신 시각 `received_at`, 발행 시각 `sent_at`, 기기 연결 ID `session_id`, 순번 `seq`, `(node_id, session_id, seq, beacon_id)` UNIQUE, nullable FK `collection_id`. 등록된 활성 비콘의 관측만 저장한다. 라벨은 연결한 수집 회차에서 읽는다. |
 | `request` | TEXT PK `internal_request_id`, FK `user_id`, 외부 `request_id`, UNIQUE `(user_id, request_id)`, 정규화 입력 요약 `input_digest`, nullable FK `parent_internal_request_id`, nullable FK `node_id`, `target_spec`, `action`, `verdict`, `reason_code`, `p_max`, 버전 `model`, `calib`, `policy_ver`, `config_ver`, 실제 설정을 포함한 JSON `decision_context`, `host_kind` |
 | `node_command` | TEXT PK `command_id`, FK `internal_request_id`, `node_id`, 대상 동작과 입력 요약, 전송 시도, 실행 상태, 결과, 시각. 승인 사용분과 연결한다. 결과 불명은 실패, 미전송과 구분한다. 접수·실행 전 거부는 미전송, 실패와 구분한다. 기록은 재시작 뒤에도 보존한다. |
 | `use_session` | TEXT PK `use_id`, FK `internal_request_id`, `user_id`, `node_id`, `state` (`RESERVED`, `ACTIVE`, `CLOSING`, `CLOSED`), `end_reason` (`release`, `leave`, `timeout`, `fault`, `cancelled`), nullable `rental_due_at` (실행 성공 때 정한다), nullable `closed_at`, 생성 당시 종료 정책. 대여형 요청과 점유 세션은 1:0..1 관계다. |
@@ -1037,7 +1094,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 계정은 여러 비콘, 장소, 요청을 가진다. 장소는 여러 기기를 가진다.
 - 계정의 활성 비콘은 하나 이하다. 비활성 비콘의 식별자와 계정 연결은 보존한다.
 - 기기별, 비콘별 관측은 요청의 `decision_context`에서 재현할 수 있는 관측 구간으로 연결한다.
-- `anchor_params`는 경로손실 파라미터 `A`, `n`, `σ`를 보존한다.
+- 근접 파라미터와 기기 배치는 장소별 모델 파일이 보존한다. DB는 판정에 적용한 모델·보정 버전만 기록한다.
 - `decision_context`와 감사 payload는 임계값, 후보별 확률, 관측 참조, 모델 버전, 보정 버전, 정책 버전을 담는다.
 - DB는 `DecisionRecord`의 명시 필드로 `request` 행의 버전 컬럼과 `decision_context`를 채운다. `request` 행의 판정은 한 번만 저장한다.
 - `approval.valid_until`은 DB가 승인 시각과 승인을 만든 당시 리비전의 `approval_ttl_sec`로 계산한다.
