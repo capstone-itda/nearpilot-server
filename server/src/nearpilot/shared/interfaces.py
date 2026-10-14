@@ -120,7 +120,10 @@ class Repository(Protocol):
         """등록된 활성 비콘의 프레임만 저장한다. 그 밖의 비콘은 저장하지 않는다 (FR-05).
 
         `(node_id, session_id, seq, beacon)` 이 같은 프레임은 한 번만 저장한다.
-        수집 라벨은 `tools/data_collection` 만 쓴다. 이 경로의 라벨은 NULL 이다.
+        수집 회차와 라벨은 tools/data_collection 이 기록한다 (#41). IOT 입력에는 담지 않는다.
+        DB 는 비콘과 frame_ts 로 수집 구간을 찾아 저장한 관측에 collection_id 를 연결한다.
+        구간은 시작 이상·끝 미만이다. 운영 관측에는 collection_id 가 없다.
+        수집 회차에 연결된 관측은 운영 관측 보존기간으로 삭제하지 않는다.
         """
         ...
 

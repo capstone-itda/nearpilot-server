@@ -79,6 +79,8 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 사후확률 | 근접 추정이 장소의 전체 상태로 계산한, 방문자가 한 기기 앞에 있을 확률. 후보끼리 다시 정규화하지 않는다 | `ProximityResult.posteriors` | |
 | 전체 상태 | 근접 추정이 사후확률을 계산하는 상태의 집합. 장소의 `trusted` 기기 앞 상태들과 "어느 기기 앞도 아님" 상태다 | | |
 | 모델 파일 | 장소별 근접 파라미터, 기기 배치, HMM 전이와 보정 값을 버전으로 묶은 파일 | `model_version`, `calib_version` | |
+| 수집 회차 | 같은 비콘의 관측을 한 라벨과 수집 구간으로 묶은 기록. 학습·검증·시험 분할의 단위다 | `collection_run`, `collection_id` | |
+| 수집 라벨 | 수집 회차에서 관측한 위치. 기기 1~6 앞 또는 `none`이다 | `collection_run.label` | |
 | 후보 밖 상태 | 전체 상태 중 ②의 후보 기기 앞이 아닌 상태 | | |
 | 근접 임계값 | 판정이 ③에서 사후확률과 비교하는 설정 값. 명시적 지정 요청에는 별도 값을 쓴다 | `threshold_locker`, `threshold_light`, `threshold_explicit_locker`, `threshold_explicit_light` | |
 | 내부 요청 ID | 서버가 외부 요청 ID에 연결하는 전역 고유 ID | `internal_request_id` | |
