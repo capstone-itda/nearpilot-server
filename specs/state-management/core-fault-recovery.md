@@ -1,6 +1,6 @@
 # FAULT 복구 건, 복구 준비 조회, 복구 승인
 
-- 상태: 구현 중. 복구 건 생성과 저장 재시도를 구현한다. 조회·승인은 선행 계약을 기다린다.
+- 상태: 구현 중. 복구 건 생성과 저장 재시도의 단위 검증을 마쳤다. 조회·승인은 선행 계약을 기다린다.
 - 담당: JM-220 (상태 관리)
 - 요구사항: NFR-04, NFR-03, FR-12A, FR-19
 - 따르는 결정: #17, #20
@@ -20,6 +20,15 @@
 이번 구현은 `lifecycle-review.md` 6절의 두 번째 작업이다.
 복구 건 생성과 저장 재시도, `core-release`의 필수 주입 접점을 연결한다.
 아래 조회·승인·정산은 전체 spec의 목표다. 이번 구현의 완료 범위에 넣지 않는다.
+
+### 이번 구현의 추상 요약
+
+- 입력: 격리를 확인한 기기, 관련 요청·명령·점유 세션, 기존 보고의 근거 참조, 시계와 기기별 공통 잠금이다.
+- 출력: 저장을 확인한 `RecoveryRecord`다. 반납 인계는 저장 확인 뒤 반환한다. 저장 실패는 예외로 알린다.
+- 바뀌는 상태: 복구 건과 근거를 `save_recovery`로 저장한다. 메모리는 실패한 복구 건의 저장 대기를 유지한다.
+- 약속: 같은 미해결 장애는 같은 복구 ID와 대상 연결을 유지한다. 불명 저장은 같은 ID로 조회한다. 복구 건 저장은 점유·사용분·기기 격리를 풀지 않는다.
+
+### 선행 계약 뒤 구현할 목표
 
 - 입력:
   - 새 장애 격리: `node_id`, 관련 요청, 명령, 점유 세션, 근거 (`core-execution`, `core-node-events`, `core-release`가 부른다)
@@ -156,3 +165,15 @@
 
 이번 구현은 복구 건 생성, 같은 장애의 ID 보존, 저장 실패와 불명 조회, 재시작 뒤 ID 재사용을 검증한다.
 반납과 복구 건 생성의 연결은 같은 기기 잠금을 쓰는 CORE 단위 테스트로 검증한다.
+
+| 이번 구현의 요구사항 | 테스트 | 확인하는 것 |
+|---|---|---|
+| NFR-04 | `test_NFR04_isolation_creates_recovery_case` | 격리한 기기에 복구 건과 대상 연결을 저장한다 |
+| NFR-04 | `test_NFR04_save_recovery_unknown_requeries` | 불명 저장을 같은 ID로 확인한다. 확인하지 못하면 저장 대기를 유지한다 |
+| NFR-04 | `test_NFR04_restart_reuses_existing_recovery_id` | 새 서비스도 기존 미완료 복구 ID와 생성 시각을 유지한다 |
+| NFR-04 | `test_NFR04_release_fault_connected_to_recovery_creation` | 반납의 격리 뒤 실제 CORE 복구 건 생성 접점을 부른다 |
+| NFR-04 | `test_NFR04_release_unconfirmed_limit_connected_to_recovery` | 확인 불능 제한 뒤 점유를 보존하고 복구 건을 만든다 |
+| NFR-03 | `test_NFR03_concurrent_fault_creates_once` | 동시 인계에도 같은 장애의 복구 건을 하나만 만든다 |
+| FR-19 | `test_FR19_unconfirmed_usage_not_released` | 복구 건 저장은 점유와 승인 사용분을 풀지 않는다 |
+
+FR-12A의 조회·승인 테스트는 선행 계약 뒤 추가한다.
