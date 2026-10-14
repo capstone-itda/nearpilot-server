@@ -22,6 +22,7 @@ from nearpilot.shared.enums import (
     EndReason,
     Occupancy,
     ReasonCode,
+    ReserveOutcome,
     Role,
     SessionState,
     Step,
@@ -46,12 +47,17 @@ from nearpilot.shared.models import (
     NodeInfo,
     PolicyRevision,
     RequestLink,
+    ReserveRequest,
+    ReserveResult,
     RssiFrame,
     StoreResult,
     TargetSpec,
     UseRequest,
     UseSession,
 )
+
+
+_EXHAUSTED = object()  # 승인 남은 횟수가 0일 때 _reserve_usage()가 돌려주는 표지값
 
 
 class SqliteRepository:
@@ -502,3 +508,117 @@ class SqliteRepository:
             return ApprovalDecisionResult(
                 applied=True, reason=ApprovalDecisionReason.OK, status=req.decision, valid_until=valid_until
             )
+
+    # ── ⑤⑥ 원자적 예약 (FR-19, NFR-03) ────────────────────────────────
+
+    def reserve_if_free(self, req: ReserveRequest) -> ReserveResult:
+        with immediate_transaction(self._conn):
+            node = self._conn.execute(
+                "SELECT occupancy, device_state, exclusive_group FROM node WHERE node_id = ?",
+                (req.node_id,),
+            ).fetchone()
+            if node is None:
+                raise LookupError(f"기기 {req.node_id} 가 없다")
+
+            own_active = self._conn.execute(
+                "SELECT use_id FROM use_session WHERE node_id = ? AND user_id = ? AND state = 'ACTIVE'",
+                (req.node_id, req.user_id),
+            ).fetchone()
+            if own_active is not None:
+                usage_id = self._reserve_usage(req.approval_id, req.internal_request_id)
+                if usage_id is _EXHAUSTED:
+                    return ReserveResult(outcome=ReserveOutcome.APPROVAL_EXHAUSTED)
+                return ReserveResult(
+                    outcome=ReserveOutcome.REOPERATING, use_id=own_active["use_id"], usage_id=usage_id
+                )
+
+            existing_session = self._conn.execute(
+                "SELECT use_id FROM use_session WHERE internal_request_id = ?",
+                (req.internal_request_id,),
+            ).fetchone()
+            if existing_session is not None:
+                usage_id = self._lookup_usage(req.approval_id, req.internal_request_id)
+                return ReserveResult(
+                    outcome=ReserveOutcome.RESERVED, use_id=existing_session["use_id"], usage_id=usage_id
+                )
+
+            if node["occupancy"] == Occupancy.SHARED.value:
+                if req.approval_id is None:
+                    return ReserveResult(outcome=ReserveOutcome.RESERVED)
+                usage_id = self._reserve_usage(req.approval_id, req.internal_request_id)
+                if usage_id is _EXHAUSTED:
+                    return ReserveResult(outcome=ReserveOutcome.APPROVAL_EXHAUSTED)
+                return ReserveResult(outcome=ReserveOutcome.RESERVED, usage_id=usage_id)
+
+            if node["device_state"] != DeviceState.AVAILABLE.value:
+                return ReserveResult(outcome=ReserveOutcome.DEVICE_BUSY)
+
+            if node["exclusive_group"] is not None:
+                busy = self._conn.execute(
+                    "SELECT 1 FROM use_session s JOIN node n ON n.node_id = s.node_id "
+                    "WHERE n.exclusive_group = ? AND s.user_id = ? "
+                    "AND s.state IN ('RESERVED', 'ACTIVE', 'CLOSING')",
+                    (node["exclusive_group"], req.user_id),
+                ).fetchone()
+                if busy is not None:
+                    return ReserveResult(outcome=ReserveOutcome.USER_BUSY)
+
+            usage_id = self._reserve_usage(req.approval_id, req.internal_request_id)
+            if usage_id is _EXHAUSTED:
+                return ReserveResult(outcome=ReserveOutcome.APPROVAL_EXHAUSTED)
+
+            use_id = new_id()
+            self._conn.execute(
+                "INSERT INTO use_session (use_id, internal_request_id, user_id, node_id, state, "
+                "release_policy) VALUES (?, ?, ?, ?, 'RESERVED', ?)",
+                (use_id, req.internal_request_id, req.user_id, req.node_id, to_json(req.release_policy)),
+            )
+            self._conn.execute(
+                "UPDATE node SET device_state = 'RESERVED' WHERE node_id = ?", (req.node_id,)
+            )
+            return ReserveResult(outcome=ReserveOutcome.RESERVED, use_id=use_id, usage_id=usage_id)
+
+    def _lookup_usage(self, approval_id: str | None, internal_request_id: str) -> str | None:
+        if approval_id is None:
+            return None
+        row = self._conn.execute(
+            "SELECT usage_id FROM approval_usage WHERE approval_id = ? AND internal_request_id = ?",
+            (approval_id, internal_request_id),
+        ).fetchone()
+        return row["usage_id"] if row else None
+
+    def _reserve_usage(self, approval_id: str | None, internal_request_id: str) -> str | None:
+        """승인 사용분을 예약한다. 이미 예약했으면 기존 사용분을 그대로 반환한다(멱등).
+
+        남은 횟수가 0이면 `_EXHAUSTED`를 반환한다. `approval_id` 가 `None` 이면 예약하지 않는다.
+        """
+        if approval_id is None:
+            return None
+        existing = self._conn.execute(
+            "SELECT usage_id FROM approval_usage WHERE approval_id = ? AND internal_request_id = ?",
+            (approval_id, internal_request_id),
+        ).fetchone()
+        if existing is not None:
+            return existing["usage_id"]
+        policy_row = self._conn.execute(
+            "SELECT pr.max_uses FROM approval a "
+            "JOIN policy_revision pr ON pr.policy_id = a.policy_id AND pr.version = a.policy_version "
+            "WHERE a.approval_id = ?",
+            (approval_id,),
+        ).fetchone()
+        max_uses = policy_row["max_uses"] if policy_row else None
+        if max_uses is not None:
+            used = self._conn.execute(
+                "SELECT COUNT(*) AS c FROM approval_usage "
+                "WHERE approval_id = ? AND state IN ('reserved', 'held', 'consumed')",
+                (approval_id,),
+            ).fetchone()["c"]
+            if used >= max_uses:
+                return _EXHAUSTED
+        usage_id = new_id()
+        self._conn.execute(
+            "INSERT INTO approval_usage (usage_id, approval_id, internal_request_id, command_id, state) "
+            "VALUES (?, ?, ?, NULL, 'reserved')",
+            (usage_id, approval_id, internal_request_id),
+        )
+        return usage_id
