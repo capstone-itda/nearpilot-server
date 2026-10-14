@@ -152,7 +152,7 @@ def test_FR14_decide_approval_request_expired(conn, repo):
     assert result.reason == ApprovalDecisionReason.REQUEST_EXPIRED
 
 
-def test_FR14_decide_approval_invalid_policy_version_mismatch(conn, repo):
+def test_FR14_decide_approval_invalid(conn, repo):
     _setup(conn)
     pending = repo.create_approval_request(_request())
     add_policy_revision(conn, version=2)

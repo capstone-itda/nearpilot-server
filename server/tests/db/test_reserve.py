@@ -259,3 +259,43 @@ def test_NFR03_reserve_stress(tmp_path):
     check_conn = connect(db_path)
     assert check_conn.execute("SELECT COUNT(*) AS c FROM use_session").fetchone()["c"] == 1
     check_conn.close()
+
+
+def test_NFR03_threads(tmp_path):
+    """스레드마다 연결을 따로 쓴다. 쓰기 경합은 busy_timeout 안에서 기다리고, 예외 없이 끝난다."""
+    db_path = str(tmp_path / "threads.db")
+    setup_conn = connect(db_path)
+    insert_user(setup_conn, user_id="owner", token_hash="hash-owner")
+    insert_place(setup_conn, owner_user_id="owner")
+    insert_node(setup_conn, node_id="node1", occupancy="rental", last_seen_at="2020-01-01T00:00:00+00:00")
+    setup_conn.close()
+
+    errors: list[BaseException] = []
+    lock = threading.Lock()
+
+    def touch(seen_at: str) -> None:
+        conn = connect(db_path)
+        try:
+            conn.execute(
+                "UPDATE node SET last_seen_at = ? WHERE node_id = 'node1' AND last_seen_at < ?",
+                (seen_at, seen_at),
+            )
+        except BaseException as exc:  # noqa: BLE001 - 스레드 예외를 모아서 테스트에서 검사한다
+            with lock:
+                errors.append(exc)
+        finally:
+            conn.close()
+
+    threads = [
+        threading.Thread(target=touch, args=(f"2026-0{i + 1}-01T00:00:00+00:00",)) for i in range(5)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    check_conn = connect(db_path)
+    row = check_conn.execute("SELECT last_seen_at FROM node WHERE node_id = 'node1'").fetchone()
+    assert row["last_seen_at"] == "2026-05-01T00:00:00+00:00"
+    check_conn.close()
