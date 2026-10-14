@@ -1,4 +1,4 @@
-"""`PolicyChecker` 구현 (specs/db-policy-check/spec.md).
+"""`PolicyChecker` 구현 (specs/core-policy-check/spec.md).
 
 `core` 계층이므로 SQL을 직접 쓰지 않고 `shared.Repository` Protocol에만 의존한다
 (`AGENTS.md` 의존 규칙 4). 정책 모드, 승인 범위, 정책 버전 비교 규칙은 이 함수 안에 둔다.
