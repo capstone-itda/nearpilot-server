@@ -67,9 +67,9 @@ def test_settings_defaults_and_validation():
 
 def test_fake_satisfies_protocol():
     class FakeProximity:
-        def observe(self, frame): ...
+        def observe(self, frame, *, node): ...
 
-        def posterior(self, beacons, candidates, at):
+        def posterior(self, beacons, candidates, at, *, place_nodes):
             return ProximityResult({"locker-1": 0.97}, at, at, "fake", "fake")
 
     assert isinstance(FakeProximity(), ProximityEstimator)

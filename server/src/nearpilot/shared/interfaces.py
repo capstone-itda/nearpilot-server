@@ -369,14 +369,24 @@ class ExecutionService(Protocol):
 class ProximityEstimator(Protocol):
     """관측 모델 + HMM (FR-16). 교체 가능한 인터페이스로 분리한다 (requirements.md §1.2)."""
 
-    def observe(self, frame: RssiFrame) -> None:
-        """RSSI 프레임 하나로 내부 상태(HMM 필터)를 갱신한다."""
+    def observe(self, frame: RssiFrame, *, node: NodeInfo) -> None:
+        """호출자가 조회한 관측 기기와 RSSI 프레임으로 HMM 필터를 갱신한다 (FR-16).
+
+        node_id 가 다르거나 node.trust_state 가 TRUSTED 가 아니면 프레임을 쓰지 않는다.
+        프레임의 최신성은 FR-05 계약을 따른다. DB 관측 저장과 근접 추정 사용 여부는 별개다.
+        """
         ...
 
     def posterior(
-        self, beacons: Sequence[BeaconKey], candidates: Sequence[NodeInfo], at: datetime
+        self, beacons: Sequence[BeaconKey], candidates: Sequence[NodeInfo], at: datetime,
+        *, place_nodes: Sequence[NodeInfo],
     ) -> ProximityResult:
-        """후보 장치별 사후확률. 후보가 없으면 빈 posteriors.
+        """장소 전체 상태로 계산한 후보별 사후확률. 후보가 없으면 빈 posteriors.
+
+        판정이 Repository.nodes() 로 읽은 해당 장소의 전체 기기를 place_nodes 로 넘긴다.
+        TRUSTED 기기는 FAULT·오프라인·다른 기능이어도 전체 상태에 넣고 '어느 기기 앞도 아님'을 더한다.
+        후보 확률을 다시 정규화하지 않는다. 후보 밖 확률을 후보에 더하지 않는다. 합은 1 이하다.
+        후보와 전체 기기는 같은 장소의 조회다. 관계가 맞지 않으면 실행 허가에 쓸 결과를 만들지 않는다.
 
         판정은 명시 지정 요청에도 ② 의 전체 후보를 넘긴다 (#26). 지정 대상은 인자로 받지 않는다.
         같은 입력에는 지정 여부와 상관없이 같은 출력을 낸다 (NFR-09).

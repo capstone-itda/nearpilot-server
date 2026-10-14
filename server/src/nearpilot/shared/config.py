@@ -18,6 +18,9 @@ class Settings:
     # 근접 임계값 (FR-17)
     threshold_locker: float = 0.95
     threshold_light: float = 0.75
+    # 명시 지정 수치는 미결이다. None 은 미설정이며 실행을 허가하지 않는다 (FR-17)。
+    threshold_explicit_locker: float | None = None
+    threshold_explicit_light: float | None = None
 
     # 관측 (FR-05)
     rssi_frame_sec: float = 1.0
@@ -76,6 +79,17 @@ class Settings:
                 "request_dedup_ttl_sec", "dedup_entry_limit",
             ) and not isinstance(v, int):
                 raise ValueError(f"{name} 는 정수여야 한다: {v}")
+        for name, general in (
+            ("threshold_explicit_locker", "threshold_locker"),
+            ("threshold_explicit_light", "threshold_light"),
+        ):
+            v = getattr(self, name)
+            if v is None:
+                continue
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not isfinite(v):
+                raise ValueError(f"{name} 는 유한한 숫자 또는 None 이어야 한다")
+            if not 0.0 < v < getattr(self, general):
+                raise ValueError(f"{name} 는 0 보다 크고 {general} 보다 작아야 한다")
         for name in ("threshold_locker", "threshold_light"):
             v = getattr(self, name)
             if not 0.0 < v <= 1.0:

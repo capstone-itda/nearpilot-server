@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
+from math import fsum, isclose, isfinite
 from typing import Any
 
 from nearpilot.shared.config import Settings
@@ -255,13 +256,21 @@ class RssiFrame:
 
 @dataclass(frozen=True, slots=True)
 class ProximityResult:
-    posteriors: Mapping[str, float]  # node_id → 사후확률, 합 ≈ 1
+    posteriors: Mapping[str, float]  # node_id → 장소 전체 상태의 확률. 후보 합 ≤ 1, 다시 정규화하지 않는다.
     window_start: datetime
     window_end: datetime
     model_version: str
     calib_version: str
 
     def __post_init__(self) -> None:
+        for probability in self.posteriors.values():
+            if isinstance(probability, bool) or not isinstance(probability, (int, float)):
+                raise ValueError("사후확률은 숫자여야 한다")
+            if not isfinite(probability) or not 0.0 <= probability <= 1.0:
+                raise ValueError("사후확률은 [0, 1] 범위의 유한한 값이어야 한다")
+        total = fsum(self.posteriors.values())
+        if total > 1.0 and not isclose(total, 1.0):
+            raise ValueError("후보 사후확률의 합은 1 이하다")
         object.__setattr__(self, "posteriors", _freeze(self.posteriors))
 
     @property
