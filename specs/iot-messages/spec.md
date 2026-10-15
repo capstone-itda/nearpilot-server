@@ -4,7 +4,7 @@
 - 구현 브랜치: `feat/iot-messages`
 - 요구사항: FR-04, FR-05, FR-06, FR-07, FR-20, NFR-08, NFR-11
 - 따르는 결정: architecture.md에 반영한 #19, #31, #38, #140~#143이다.
-- 상태: 구현 전 초안이다. 전체 계획은 [plan.md](../iot-mqtt-gateway/plan.md)에 있다.
+- 상태: 메시지 검증·변환과 단위 테스트를 구현했다. 전체 계획은 [plan.md](../iot-mqtt-gateway/plan.md)에 있다.
 
 ## 1. 왜
 
@@ -88,6 +88,16 @@
 - 형식 변환은 부작용 없이 작성한다 — 최초 수신 시각을 보존하고 개별 변환을 검증한다.
 - RSSI 본문 전체를 검증한 뒤 모델을 만든다 — 잘못된 본문의 앞 항목만 인계하지 않게 한다.
 
+구현 접점은 `nearpilot.iot.messages`에 있다.
+
+- `decode_message(topic, payload, received_at=...)`는 보고를 shared 모델로 변환한다. RSSI는 `RssiFrame` 튜플을 반환한다.
+- 호출자는 최초 수신 시각을 UTC `datetime`으로 전달한다. MQTT 전달 정보는 호출자가 보존한다.
+- `encode_command(NodeCommand)`와 `encode_safety_check(SafetyCheckRequest)`는 UTF-8 JSON 바이트를 반환한다.
+- 형식이 잘못되면 `MessageValidationError`를 던진다. 예외 메시지에 본문을 넣지 않는다. 호출자가 거부를 기록한다.
+- 중복 JSON 키와 유한하지 않은 JSON 수를 거부한다. 알 수 없는 추가 필드는 판정 필드에 넣지 않는다.
+- 알려진 v1 검사 기준은 모든 결과에서 필수 bool 근거와 관측 시각을 검사한다. 근거의 값과 결과의 일치는 CORE가 검사한다.
+- 다른 검사 기준과 버전은 값을 보존한다. CORE가 요청한 기준과 유효성을 검사한다.
+
 ## 7. 가정
 
 - #141의 v1 기준은 §4 표다. 미래 센서 조건을 같은 버전에 추가하지 않는다.
@@ -108,3 +118,5 @@
 | NFR-11 | `test_NFR11_all_v1_message_shapes` | 일곱 토픽의 v1 형식을 확인한다 |
 
 실제 브로커와 다른 계층 구현은 필요 없다. 입력과 변환 결과를 직접 비교한다.
+
+2026-10-16 원격 main 동기화 뒤 검증 결과는 IOT 테스트 228개 통과다. 전체 테스트는 1,844개 통과와 기존 예상 실패 1개다.
