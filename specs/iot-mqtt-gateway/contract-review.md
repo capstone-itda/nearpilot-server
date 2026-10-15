@@ -1,8 +1,9 @@
 # IOT 계약 검토와 남은 결정
 
-이 문서는 합의한 펌웨어 계약과 남은 서버 선택을 기록한다.
-담당자는 2026-10-15에 #141의 §4 기준과 #140·#142·#143의 A안을 선택했다.
-같은 날 내부 책임 분리와 실행 중 메모리 재인계를 선택했다. 전체 분할은 [plan.md](plan.md)에 있다.
+이 문서는 남은 서버 계약과 내부 선택을 기록한다.
+펌웨어 계약 검수와 후속 이슈 본문은 [별도 폴더](../firmware-contracts/README.md)에 있다.
+담당자는 2026-10-15에 내부 책임 분리와 실행 중 메모리 재인계를 선택했다.
+전체 분할은 [plan.md](plan.md)에 있다.
 계약의 근거는 이 브랜치의 `docs/`와 기존 spec이다. 닫힌 이슈 토론을 구현 근거로 쓰지 않는다.
 
 ## 1. 이미 정한 계약
@@ -17,36 +18,16 @@
 | RSSI 저장과 수집 회차 | FR-05, architecture.md §4 "RSSI 수집 회차" | IOT는 수집 라벨을 받지 않는다 |
 | 서버 조립 담당 | architecture.md §2, #88의 문서 반영 | 이번 작업은 게이트웨이와 시뮬레이터를 만든다 |
 
-## 2. 펌웨어 계약 이슈
+## 2. 펌웨어 계약의 참조
 
-펌웨어 담당은 지정하지 않았다. 네 이슈의 A안은 담당자의 지시로 합의 완료했다.
-실제 센서 능력과 미측정 수치는 합의 범위 밖의 후속 검증이다.
-
-| 이슈 | 합의한 부분 | 문서 PR과 남은 검증 |
-|---|---|---|
-| [#140](https://github.com/capstone-itda/nearpilot-server/issues/140) | 폐쇄망 시각원·기기별 오차 실측·검증 전 실행과 안전 확인 차단 | [#146](https://github.com/capstone-itda/nearpilot-server/pull/146). 구체 동기화 방식·간격·오차값·설정 이름은 후속 검증이다 |
-| [#141](https://github.com/capstone-itda/nearpilot-server/issues/141) | §4 v1 기준 유지와 추가 조건의 새 버전 분리 | [#147](https://github.com/capstone-itda/nearpilot-server/pull/147). 실제 기기의 근거 제공 능력은 따로 검증한다 |
-| [#142](https://github.com/capstone-itda/nearpilot-server/issues/142) | 증명한 기능만 성공, 확인 불가의 `unknown`·`null` 보존 | [#148](https://github.com/capstone-itda/nearpilot-server/pull/148). 실제 완료 관측과 스피커 새 필드는 후속 계약이다 |
-| [#143](https://github.com/capstone-itda/nearpilot-server/issues/143) | 기존 확인 불능 경로·거짓 bool 금지·기존 결과 보존 | [#150](https://github.com/capstone-itda/nearpilot-server/pull/150). 전용 오류 형식은 후속 계약이다 |
-
-이슈의 발행 본문 사본은 `firmware-issues/`에 둔다.
-결정은 네 `decision/{요약}` 브랜치의 문서 PR에 반영했다. PR은 순서대로 연결했으며 머지하지 않았다.
-
-### 반납 검사 문서 정리
-
-| 위치 | 사물함 조건 | 조명·스피커 조건 |
-|---|---|---|
-| architecture.md §4 "반납 검사와 종료" | `door_closed`, `locked`의 bool 근거다 | `actuator_idle`의 bool 근거다 |
-| architecture.md §5 MQTT 7절 | 같은 v1 기준을 참조한다 | 같은 v1 기준을 참조한다 |
-
-기존 §5의 별도 통과 조건을 §4의 v1 기준으로 통일했다. 스피커 기준도 표에 포함했다.
-§5 MQTT 3절의 필수 근거 설명도 §4의 확정 표를 참조한다.
-구동부 정지·센서 정상·정책상 꺼짐을 새 필수 조건으로 추가하려면 기준 버전을 올린다.
+[펌웨어 계약 검수](../firmware-contracts/README.md)에 현재 계약, 실제 기기의 미검증 항목과 후속 이슈 본문을 모았다.
+게이트웨이와 시뮬레이터는 이 브랜치의 docs에 있는 MQTT v1을 따른다.
+실제 기기의 미측정 수치와 새 보고 형식은 이 문서에서 확정하지 않는다.
 
 ## 3. 서버 계약의 결정 초안
 
 다음 사안은 펌웨어 담당에게만 맡길 수 없다. 서버 조립·CORE·공용 설정과 닿는다.
-이번에 승인한 실제 이슈는 #140~#143이다. 아래 서버 사안은 아직 이슈로 발행하지 않은 선택지다.
+아래 서버 사안은 아직 이슈로 발행하지 않은 선택지다. 펌웨어 후속 이슈와 구분한다.
 
 ### S1. 상태 보고의 최신성
 
@@ -202,4 +183,4 @@ spec 초안은 기존 회귀 테스트를 확인한 뒤 먼저 커밋한다. 아
 6. plan.md의 다섯 feat 작업을 각 spec과 함께 구현한다.
 7. 단위 테스트와 Mosquitto 계약 검증을 마친다.
 8. 서버 조립 작업에서 CORE·DB를 연결한다.
-9. 실제 기기는 #140~#143의 검증 근거를 확인한 뒤 연결한다.
+9. 실제 기기는 [펌웨어 검수](../firmware-contracts/README.md)의 후속 검증 근거를 확인한 뒤 연결한다.

@@ -60,8 +60,9 @@ IOT 전체 연결 검증은 보고 검증과 명령 대기를 모두 구현한 �
 | #142 | 증명한 기능만 성공. 관측 불가는 `unknown`·`null`로 보존 | [#148](https://github.com/capstone-itda/nearpilot-server/pull/148) |
 | #143 | 검사 충돌·불완전한 근거는 기존 확인 불능 경로 | [#150](https://github.com/capstone-itda/nearpilot-server/pull/150) |
 
-문서 PR은 위 순서로 연결했다. PR은 머지하지 않았다.
-합의의 근거는 담당자의 2026-10-15 지시와 이 브랜치의 `docs/`다. 닫힌 이슈 토론을 구현 근거로 쓰지 않는다.
+계약의 근거는 이 브랜치의 `docs/`다. 이슈와 문서 PR 번호는 추적에 쓴다.
+닫힌 이슈 토론을 구현 근거로 쓰지 않는다.
+실제 기기의 검증과 남은 보고 계약은 [펌웨어 계약 검수](../firmware-contracts/README.md)에 분리했다.
 
 ## 5. 구현 전에 남은 선택
 
