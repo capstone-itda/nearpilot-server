@@ -144,7 +144,7 @@ sequenceDiagram
 | 재조작이 성공한다 | `rental_due_at`에 `None`을 넘긴다 | `test_FR19_reoperation_success_keeps_due` |
 | `record_result`가 `StoreOutcomeUnknown`을 던진다 | `execution()`으로 다시 조회한다. 확인 전에는 `SUCCEEDED`를 반환하지 않는다 | `test_FR19_store_unknown_requeries` |
 | 결과 대기가 끝난 뒤 성공 결과가 온다 | `record_result`로 넘긴다. DB가 `CONFLICT`를 반환하면 `FAULT`를 유지한다 | `test_FR07_late_success_keeps_fault` |
-| 같은 결과 사건이 `send()` 반환과 `on_result()`로 두 번 온다 | 두 번째 저장은 `ALREADY_APPLIED`다. 정산은 한 번이다 | `test_FR07_same_event_settled_once` |
+| 같은 결과 사건이 `send()` 반환과 `on_result()`로 두 번 온다 | 완료한 사건은 중복 저장하지 않는다. 저장 재시도는 `ALREADY_APPLIED`를 따른다 | `test_FR07_same_event_settled_once` |
 
 ## 6. 결정
 
@@ -156,6 +156,8 @@ sequenceDiagram
 - `on_result(context, report)`는 검증한 보고의 내부 인계다 — 사건 연결을 검사하고 저장 실패는 예외로 알린다. 실제 이벤트 조립은 후속 작업이다.
 - 전송 시작의 반영이 불명이면 조회만 한다 — 조회로 시작 기록을 확인해도 명령을 보내지 않는다.
 - 저장할 결과와 취소 근거를 메모리에 보존한다 — 같은 사건의 재시도에서 시각과 내용을 바꾸지 않는다.
+- 저장 뒤 확인 조회까지 실패해도 복구 건 생성을 재시도한다 — 같은 실패·불명 사건의 `ALREADY_APPLIED`는 복구 건 저장을 대신하지 않는다.
+- 통신 대기 중에는 기기 잠금을 푼다 — 다른 스레드의 결과 인계가 끝나야 통신 대기를 끝내는 경우에도 교착하지 않는다.
 - `blockers(internal_request_id)`로 내부 보류 이유를 읽는다 — 공동 응답 모델에 임시 사유를 추가하지 않는다.
 
 ## 7. 가정
@@ -181,13 +183,23 @@ sequenceDiagram
 | 요구사항 | 테스트 | 확인하는 것 |
 |---|---|---|
 | FR-06 | `test_FR06_execute_sends_command_after_recheck` | 재검사 `OK` 뒤에만 `send()`를 부른다. 명령에 현재 연결 ID와 만료 시각을 담는다 |
-| FR-07 | `test_FR07_timeout_not_treated_as_not_sent` | 시간 초과의 `UNKNOWN`을 미전송으로 바꾸지 않는다 |
-| FR-18 | `test_FR18_recheck_called_before_send` | 재검사를 전송 직전에 부른다 |
+| FR-07 | `test_FR07_gateway_exception_is_unknown_not_not_sent` | 시간 초과와 통신 오류를 미전송으로 바꾸지 않는다 |
+| FR-18 | `test_FR18_recheck_reject_blocks_send` | 재검사 거부의 판정과 사유를 보존하고 조건부 취소한다 |
 | FR-19 | `test_FR19_initial_success_sets_rental_due_at` | 최초 대여 성공에 성공 시각과 `rental_duration_sec`로 계산한 `rental_due_at`을 넘긴다 |
 | NFR-03 | `test_NFR03_concurrent_handover_sends_once` | 동시 인계에도 물리 명령은 한 번이다 |
-| NFR-04 | `test_NFR04_unknown_creates_recovery_case` | 결과 불명 뒤 복구 건을 만든다 |
+| NFR-04 | `test_NFR04_failed_or_unknown_creates_recovery_and_holds_usage` | 실패·불명 뒤 복구 건을 만들고 사용분을 보존한다 |
+| FR-06 | `test_FR06_begin_unknown_never_authorizes_send` | 불명 시작 기록을 조회해도 재전송하지 않는다 |
+| FR-19 | `test_FR19_store_unknown_requeries_before_success` | 저장 불명은 조회한다. 확인 전에는 성공과 `use_id`를 반환하지 않는다 |
+| FR-19 | `test_FR19_result_not_applied_retry_keeps_original_due` | 저장 재시도는 원래 결과 시각과 대여시간 기준을 쓴다 |
+| FR-19 | `test_FR19_execution_uses_real_restore_gate` | 실제 복원 서비스의 현재 연결 확인 뒤 전송한다 |
+| FR-19 | `test_FR19_expiry_during_recheck_blocks_send` | 재검사 중 예약 대기가 만료하면 전송을 막는다 |
+| FR-07 | `test_FR07_late_success_keeps_fault` | 늦은 성공을 저장에 넘긴다. 기존 격리와 사용분 보류를 유지한다 |
+| FR-07 | `test_FR07_restart_same_event_does_not_recalculate_rental_due` | 재시작 뒤 같은 보고로 대여시간 기준을 다시 계산하지 않는다 |
+| NFR-03 | `test_NFR03_report_can_arrive_during_gateway_wait_without_deadlock` | 통신 대기 중 다른 스레드의 결과를 받는다 |
+| NFR-04 | `test_NFR04_result_committed_but_query_failed_still_creates_recovery` | 결과 저장 뒤 조회가 실패해도 복구 건을 보완한다 |
 
 - `ExecutionStore`, `DecisionRechecker`, `NodeCommandGateway`, `Repository`는 fake로 대신한다.
 - 이번 구현은 재검사 거부의 취소, 원자적 전송 시작, 결과 저장, 복구 건 생성과 저장 재시도를 검증한다.
 - 예약 만료·연결 없음·IOT 미전송은 전송 차단과 예약 보존을 검증한다. 취소 저장과 사유 전달의 완료로 세지 않는다.
 - 전체 서버 조립과 실제 MQTT 연결은 이번 구현에 넣지 않는다.
+- 5절의 예약 만료 취소·IOT 미전송 취소·외부 사유 전달은 선행 계약 뒤 검증한다.
