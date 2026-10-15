@@ -20,6 +20,12 @@ def test_fr18_internal_error_reason_is_separate_from_recheck_failed():
     assert ReasonCode.INTERNAL_ERROR is not ReasonCode.RECHECK_FAILED
 
 
+def test_fr22_capacity_exceeded_reason_is_separate_from_request_conflict():
+    assert ReasonCode.CAPACITY_EXCEEDED.value == "CAPACITY_EXCEEDED"
+    assert ReasonCode.CAPACITY_EXCEEDED is not ReasonCode.REQUEST_ID_CONFLICT
+    assert ReasonCode.CAPACITY_EXCEEDED is not ReasonCode.INTERNAL_ERROR
+
+
 @pytest.mark.parametrize(
     ("raw", "kind", "node_id"),
     [
@@ -61,9 +67,18 @@ def test_settings_defaults_and_validation():
 
 def test_fake_satisfies_protocol():
     class FakeProximity:
-        def observe(self, frame): ...
+        def observe(self, frame, *, node): ...
 
-        def posterior(self, beacons, candidates, at):
+        def posterior(self, beacons, candidates, at, *, place_nodes):
             return ProximityResult({"locker-1": 0.97}, at, at, "fake", "fake")
 
     assert isinstance(FakeProximity(), ProximityEstimator)
+
+
+@pytest.mark.parametrize(
+    ("raw", "kind", "node_id"),
+    [("nearest:speaker", TargetKind.NEAREST, None), ("speaker-1", TargetKind.EXPLICIT, "speaker-1")],
+)
+def test_FR09_speaker_target_spec_parse(raw, kind, node_id):
+    spec = TargetSpec.parse(raw)
+    assert (spec.kind, spec.capability, spec.node_id) == (kind, Capability.SPEAKER, node_id)

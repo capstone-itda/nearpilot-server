@@ -1,11 +1,14 @@
 """#23 ④ 정책 검사 shared 계약 검사."""
 
-from dataclasses import fields
+import inspect
+from dataclasses import FrozenInstanceError, fields
 from datetime import datetime
 
-from nearpilot.shared.enums import Action, ReasonCode, Verdict
-from nearpilot.shared.interfaces import PolicyChecker
-from nearpilot.shared.models import PolicyCheckResult
+import pytest
+
+from nearpilot.shared.enums import Action, ApprovalStatus, ReasonCode, Verdict
+from nearpilot.shared.interfaces import PolicyChecker, Repository
+from nearpilot.shared.models import ApprovalRecord, PolicyCheckResult
 
 
 def test_fr14_policy_check_result_carries_policy_version_and_approval_id():
@@ -21,11 +24,18 @@ def test_fr14_fr18_need_approval_reasons_are_distinguishable():
         ReasonCode.APPROVAL_PENDING,
         ReasonCode.APPROVAL_REJECTED,
         ReasonCode.APPROVAL_EXPIRED,
+        ReasonCode.APPROVAL_REQUEST_EXPIRED,
         ReasonCode.APPROVAL_EXHAUSTED,
         ReasonCode.ACTION_NOT_ALLOWED,
     }
     results = [PolicyCheckResult(Verdict.NEED_APPROVAL, r, 1) for r in reasons]
-    assert len({r.reason for r in results}) == 6
+    assert len({r.reason for r in results}) == 7
+
+
+def test_fr03_pending_expiry_reason_is_separate_from_rejection_and_approval_expiry():
+    assert ReasonCode.APPROVAL_REQUEST_EXPIRED.value == "APPROVAL_REQUEST_EXPIRED"
+    assert ReasonCode.APPROVAL_REQUEST_EXPIRED is not ReasonCode.APPROVAL_REJECTED
+    assert ReasonCode.APPROVAL_REQUEST_EXPIRED is not ReasonCode.APPROVAL_EXPIRED
 
 
 def test_fr14_policy_check_result_allows_no_policy_version_on_deny():
@@ -46,3 +56,30 @@ def test_fr18_fake_policy_checker_satisfies_protocol():
     checker = FakePolicyChecker()
     assert isinstance(checker, PolicyChecker)
     assert checker.check("u1", "locker-1", Action.OPEN, datetime(2026, 10, 1)).verdict is Verdict.OK
+
+
+def test_fr03_fr14_approval_record_carries_reason_inputs():
+    record = ApprovalRecord(
+        approval_id="ap-1",
+        action=Action.OPEN,
+        policy_version=3,
+        status=ApprovalStatus.PENDING,
+        created_at=datetime(2026, 10, 1, 9, 0),
+        pending_until=datetime(2026, 10, 1, 9, 10),
+        valid_until=None,
+        remaining_uses=None,
+    )
+    assert record.valid_until is None
+    assert record.remaining_uses is None
+    with pytest.raises(FrozenInstanceError):
+        record.status = ApprovalStatus.APPROVED  # type: ignore[misc]
+
+
+def test_fr11_approval_record_has_no_user_fields():
+    names = {f.name for f in fields(ApprovalRecord)}
+    assert not names & {"user_id", "requester_user_id", "approver_user_id", "approved_by_user_id"}
+
+
+def test_fr18_repository_has_unfiltered_approval_history_query():
+    params = list(inspect.signature(Repository.approvals_in_scope).parameters)
+    assert params == ["self", "user_id", "node_id"]

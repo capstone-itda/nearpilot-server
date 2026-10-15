@@ -9,7 +9,8 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from datetime import timedelta
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any
 
 from nearpilot.core.decision.digest import input_digest
@@ -17,10 +18,12 @@ from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
     Capability,
     DeviceState,
+    ExecutionKind,
     Occupancy,
     ReasonCode,
     ReserveOutcome,
     Step,
+    StoreOutcome,
     TargetKind,
     TrustState,
     Verdict,
@@ -34,6 +37,8 @@ from nearpilot.shared.interfaces import (
 from nearpilot.shared.models import (
     AuditEvent,
     Decision,
+    DecisionRecord,
+    ExecutionContext,
     NodeInfo,
     ReserveRequest,
     UseRequest,
@@ -44,14 +49,62 @@ log = logging.getLogger(__name__)
 _GENERIC_MESSAGE = "요청을 처리하지 못했습니다."
 
 
+def select_candidates(
+    nodes: Sequence[NodeInfo], capability: Capability, settings: Settings, now: datetime,
+    place_id: str | None = None,
+) -> Sequence[NodeInfo]:
+    """② 후보 조건. 최초 판정과 실행 직전 재검사가 같은 조건을 쓴다."""
+    ttl = timedelta(seconds=settings.online_ttl_sec)
+    return [
+        n for n in nodes
+        if n.capability is capability
+        and (place_id is None or n.place_id == place_id)
+        and n.trust_state is TrustState.TRUSTED
+        and n.device_state is not DeviceState.FAULT
+        and n.last_seen_at is not None
+        and now - n.last_seen_at <= ttl
+    ]
+
+
+def threshold_for(settings: Settings, capability: Capability, explicit: bool) -> float | None:
+    """요청 종류와 명시 지정 여부로 임계값을 고른다. 설정에 없으면 None 이다."""
+    name = f"threshold_explicit_{capability.value}" if explicit else f"threshold_{capability.value}"
+    return getattr(settings, name, None)
+
+
+def make_decision(
+    request_id: str, iid: str, verdict: Verdict, reason: ReasonCode, **kw: Any
+) -> Decision:
+    message = _GENERIC_MESSAGE if reason is ReasonCode.INTERNAL_ERROR else None
+    return Decision(internal_request_id=iid, request_id=request_id, verdict=verdict,
+                    reason=reason, message=message, **kw)
+
+
+@dataclass
+class _Applied:
+    """판정에 적용한 값. DecisionRecord 와 감사 기록의 재료다."""
+
+    policy_version: int | None = None
+    model_version: str | None = None
+    calib_version: str | None = None
+    posteriors: Mapping[str, float] = field(default_factory=dict)
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+    usage_id: str | None = None
+    execution_kind: ExecutionKind | None = None
+
+
+class _SaveConflict(Exception):
+    """같은 내부 요청에 다른 판정 기록이 이미 있다. 기존 기록을 덮어쓰지 않는다."""
+
+
 class _Stop(Exception):
     """단계가 실패해서 판정을 확정했다. 뒤 단계는 실행하지 않는다."""
 
-    def __init__(self, step: Step, decision: Decision, detail: Mapping[str, Any] | None = None):
+    def __init__(self, step: Step, decision: Decision):
         super().__init__(decision.reason)
         self.step = step
         self.decision = decision
-        self.detail = detail or {}
 
 
 class DecisionPipeline:
@@ -75,6 +128,10 @@ class DecisionPipeline:
 
     def decide(self, req: UseRequest) -> Decision:
         """⓪부터 ⑥까지 같은 순서로 검사하고 판정 하나를 반환한다."""
+        return self.decide_for_execution(req)[0]
+
+    def decide_for_execution(self, req: UseRequest) -> tuple[Decision, ExecutionContext | None]:
+        """판정과 실행 인계 context 를 반환한다. context 는 이번에 새로 OK 가 난 요청에만 있다 (#16, #35)."""
         internal_id = ""
         try:
             link = self._repo.link_request(req, input_digest(req))
@@ -82,67 +139,89 @@ class DecisionPipeline:
             if link.conflict:
                 d = self._decision(req, internal_id, Verdict.DENY, ReasonCode.REQUEST_ID_CONFLICT)
                 self._audit_step(Step.DEDUP, internal_id, {"result": d.reason.value})
-                return d  # 기존 판정을 덮어쓰지 않는다
+                return d, None  # 기존 판정을 덮어쓰지 않는다
             if not link.is_new:
                 if link.previous is not None:
-                    return link.previous
+                    return link.previous, None
                 d = self._decision(req, internal_id, Verdict.DENY, ReasonCode.INTERNAL_ERROR)
                 self._audit_step(Step.DEDUP, internal_id, {"result": "IN_PROGRESS"})
-                return d
+                return d, None
         except Exception as exc:  # noqa: BLE001 - 알 수 없는 오류는 거부한다
-            return self._internal_error(req, internal_id, Step.DEDUP, exc, save=False)
+            return self._internal_error(req, internal_id, Step.DEDUP, exc, save=False), None
 
+        applied = _Applied()
         try:
             try:
-                decision, step, detail = self._run(req, internal_id)
+                decision, step, detail = self._run(req, internal_id, applied)
             except _Stop as stop:
-                decision, step, detail = stop.decision, stop.step, stop.detail
-            context = {"step": step.value, **detail}
+                decision, step, detail = stop.decision, stop.step, {}
             self._audit_step(step, internal_id, {
                 "verdict": decision.verdict.value, "reason": decision.reason.value,
                 "settings_version": self._settings.version, **detail})
-            self._repo.save_decision(decision, context, self._settings.version)
+            saved = self._repo.save_decision(decision, self._record(applied))
+            if saved.outcome is StoreOutcome.CONFLICT:
+                raise _SaveConflict("같은 내부 요청에 다른 판정 기록이 있다")
         except Exception as exc:  # noqa: BLE001 - 알 수 없는 오류는 거부한다
-            return self._internal_error(req, internal_id, Step.EXEC, exc, save=True)
-        return decision
+            return self._internal_error(
+                req, internal_id, Step.EXEC, exc, save=not isinstance(exc, _SaveConflict)), None
+        return decision, self._context(req, internal_id, decision, applied)
 
     # ── ①~⑥ ───────────────────────────────────────────────────────
 
-    def _run(self, req: UseRequest, iid: str) -> tuple[Decision, Step, dict[str, Any]]:
+    def _run(
+        self, req: UseRequest, iid: str, applied: _Applied
+    ) -> tuple[Decision, Step, dict[str, Any]]:
         s = self._settings
         now = req.received_at
 
-        # ① 비콘
+        # ① 비콘 — 활성 비콘은 0 또는 1 개다 (#42)
         beacons = self._repo.beacons_of(req.user_id)
+        if len(beacons) > 1:
+            raise ValueError("활성 비콘이 둘 이상이다")
         frames = (
             self._repo.rssi_since(beacons, now - timedelta(seconds=s.beacon_recent_sec))
             if beacons
             else ()
         )
+        all_nodes: Sequence[NodeInfo] = self._repo.nodes() if frames else ()
+        by_node = {n.node_id: n for n in all_nodes}
+        anchors = {f.node_id for f in frames
+                   if f.node_id in by_node and by_node[f.node_id].trust_state is TrustState.TRUSTED}
         self._audit_step(Step.BEACON, iid, {"beacons": len(beacons), "frames": len(frames),
+                                           "anchors": sorted(anchors),
                                            "beacon_recent_sec": s.beacon_recent_sec})
-        if not frames:
+        if not anchors:
             raise _Stop(Step.BEACON, self._decision(req, iid, Verdict.DENY, ReasonCode.BEACON_NOT_SEEN))
+        places = {by_node[a].place_id for a in anchors}
+        if len(places) != 1 or None in places:
+            raise ValueError(f"비콘을 본 기기의 장소가 하나로 정해지지 않는다: {sorted(map(str, places))}")
+        place_id = places.pop()
 
-        # ② 후보
+        # ② 후보 — 비콘을 본 장소 안에서 고른다
         if req.target.kind is TargetKind.ANY:
             raise _Stop(Step.CANDIDATE, self._decision(req, iid, Verdict.DENY, ReasonCode.INVALID_INPUT))
-        candidates = self._candidates(req.target.capability, now)
-        self._audit_step(Step.CANDIDATE, iid, {"candidates": [n.node_id for n in candidates],
+        explicit = req.target.kind is TargetKind.EXPLICIT
+        threshold = threshold_for(s, req.target.capability, explicit)
+        if threshold is None:  # 설정이 없는 요청 종류는 실행을 허가하지 않는다
+            self._audit_step(Step.CANDIDATE, iid, {"threshold": None, "explicit": explicit})
+            raise _Stop(Step.CANDIDATE, self._decision(req, iid, Verdict.DENY, ReasonCode.INVALID_INPUT))
+        candidates = select_candidates(all_nodes, req.target.capability, s, now, place_id)
+        self._audit_step(Step.CANDIDATE, iid, {"place_id": place_id,
+                                              "candidates": [n.node_id for n in candidates],
                                               "online_ttl_sec": s.online_ttl_sec})
         by_id = {n.node_id: n for n in candidates}
-        explicit = req.target.kind is TargetKind.EXPLICIT
         if explicit and req.target.node_id not in by_id:
             raise _Stop(Step.CANDIDATE, self._decision(req, iid, Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE))
         if not candidates:
             raise _Stop(Step.CANDIDATE, self._decision(req, iid, Verdict.DENY, ReasonCode.NO_CANDIDATE))
 
-        # ③ 근접 — 명시 지정에도 ② 의 전체 후보를 넘긴다 (#26)
-        result = self._proximity.posterior(beacons, candidates, now)
-        threshold = (
-            s.threshold_locker if req.target.capability is Capability.LOCKER else s.threshold_light
-        )
+        # ③ 근접 — 명시 지정에도 ② 의 전체 후보를 넘긴다 (#26). 장소 전체 기기도 넘긴다 (#39)
+        place_nodes = [n for n in all_nodes if n.place_id == place_id]
+        result = self._proximity.posterior(beacons, candidates, now, place_nodes=place_nodes)
         posteriors = dict(result.posteriors)
+        applied.model_version, applied.calib_version = result.model_version, result.calib_version
+        applied.posteriors = posteriors
+        applied.window_start, applied.window_end = result.window_start, result.window_end
         prox_detail = {"posteriors": posteriors, "threshold": threshold,
                        "model_version": result.model_version, "calib_version": result.calib_version}
         if explicit:
@@ -151,19 +230,20 @@ class DecisionPipeline:
             self._audit_step(Step.PROXIMITY, iid, {**prox_detail, "p": p})
             if p < threshold:
                 raise _Stop(Step.PROXIMITY, self._decision(
-                    req, iid, Verdict.ASK, ReasonCode.MOVE_CLOSER, node_id=node_id, p_max=p), prox_detail)
+                    req, iid, Verdict.ASK, ReasonCode.MOVE_CLOSER, node_id=node_id, p_max=p))
         else:
             best = result.best
             self._audit_step(Step.PROXIMITY, iid, {**prox_detail, "best": best})
             if best is None or best[1] < threshold or best[0] not in by_id:
                 p_max = best[1] if best else None
                 raise _Stop(Step.PROXIMITY, self._decision(
-                    req, iid, Verdict.ASK, ReasonCode.LOW_CONFIDENCE, p_max=p_max), prox_detail)
+                    req, iid, Verdict.ASK, ReasonCode.LOW_CONFIDENCE, p_max=p_max))
             node_id, p = best
         node = by_id[node_id]
 
         # ④ 정책 — 확정한 대상만 검사한다
         check = self._policy.check(req.user_id, node_id, req.action, now)
+        applied.policy_version = check.policy_version
         self._audit_step(Step.POLICY, iid, {"node_id": node_id, "verdict": check.verdict.value,
                                            "reason": check.reason.value,
                                            "policy_version": check.policy_version})
@@ -171,59 +251,69 @@ class DecisionPipeline:
             if check.verdict not in (Verdict.NEED_APPROVAL, Verdict.DENY):
                 raise ValueError(f"정책 검사의 알 수 없는 판정: {check.verdict!r}")
             raise _Stop(Step.POLICY, self._decision(
-                req, iid, check.verdict, check.reason, node_id=node_id, p_max=p), prox_detail)
+                req, iid, check.verdict, check.reason, node_id=node_id, p_max=p))
 
-        # ⑤⑥ — 대여형만. reserve_if_free() 한 번이 검사와 RESERVED 생성을 한다
-        use_id: str | None = None
-        if node.occupancy is Occupancy.RENTAL:
-            reserved = self._repo.reserve_if_free(ReserveRequest(
-                internal_request_id=iid, user_id=req.user_id, node_id=node_id, action=req.action,
-                approval_id=check.approval_id, release_policy=node.release_policy))
-            self._audit_step(Step.DEVICE_OCCUPANCY, iid, {"node_id": node_id,
-                                                         "outcome": reserved.outcome.value})
-            if reserved.outcome is ReserveOutcome.RESERVED:
-                use_id = reserved.use_id
-            else:
-                raise _Stop(Step.DEVICE_OCCUPANCY if reserved.outcome is ReserveOutcome.DEVICE_BUSY
-                            else Step.USER_OCCUPANCY, self._reserve_failure(req, iid, node_id, p, reserved.outcome), prox_detail)
-        elif check.approval_id is not None:
-            # 공용형의 승인 사용분 확보 접점이 미결이다 (spec 7절). 원자적 확보를 못 하므로 거부한다.
-            raise _Stop(Step.POLICY, self._decision(
-                req, iid, Verdict.DENY, ReasonCode.POLICY_DENIED, node_id=node_id, p_max=p), prox_detail)
+        # ⑤⑥ — reserve_if_free() 한 번이 검사와 예약을 한다. 점유 방식별 분기는 DB 가 한다 (#27)
+        reserved = self._repo.reserve_if_free(ReserveRequest(
+            internal_request_id=iid, user_id=req.user_id, node_id=node_id, action=req.action,
+            approval_id=check.approval_id, release_policy=node.release_policy))
+        self._audit_step(Step.DEVICE_OCCUPANCY, iid, {"node_id": node_id,
+                                                     "outcome": reserved.outcome.value})
+        if reserved.outcome not in (ReserveOutcome.RESERVED, ReserveOutcome.REOPERATING):
+            raise _Stop(Step.DEVICE_OCCUPANCY if reserved.outcome is ReserveOutcome.DEVICE_BUSY
+                        else Step.USER_OCCUPANCY, self._reserve_failure(req, iid, node_id, p, reserved.outcome))
+        applied.usage_id = reserved.usage_id
+        applied.execution_kind = self._execution_kind(node, reserved.outcome, reserved.use_id)
 
         decision = self._decision(req, iid, Verdict.OK, ReasonCode.OK, node_id=node_id,
-                                  use_id=use_id, p_max=p)
-        return decision, (Step.USER_OCCUPANCY if use_id else Step.POLICY), prox_detail
+                                  use_id=reserved.use_id, p_max=p)
+        return decision, (Step.USER_OCCUPANCY if reserved.use_id else Step.POLICY), {}
 
     # ── 보조 ────────────────────────────────────────────────────────
 
-    def _candidates(self, capability: Capability, now) -> Sequence[NodeInfo]:
-        ttl = timedelta(seconds=self._settings.online_ttl_sec)
-        return [
-            n for n in self._repo.nodes(capability)
-            if n.capability is capability
-            and n.trust_state is TrustState.TRUSTED
-            and n.device_state is not DeviceState.FAULT
-            and n.last_seen_at is not None
-            and now - n.last_seen_at <= ttl
-        ]
+    @staticmethod
+    def _execution_kind(node: NodeInfo, outcome: ReserveOutcome, use_id: str | None) -> ExecutionKind:
+        """실행 종류는 점유 방식과 점유 결과로 정한다 (#35). 어긋나면 불변 조건 위반이다."""
+        if node.occupancy is Occupancy.SHARED:
+            kind, ok = ExecutionKind.SHARED, use_id is None and outcome is ReserveOutcome.RESERVED
+        elif outcome is ReserveOutcome.REOPERATING:
+            kind, ok = ExecutionKind.RENTAL_REOPERATION, use_id is not None
+        else:
+            kind, ok = ExecutionKind.RENTAL_INITIAL, use_id is not None
+        if not ok:
+            raise ValueError(f"점유 결과가 기기의 점유 방식과 맞지 않는다: {node.occupancy}, {outcome}")
+        return kind
+
+    def _record(self, applied: _Applied) -> DecisionRecord:
+        return DecisionRecord(
+            settings=self._settings, model_version=applied.model_version,
+            calib_version=applied.calib_version, policy_version=applied.policy_version,
+            posteriors=applied.posteriors, window_start=applied.window_start,
+            window_end=applied.window_end)
+
+    def _context(
+        self, req: UseRequest, iid: str, decision: Decision, applied: _Applied
+    ) -> ExecutionContext | None:
+        if decision.verdict is not Verdict.OK or applied.execution_kind is None:
+            return None
+        return ExecutionContext(
+            internal_request_id=iid, request=req, node_id=decision.node_id, use_id=decision.use_id,
+            usage_id=applied.usage_id, settings=self._settings, execution_kind=applied.execution_kind)
 
     @staticmethod
     def _reserve_failure(req, iid, node_id, p, outcome: ReserveOutcome) -> Decision:
         if outcome is ReserveOutcome.DEVICE_BUSY:
-            return DecisionPipeline._decision(req, iid, Verdict.BUSY, ReasonCode.DEVICE_BUSY, node_id=node_id, p_max=p)
+            return make_decision(req.request_id, iid, Verdict.BUSY, ReasonCode.DEVICE_BUSY, node_id=node_id, p_max=p)
         if outcome is ReserveOutcome.USER_BUSY:
-            return DecisionPipeline._decision(req, iid, Verdict.BUSY, ReasonCode.USER_BUSY, node_id=node_id, p_max=p)
+            return make_decision(req.request_id, iid, Verdict.BUSY, ReasonCode.USER_BUSY, node_id=node_id, p_max=p)
         if outcome is ReserveOutcome.APPROVAL_EXHAUSTED:
-            return DecisionPipeline._decision(
-                req, iid, Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED, node_id=node_id, p_max=p)
+            return make_decision(
+                req.request_id, iid, Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED, node_id=node_id, p_max=p)
         raise ValueError(f"알 수 없는 점유 결과: {outcome!r}")
 
     @staticmethod
     def _decision(req: UseRequest, iid: str, verdict: Verdict, reason: ReasonCode, **kw: Any) -> Decision:
-        message = _GENERIC_MESSAGE if reason is ReasonCode.INTERNAL_ERROR else None
-        return Decision(internal_request_id=iid, request_id=req.request_id, verdict=verdict,
-                        reason=reason, message=message, **kw)
+        return make_decision(req.request_id, iid, verdict, reason, **kw)
 
     def _internal_error(self, req: UseRequest, iid: str, step: Step, exc: Exception, save: bool) -> Decision:
         """예외 내용은 감사 기록에만 남기고 호스트에는 일반 안내만 준다 (#25)."""
@@ -236,8 +326,7 @@ class DecisionPipeline:
                 log.exception("거부 감사 기록 실패")
             if save:
                 try:
-                    self._repo.save_decision(
-                        d, {"step": step.value, "error": repr(exc)}, self._settings.version)
+                    self._repo.save_decision(d, DecisionRecord(settings=self._settings))
                 except Exception:  # noqa: BLE001
                     log.exception("거부 판정 저장 실패")
         return d

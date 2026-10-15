@@ -45,7 +45,7 @@ CONTEXT = ExecutionContext("ir-1", REQUEST, "locker-1", "use-1", None, Settings(
 
 def test_fr18_execution_status_separates_progress_and_outcomes():
     assert {s.value for s in ExecutionStatus} == {
-        "pending", "in_progress", "succeeded", "failed", "unknown", "not_sent",
+        "pending", "in_progress", "succeeded", "failed", "unknown", "not_sent", "rejected",
     }
 
 
@@ -116,7 +116,22 @@ def test_fr19_fake_store_satisfies_protocol():
         def begin_close(self, use_id, reason):
             return StoreResult(StoreOutcome.APPLIED)
 
-        def finish_close(self, use_id, closed_at, evidence):
+        def finish_close(self, use_id, closed_at, check_id, evidence):
+            return StoreResult(StoreOutcome.APPLIED)
+
+        def close_result(self, use_id):
+            return None
+
+        def restore_pending(self):
+            return ()
+
+        def save_recovery(self, record):
+            return StoreResult(StoreOutcome.APPLIED, recovery=record)
+
+        def recovery(self, recovery_id):
+            return None
+
+        def settle_recovery(self, settlement):
             return StoreResult(StoreOutcome.APPLIED)
 
         def execution(self, internal_request_id):

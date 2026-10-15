@@ -22,12 +22,29 @@ from nearpilot.shared.enums import (
     EndReason,
     ExecutionStatus,
     ReasonCode,
+    TrustState,
 )
 from nearpilot.shared.models import (
+    RecoveryRecord,
+    RecoverySettlement,
+    RestoreBundle,
+    RecoveryReadiness,
+    RecoveryApprovalResult,
+    ApprovalRequest,
+    ApprovalRequestResult,
+    ApprovalDecisionRequest,
+    ApprovalDecisionResult,
+    DecisionRecord,
+    AccountRegistration,
+    BeaconRegistration,
+    PlaceAssignment,
+    AdminWriteResult,
     Account,
     Approval,
+    ApprovalRecord,
     AuditEvent,
     BeaconKey,
+    CloseResult,
     CommandRecord,
     CommandResult,
     Decision,
@@ -36,6 +53,7 @@ from nearpilot.shared.models import (
     NodeAnnounce,
     NodeCommand,
     NodeInfo,
+    NodeResult,
     NodeStatus,
     PolicyCheckResult,
     PolicyRevision,
@@ -44,6 +62,8 @@ from nearpilot.shared.models import (
     ReserveRequest,
     ReserveResult,
     RssiFrame,
+    SafetyCheckRequest,
+    SafetyCheckResult,
     StoreResult,
     UseRequest,
     UseSession,
@@ -86,23 +106,59 @@ class Repository(Protocol):
         """
         ...
 
-    def save_decision(
-        self, decision: Decision, context: Mapping[str, Any], settings_version: str
-    ) -> None: ...
+    def save_decision(self, decision: Decision, record: DecisionRecord) -> StoreResult:
+        """판정과 적용값을 internal_request_id 별로 한 번 저장한다 (FR-22).
+
+        같은 판정·기록은 ALREADY_APPLIED, 다른 내용은 CONFLICT·CONTENT_CONFLICT다.
+        외부 request_id 보존기간과 관계없이 기존 기록을 보존한다. 저장 장애는 StoreError 로 알린다.
+        """
+        ...
 
     # ① 비콘
-    def beacons_of(self, user_id: str) -> Sequence[BeaconKey]: ...
+    def beacons_of(self, user_id: str) -> Sequence[BeaconKey]:
+        """본 계정의 활성 비콘만 반환한다. 개수는 0 또는 1 이다 (FR-01, FR-15, #42).
 
-    def save_rssi(self, frame: RssiFrame) -> None: ...
+        비활성 비콘의 등록 이력은 반환하지 않는다. 활성 비콘이 없으면 빈 시퀀스다.
+        여러 활성 비콘을 발견하면 저장 불변 조건 위반이다. 임의로 하나를 골라 반환하지 않는다.
+        """
+        ...
+
+    def save_rssi(self, frame: RssiFrame) -> None:
+        """등록된 활성 비콘의 프레임만 저장한다. 그 밖의 비콘은 저장하지 않는다 (FR-05).
+
+        `(node_id, session_id, seq, beacon)` 이 같은 프레임은 한 번만 저장한다.
+        수집 회차와 라벨은 tools/data_collection 이 기록한다 (#41). IOT 입력에는 담지 않는다.
+        DB 는 비콘과 frame_ts 로 수집 구간을 찾아 저장한 관측에 collection_id 를 연결한다.
+        구간은 시작 이상·끝 미만이다. 운영 관측에는 collection_id 가 없다.
+        수집 회차에 연결된 관측은 운영 관측 보존기간으로 삭제하지 않는다.
+        """
+        ...
 
     def rssi_since(self, beacons: Sequence[BeaconKey], since: datetime) -> Sequence[RssiFrame]: ...
 
     # ② 후보
     def nodes(self, capability: Capability | None = None) -> Sequence[NodeInfo]: ...
 
-    def upsert_announced_node(self, announce: NodeAnnounce) -> None: ...
+    def upsert_announced_node(self, announce: NodeAnnounce) -> None:
+        """기능 발표를 반영한다 (FR-04). 발표는 신뢰 부여가 아니다.
 
-    def touch_node(self, node_id: str, seen_at: datetime) -> None: ...
+        처음 보는 node_id 는 DISCOVERED 로 만든다. 내용이 같은 재발표는 신뢰 상태를 바꾸지 않는다.
+        기능이나 점유 방식이 다르면 새 값으로 바꾸고 신뢰 상태를 DISCOVERED 로 되돌린다.
+        되돌린 변경은 같은 트랜잭션에서 감사 로그에 남긴다.
+        """
+        ...
+
+    def touch_node(self, node_id: str, seen_at: datetime) -> None:
+        """저장한 값보다 새로운 시각일 때만 last_seen_at 을 바꾼다 (FR-13)."""
+        ...
+
+    def set_node_session(self, node_id: str, session_id: str, first_seen_at: datetime) -> None:
+        """현재 기기 연결 ID 와 그 연결의 첫 수신 시각을 저장한다 (FR-04).
+
+        같은 session_id 를 다시 받으면 첫 수신 시각을 바꾸지 않는다.
+        조회는 `nodes()` 의 `NodeInfo.session_id`, `NodeInfo.session_first_seen_at` 으로 한다.
+        """
+        ...
 
     # ④ 정책
     def current_policy(self, node_id: str) -> PolicyRevision: ...
@@ -111,8 +167,45 @@ class Repository(Protocol):
         self, user_id: str, node_id: str, action: Action, policy_version: int, now: datetime
     ) -> Approval | None: ...
 
+    def approvals_in_scope(self, user_id: str, node_id: str) -> Sequence[ApprovalRecord]:
+        """요청자·기기의 승인 이력을 모두 반환한다 (#60, FR-03, FR-14).
+
+        시각·동작·정책 버전으로 거르지 않는다. 사유 선택은 core/policy 가 한다.
+        조회만 한다. 저장소를 바꾸지 않고 승인 사용분을 예약하지 않는다.
+        """
+        ...
+
+    def create_approval_request(self, req: ApprovalRequest) -> ApprovalRequestResult:
+        """요청자·기기·동작·정책 버전이 같고 유효한 pending 이 있으면 기존 신청을 반환한다 (FR-03).
+
+        새 신청의 pending_until 은 created_at + settings.approval_pending_ttl_sec 다.
+        중복 호출은 시각을 연장하지 않는다. 만료한 신청은 새 신청을 막지 않는다.
+        """
+        ...
+
+    def decide_approval(self, req: ApprovalDecisionRequest) -> ApprovalDecisionResult:
+        """pending·현재 정책 버전·대기 만료를 조건부로 검사하고 결정 하나만 반영한다 (FR-03).
+
+        승인 권한은 CORE 가 검사한다. approved 의 valid_until 은 decided_at 에 생성 당시
+        정책 리비전의 approval_ttl_sec 를 더한다. 이미 결정·버전 불일치·대기 만료를 구분한다.
+        권한 검사 뒤 같은 승인 ID·결정자·결정의 재호출은 ALREADY_APPLIED 다.
+        호출 시각은 비교하지 않는다. applied 는 False, succeeded 는 True 다.
+        기존 상태와 valid_until 을 반환한다. 결정·유효시간·감사를 다시 쓰지 않는다.
+        반대 결정 또는 다른 결정자의 호출은 ALREADY_DECIDED 다. 기존 기록을 보존한다.
+        """
+        ...
+
     # ⑤⑥ — BEGIN IMMEDIATE 한 트랜잭션 (FR-19)
-    def reserve_if_free(self, req: ReserveRequest) -> ReserveResult: ...
+    def reserve_if_free(self, req: ReserveRequest) -> ReserveResult:
+        """⑤⑥ 검사와 승인 사용분 예약은 BEGIN IMMEDIATE 하나에서 한다 (FR-19).
+
+        본인 ACTIVE 점유이면 요청·계정·기기 연결을 검사하고 REOPERATING 과 기존 use_id 를 반환한다.
+        공용형은 ⑤⑥·세션 생성을 생략하고 승인 사용분만 예약한다. open·승인 없음은 쓰기 없이 RESERVED 다.
+        무제한 기간형 승인도 요청별 사용분을 만든다. 횟수 검사만 생략한다.
+        이번 요청의 사용분만 예약한다. 새 세션을 만들거나 rental_due_at 을 바꾸지 않는다.
+        타인 점유 또는 RESERVED·CLOSING·FAULT 는 DEVICE_BUSY 다. 같은 요청의 중복은 기존 연결을 반환한다.
+        """
+        ...
 
     # 조회 — 예약 이후의 쓰기는 ExecutionStore 로만 한다
     def session(self, use_id: str) -> UseSession | None: ...
@@ -136,7 +229,12 @@ class ExecutionStore(Protocol):
         ...
 
     def begin_send(self, command_id: str) -> StoreResult:
-        """PENDING → IN_PROGRESS. APPLIED 일 때만 전송을 시작한다. 취소된 명령은 CONFLICT. 키: command_id"""
+        """PENDING → IN_PROGRESS. APPLIED 일 때만 전송을 시작한다. 키: command_id
+
+        같은 기기의 다른 미완료 구동 명령, 기기·세션 상태와 요청 연결을 원자적으로 검사한다.
+        다른 명령과의 경합은 CONFLICT·COMMAND_IN_PROGRESS, CLOSING·FAULT 는 CONFLICT·STATE_CONFLICT 다.
+        같은 명령의 중복 시작은 ALREADY_APPLIED 이며 재전송 허가가 아니다. 취소된 명령은 CONFLICT 다.
+        """
         ...
 
     def cancel_not_sent(
@@ -148,7 +246,8 @@ class ExecutionStore(Protocol):
     ) -> StoreResult:
         """확실한 미전송 취소. 현재 상태가 expected 가 아니거나 결과가 있으면 CONFLICT.
 
-        대여형: 기기 AVAILABLE, 세션 CLOSED·cancelled. 공통: 사용분 released, 명령 NOT_SENT, 감사.
+        최초 대여: 기기 AVAILABLE, 세션 CLOSED·cancelled. 재조작: 기존 점유·rental_due_at 보존.
+        공통: 이번 요청의 사용분 released, 명령 NOT_SENT, 감사. 기존 대여의 사용분은 바꾸지 않는다.
         재검사 실패와 예약 대기 제한은 expected=PENDING, IOT 의 NOT_SENT 증명은 expected=IN_PROGRESS 다.
         """
         ...
@@ -161,9 +260,13 @@ class ExecutionStore(Protocol):
         rental_due_at: datetime | None,
         evidence: Mapping[str, Any],
     ) -> StoreResult:
-        """실행 결과를 명령 하나에 한 번만 확정한다. outcome 은 SUCCEEDED·FAILED·UNKNOWN 이다.
+        """실행 결과를 명령 하나에 한 번만 확정한다. outcome 은 SUCCEEDED·FAILED·UNKNOWN·REJECTED 다. NOT_SENT 는 cancel_not_sent 로 반영한다.
 
-        SUCCEEDED: 명령 성공, 대여형 기기·세션 ACTIVE 와 rental_due_at, 사용분 consumed, 감사.
+        SUCCEEDED: 최초 대여는 기기·세션 ACTIVE 와 rental_due_at. 재조작은 기존 점유·rental_due_at 보존.
+        공통으로 이번 요청의 사용분 consumed 와 감사를 반영한다.
+        REJECTED: 검증된 DEVICE_BUSY 의 미접수·미실행 근거와 상충 여부를 검사한다.
+        이번 요청의 사용분만 released 로 둔다. 최초 대여는 이번 예약을 cancelled 로 종료한다.
+        재조작은 기존 점유·rental_due_at 을 보존한다. 기기를 FAULT 로 두지 않는다.
         FAILED·UNKNOWN: 명령 결과, 기기 FAULT, 사용분 held, 세션 보존, 감사.
         이미 다른 결과가 있으면 CONFLICT 다. 늦은 성공으로 FAULT 를 해제하지 않는다.
         """
@@ -178,13 +281,31 @@ class ExecutionStore(Protocol):
         ...
 
     def begin_close(self, use_id: str, reason: EndReason) -> StoreResult:
-        """대여형 기기·세션 ACTIVE → CLOSING. 키: use_id"""
+        """대여형 기기·세션 ACTIVE → CLOSING. 키: use_id
+
+        다른 미완료 구동 명령이 있으면 CONFLICT·COMMAND_IN_PROGRESS 로 반납 시작을 보류한다.
+        전송 시작과 반납 시작의 검사·쓰기를 원자적으로 한다. CLOSING 뒤에는 새 전송을 막는다.
+        """
         ...
 
     def finish_close(
-        self, use_id: str, closed_at: datetime, evidence: Mapping[str, Any]
+        self, use_id: str, closed_at: datetime, check_id: str, evidence: Mapping[str, Any]
     ) -> StoreResult:
-        """CORE 가 안전을 확인한 뒤 세션 CLOSED, 기기 AVAILABLE, closed_at, 종료 기록. 키: use_id"""
+        """CORE 가 종료를 결정한 뒤 세션 CLOSED, 기기 AVAILABLE, closed_at, 종료 기록. 키: use_id
+
+        check_id 는 종료 근거로 채택한 반납 검사다. evidence 는 그 검사의 근거다. 함께 저장한다.
+        기기 상태, 점유 세션, 채택한 검사가 바뀌지 않았는지 같은 트랜잭션에서 검사한다.
+        같은 use_id·같은 check_id 의 재호출은 ALREADY_APPLIED, 다른 check_id 나 내용은 CONFLICT 다.
+        DB 는 문·구동부·센서 조건을 다시 판단하지 않는다.
+        """
+        ...
+
+    def close_result(self, use_id: str) -> CloseResult | None:
+        """반납의 저장된 완료 기록과 채택한 check_id·근거를 조회한다 (FR-20). 키: use_id
+
+        finish_close 의 반영 여부가 불명일 때 쓴다. 기록이 없으면 None 이다.
+        None 은 미반영의 증거가 아니다. 저장이 진행 중일 수 있다.
+        """
         ...
 
     def execution(self, internal_request_id: str) -> CommandRecord | None:
@@ -192,9 +313,43 @@ class ExecutionStore(Protocol):
         ...
 
 
+    def restore_pending(self) -> Sequence[RestoreBundle]:
+        """미완료 요청·명령·세션·사용분·복구 건과 FAULT 기기를 일관된 읽기 시점에 조회한다.
+
+        공용형의 사용분도 반환한다. 조회 오류를 빈 목록으로 바꾸지 않고 저장한 시각을 보존한다.
+        복원·현재 상태 확인 전에는 새 실행과 재사용을 허가하지 않는다.
+        """
+        ...
+
+    def save_recovery(self, record: RecoveryRecord) -> StoreResult:
+        """복구 건과 근거를 저장한다. 대상 연결은 바꾸지 않고 완료 근거는 덮어쓰지 않는다.
+
+        같은 내용은 ALREADY_APPLIED, 다른 대상 연결은 CONFLICT 다. 점유·사용분·기기 상태는 풀지 않는다.
+        """
+        ...
+
+    def recovery(self, recovery_id: str) -> RecoveryRecord | None:
+        """복구 건과 완료 결과를 조회한다. None 만으로 미반영을 단정하지 않는다."""
+        ...
+
+    def settle_recovery(self, settlement: RecoverySettlement) -> StoreResult:
+        """연결·예상 상태를 검사하고 승인·근거·사용분·점유 종료·기기 복구·감사를 함께 커밋한다.
+
+        finish_close 를 거치지 않는다. 반납 check_id 대신 복구 근거를 쓴다.
+        같은 recovery_id·논리 정산이면 ALREADY_APPLIED 와 기존 완료 결과를 반환한다.
+        다른 연결·요약값·예상 상태는 CONFLICT 다. 늦은 결과로 완료 정산을 뒤집지 않는다.
+        """
+        ...
+
+
 @runtime_checkable
 class AuditLog(Protocol):
-    """DB → CORE 감사 로그 (FR-22). 테이블 + JSONL."""
+    """DB → CORE 감사 로그 (FR-22). 테이블이 원본이고 JSONL 은 커밋 뒤 사본이다.
+
+    호출자가 UUID event_id 를 만든다. DB 는 같은 ID 를 한 번만 저장한다.
+    JSONL 실패는 저장 오류가 아니다. 커밋 순서로 내보내고 원본 테이블에서 다시 만들 수 있다.
+    평가 스크립트는 테이블을 읽는다.
+    """
 
     def append(self, event: AuditEvent) -> None: ...
 
@@ -232,14 +387,26 @@ class ExecutionService(Protocol):
 class ProximityEstimator(Protocol):
     """관측 모델 + HMM (FR-16). 교체 가능한 인터페이스로 분리한다 (requirements.md §1.2)."""
 
-    def observe(self, frame: RssiFrame) -> None:
-        """RSSI 프레임 하나로 내부 상태(HMM 필터)를 갱신한다."""
+    def observe(self, frame: RssiFrame, *, node: NodeInfo) -> None:
+        """호출자가 조회한 관측 기기와 RSSI 프레임으로 HMM 필터를 갱신한다 (FR-16).
+
+        node_id 가 다르거나 node.trust_state 가 TRUSTED 가 아니면 프레임을 쓰지 않는다.
+        프레임의 최신성은 FR-05 계약을 따른다. DB 관측 저장과 근접 추정 사용 여부는 별개다.
+        """
         ...
 
     def posterior(
-        self, beacons: Sequence[BeaconKey], candidates: Sequence[NodeInfo], at: datetime
+        self, beacons: Sequence[BeaconKey], candidates: Sequence[NodeInfo], at: datetime,
+        *, place_nodes: Sequence[NodeInfo],
     ) -> ProximityResult:
-        """후보 장치별 사후확률. 후보가 없으면 빈 posteriors.
+        """장소 전체 상태로 계산한 후보별 사후확률. 후보가 없으면 빈 posteriors.
+
+        판정이 Repository.nodes() 로 읽은 해당 장소의 전체 기기를 place_nodes 로 넘긴다.
+        TRUSTED 기기는 FAULT·오프라인·다른 기능이어도 전체 상태에 넣고 '어느 기기 앞도 아님'을 더한다.
+        후보 확률을 다시 정규화하지 않는다. 후보 밖 확률을 후보에 더하지 않는다. 합은 1 이하다.
+        후보와 전체 기기는 같은 장소의 조회다. 관계가 맞지 않으면 실행 허가에 쓸 결과를 만들지 않는다.
+        beacons 는 Repository.beacons_of() 가 반환한 본 계정의 활성 비콘 하나다 (#42).
+        여러 비콘의 확률을 합치거나 최댓값으로 고르지 않는다. 인자 타입은 Sequence 를 유지한다.
 
         판정은 명시 지정 요청에도 ② 의 전체 후보를 넘긴다 (#26). 지정 대상은 인자로 받지 않는다.
         같은 입력에는 지정 여부와 상관없이 같은 출력을 낸다 (NFR-09).
@@ -255,7 +422,8 @@ class ProximityEstimator(Protocol):
 class NodeCommandGateway(Protocol):
     """IOT → CORE 노드 명령 (FR-06).
 
-    결과는 NOT_SENT / SUCCEEDED / FAILED / UNKNOWN 으로 구분한다.
+    결과는 NOT_SENT / SUCCEEDED / FAILED / UNKNOWN / REJECTED 으로 구분한다.
+    REJECTED 는 검증된 DEVICE_BUSY 접수·실행 전 거부다. 다른 거부는 실패·불명 규칙을 따른다.
     시간 초과·연결 끊김은 UNKNOWN 이며 미실행으로 간주하지 않는다.
     같은 command_id 로만 재전송하고 새 ID 로 자동 재시도하지 않는다.
     """
@@ -263,18 +431,45 @@ class NodeCommandGateway(Protocol):
     def send(self, command: NodeCommand, timeout_sec: float) -> CommandResult: ...
 
 
+@runtime_checkable
+class SafetyCheckGateway(Protocol):
+    """IOT → CORE 반납 검사 요청 (FR-20). 물리 구동 명령과 구분한다.
+
+    결과를 기다리지 않는다. 결과는 `NodeEventSink.on_safety_check_result` 로 온다.
+    응답 기한과 재검사는 CORE 가 `Settings` 값으로 잰다. 전송 실패도 CORE 에서는 응답 기한 초과다.
+    같은 check_id 의 재전송은 내용을 바꾸지 않는다. 다시 측정하려면 새 check_id 를 쓴다.
+    """
+
+    def request_check(self, request: SafetyCheckRequest) -> None: ...
+
+
 # ── CORE 제공 ───────────────────────────────────────────────────────
 
 
 @runtime_checkable
 class NodeEventSink(Protocol):
-    """CORE 가 구현하고 IOT 가 호출한다. 검증을 마친 MQTT 메시지만 넘긴다."""
+    """CORE 가 구현하고 IOT 가 호출한다. 검증을 마친 MQTT 메시지만 넘긴다.
+
+    IOT 는 안전을 판정하지 않는다. 점유 해제와 장애 상태 변경은 CORE 가 결정한다.
+    인계가 예외로 실패하면 IOT 는 실패를 기록하고 다시 인계한다. 중복 반영은 CORE 와 DB 가 막는다.
+    """
 
     def on_announce(self, announce: NodeAnnounce) -> None: ...
 
     def on_rssi(self, frame: RssiFrame) -> None: ...
 
     def on_status(self, status: NodeStatus) -> None: ...
+
+    def on_result(self, result: NodeResult) -> None:
+        """기기가 보고한 실행 결과. 결과 대기 중과 결과 대기가 끝난 뒤의 보고를 모두 받는다 (FR-07).
+
+        과거 명령의 결과는 정산과 감사에만 쓴다. 현재 온라인·안전 상태를 갱신하지 않는다.
+        """
+        ...
+
+    def on_safety_check_result(self, result: SafetyCheckResult) -> None:
+        """기기가 보고한 반납 검사 결과 (FR-20)."""
+        ...
 
 
 @runtime_checkable
@@ -297,3 +492,53 @@ class CoreService(Protocol):
     def release_use(self, user_id: str, use_id: str) -> Decision: ...
 
     def get_use_status(self, user_id: str, use_id: str) -> Mapping[str, Any]: ...
+
+
+@runtime_checkable
+class RecoveryService(Protocol):
+    """상태 관리 → API 복구 접점 (NFR-04). API 는 인증 계정만 넘긴다.
+
+    조회·승인 모두 장소 소유권을 검사한다. 조회는 복구 건을 만들거나 정산하지 않는다.
+    승인은 현재 복구 건·온라인·신뢰·실행·안전·물리 상태를 다시 검사한다.
+    저장 미반영은 rejected, 저장 불명은 pending 이다. 완료 기록 확인 뒤에만 completed 다.
+    """
+
+    def readiness(self, user_id: str, node_id: str) -> RecoveryReadiness: ...
+
+    def approve(self, user_id: str, node_id: str, recovery_id: str) -> RecoveryApprovalResult: ...
+
+
+@runtime_checkable
+class AdminRepository(Protocol):
+    """DB → 관리 기능·시드 스크립트의 쓰기 접점 (FR-01, FR-12A).
+
+    API 가 직접 호출하지 않는다. 인증·권한 검사는 CORE 관리 기능이 맡는다.
+    각 쓰기는 감사와 함께 한 트랜잭션으로 반영한다. FAULT 복구는 ExecutionStore 로 한다.
+    """
+
+    def register_account(self, req: AccountRegistration) -> AdminWriteResult: ...
+
+    def register_beacon(self, req: BeaconRegistration) -> AdminWriteResult:
+        """다른 계정의 동일 BeaconKey 는 BEACON_ALREADY_REGISTERED 로 거부한다 (FR-01).
+
+        계정당 활성 비콘은 하나 이하다. is_active=True 이면 같은 계정의 다른 비콘을 끈다.
+        중복 검사·기존 비콘 비활성화·등록 또는 활성화·감사는 한 트랜잭션으로 반영한다.
+        거부하거나 저장에 실패하면 기존 활성 비콘을 유지한다.
+        is_active=False 인 등록은 같은 계정의 다른 비콘을 끄지 않는다.
+        """
+        ...
+
+    def set_node_trust(self, node_id: str, trust_state: TrustState) -> AdminWriteResult:
+        """신뢰 상태만 바꾼다. device_state·점유 세션은 바꾸지 않는다."""
+        ...
+
+    def assign_place(self, req: PlaceAssignment) -> AdminWriteResult:
+        """장소를 등록하고 기기를 연결한다. 점유 상태는 바꾸지 않는다."""
+        ...
+
+    def set_policy(self, revision: PolicyRevision, expected_version: int | None) -> AdminWriteResult:
+        """새 리비전 추가와 current_version 갱신은 원자적이다. 과거 리비전은 바꾸지 않는다.
+
+        expected_version 은 현재 버전의 기대값이다. 정책 최초 등록이면 None 이다.
+        """
+        ...
