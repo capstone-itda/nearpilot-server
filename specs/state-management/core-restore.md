@@ -1,6 +1,6 @@
 # 재시작 복원
 
-- 상태: 작성 중
+- 상태: 구현 중
 - 담당: JM-220 (상태 관리)
 - 요구사항: FR-19, FR-20, NFR-04
 - 따르는 결정: #15, #17
@@ -94,6 +94,21 @@
 
 ## 6. 결정
 
+- `restore.py`에 `RestoreService`를 둔다 — 담당자가 2026-10-15에 제안한 구성을 선택했다.
+- 시계, 설정 조회와 공통 기기 재진입 잠금을 주입한다 — 반납·복구·관측과 같은 잠금을 쓴다.
+- `restore()`가 최초 조회를 맡고 외부 `tick()`이 실패와 미완료 기기를 재시도한다 — 자체 스레드와 새 시간 설정을 만들지 않는다.
+- `on_status()`는 검증을 마친 현재 연결의 보고만 받는다 — 발표와 과거 결과로 복원을 끝내지 않는다.
+- 현재 연결과 온라인 유지 시간을 다시 확인하는 `can_execute()`를 내부에 제공한다 — `shared`의 새 계약으로 공개하지 않는다.
+- `is_restored()`와 `blockers()`로 내부 복원 상태를 읽는다 — 실행 가능 여부와 반납 검사 재개를 구분한다.
+- `FaultRecoveryService.record_isolated`, `ReleaseService.resume_close`, `SharedLightService.resume`를 연결한다 — 기존 상태 관리 기능을 재사용한다.
+- 공용 조명에는 `resume()` 뒤 확인한 보고를 `on_status()`로 넘긴다 — 초기 참여 대기는 실제 인계 시각부터 잰다.
+- 재시작의 불명 근거와 확정 시각을 보존한다 — 저장 재시도에서 사건 내용을 바꾸지 않는다.
+- 같은 상태 보고를 다시 인계하면 실패한 작업을 재시도한다 — 중복 보고가 복원을 중단하지 않는다.
+- 복원 완료 뒤 새 요청이 만든 `RESERVED`는 실행 인계에 허용한다 — 재시작 당시의 미완료 예약과 구분한다.
+- 복구 정산의 완료 기록은 식별자로 다시 조회한다 — 완료한 건의 불명 명령을 계속 차단하지 않는다.
+- 조회·저장·인계가 실패하면 예외로 알리고 실행 차단을 유지한다 — 한 기기의 실패 뒤에도 다른 기기는 재시도한다.
+- 예약 만료 취소는 선행 계약이 정해질 때까지 보류한다 — 임시 사유와 가짜 명령을 만들지 않는다.
+
 ## 7. 가정
 
 - 미결: 판정이 기기별 복원 상태를 확인하는 접점. `shared`에 접점이 없다. 이 spec은 `core-execution`의 전송 시작 전에 복원 상태를 검사한다. 판정의 ②에서 복원 중인 기기를 후보에서 뺄지는 판정 담당과 정한다. 이슈 초안을 담당자에게 넘긴다.
@@ -101,6 +116,12 @@
 - DB 계약 확인 대기: 명령 미연결 요청의 `cancel_not_sent(expected=PENDING)` 처리다. 현재 인터페이스는 명령 부재 때의 기대 상태를 명시하지 않는다. 임의로 명령을 만들어 우회하지 않는다. DB 담당과 확인하고 공동 계약 보완이 필요하면 팀 결정으로 넘긴다.
 - 미결: 서버 실행 진입점. 복원은 서버 시작 때 게이트웨이 구독 뒤, 요청 수신 전에 한 번 실행한다고 가정한다.
 - `in_progress` 명령을 `record_result(UNKNOWN)`으로 저장하는 근거는 서버의 재시작이다. 기기가 보고한 `unknown`과 구분하도록 근거에 출처를 남긴다 (FR-07).
+- 이번 구현은 기존 계약으로 가능한 복원과 상태 관리 인계를 검증한다. 예약 취소와 서버 조립은 완료로 표시하지 않는다.
+- 신선한 보고의 검증은 IOT가 맡는다고 가정한다. 이 서비스는 재시작 뒤 수신, 현재 연결과 온라인 유지 시간을 추가로 확인한다.
+- 센서 이상이나 구동 중인 보고로 새 실행을 열지 않는다. 현재의 정상 보고를 기다린다.
+- 예약 대기 제한은 최초 조회 때 받은 설정을 보존한다. 저장한 예약 시각으로 만료 여부를 구분한다.
+- 판정의 복원 조회 접점, 취소 사유와 명령 미연결 취소는 `restore-decisions.md`의 이슈 초안으로 넘긴다.
+- 실제 서버 시작, 판정과 실행 서비스의 차단 접점 연결, 늦은 실행 결과의 인계는 후속 작업이다. spec은 구현 중으로 유지한다.
 
 ## 8. 테스트
 
@@ -108,4 +129,16 @@
 |---|---|---|
 | FR-19 | `test_FR19_restore_blocks_new_execution_until_confirmed` | 복원과 확인 전에는 그 기기의 전송을 시작하지 않는다 |
 | FR-20 | `test_FR20_restore_does_not_restore_light_holders` | 공용 조명의 유지 대상자를 복원하지 않는다 |
-| NFR-04 | `test_NFR04_restore_reverifies_evidence` | 과거 안전 근거로 복구 준비를 `ready`로 만들지 않는다 |
+| NFR-04 | `test_NFR04_restore_keeps_recovery_id_and_evidence_without_trusting_it` | 기존 복구 건과 근거를 보존한다. 과거 근거로 실행을 열지 않는다 |
+| FR-19 | `test_FR19_unknown_store_without_commit_retries_same_event` | 저장 불명 재시도에 같은 시각과 근거를 쓴다 |
+| FR-19 | `test_FR19_restore_request_without_command_preserves_reservation` | 선행 계약 전에는 명령 미연결 예약과 사용분을 보존한다 |
+| FR-19 | `test_FR19_new_reservation_after_restore_can_reach_execution` | 복원 완료 뒤 정상 예약의 실행 인계를 허용한다 |
+| FR-19 | `test_FR19_same_status_redelivery_retries_failed_handover` | 같은 보고의 재인계에서 실패한 인계를 재시도한다 |
+| FR-20 | `test_FR20_restore_overdue_kept` | 점유와 기준 시각을 유지하고 서버 중단 시간을 초과시간에 포함한다 |
+| FR-20 | `test_FR20_restore_closing_new_check` | 현재 연결 확인 뒤 새 반납 검사를 요청한다 |
+| NFR-04 | `test_NFR04_completed_recovery_rechecks_current_status` | 복구 정산 완료 기록과 현재 보고를 확인한다 |
+| NFR-03 | `test_NFR03_concurrent_restore_settles_once` | 동시 복원에서도 불명 저장과 복구 건 생성을 중복하지 않는다 |
+
+- 예약 취소 테스트는 현재 실행 차단과 저장된 만료 시각의 보존을 검증한다. 취소 저장의 검증은 선행 계약 뒤 추가한다.
+- DB와 IOT는 `shared` 계약의 fake로 대신한다. 반납·복구·공용 조명 서비스 연결도 검증한다.
+- 5절의 예약 취소 저장과 늦은 결과 인계 테스트는 후속 작업이다. 이번 검증을 실제 서버 연결 완료로 보지 않는다.
