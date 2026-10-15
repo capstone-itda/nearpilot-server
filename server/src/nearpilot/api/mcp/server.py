@@ -15,7 +15,9 @@ from starlette.applications import Starlette
 
 from nearpilot.api.auth.authenticator import Authenticator
 from nearpilot.api.mcp.middleware import ACCOUNT_KEY, AuthMiddleware
-from nearpilot.api.mcp.response import denied_response, host_response
+from nearpilot.api.mcp.response import (
+    denied_response, host_response, status_denied, status_response,
+)
 from nearpilot.shared.enums import Action, ReasonCode
 from nearpilot.shared.interfaces import CoreService
 from nearpilot.shared.models import Account, TargetSpec, UseRequest
@@ -27,6 +29,15 @@ _TOOL_DESCRIPTION = (
     "action 은 open, on, off 중 하나다. 같은 요청을 다시 보낼 때는 같은 request_id 를 쓴다."
 )
 
+_RELEASE_DESCRIPTION = "본인의 사용(use_id)을 종료한다. 반납 검사를 거쳐 종료한다."
+_STATUS_DESCRIPTION = "본인의 사용(use_id) 상태와 종료 이력을 조회한다."
+
+
+def _account_of(ctx: Context) -> Account | None:
+    """미들웨어가 검증한 계정. 없으면 None 이다. 기본값은 거부다."""
+    account = ctx.request_context.request.scope.get(ACCOUNT_KEY)
+    return account if isinstance(account, Account) else None
+
 
 def build_app(
     core: CoreService, authenticator: Authenticator, clock: Callable[[], datetime]
@@ -36,8 +47,8 @@ def build_app(
     @mcp.tool(name="request_use", description=_TOOL_DESCRIPTION)
     async def request_use(target_spec: str, action: str, request_id: str, ctx: Context) -> dict:
         try:
-            account = ctx.request_context.request.scope.get(ACCOUNT_KEY)
-            if not isinstance(account, Account):  # 미들웨어를 거치지 않았다. 기본값은 거부다
+            account = _account_of(ctx)
+            if account is None:  # 미들웨어를 거치지 않았다
                 return denied_response(ReasonCode.INTERNAL_ERROR, request_id)
             try:
                 if not request_id:
@@ -53,6 +64,33 @@ def build_app(
         except Exception:  # noqa: BLE001 - 알 수 없는 오류는 거부한다. 예외 내용은 응답에 넣지 않는다
             log.exception("request_use 도구 처리 중 예외")
             return denied_response(ReasonCode.INTERNAL_ERROR, request_id)
+
+    @mcp.tool(name="release_use", description=_RELEASE_DESCRIPTION)
+    async def release_use(use_id: str, ctx: Context) -> dict:
+        try:
+            account = _account_of(ctx)
+            if account is None:
+                return denied_response(ReasonCode.INTERNAL_ERROR)
+            if not use_id:
+                return denied_response(ReasonCode.INVALID_INPUT)
+            return host_response(await asyncio.to_thread(core.release_use, account.user_id, use_id))
+        except Exception:  # noqa: BLE001
+            log.exception("release_use 도구 처리 중 예외")
+            return denied_response(ReasonCode.INTERNAL_ERROR)
+
+    @mcp.tool(name="get_use_status", description=_STATUS_DESCRIPTION)
+    async def get_use_status(use_id: str, ctx: Context) -> dict:
+        try:
+            account = _account_of(ctx)
+            if account is None:
+                return status_denied(ReasonCode.INTERNAL_ERROR)
+            if not use_id:
+                return status_denied(ReasonCode.INVALID_INPUT)
+            return status_response(
+                await asyncio.to_thread(core.get_use_status, account.user_id, use_id))
+        except Exception:  # noqa: BLE001
+            log.exception("get_use_status 도구 처리 중 예외")
+            return status_denied(ReasonCode.INTERNAL_ERROR)
 
     app = mcp.streamable_http_app(json_response=True, stateless_http=True)
     app.add_middleware(AuthMiddleware, authenticator=authenticator)
