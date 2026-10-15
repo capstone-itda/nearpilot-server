@@ -81,7 +81,7 @@
 | 대상이 자기 예약으로 `RESERVED` 상태다 | 타인 점유로 보지 않고 통과한다 | `test_FR18_재검사는_자기_예약을_타인_점유로_보지_않는다` |
 | 재조작이다 | 기존 `ACTIVE` 세션이면 통과한다. 최초 대여의 `RESERVED`는 재조작을 통과시키지 않고 반대도 같다 | `test_FR18_재검사_재조작은_ACTIVE_세션이어야_통과한다` |
 | 비콘을 대상이 없는 장소만 봤다 | `DENY` / `BEACON_NOT_SEEN` | `test_FR18_재검사_비콘을_다른_장소만_봤으면_거부한다` |
-| 세션이 없거나 `RESERVED`가 아니거나 계정이 맞지 않는다 | `DENY` / `RECHECK_FAILED` | `test_FR18_재검사_예약이_유효하지_않으면_RECHECK_FAILED` |
+| 세션이 없거나, 상태가 실행 종류에 맞지 않거나, 대상 기기나 계정이 맞지 않는다 | `DENY` / `RECHECK_FAILED` | `test_FR18_재검사_예약이_유효하지_않으면_RECHECK_FAILED` |
 | 검사 중 예외가 난다 | `DENY` / `RECHECK_FAILED`. 예외 내용을 `Decision`에 넣지 않는다 | `test_FR18_재검사_예외는_RECHECK_FAILED로_거부한다` |
 | 정책이 알 수 없는 판정을 반환한다 | `DENY` / `RECHECK_FAILED` | `test_FR18_재검사_정책의_알_수_없는_판정은_OK가_되지_않는다` |
 | 감사 기록이 실패한다 | `OK`가 되지 않는다 | `test_FR18_재검사_감사_기록이_실패하면_OK가_되지_않는다` |
