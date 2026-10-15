@@ -1,6 +1,6 @@
 # FAULT 복구 건, 복구 준비 조회, 복구 승인
 
-- 상태: 구현 중. 복구 건 생성과 저장 재시도의 단위 검증을 마쳤다. 조회·승인은 선행 계약을 기다린다.
+- 상태: 구현 중. 복구 건 생성, 저장 재시도, 정산 요약값 계산의 단위 검증을 마쳤다. 조회·승인은 선행 계약(#84, #85, #89)을 기다린다.
 - 담당: JM-220 (상태 관리)
 - 요구사항: NFR-04, NFR-03, FR-12A, FR-19
 - 따르는 결정: #17, #20
@@ -103,7 +103,7 @@
 | `ExecutionStore.save_recovery`, `recovery`, `settle_recovery`, `execution` | 사용 | DB |
 | `Repository.nodes`, `session` | 사용 | DB |
 | `SafetyCheckGateway.request_check` | 사용 (복구 안전 확인) | IOT |
-| `settlement_digest`의 직렬화와 해시 방식 | DB와 함께 정한다 (7절) | DB |
+| `settlement_digest`의 직렬화와 해시 방식 | 제공 (6절). DB는 값을 저장하고 대조만 한다 | DB |
 
 ### 만들지 않는 것
 - REST 경로 `GET /admin/nodes/{node_id}/recovery`, `POST /admin/nodes/{node_id}/recovery/{recovery_id}/approve` (API)
@@ -141,16 +141,22 @@
 - 확인 불능에 보고 참조가 없으면 근거 목록을 비운다 — 진단 문자열을 안전 근거로 바꾸지 않는다.
 - 저장 충돌이나 조회 실패는 예외로 알리고 저장 대기를 유지한다 — 실패를 완료로 안내하지 않는다.
 - DB와 IOT는 `shared` 계약의 fake로 검증한다 — 실제 저장·통신 구현과 서버 조립은 별도 담당 작업이다.
+- `settlement_digest()`는 정규 JSON의 SHA-256 hex다 — 담당자가 2026-10-15에 선택했다. `shared/models.py`는 직렬화를 구현 담당자가 spec에 정하라고 한다. DB는 값을 계산하지 않고 저장·대조만 한다.
+  - 넣는 값: 버전 `v=1`, 복구·기기 ID, 예상 기기·복구 상태, 예상 명령·세션 상태, 근거, 사용분 정산, 점유 종료(`use_id`, `closed_at`, `end_reason`)다.
+  - 빼는 값: 승인 계정과 승인 시각이다. 같은 정산을 다시 승인해도 같은 값이 나온다.
+  - 정규화: 키를 정렬하고 공백 없이 UTF-8로 쓴다. 근거와 사용분은 ID 순서로 정렬한다. 열거형은 값 문자열로 쓴다. 시각은 UTC ISO 8601로 바꾼다.
+  - 거부: 시간대가 없는 시각과 같은 ID가 두 번 나온 근거·사용분은 `ValueError`다.
+  - 방식을 바꾸면 `v`를 올린다. 이미 저장한 값과 비교할 때 옛 방식으로 다시 계산하지 않는다.
 
 ## 7. 가정
 
-- 미결: `settlement_digest`의 직렬화와 해시 방식. architecture.md §4는 상태 관리와 DB 구현 담당이 spec에서 같은 방식을 정하라고 한다. DB 담당과 정한 뒤 6절에 쓴다.
-- 미결: 장소 소유권을 조회하는 접점. `NodeInfo`는 `place_id`를 담지만 장소 소유자를 담지 않는다. `Repository`에는 장소 조회 함수가 없다. 이슈 초안을 담당자에게 넘긴다.
-- 미결: 복구의 안전 확인과 물리 상태 동기화의 근거. 반납 검사는 `UseSession.check_criteria`를 쓴다. 점유 세션이 없는 공용형과 세션이 끝난 기기의 검사 기준은 정하지 않았다. 이슈 초안을 담당자에게 넘긴다.
-- 미결: 관리 API의 구현 담당 (architecture.md §4 "복구 준비 조회와 복구 승인"). 이 spec은 `RecoveryService`만 제공한다.
+- `settlement_digest`의 방식은 6절에 정했다. DB 담당은 이 값을 저장·대조만 한다고 가정한다. architecture.md §4가 요구하는 DB spec의 같은 기록은 #92로 DB 담당에게 알렸다.
+- 미결 — #84: 장소 소유권을 조회하는 접점. `NodeInfo`는 `place_id`를 담지만 장소 소유자를 담지 않는다. `Repository`에는 장소 조회 함수가 없다.
+- 미결 — #85: 복구의 안전 확인과 물리 상태 동기화의 근거. 반납 검사는 `UseSession.check_criteria`를 쓴다. 점유 세션이 없는 공용형과 세션이 끝난 기기의 검사 기준은 정하지 않았다.
+- 미결 — #89: 관리 API의 구현 담당 (architecture.md §4 "복구 준비 조회와 복구 승인"). 이 spec은 `RecoveryService`만 제공한다.
 - 복구 건 생성과 저장 실패 처리는 기존 계약으로 보완한다. 장소 소유권과 안전 근거의 계약이 정해지기 전에는 조회·승인 경로의 구현을 보류한다. 틀이나 항상 거부하는 구현을 완료로 보지 않는다.
-- 장소 소유권과 안전 근거의 이슈 초안은 `fault-recovery-decisions.md`에 둔다. 이슈는 생성하지 않았다.
-- FR-12A의 조회·승인, 복구 정산과 `settlement_digest`는 선행 계약 뒤 구현한다. 아래 테스트 표의 조회·승인 테스트도 남은 작업이다.
+- 장소 소유권과 안전 근거의 이슈 초안은 `fault-recovery-decisions.md`에 있다. 이슈는 #84, #85다.
+- FR-12A의 조회·승인과 복구 정산은 선행 계약 뒤 구현한다. 정산 요약값 계산은 먼저 구현했다. 아래 테스트 표의 조회·승인 테스트는 남은 작업이다.
 
 ## 8. 테스트
 
@@ -175,5 +181,11 @@
 | NFR-04 | `test_NFR04_release_unconfirmed_limit_connected_to_recovery` | 확인 불능 제한 뒤 점유를 보존하고 복구 건을 만든다 |
 | NFR-03 | `test_NFR03_concurrent_fault_creates_once` | 동시 인계에도 같은 장애의 복구 건을 하나만 만든다 |
 | FR-19 | `test_FR19_unconfirmed_usage_not_released` | 복구 건 저장은 점유와 승인 사용분을 풀지 않는다 |
+| NFR-04 | `test_NFR04_settlement_digest_excludes_approval_account_and_time` | 승인 계정과 승인 시각이 달라도 요약값이 같다 |
+| NFR-04 | `test_NFR04_settlement_digest_ignores_input_order_and_time_zone` | 입력 순서와 시간대 표기가 달라도 요약값이 같다 |
+| NFR-04 | `test_NFR04_settlement_digest_changes_with_settlement_content` | 대상, 예상 상태, 근거, 사용분, 종료 내용이 다르면 요약값이 다르다 |
+| NFR-04 | `test_NFR04_settlement_digest_shared_recovery_has_no_close` | 공용형 복구는 점유 종료 없이 요약값을 만든다 |
+| NFR-04 | `test_NFR04_settlement_digest_canonical_format` | 정규 JSON 형식을 고정한다 |
+| NFR-04 | `test_NFR04_settlement_digest_rejects_ambiguous_input` | 시간대 없는 시각과 중복 ID를 거부한다 |
 
 FR-12A의 조회·승인 테스트는 선행 계약 뒤 추가한다.

@@ -1,22 +1,94 @@
 """FAULT 격리 뒤 복구 건 생성과 저장 재시도 (NFR-04, NFR-03, FR-19).
 
 조회·승인·정산은 선행 계약을 기다린다. 이 서비스는 RecoveryService가 아니다.
+정산 요약값의 계산(settlement_digest)은 승인 경로가 쓸 수 있게 먼저 둔다.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timezone
+from hashlib import sha256
 from threading import Lock
 from typing import Any
 from uuid import uuid4
 
-from nearpilot.shared.enums import DeviceState, RecoveryStatus, StoreOutcome
+from nearpilot.shared.enums import (
+    DeviceState, EndReason, ExecutionStatus, RecoveryStatus, SessionState, StoreOutcome,
+)
 from nearpilot.shared.errors import StoreError, StoreOutcomeUnknown
 from nearpilot.shared.interfaces import ExecutionStore, Repository
-from nearpilot.shared.models import NodeInfo, RecoveryEvidence, RecoveryRecord, UseSession
+from nearpilot.shared.models import (
+    ApprovalUsageSettlement, NodeInfo, RecoveryEvidence, RecoveryRecord, UseSession,
+)
+
+SETTLEMENT_DIGEST_VERSION = 1
+
+
+def settlement_digest(
+    *, recovery_id: str, node_id: str,
+    expected_node_state: DeviceState, expected_recovery_status: RecoveryStatus,
+    expected_commands: Mapping[str, ExecutionStatus],
+    expected_sessions: Mapping[str, SessionState],
+    evidence: tuple[RecoveryEvidence, ...],
+    usage_settlements: tuple[ApprovalUsageSettlement, ...],
+    use_id: str | None = None, closed_at: datetime | None = None,
+    end_reason: EndReason | None = None,
+) -> str:
+    """RecoverySettlement의 논리 정산 요약값 (NFR-04, architecture.md §4).
+
+    승인 계정과 승인 시각은 넣지 않는다. 같은 정산의 반복 승인은 같은 값을 만든다.
+    정규 JSON(키 정렬, 공백 없음, UTF-8)의 SHA-256 hex다. 목록은 ID 순서로 정렬한다.
+    시각은 UTC ISO 8601로 바꾼다. 시간대가 없는 시각은 받지 않는다.
+    """
+    for name, ids in (
+        ("evidence", [e.evidence_id for e in evidence]),
+        ("usage_settlements", [u.usage_id for u in usage_settlements]),
+    ):
+        if len(ids) != len(set(ids)):
+            raise ValueError(f"정산 요약값의 {name}에 같은 ID가 있다")
+    body = {
+        "v": SETTLEMENT_DIGEST_VERSION,
+        "recovery_id": recovery_id,
+        "node_id": node_id,
+        "expected_node_state": expected_node_state.value,
+        "expected_recovery_status": expected_recovery_status.value,
+        "expected_commands": {k: v.value for k, v in expected_commands.items()},
+        "expected_sessions": {k: v.value for k, v in expected_sessions.items()},
+        "evidence": [
+            {
+                "evidence_id": item.evidence_id,
+                "session_id": item.session_id,
+                "observed_at": _utc(item.observed_at),
+                "execution_outcome": _value(item.execution_outcome),
+                "safety_confirmed": item.safety_confirmed,
+                "physical_state_synced": item.physical_state_synced,
+            }
+            for item in sorted(evidence, key=lambda e: e.evidence_id)
+        ],
+        "usage_settlements": [
+            {"usage_id": u.usage_id, "expected_state": u.expected_state.value, "state": u.state.value}
+            for u in sorted(usage_settlements, key=lambda u: u.usage_id)
+        ],
+        "use_id": use_id,
+        "closed_at": None if closed_at is None else _utc(closed_at),
+        "end_reason": _value(end_reason),
+    }
+    text = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return sha256(text.encode("utf-8")).hexdigest()
+
+
+def _utc(at: datetime) -> str:
+    if at.tzinfo is None or at.utcoffset() is None:
+        raise ValueError("정산 요약값의 시각에는 시간대가 필요하다")
+    return at.astimezone(timezone.utc).isoformat()
+
+
+def _value(item: Any) -> Any:
+    return None if item is None else item.value
 
 
 @dataclass
