@@ -249,6 +249,9 @@ class ExecutionStore(Protocol):
         최초 대여: 기기 AVAILABLE, 세션 CLOSED·cancelled. 재조작: 기존 점유·rental_due_at 보존.
         공통: 이번 요청의 사용분 released, 명령 NOT_SENT, 감사. 기존 대여의 사용분은 바꾸지 않는다.
         재검사 실패와 예약 대기 제한은 expected=PENDING, IOT 의 NOT_SENT 증명은 expected=IN_PROGRESS 다.
+        명령을 연결하지 않은 요청도 expected=PENDING 으로 취소한다 (#81). 예약과 사용분만 정리하고 명령을 만들지 않는다.
+        reason: 재검사 거부는 재검사의 사유, 검사 오류는 RECHECK_FAILED, 예약 대기 제한은 RESERVATION_EXPIRED,
+        현재 연결 없음은 NODE_NOT_CONNECTED, IOT 미전송 증명은 COMMAND_NOT_SENT 다 (#78).
         """
         ...
 

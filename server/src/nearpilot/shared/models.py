@@ -327,6 +327,9 @@ class ReserveResult:
     outcome: ReserveOutcome
     use_id: str | None = None  # 공용형은 세션이 없으므로 None
     usage_id: str | None = None  # 승인 사용분 ID
+    # DB 가 저장한 예약 시각 (#80). 판정이 ExecutionContext.reserved_at 으로 그대로 넘긴다.
+    # 쓰기가 없는 결과(공용형 open·승인 없음, 거부)는 None 이다.
+    reserved_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,6 +388,9 @@ class ExecutionContext:
     usage_id: str | None  # 승인이 필요 없으면 None
     settings: Settings  # 판정에 적용한 설정. 실행과 대여시간 계산도 이 값을 쓴다.
     execution_kind: ExecutionKind = ExecutionKind.RENTAL_INITIAL
+    # ReserveResult.reserved_at 을 그대로 담는다 (#80). 예약 대기는 이 시각부터 잰다.
+    # 인계 시각부터 다시 세지 않는다. DB 쓰기가 없는 공용형 open 요청은 None 이다.
+    reserved_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if (self.execution_kind == ExecutionKind.SHARED) != (self.use_id is None):
@@ -400,6 +406,18 @@ class ExecutionResult:
     command_id: str | None = None  # 명령을 연결하기 전에 막혔으면 None
     use_id: str | None = None  # 호스트에는 SUCCEEDED 일 때만 반환한다
     recheck: Decision | None = None  # 재검사가 전송을 막았을 때 그 판정
+    # 재검사 밖의 이유로 실행을 막았을 때의 사유 (#79). recheck 와 함께 쓰지 않는다.
+    # 판정은 recheck 가 있으면 그 판정을, 없으면 이 사유로 DENY 사유를 정한다.
+    # 값: COMMAND_IN_PROGRESS(구동 경합), DEVICE_BUSY(CLOSING·FAULT 상태 충돌),
+    # TARGET_UNAVAILABLE(복원 미완료), NODE_NOT_CONNECTED, RESERVATION_EXPIRED, COMMAND_NOT_SENT
+    reason: ReasonCode | None = None
+
+    def __post_init__(self) -> None:
+        if self.reason is not None:
+            if self.recheck is not None:
+                raise ValueError("중단 사유는 재검사 판정이 없을 때만 쓴다")
+            if self.status == ExecutionStatus.SUCCEEDED:
+                raise ValueError("성공한 실행에는 중단 사유가 없다")
 
 
 @dataclass(frozen=True, slots=True)

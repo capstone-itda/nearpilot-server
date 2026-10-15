@@ -96,6 +96,8 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 구동 중 | 기기의 구동부가 물리 동작을 하는 상태. 기기 상태 `ACTIVE`(대여 중)와 다르다 | `actuator_state`의 `busy` | |
 | 접수·실행 전 거부 | 기기가 새 명령을 접수하기 전에 검증된 `DEVICE_BUSY`로 거부한 결과. 서버의 확실한 미전송(`NOT_SENT`)과 다르다 | `CommandOutcome.REJECTED` | |
 | 처리 중 사유 | 다른 구동 명령이 진행 중이어서 새 조작을 시작하지 못하는 사유. 기기 점유 충돌과 구분한다 | `ReasonCode.COMMAND_IN_PROGRESS` | |
+| 실행 중단 사유 | 재검사 밖의 이유로 상태 관리가 전송을 막은 사유. 재검사 판정과 구분한다 | `ExecutionResult.reason` | |
+| 예약 시각 | DB가 예약을 저장한 시각. 예약 대기 제한을 이 시각부터 잰다 | `ReserveResult.reserved_at`, `ExecutionContext.reserved_at` | |
 | 복원 조회 | 재시작한 서버가 끝나지 않은 요청, 명령, 점유 세션, 승인 사용분, 복구 건을 기기별로 읽는 조회 | `restore_pending` | |
 | 복원 묶음 | 복원 조회가 기기 하나에 반환하는 현재 기기 상태와 연결 기록의 목록 | `RestoreBundle` | |
 | 복구 건 | 기기의 장애 격리 하나에 딸린 복구 업무의 기록. 근거와 복구 승인을 연결한다 | `RecoveryRecord`, `recovery_id` | `store_event_id` |

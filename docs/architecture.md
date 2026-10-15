@@ -146,7 +146,7 @@ api  ──▶  core  ──▶  db
 
 ### 실행 인계와 재검사
 
-[#16](https://github.com/capstone-itda/nearpilot-server/issues/16)의 인계 계약과 [#35](https://github.com/capstone-itda/nearpilot-server/issues/35)의 A안을 따른다.
+[#16](https://github.com/capstone-itda/nearpilot-server/issues/16)의 인계 계약, [#35](https://github.com/capstone-itda/nearpilot-server/issues/35)의 A안, [#79](https://github.com/capstone-itda/nearpilot-server/issues/79)의 A안과 [#80](https://github.com/capstone-itda/nearpilot-server/issues/80)의 B안을 따른다.
 판정은 최초 허가와 필요한 예약 뒤 `context` 하나를 상태 관리에 전달한다.
 
 | 정보 | 약속 |
@@ -157,6 +157,7 @@ api  ──▶  core  ──▶  db
 | `use_id`, `usage_id` | 자기 예약과 승인 사용분을 찾는다. 없으면 `None`이다. 재조작의 `use_id`는 기존 대여의 점유 세션이다. `usage_id`는 이번 요청의 승인 사용분이다. |
 | `execution_kind` | 최초 대여, 기존 대여의 재조작, 공용형 조작을 구분한다. |
 | 적용한 `Settings` | 실제 설정 값과 버전을 유지한다. |
+| `reserved_at` | DB가 `ReserveResult`로 반환한 예약 시각이다. 예약 대기 제한은 이 시각부터 잰다. 인계 시각부터 다시 세지 않는다. DB 쓰기가 없는 공용형 `open` 요청은 `None`이다. |
 
 - 상태 관리는 `execute(context)`를 제공한다. 판정은 이 접점으로 실행을 인계한다.
 - 판정은 `recheck(context)`를 제공한다. 상태 관리는 전송 직전에 이 접점을 호출한다.
@@ -187,6 +188,18 @@ api  ──▶  core  ──▶  db
 - 미결: `Repository.link_request`가 오류로 끝난 키를 새 시도로 인정하는 방법과 이중 예약을 막는 조건. 판정과 DB 담당이 spec에서 정한다.
 - `recheck()`가 예외를 던지면 상태 관리는 검사 오류와 같게 처리한다.
 - `ExecutionResult`는 재검사가 전송을 막았을 때 그 `Decision`을 함께 담는다. 호스트 응답 변환은 판정이 맡는다 (FR-09).
+- 재검사 밖의 이유로 실행을 막으면 `ExecutionResult.reason`에 중단 사유를 담는다. `reason`은 `recheck`가 없을 때만 쓴다. 판정은 `recheck`가 있으면 그 판정을, 없으면 `reason`으로 `DENY` 사유를 정한다.
+
+| 중단 원인 | `reason` |
+|---|---|
+| 같은 기기의 다른 구동 명령 | `COMMAND_IN_PROGRESS` |
+| `CLOSING`·`FAULT` 같은 상태 충돌 | `DEVICE_BUSY` |
+| 재시작 복원 미완료 | `TARGET_UNAVAILABLE` |
+| 기기의 현재 연결 없음 | `NODE_NOT_CONNECTED` |
+| 예약 대기 제한 만료 | `RESERVATION_EXPIRED` |
+| IOT의 미전송 증명 | `COMMAND_NOT_SENT` |
+
+- `RESERVATION_EXPIRED`, `NODE_NOT_CONNECTED`, `COMMAND_NOT_SENT`는 내부 사유다. 호스트에 보이는 사유는 판정이 정한다. 판정은 내부 판단 근거를 호스트에 공개하지 않는다. 예를 들어 현재 연결 없음은 `TARGET_UNAVAILABLE` 수준으로만 보인다.
 
 ### 예약과 승인 사용분
 
@@ -205,6 +218,7 @@ api  ──▶  core  ──▶  db
 - 공용형 예약은 `approval_usage`의 `reserved` 행만 만든다. DB는 기기 상태와 점유 세션을 바꾸지 않는다.
 - 승인 방식이 `time_window`이고 `max_uses`가 NULL이어도 DB는 요청별 사용분 행을 만든다. 사용분 행은 명령과 감사 기록을 연결한다. DB는 횟수 검사만 생략한다.
 - 예약한 사용분의 소진, 보류, 반환은 `ExecutionStore`가 반영한다.
+- DB는 예약을 쓴 결과에 저장한 예약 시각 `reserved_at`을 담는다. 쓰기가 없는 결과는 `None`이다. 판정은 이 값을 `ExecutionContext.reserved_at`으로 그대로 넘긴다 ([#80](https://github.com/capstone-itda/nearpilot-server/issues/80)).
 
 ### 승인 요청과 소유자 결정
 
@@ -365,6 +379,8 @@ CORE는 실행·종료·안전을 판단한다. DB는 현재 상태와 기록 �
 - 사건은 새 사건 ID 없이 식별 키와 함수로 식별한다. 결과는 `applied`, `already_applied`, `conflict` 중 하나다.
 - 실행 결과는 명령 하나에 하나만 확정한다. 이미 다른 결과가 있으면 `conflict`다. 상충한 결과는 감사 기록에 남긴다.
 - 미전송 취소는 기대 상태를 함께 받는다. 재검사 실패와 예약 대기 제한은 `pending`에서만 취소한다. IOT가 미전송을 증명하면 `in_progress`에서도 취소한다.
+- 명령을 연결하지 않은 요청도 `cancel_not_sent(expected=pending)`로 취소한다. DB는 예약과 사용분만 정리하고 명령을 만들지 않는다 ([#81](https://github.com/capstone-itda/nearpilot-server/issues/81)).
+- 미전송 취소의 사유는 원인별로 구분한다. 재검사 거부는 재검사의 사유, 검사 오류는 `RECHECK_FAILED`, 예약 대기 제한은 `RESERVATION_EXPIRED`, 현재 연결 없음은 `NODE_NOT_CONNECTED`, IOT의 미전송 증명은 `COMMAND_NOT_SENT`다 ([#78](https://github.com/capstone-itda/nearpilot-server/issues/78)). 검사 오류용 사유를 정상 만료에 쓰지 않는다.
 - 최초 대여의 확실한 미전송 취소는 대여형 기기를 `AVAILABLE`로, 점유 세션을 `cancelled` 사유의 `CLOSED`로 둔다.
 - 저장 오류는 `StoreNotApplied`와 `StoreOutcomeUnknown` 예외로 구분한다. `StoreOutcomeUnknown`이면 `execution`으로 다시 조회한다.
 - 최초 대여의 실행 성공 때 CORE는 인계받은 `Settings`로 `rental_due_at`을 계산해서 전달한다. 재조작의 성공은 `rental_due_at`을 갱신하지 않는다.

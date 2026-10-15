@@ -162,14 +162,13 @@ sequenceDiagram
 
 ## 7. 가정
 
-- 미결 — #78: 아래 취소에 쓰는 사유 코드. `cancel_not_sent`는 `ReasonCode`를 받지만 세 경우에 맞는 값이 없다.
+- #78 A안으로 정했다: 아래 취소의 사유 코드는 각각 `RESERVATION_EXPIRED`, `NODE_NOT_CONNECTED`, `COMMAND_NOT_SENT`다. 코드 반영은 후속 작업이다.
   - 예약 대기 제한의 만료 취소
   - 기기의 현재 연결 ID가 없어서 보내지 않은 명령의 취소
   - IOT가 미전송을 증명한 명령의 취소
-- 위 사유 코드 추가는 팀 결정이다.
-- 미결 — #79: 재검사가 아닌 이유로 전송을 막았을 때 판정에 사유를 알리는 방법. `ExecutionResult`에는 사유 필드가 없다. `COMMAND_IN_PROGRESS`, `STATE_CONFLICT`, 연결 없음을 판정이 구분할 수 없다.
-- 위 두 미결이 정해지기 전에는 그 경로의 구현을 보류한다. 임시 `not_sent` 반환으로 취소 저장과 사유 전달의 완료를 대신하지 않는다.
-- 미결 — #80, #81: 인계 전 예약과 명령 미연결 예약의 시각을 정상 운영 중 확보하는 경로다. `ExecutionContext`와 기존 조회 계약으로 충족하지 못하면 판정·DB 담당과 접점을 정한다.
+- #79 A안으로 정했다: 재검사 밖의 이유로 전송을 막으면 `ExecutionResult.reason`에 사유를 담는다. 값은 architecture.md §4 "실행 인계와 재검사"의 표를 따른다. 코드 반영은 후속 작업이다.
+- 위 두 결정을 코드에 반영하기 전에는 그 경로의 구현을 보류한다. 임시 `not_sent` 반환으로 취소 저장과 사유 전달의 완료를 대신하지 않는다.
+- #80 B안과 #81 A안으로 정했다: 판정이 `ReserveResult.reserved_at`을 `ExecutionContext.reserved_at`으로 넘긴다. 명령 미연결 예약도 `cancel_not_sent(expected=PENDING)`로 취소한다. 코드 반영은 후속 작업이다.
 - 선행 의존: 복구 건 생성은 `core-fault-recovery`, 복원 상태는 `core-restore`가 제공한다. 이 spec은 두 spec보다 먼저 단독 완료할 수 있다고 가정하지 않는다.
 - 이번 구현은 명령에 저장한 `reserved_at`을 전송 직전까지 확인한다. 시각이 없거나 만료하면 전송을 막는다. 인계 전 예약의 만료 감시와 취소 저장은 선행 계약 뒤 구현한다.
 - 연결 없음과 복원 미완료는 `pending`을 유지한다. IOT의 확실한 미전송은 취소 사유가 정해질 때까지 `in_progress`를 유지한다. 임시 `not_sent`를 반환하지 않는다.
