@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from nearpilot.shared.errors import StoreNotApplied, StoreOutcomeUnknown
+
 
 def new_id() -> str:
     return str(uuid4())
@@ -49,15 +51,29 @@ def from_json(value: str | None) -> dict[str, Any]:
 
 @contextmanager
 def immediate_transaction(conn: sqlite3.Connection):
-    """`BEGIN IMMEDIATE` 트랜잭션 하나로 여러 문장을 원자적으로 묶는다 (FR-19)."""
-    conn.execute("BEGIN IMMEDIATE")
+    """`BEGIN IMMEDIATE` 트랜잭션 하나로 여러 문장을 원자적으로 묶는다 (FR-19).
+
+    저장 장애는 `StoreNotApplied`(변경 없음 확실)와 `StoreOutcomeUnknown`(반영 여부 불명)으로
+    구분한다 (`ExecutionStore` 전체의 약속). 쓰기 잠금을 얻지 못했거나 롤백까지 끝났으면
+    아무것도 바뀌지 않은 것이 확실하다. `COMMIT` 자체가 실패하면 반영 여부를 알 수 없다.
+    """
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError as error:
+        raise StoreNotApplied(str(error)) from error
     try:
         yield
-    except BaseException:
-        conn.execute("ROLLBACK")
+    except BaseException as original:
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.OperationalError as rollback_error:
+            raise StoreOutcomeUnknown(str(rollback_error)) from original
         raise
     else:
-        conn.execute("COMMIT")
+        try:
+            conn.execute("COMMIT")
+        except sqlite3.OperationalError as error:
+            raise StoreOutcomeUnknown(str(error)) from error
 
 
 @contextmanager
