@@ -23,7 +23,7 @@ from nearpilot.shared.enums import (
     Verdict,
     Visibility,
 )
-from nearpilot.shared.interfaces import PolicyChecker, ProximityEstimator, Repository
+from nearpilot.shared.interfaces import ExecutionReadiness, PolicyChecker, ProximityEstimator, Repository
 from nearpilot.shared.models import NodeInfo
 
 log = logging.getLogger(__name__)
@@ -47,12 +47,14 @@ class DeviceQueryService:
         policy: PolicyChecker,
         settings: Settings,
         clock: Callable[[], datetime],
+        readiness: ExecutionReadiness,
     ) -> None:
         self._repo = repo
         self._proximity = proximity
         self._policy = policy
         self._settings = settings
         self._clock = clock
+        self._readiness = readiness
 
     # ── find_available_devices ──────────────────────────────────────
 
@@ -83,7 +85,8 @@ class DeviceQueryService:
             threshold = threshold_for(s, capability, False)
             if threshold is None:
                 continue
-            candidates = select_candidates(all_nodes, capability, s, now, place_id)
+            candidates = select_candidates(
+                all_nodes, capability, s, now, place_id, self._readiness.can_execute)
             if not candidates:
                 continue
             posteriors = dict(self._proximity.posterior(

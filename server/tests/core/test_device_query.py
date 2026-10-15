@@ -88,6 +88,19 @@ class FakeProximity:
         return ProximityResult(self.posteriors, at, at, "m", "c")
 
 
+class FakeReadiness:
+    """상태 관리의 기기별 실행 가능 여부. 기본은 모두 가능하다."""
+
+    def __init__(self, not_ready=()):
+        self.not_ready = set(not_ready)
+        self.error: Exception | None = None
+
+    def can_execute(self, node_id):
+        if self.error:
+            raise self.error
+        return node_id not in self.not_ready
+
+
 class FakePolicy:
     def __init__(self, result=None):
         self.result = result or PolicyCheckResult(Verdict.OK, ReasonCode.OK, 1)
@@ -102,10 +115,11 @@ class FakePolicy:
         return self.by_node.get(node_id, self.result)
 
 
-def build(posteriors=None, settings=None):
+def build(posteriors=None, settings=None, readiness=None):
     repo, policy_check = FakeRepo(), FakePolicy()
     prox = FakeProximity({"locker-1": 0.97} if posteriors is None else posteriors)
-    svc = DeviceQueryService(repo, prox, policy_check, settings or Settings(version="v1"), lambda: NOW)
+    svc = DeviceQueryService(repo, prox, policy_check, settings or Settings(version="v1"), lambda: NOW,
+                             readiness or FakeReadiness())
     return svc, repo, prox, policy_check
 
 
@@ -299,3 +313,13 @@ def test_FR09_상태_조회_예외는_올린다():
     repo.policy_error = RuntimeError("boom")
     with pytest.raises(RuntimeError):
         svc.get_device_state("anyone", "locker-1")
+
+
+def test_FR09_복원_중인_기기는_목록에서_뺀다():
+    svc, repo, prox, _ = build(readiness=FakeReadiness({"locker-1"}))
+    assert svc.find_available_devices("u1") == []
+
+
+def test_FR11_복원_사실을_공개하지_않는다():
+    svc, *_ = build(readiness=FakeReadiness({"locker-1"}))
+    assert "복원" not in repr(svc.find_available_devices("u1"))

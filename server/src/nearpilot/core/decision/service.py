@@ -27,6 +27,17 @@ _BY_STATUS: dict[ExecutionStatus, tuple[Verdict, ReasonCode]] = {
 }
 
 
+# 재검사 밖의 중단 사유 → 호스트 판정과 사유 (#79). 내부 판단 근거는 공개하지 않는다.
+_BY_REASON: dict[ReasonCode, tuple[Verdict, ReasonCode]] = {
+    ReasonCode.COMMAND_IN_PROGRESS: (Verdict.BUSY, ReasonCode.COMMAND_IN_PROGRESS),
+    ReasonCode.DEVICE_BUSY: (Verdict.BUSY, ReasonCode.DEVICE_BUSY),
+    ReasonCode.TARGET_UNAVAILABLE: (Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE),
+    ReasonCode.NODE_NOT_CONNECTED: (Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE),
+    ReasonCode.RESERVATION_EXPIRED: (Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE),
+    ReasonCode.COMMAND_NOT_SENT: (Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE),
+}
+
+
 class RequestUseService:
     def __init__(
         self, pipeline: DecisionPipeline, execution: ExecutionService, store: ExecutionStore
@@ -53,20 +64,27 @@ class RequestUseService:
         record = self._store.execution(decision.internal_request_id)
         if record is None:  # 인계가 끝나지 않았다. context 를 다시 만들 수 없다
             return self._failure(decision, ReasonCode.INTERNAL_ERROR)
-        return self._map(decision, record.status, record.use_id, None)
+        return self._map(decision, record.status, record.use_id, None, None)
 
     def _from_result(self, decision: Decision, result: ExecutionResult) -> Decision:
-        return self._map(decision, result.status, result.use_id, result.recheck)
+        return self._map(decision, result.status, result.use_id, result.recheck, result.reason)
 
     def _map(
         self, decision: Decision, status: ExecutionStatus, use_id: str | None,
-        recheck: Decision | None,
+        recheck: Decision | None, reason: ReasonCode | None,
     ) -> Decision:
         if status is ExecutionStatus.SUCCEEDED:
             return replace(decision, verdict=Verdict.OK, reason=ReasonCode.OK, use_id=use_id,
                            message=None)
+        if recheck is not None and status is ExecutionStatus.NOT_SENT:
+            return recheck  # 재검사 판정이 중단 사유보다 먼저다
+        if reason is not None:
+            by_reason = _BY_REASON.get(reason)  # 알 수 없는 사유는 OK 가 되지 않는다
+            if by_reason is None:
+                return self._failure(decision, ReasonCode.INTERNAL_ERROR)
+            return self._failure(decision, by_reason[1], by_reason[0])
         if status is ExecutionStatus.NOT_SENT:
-            return recheck if recheck is not None else self._failure(decision, ReasonCode.INTERNAL_ERROR)
+            return self._failure(decision, ReasonCode.INTERNAL_ERROR)
         mapped = _BY_STATUS.get(status)
         if mapped is None:  # 알 수 없는 상태는 OK 가 되지 않는다
             return self._failure(decision, ReasonCode.INTERNAL_ERROR)
