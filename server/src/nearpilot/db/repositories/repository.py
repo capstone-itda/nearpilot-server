@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Sequence
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from nearpilot.db.repositories._common import (
     from_json, immediate_transaction, iso, new_id, parse_iso, settings_to_json, to_json,
@@ -308,31 +308,77 @@ class SqliteRepository:
         return f"{target.kind.value}:{target.capability.value}"
 
     def _link_existing(self, req: UseRequest, input_digest: str) -> RequestLink:
-        row = self._conn.execute(
-            "SELECT internal_request_id, input_digest, verdict, reason_code, node_id, p_max "
-            "FROM request WHERE user_id = ? AND request_id = ?",
-            (req.user_id, req.request_id),
-        ).fetchone()
-        if row["input_digest"] != input_digest:
-            return RequestLink(internal_request_id=row["internal_request_id"], is_new=False, conflict=True)
-        previous = None
-        if row["verdict"] is not None:
-            use_row = self._conn.execute(
-                "SELECT use_id FROM use_session WHERE internal_request_id = ?",
-                (row["internal_request_id"],),
+        with immediate_transaction(self._conn):
+            row = self._conn.execute(
+                "SELECT internal_request_id, input_digest, verdict, reason_code, node_id, p_max, "
+                "policy_ver FROM request WHERE user_id = ? AND request_id = ?",
+                (req.user_id, req.request_id),
             ).fetchone()
-            previous = Decision(
-                internal_request_id=row["internal_request_id"],
-                request_id=req.request_id,
-                verdict=Verdict(row["verdict"]),
-                reason=ReasonCode(row["reason_code"]),
-                node_id=row["node_id"],
-                use_id=use_row["use_id"] if use_row else None,
-                p_max=row["p_max"],
+            if row["input_digest"] != input_digest:
+                return RequestLink(internal_request_id=row["internal_request_id"], is_new=False, conflict=True)
+
+            internal_request_id = row["internal_request_id"]
+            if row["verdict"] == Verdict.DENY.value and row["reason_code"] == ReasonCode.INTERNAL_ERROR.value:
+                retried = self._retry_internal_error(internal_request_id, input_digest, row)
+                return RequestLink(
+                    internal_request_id=internal_request_id, is_new=retried, conflict=False, previous=None
+                )
+
+            previous = None
+            if row["verdict"] is not None:
+                use_row = self._conn.execute(
+                    "SELECT use_id FROM use_session WHERE internal_request_id = ?",
+                    (internal_request_id,),
+                ).fetchone()
+                previous = Decision(
+                    internal_request_id=internal_request_id,
+                    request_id=req.request_id,
+                    verdict=Verdict(row["verdict"]),
+                    reason=ReasonCode(row["reason_code"]),
+                    node_id=row["node_id"],
+                    use_id=use_row["use_id"] if use_row else None,
+                    p_max=row["p_max"],
+                )
+            return RequestLink(
+                internal_request_id=internal_request_id, is_new=False, conflict=False, previous=previous
             )
-        return RequestLink(
-            internal_request_id=row["internal_request_id"], is_new=False, conflict=False, previous=previous
+
+    def _retry_internal_error(
+        self, internal_request_id: str, input_digest: str, row: sqlite3.Row
+    ) -> bool:
+        """`INTERNAL_ERROR`로 끝난 요청을 같은 키·같은 입력으로 다시 보내면 판정 칸을 비워
+
+        새 요청처럼 재판정하게 한다 (#76). 비운 뒤 `True`, 다른 재전송이 먼저 비웠으면
+        `False`를 반환한다(그 쪽은 `verdict IS NULL`인 "처리 중"으로 떨어진다).
+        """
+        updated = self._conn.execute(
+            "UPDATE request SET verdict = NULL, reason_code = NULL, node_id = NULL, p_max = NULL, "
+            "model = NULL, calib = NULL, policy_ver = NULL, config_ver = NULL, decision_context = NULL, "
+            "settings_json = NULL "
+            "WHERE internal_request_id = ? AND input_digest = ? AND verdict = ? AND reason_code = ?",
+            (internal_request_id, input_digest, Verdict.DENY.value, ReasonCode.INTERNAL_ERROR.value),
         )
+        if updated.rowcount == 0:
+            return False
+        self._conn.execute(
+            "INSERT INTO audit_log (log_id, event_id, internal_request_id, command_id, step, "
+            "payload_json, created_at) VALUES (?, ?, ?, NULL, ?, ?, ?)",
+            (
+                new_id(), new_id(), internal_request_id, Step.DEDUP.value,
+                to_json(
+                    {
+                        "event": "link_request_retry",
+                        "previous_verdict": row["verdict"],
+                        "previous_reason_code": row["reason_code"],
+                        "previous_node_id": row["node_id"],
+                        "previous_p_max": row["p_max"],
+                        "previous_policy_ver": row["policy_ver"],
+                    }
+                ),
+                iso(datetime.now(timezone.utc)),
+            ),
+        )
+        return True
 
     def save_decision(self, decision: Decision, record: DecisionRecord) -> StoreResult:
         row = self._conn.execute(
