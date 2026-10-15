@@ -181,7 +181,10 @@ def test_FR16_fake_repository_and_io(fake_repo, make_io, beacon, t0):
     assert fake_repo.start_collection("col-4", beacon, "none", t0) == ok
     assert fake_repo.end_collection("col-2", t1) == conflict
     assert fake_repo.end_collection("col-2", t1) == ok
-    assert fake_repo.calls[2:] == [
+    assert fake_repo.end_collection("col-4", t0) == AdminWriteResult(
+        AdminWriteOutcome.REJECTED, AdminWriteReason.INVALID_INTERVAL
+    )  # 큐가 비면 끝 시각이 시작 시각보다 뒤가 아닌 회차를 실제 DB처럼 거부한다
+    assert fake_repo.calls[2:7] == [
         ("start", "col-2", beacon, "none", t0),
         ("start", "col-3", beacon, "none", t0),
         ("start", "col-4", beacon, "none", t0),
@@ -194,7 +197,7 @@ def test_FR16_fake_repository_and_io(fake_repo, make_io, beacon, t0):
     methods = {name for name in dir(fake_repo) if not name.startswith("_") and callable(getattr(fake_repo, name))}
     assert methods == {"start_collection", "end_collection"}
 
-    # FakeIO의 시계: 시각은 sleep으로만 간다. 2번째(0부터) sleep은 시각을 늘리지 않고 KeyboardInterrupt를 던진다
+    # FakeIO의 시계: 시각은 sleep으로만 간다. 2번째(0부터) sleep은 절반만 시각을 늘리고 KeyboardInterrupt를 던진다
     io = make_io(["", "q", KeyboardInterrupt()], interrupt_on_sleep=2)
     assert io.clock() == t0
     io.sleep(5)
@@ -202,9 +205,9 @@ def test_FR16_fake_repository_and_io(fake_repo, make_io, beacon, t0):
     assert io.now == t0 + timedelta(seconds=6.5)
     with pytest.raises(KeyboardInterrupt):
         io.sleep(3)
-    assert io.now == t0 + timedelta(seconds=6.5)
+    assert io.now == t0 + timedelta(seconds=8)
     io.sleep(1)  # 중단은 그 한 번뿐이다
-    assert io.now == t0 + timedelta(seconds=7.5)
+    assert io.now == t0 + timedelta(seconds=9)
     assert io.sleeps == [5, 1.5, 3, 1]  # 중단된 sleep도 기록한다
 
     # FakeIO의 입력: 맨 앞부터 꺼낸다. 예외는 던진다. 다 떨어지면 EOFError다

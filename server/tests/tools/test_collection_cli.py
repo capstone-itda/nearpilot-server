@@ -163,10 +163,12 @@ def test_FR16_cli_run_returns_session_code(
 
 def test_FR16_cli_start_at_out_of_range(sample_plan_path, fake_repo, make_io, record_path):
     io = make_io(["", "", ""])
+    factory = _Factory(fake_repo)
 
-    code = _main(_run_argv(sample_plan_path, record_path, "--start-at", "9"), _Factory(fake_repo), io)
+    code = _main(_run_argv(sample_plan_path, record_path, "--start-at", "9"), factory, io)
 
     assert code == EXIT_INVALID
+    assert factory.count == 0  # 저장소를 만들기 전에 거부한다
     assert fake_repo.calls == []
     assert "--start-at" in io.text and "9" in io.text  # 사유를 화면에 쓴다
     assert not record_path.exists()

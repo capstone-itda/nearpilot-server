@@ -43,6 +43,8 @@ class FakeAdminRepository:
     도구가 그 외의 메서드를 부르면 `AttributeError`로 테스트가 실패한다.
     호출은 결과와 상관없이 `calls`에 먼저 기록한다. 결과는 `start_results`, `end_results`의 맨 앞부터
     하나씩 꺼내 돌려주고 (예외면 던진다), 비었으면 APPLIED/OK를 돌려준다.
+    `end_results`가 비었을 때 `ended_at`이 그 회차의 `started_at`보다 뒤가 아니면 실제 DB처럼
+    `INVALID_INTERVAL`로 거부한다 (`AdminRepository.end_collection` docstring).
     """
 
     def __init__(self) -> None:
@@ -50,23 +52,28 @@ class FakeAdminRepository:
         self.calls: list[tuple] = []
         self.start_results: list[AdminWriteResult | BaseException] = []
         self.end_results: list[AdminWriteResult | BaseException] = []
+        self._started: dict[str, datetime] = {}  # collection_id → started_at
 
     def start_collection(
         self, collection_id: str, beacon: BeaconKey, label: str, started_at: datetime
     ) -> AdminWriteResult:
         self.calls.append(("start", collection_id, beacon, label, started_at))
+        self._started.setdefault(collection_id, started_at)
         return _next_result(self.start_results)
 
     def end_collection(self, collection_id: str, ended_at: datetime) -> AdminWriteResult:
         self.calls.append(("end", collection_id, ended_at))
+        started_at = self._started.get(collection_id)
+        if not self.end_results and started_at is not None and ended_at <= started_at:
+            return AdminWriteResult(AdminWriteOutcome.REJECTED, AdminWriteReason.INVALID_INTERVAL)
         return _next_result(self.end_results)
 
 
 class FakeIO:
     """시계, 대기, 입력, 출력을 흉내 낸다. 실제 시간을 기다리지 않는다.
 
-    시각은 `sleep`으로만 간다. `interrupt_on_sleep`번째(0부터) `sleep`은 시각을 늘리지 않고
-    `KeyboardInterrupt`를 던진다. `inputs`의 예외는 `read_line`이 그 차례에 던지고, 입력이 다 떨어지면
+    시각은 `sleep`으로만 간다. `interrupt_on_sleep`번째(0부터) `sleep`은 넘겨받은 초의 절반만 시각을 늘리고
+    `KeyboardInterrupt`를 던진다 (대기 도중에 Ctrl+C를 누른 것과 같다). `inputs`의 예외는 `read_line`이 그 차례에 던지고, 입력이 다 떨어지면
     `EOFError`를 던진다.
     """
 
@@ -90,6 +97,7 @@ class FakeIO:
         index = len(self.sleeps)
         self.sleeps.append(sec)
         if index == self.interrupt_on_sleep:
+            self.now += timedelta(seconds=sec / 2)
             raise KeyboardInterrupt
         self.now += timedelta(seconds=sec)
 

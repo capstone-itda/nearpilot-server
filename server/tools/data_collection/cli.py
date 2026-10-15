@@ -88,11 +88,16 @@ def _make_repository(repository_factory: Callable[[], AdminRepository], io: Sess
 
 
 def _run(args: argparse.Namespace, repository_factory: Callable[[], AdminRepository], io: SessionIO) -> int:
-    """계획 파일을 모두 검사한 뒤에 저장소를 만들고 회차를 실행한다. 계획 파일이 틀리면 저장소를 만들지 않는다."""
+    """계획 파일과 `--start-at`을 검사한 뒤에 저장소를 만들고 회차를 실행한다. 틀리면 저장소를 만들지 않는다."""
     try:
         plan = load_plan(args.plan)
     except PlanError as error:
         io.write(f"계획 파일이 올바르지 않다: {error}")
+        return EXIT_INVALID
+    total = len(plan.runs)
+    if not 1 <= args.start_at <= total:
+        # 저장소를 만들면 DB 파일이 생길 수 있다. 회차 수만으로 판정할 수 있으니 먼저 거부한다
+        io.write(f"--start-at은 1 이상 {total} 이하여야 한다 ({args.start_at})")
         return EXIT_INVALID
     repository = _make_repository(repository_factory, io)
     if repository is None:

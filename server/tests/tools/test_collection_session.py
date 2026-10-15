@@ -351,7 +351,7 @@ def test_FR16_interrupt_during_run_ends_collection(
 
     assert code == EXIT_INTERRUPTED
     started_at = _after(t0, 40)
-    assert io.now == started_at  # 끊긴 대기는 시각을 늘리지 않는다
+    assert io.now == _after(started_at, 15)  # 끊긴 대기는 run_sec의 절반만 시각을 늘린다
     assert fake_repo.calls == [
         ("start", "col-1", beacon, "locker-1", _after(t0, 5)),
         ("end", "col-1", _after(t0, 35)),
@@ -362,7 +362,7 @@ def test_FR16_interrupt_during_run_ends_collection(
     first, second = _records(record_path)
     assert first["status"] == "done"
     assert (second["index"], second["collection_id"], second["status"]) == (2, "col-2", status)
-    assert second["ended_at"] == (started_at.isoformat() if status == "aborted" else None)
+    assert second["ended_at"] == (io.now.isoformat() if status == "aborted" else None)
     assert expected_text in io.text
     assert ("close --collection-id col-2" in io.text) is (status == "end_failed")
 
