@@ -14,6 +14,7 @@ from threading import Lock
 from typing import Any
 from uuid import uuid4
 
+from nearpilot.core.lifecycle.check_criteria import evidence_valid
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
     DeviceState, EndReason, ReasonCode, SafetyCheckOutcome, SessionState,
@@ -193,6 +194,7 @@ class ReleaseService:
                 and request.issued_at <= report.received_at <= request.expires_at
                 and request.issued_at <= report.checked_at <= report.received_at
                 and 0 <= age <= closing.settings.safety_report_max_age_sec
+                and evidence_valid(request.criteria, report.outcome, report.evidence)
             )
             if not valid or report.outcome == SafetyCheckOutcome.UNKNOWN:
                 self._unconfirmed(closing, self._clock())

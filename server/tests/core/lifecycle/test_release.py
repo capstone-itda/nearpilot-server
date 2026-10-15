@@ -172,9 +172,13 @@ def report(env, outcome=SafetyCheckOutcome.PASSED, **changes):
     value = SafetyCheckResult(
         request.node_id, request.target_session_id, 1, env.clock(), env.clock(),
         request.check_id, "event-1", request.criteria, env.clock(), outcome,
-        {"door_closed": True, "actuator_state": "idle", "sensor_fault": False},
+        {"door_closed": item(env, True), "locked": item(env, outcome != SafetyCheckOutcome.NOT_READY)},
     )
     return replace(value, **changes)
+
+
+def item(env, value):
+    return {"value": value, "observed_at": env.clock().isoformat()}
 
 
 def deliver(env, outcome=SafetyCheckOutcome.PASSED, **changes):
@@ -646,3 +650,17 @@ def test_NFR04_shared_node_lock_serializes_fault_and_close(env):
             assert not pending.done()
         pending.result(timeout=5)
     assert not env.store.finishes
+
+
+@pytest.mark.parametrize("evidence", [
+    {},
+    {"door_closed": {"value": True, "observed_at": "2026-10-15T00:00:00+00:00"}},
+    {"door_closed": {"value": True, "observed_at": "2026-10-15T00:00:00+00:00"},
+     "locked": {"value": False, "observed_at": "2026-10-15T00:00:00+00:00"}},
+    {"door_closed": {"value": True, "observed_at": "bad"},
+     "locked": {"value": True, "observed_at": "2026-10-15T00:00:00+00:00"}},
+])
+def test_FR20_invalid_evidence_not_passed(env, evidence):
+    release(env)
+    deliver(env, evidence=evidence)
+    assert env.store.finishes == []
