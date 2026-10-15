@@ -110,7 +110,8 @@ class SqliteExecutionStore:
         if own_session is not None:
             return ExecutionKind.RENTAL_INITIAL, own_session["use_id"]
         active_session = self._conn.execute(
-            "SELECT use_id FROM use_session WHERE node_id = ? AND state = 'ACTIVE'", (node_id,)
+            "SELECT use_id FROM use_session WHERE node_id = ? AND state = ?",
+            (node_id, SessionState.ACTIVE.value),
         ).fetchone()
         if active_session is None:
             raise LookupError(f"기기 {node_id} 에 연결할 점유 세션이 없다")
@@ -268,22 +269,23 @@ class SqliteExecutionStore:
         """
         now = datetime.now(timezone.utc)
         own_session = self._conn.execute(
-            "SELECT use_id, node_id FROM use_session WHERE internal_request_id = ? AND state = 'RESERVED'",
-            (internal_request_id,),
+            "SELECT use_id, node_id FROM use_session WHERE internal_request_id = ? AND state = ?",
+            (internal_request_id, SessionState.RESERVED.value),
         ).fetchone()
         if own_session is not None:
             self._conn.execute(
-                "UPDATE use_session SET state = 'CLOSED', end_reason = 'cancelled', closed_at = ? "
+                "UPDATE use_session SET state = ?, end_reason = ?, closed_at = ? "
                 "WHERE use_id = ?",
-                (iso(now), own_session["use_id"]),
+                (SessionState.CLOSED.value, EndReason.CANCELLED.value, iso(now), own_session["use_id"]),
             )
             self._conn.execute(
-                "UPDATE node SET device_state = 'AVAILABLE' WHERE node_id = ?", (own_session["node_id"],)
+                "UPDATE node SET device_state = ? WHERE node_id = ?",
+                (DeviceState.AVAILABLE.value, own_session["node_id"]),
             )
         self._conn.execute(
-            "UPDATE approval_usage SET state = 'released' "
-            "WHERE internal_request_id = ? AND state = 'reserved'",
-            (internal_request_id,),
+            "UPDATE approval_usage SET state = ? "
+            "WHERE internal_request_id = ? AND state = ?",
+            (ApprovalUsageState.RELEASED.value, internal_request_id, ApprovalUsageState.RESERVED.value),
         )
 
     def _append_audit(

@@ -17,6 +17,7 @@ from nearpilot.shared.enums import (
     ApprovalDecisionReason,
     ApprovalMode,
     ApprovalStatus,
+    ApprovalUsageState,
     Capability,
     DeviceState,
     EndReason,
@@ -176,9 +177,9 @@ class SqliteRepository:
             "FROM approval a "
             "JOIN policy_revision pr ON pr.policy_id = a.policy_id AND pr.version = a.policy_version "
             "WHERE a.requester_user_id = ? AND a.node_id = ? AND a.action = ? AND a.policy_version = ? "
-            "AND a.status = 'approved' AND a.valid_until IS NOT NULL AND a.valid_until > ? "
+            "AND a.status = ? AND a.valid_until IS NOT NULL AND a.valid_until > ? "
             "ORDER BY a.valid_until DESC, a.approval_id ASC LIMIT 1",
-            (user_id, node_id, action.value, policy_version, iso(now)),
+            (user_id, node_id, action.value, policy_version, ApprovalStatus.APPROVED.value, iso(now)),
         ).fetchone()
         if row is None:
             return None
@@ -199,8 +200,11 @@ class SqliteRepository:
             return None
         used = self._conn.execute(
             "SELECT COUNT(*) AS c FROM approval_usage "
-            "WHERE approval_id = ? AND state IN ('reserved', 'held', 'consumed')",
-            (approval_id,),
+            "WHERE approval_id = ? AND state IN (?, ?, ?)",
+            (
+                approval_id, ApprovalUsageState.RESERVED.value, ApprovalUsageState.HELD.value,
+                ApprovalUsageState.CONSUMED.value,
+            ),
         ).fetchone()["c"]
         return max(max_uses - used, 0)
 
@@ -373,16 +377,19 @@ class SqliteRepository:
                 self._conn.execute(
                     "INSERT INTO node (node_id, place_id, capability, occupancy, trust_state, "
                     "device_state, exclusive_group, release_policy) "
-                    "VALUES (?, NULL, ?, ?, 'discovered', 'AVAILABLE', NULL, '{}')",
-                    (announce.node_id, announce.capability.value, announce.occupancy.value),
+                    "VALUES (?, NULL, ?, ?, ?, ?, NULL, '{}')",
+                    (
+                        announce.node_id, announce.capability.value, announce.occupancy.value,
+                        TrustState.DISCOVERED.value, DeviceState.AVAILABLE.value,
+                    ),
                 )
                 return
             if row["capability"] == announce.capability.value and row["occupancy"] == announce.occupancy.value:
                 return
             self._conn.execute(
-                "UPDATE node SET capability = ?, occupancy = ?, trust_state = 'discovered' "
+                "UPDATE node SET capability = ?, occupancy = ?, trust_state = ? "
                 "WHERE node_id = ?",
-                (announce.capability.value, announce.occupancy.value, announce.node_id),
+                (announce.capability.value, announce.occupancy.value, TrustState.DISCOVERED.value, announce.node_id),
             )
             self._conn.execute(
                 "INSERT INTO audit_log (log_id, event_id, internal_request_id, command_id, step, "
@@ -425,9 +432,12 @@ class SqliteRepository:
             existing = self._conn.execute(
                 "SELECT approval_id, created_at, pending_until FROM approval "
                 "WHERE requester_user_id = ? AND node_id = ? AND action = ? AND policy_version = ? "
-                "AND status = 'pending' AND pending_until > ? "
+                "AND status = ? AND pending_until > ? "
                 "ORDER BY created_at DESC LIMIT 1",
-                (req.requester_user_id, req.node_id, req.action.value, req.policy_version, iso(req.created_at)),
+                (
+                    req.requester_user_id, req.node_id, req.action.value, req.policy_version,
+                    ApprovalStatus.PENDING.value, iso(req.created_at),
+                ),
             ).fetchone()
             if existing is not None:
                 return ApprovalRequestResult(
@@ -443,10 +453,10 @@ class SqliteRepository:
                 "INSERT INTO approval (approval_id, node_id, requester_user_id, internal_request_id, "
                 "approved_by_user_id, action, policy_id, policy_version, status, created_at, "
                 "pending_until, valid_until, used_count) "
-                "VALUES (?, ?, ?, ?, NULL, ?, ?, ?, 'pending', ?, ?, NULL, 0)",
+                "VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, 0)",
                 (
                     approval_id, req.node_id, req.requester_user_id, req.internal_request_id,
-                    req.action.value, req.policy_id, req.policy_version,
+                    req.action.value, req.policy_id, req.policy_version, ApprovalStatus.PENDING.value,
                     iso(req.created_at), iso(pending_until),
                 ),
             )
@@ -473,7 +483,7 @@ class SqliteRepository:
                 return ApprovalDecisionResult(
                     applied=False, reason=ApprovalDecisionReason.NOT_FOUND, status=None, valid_until=None
                 )
-            if row["status"] != "pending":
+            if row["status"] != ApprovalStatus.PENDING.value:
                 current_status = ApprovalStatus(row["status"])
                 if current_status == req.decision and row["approved_by_user_id"] == req.decided_by_user_id:
                     return ApprovalDecisionResult(
@@ -504,8 +514,11 @@ class SqliteRepository:
                 valid_until = req.decided_at + timedelta(seconds=row["approval_ttl_sec"])
             self._conn.execute(
                 "UPDATE approval SET status = ?, approved_by_user_id = ?, valid_until = ? "
-                "WHERE approval_id = ? AND status = 'pending'",
-                (req.decision.value, req.decided_by_user_id, iso(valid_until) if valid_until else None, req.approval_id),
+                "WHERE approval_id = ? AND status = ?",
+                (
+                    req.decision.value, req.decided_by_user_id, iso(valid_until) if valid_until else None,
+                    req.approval_id, ApprovalStatus.PENDING.value,
+                ),
             )
             return ApprovalDecisionResult(
                 applied=True, reason=ApprovalDecisionReason.OK, status=req.decision, valid_until=valid_until
@@ -535,8 +548,8 @@ class SqliteRepository:
                 )
 
             own_active = self._conn.execute(
-                "SELECT use_id FROM use_session WHERE node_id = ? AND user_id = ? AND state = 'ACTIVE'",
-                (req.node_id, req.user_id),
+                "SELECT use_id FROM use_session WHERE node_id = ? AND user_id = ? AND state = ?",
+                (req.node_id, req.user_id, SessionState.ACTIVE.value),
             ).fetchone()
             if own_active is not None:
                 # 세션은 ACTIVE로 보존돼도 기기가 FAULT로 격리됐으면(isolate_device) 재조작을
@@ -565,8 +578,11 @@ class SqliteRepository:
                 busy = self._conn.execute(
                     "SELECT 1 FROM use_session s JOIN node n ON n.node_id = s.node_id "
                     "WHERE n.exclusive_group = ? AND s.user_id = ? "
-                    "AND s.state IN ('RESERVED', 'ACTIVE', 'CLOSING')",
-                    (node["exclusive_group"], req.user_id),
+                    "AND s.state IN (?, ?, ?)",
+                    (
+                        node["exclusive_group"], req.user_id, SessionState.RESERVED.value,
+                        SessionState.ACTIVE.value, SessionState.CLOSING.value,
+                    ),
                 ).fetchone()
                 if busy is not None:
                     return ReserveResult(outcome=ReserveOutcome.USER_BUSY)
@@ -578,11 +594,15 @@ class SqliteRepository:
             use_id = new_id()
             self._conn.execute(
                 "INSERT INTO use_session (use_id, internal_request_id, user_id, node_id, state, "
-                "release_policy) VALUES (?, ?, ?, ?, 'RESERVED', ?)",
-                (use_id, req.internal_request_id, req.user_id, req.node_id, to_json(req.release_policy)),
+                "release_policy) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    use_id, req.internal_request_id, req.user_id, req.node_id, SessionState.RESERVED.value,
+                    to_json(req.release_policy),
+                ),
             )
             self._conn.execute(
-                "UPDATE node SET device_state = 'RESERVED' WHERE node_id = ?", (req.node_id,)
+                "UPDATE node SET device_state = ? WHERE node_id = ?",
+                (DeviceState.RESERVED.value, req.node_id),
             )
             return ReserveResult(outcome=ReserveOutcome.RESERVED, use_id=use_id, usage_id=usage_id)
 
@@ -618,15 +638,18 @@ class SqliteRepository:
         if max_uses is not None:
             used = self._conn.execute(
                 "SELECT COUNT(*) AS c FROM approval_usage "
-                "WHERE approval_id = ? AND state IN ('reserved', 'held', 'consumed')",
-                (approval_id,),
+                "WHERE approval_id = ? AND state IN (?, ?, ?)",
+                (
+                    approval_id, ApprovalUsageState.RESERVED.value, ApprovalUsageState.HELD.value,
+                    ApprovalUsageState.CONSUMED.value,
+                ),
             ).fetchone()["c"]
             if used >= max_uses:
                 return _EXHAUSTED
         usage_id = new_id()
         self._conn.execute(
             "INSERT INTO approval_usage (usage_id, approval_id, internal_request_id, command_id, state) "
-            "VALUES (?, ?, ?, NULL, 'reserved')",
-            (usage_id, approval_id, internal_request_id),
+            "VALUES (?, ?, ?, NULL, ?)",
+            (usage_id, approval_id, internal_request_id, ApprovalUsageState.RESERVED.value),
         )
         return usage_id
