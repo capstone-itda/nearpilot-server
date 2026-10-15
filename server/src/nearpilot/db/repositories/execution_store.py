@@ -308,6 +308,34 @@ class SqliteExecutionStore:
             ),
         )
 
+    # ── 이상 격리 (#17 4단계) ────────────────────────────────────────
+
+    def isolate_device(self, node_id: str, evidence: Mapping[str, Any]) -> StoreResult:
+        """명령 결과가 아닌 이상으로 기기를 `FAULT`로 둔다 (NFR-04).
+
+        `FR-19`의 "이상을 감지하면 어느 상태에서든 기기는 FAULT가 된다"를 따른다 — `CLOSING`
+        등 다른 상태에서도 전이를 막지 않는다. 점유 세션·승인 사용분·명령은 건드리지 않는다.
+        이미 `FAULT`면 `ALREADY_APPLIED`다. 그때도 새 근거는 감사 기록에 남긴다.
+        """
+        with immediate_transaction(self._conn):
+            row = self._conn.execute(
+                "SELECT device_state FROM node WHERE node_id = ?", (node_id,)
+            ).fetchone()
+            if row is None:
+                raise LookupError(f"기기 {node_id} 가 없다")
+            already_fault = row["device_state"] == DeviceState.FAULT.value
+            if not already_fault:
+                self._conn.execute(
+                    "UPDATE node SET device_state = ? WHERE node_id = ?",
+                    (DeviceState.FAULT.value, node_id),
+                )
+            self._append_audit(
+                None, None, {"event": "isolate_device", "node_id": node_id, "evidence": dict(evidence)},
+                step=Step.FAULT,
+            )
+            outcome = StoreOutcome.ALREADY_APPLIED if already_fault else StoreOutcome.APPLIED
+            return StoreResult(outcome=outcome)
+
     # ── 실행 결과 (#17 3단계) ────────────────────────────────────────
 
     def record_result(
