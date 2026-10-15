@@ -192,3 +192,50 @@ def test_FR09_같은_실행_결과에는_같은_판정을_반환한다():
 def test_FR11_request_use_Decision에는_사용자_ID가_없다():
     for svc in (build()[0], build(OK, None, rec=record(ExecutionStatus.SUCCEEDED))[0]):
         assert "u1" not in repr(svc.request_use(REQ))
+
+
+# ── 재검사 밖의 중단 사유 (#78, #79) ────────────────────────────────
+
+
+def stopped(reason, status=ExecutionStatus.NOT_SENT, recheck=None):
+    return ExecutionResult("i1", status, None, None, recheck, reason)
+
+
+@pytest.mark.parametrize("reason,verdict,host_reason", [
+    (ReasonCode.COMMAND_IN_PROGRESS, Verdict.BUSY, ReasonCode.COMMAND_IN_PROGRESS),
+    (ReasonCode.DEVICE_BUSY, Verdict.BUSY, ReasonCode.DEVICE_BUSY),
+    (ReasonCode.TARGET_UNAVAILABLE, Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE),
+    (ReasonCode.NODE_NOT_CONNECTED, Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE),
+    (ReasonCode.RESERVATION_EXPIRED, Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE),
+    (ReasonCode.COMMAND_NOT_SENT, Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE),
+])
+def test_FR19_중단_사유별_호스트_판정(reason, verdict, host_reason):
+    svc, *_ = build(result=stopped(reason))
+    d = svc.request_use(REQ)
+    assert (d.verdict, d.reason, d.use_id, d.node_id) == (verdict, host_reason, None, "locker-1")
+
+
+def test_FR18_재검사_판정이_있으면_먼저_쓴다():
+    blocked = Decision("i1", "r1", Verdict.ASK, ReasonCode.MOVE_CLOSER, node_id="locker-1", p_max=0.4)
+    svc, *_ = build(result=stopped(None, recheck=blocked))
+    assert svc.request_use(REQ) is blocked
+
+
+def test_FR18_알_수_없는_중단_사유는_거부한다():
+    svc, *_ = build(result=stopped(ReasonCode.BEACON_NOT_SEEN))
+    d = svc.request_use(REQ)
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+
+
+def test_FR18_사유가_없는_미전송은_거부한다():
+    svc, *_ = build(result=stopped(None))
+    d = svc.request_use(REQ)
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+
+
+@pytest.mark.parametrize("reason", [
+    ReasonCode.NODE_NOT_CONNECTED, ReasonCode.RESERVATION_EXPIRED, ReasonCode.COMMAND_NOT_SENT])
+def test_FR11_중단_사유의_내부_원인을_공개하지_않는다(reason):
+    svc, *_ = build(result=stopped(reason))
+    d = svc.request_use(REQ)
+    assert reason.value not in repr(d) and d.reason is ReasonCode.TARGET_UNAVAILABLE

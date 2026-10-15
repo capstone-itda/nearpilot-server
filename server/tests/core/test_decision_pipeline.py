@@ -74,6 +74,7 @@ class FakeRepo:
         self.reserve_outcome = ReserveOutcome.RESERVED
         self.reserve_use_id: str | None = "use-1"
         self.reserve_usage_id: str | None = None
+        self.reserved_at: datetime | None = None
         self.save_outcome = StoreOutcome.APPLIED
         self.link: RequestLink | None = None
         self.calls: list[str] = []
@@ -110,7 +111,7 @@ class FakeRepo:
         self.reserved.append(req)
         if self.reserve_outcome in (ReserveOutcome.RESERVED, ReserveOutcome.REOPERATING):
             return ReserveResult(self.reserve_outcome, use_id=self.reserve_use_id,
-                                 usage_id=self.reserve_usage_id)
+                                 usage_id=self.reserve_usage_id, reserved_at=self.reserved_at)
         return ReserveResult(self.reserve_outcome)
 
     def save_decision(self, decision, record):
@@ -142,6 +143,19 @@ class FakePolicy:
         return self.result
 
 
+class FakeReadiness:
+    """상태 관리의 기기별 실행 가능 여부. 기본은 모두 가능하다."""
+
+    def __init__(self, not_ready=()):
+        self.not_ready = set(not_ready)
+        self.error: Exception | None = None
+
+    def can_execute(self, node_id):
+        if self.error:
+            raise self.error
+        return node_id not in self.not_ready
+
+
 class FakeAudit:
     def __init__(self):
         self.events = []
@@ -150,7 +164,7 @@ class FakeAudit:
         self.events.append(event)
 
 
-def build(posteriors=None, policy=None, settings=None):
+def build(posteriors=None, policy=None, settings=None, readiness=None):
     repo = FakeRepo()
     prox = FakeProximity({"locker-1": 0.99} if posteriors is None else posteriors)
     pol = policy or FakePolicy()
@@ -158,7 +172,7 @@ def build(posteriors=None, policy=None, settings=None):
     n = iter(range(10_000))
     pipe = DecisionPipeline(repo, prox, pol, audit, settings or Settings(
         version="v1", threshold_explicit_locker=0.5, threshold_explicit_light=0.5),
-                            new_id=lambda: f"e{next(n)}")
+                            readiness or FakeReadiness(), new_id=lambda: f"e{next(n)}")
     return pipe, repo, prox, pol, audit
 
 
@@ -614,3 +628,68 @@ def test_FR22_판정_저장이_충돌하면_OK가_아니고_다시_저장하지_
     d = pipe.decide(request())
     assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
     assert len(repo.saved) == 1
+
+
+# ── 머지된 결정의 반영 (#80, #82) ─────────────────────────────────────
+
+
+def two_lockers(pipe_args=None):
+    pipe, repo, prox, pol, audit = build({"locker-1": 0.01, "locker-2": 0.97},
+                                         readiness=(pipe_args or FakeReadiness()))
+    repo.nodes_list = [node("locker-1"), node("locker-2")]
+    repo.frames = [frame("locker-1"), frame("locker-2")]
+    return pipe, repo, prox, pol, audit
+
+
+def test_FR18_복원_중인_기기는_후보에서_뺀다():
+    pipe, repo, prox, *_ = two_lockers(FakeReadiness({"locker-1"}))
+    d = pipe.decide(request())
+    assert prox.calls == [["locker-2"]]  # ③ 에는 걸러낸 후보만 넘긴다
+    assert prox.place_nodes == [["locker-1", "locker-2"]]  # 장소 전체 기기는 그대로다 (#39)
+    assert (d.verdict, d.node_id) == (Verdict.OK, "locker-2")
+
+
+def test_FR18_복원_중인_기기_대신_다른_기기를_고른다():
+    pipe, repo, prox, *_ = two_lockers(FakeReadiness({"locker-1"}))
+    d = pipe.decide(request())
+    assert d.node_id == "locker-2" and d.p_max == 0.97
+    pipe, repo, prox, *_ = two_lockers(FakeReadiness({"locker-2"}))  # 가장 가까운 기기를 뺀다
+    d = pipe.decide(request())
+    assert (d.verdict, d.reason) == (Verdict.ASK, ReasonCode.LOW_CONFIDENCE) and repo.reserved == []
+
+
+def test_FR18_복원_중인_지정_대상은_거부한다():
+    pipe, repo, prox, *_ = two_lockers(FakeReadiness({"locker-1"}))
+    d = pipe.decide(request("locker-1"))
+    assert (d.verdict, d.reason, d.node_id) == (Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE, None)
+    assert prox.calls == [] and repo.reserved == []
+    assert "복원" not in repr(d)
+
+
+def test_FR18_후보가_모두_복원_중이면_거부한다():
+    pipe, repo, prox, *_ = two_lockers(FakeReadiness({"locker-1", "locker-2"}))
+    d = pipe.decide(request())
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.NO_CANDIDATE)
+    assert prox.calls == [] and repo.reserved == []
+
+
+def test_FR18_복원_여부_조회_예외는_거부한다():
+    ready = FakeReadiness()
+    ready.error = RuntimeError("secret internal detail")
+    pipe, repo, prox, *_ = build(readiness=ready)
+    d = pipe.decide(request())
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    assert "secret" not in repr(d) and repo.reserved == []
+
+
+def test_FR19_예약_시각을_그대로_넘긴다():
+    pipe, repo, *_ = build()
+    repo.reserved_at = NOW - timedelta(seconds=5)
+    d, ctx = pipe.decide_for_execution(request())
+    assert d.verdict is Verdict.OK and ctx.reserved_at == NOW - timedelta(seconds=5)
+
+
+def test_FR19_예약_시각이_없으면_None이다():
+    pipe, repo, *_ = build()
+    _, ctx = pipe.decide_for_execution(request())
+    assert ctx.reserved_at is None

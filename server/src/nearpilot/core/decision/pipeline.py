@@ -30,6 +30,7 @@ from nearpilot.shared.enums import (
 )
 from nearpilot.shared.interfaces import (
     AuditLog,
+    ExecutionReadiness,
     PolicyChecker,
     ProximityEstimator,
     Repository,
@@ -51,9 +52,12 @@ _GENERIC_MESSAGE = "요청을 처리하지 못했습니다."
 
 def select_candidates(
     nodes: Sequence[NodeInfo], capability: Capability, settings: Settings, now: datetime,
-    place_id: str | None = None,
+    place_id: str | None = None, executable: Callable[[str], bool] | None = None,
 ) -> Sequence[NodeInfo]:
-    """② 후보 조건. 최초 판정과 실행 직전 재검사가 같은 조건을 쓴다."""
+    """② 후보 조건. 최초 판정과 실행 직전 재검사가 같은 조건을 쓴다.
+
+    `executable` 이 있으면 새 실행이 불가능한 기기(재시작 복원 중)를 뺀다 (#82).
+    """
     ttl = timedelta(seconds=settings.online_ttl_sec)
     return [
         n for n in nodes
@@ -63,6 +67,7 @@ def select_candidates(
         and n.device_state is not DeviceState.FAULT
         and n.last_seen_at is not None
         and now - n.last_seen_at <= ttl
+        and (executable is None or executable(n.node_id))
     ]
 
 
@@ -92,6 +97,7 @@ class _Applied:
     window_end: datetime | None = None
     usage_id: str | None = None
     execution_kind: ExecutionKind | None = None
+    reserved_at: datetime | None = None
 
 
 class _SaveConflict(Exception):
@@ -115,6 +121,7 @@ class DecisionPipeline:
         policy: PolicyChecker,
         audit: AuditLog,
         settings: Settings,
+        readiness: ExecutionReadiness,
         new_id: Callable[[], str] = lambda: uuid.uuid4().hex,
     ) -> None:
         self._repo = repo
@@ -122,6 +129,7 @@ class DecisionPipeline:
         self._policy = policy
         self._audit = audit
         self._settings = settings
+        self._readiness = readiness
         self._new_id = new_id
 
     # ── 진입점 ──────────────────────────────────────────────────────
@@ -205,7 +213,8 @@ class DecisionPipeline:
         if threshold is None:  # 설정이 없는 요청 종류는 실행을 허가하지 않는다
             self._audit_step(Step.CANDIDATE, iid, {"threshold": None, "explicit": explicit})
             raise _Stop(Step.CANDIDATE, self._decision(req, iid, Verdict.DENY, ReasonCode.INVALID_INPUT))
-        candidates = select_candidates(all_nodes, req.target.capability, s, now, place_id)
+        candidates = select_candidates(
+            all_nodes, req.target.capability, s, now, place_id, self._readiness.can_execute)
         self._audit_step(Step.CANDIDATE, iid, {"place_id": place_id,
                                               "candidates": [n.node_id for n in candidates],
                                               "online_ttl_sec": s.online_ttl_sec})
@@ -263,6 +272,7 @@ class DecisionPipeline:
             raise _Stop(Step.DEVICE_OCCUPANCY if reserved.outcome is ReserveOutcome.DEVICE_BUSY
                         else Step.USER_OCCUPANCY, self._reserve_failure(req, iid, node_id, p, reserved.outcome))
         applied.usage_id = reserved.usage_id
+        applied.reserved_at = reserved.reserved_at
         applied.execution_kind = self._execution_kind(node, reserved.outcome, reserved.use_id)
 
         decision = self._decision(req, iid, Verdict.OK, ReasonCode.OK, node_id=node_id,
@@ -298,7 +308,8 @@ class DecisionPipeline:
             return None
         return ExecutionContext(
             internal_request_id=iid, request=req, node_id=decision.node_id, use_id=decision.use_id,
-            usage_id=applied.usage_id, settings=self._settings, execution_kind=applied.execution_kind)
+            usage_id=applied.usage_id, settings=self._settings, execution_kind=applied.execution_kind,
+            reserved_at=applied.reserved_at)
 
     @staticmethod
     def _reserve_failure(req, iid, node_id, p, outcome: ReserveOutcome) -> Decision:
