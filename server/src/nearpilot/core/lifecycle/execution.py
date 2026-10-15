@@ -1,6 +1,7 @@
-"""실행 인계와 사건별 결과 저장 (FR-06, FR-07, FR-18, FR-19).
+"""실행 인계와 사건별 결과 저장 (FR-06, FR-07, FR-18, FR-19, FR-20).
 
-공동 계약이 없는 취소 경로는 예약을 보존한다. 서버 조립은 별도 작업이다.
+확실한 미전송은 원인별 사유로 취소하고, 재검사 밖의 중단은 ExecutionResult.reason 으로 알린다.
+서버 내부 요청(#86)도 같은 경로로 실행한다. 서버 조립은 별도 작업이다.
 """
 
 from __future__ import annotations
@@ -13,8 +14,8 @@ from threading import Lock
 from typing import Any
 
 from nearpilot.shared.enums import (
-    CommandOutcome, DeviceState, ExecutionKind, ExecutionStatus, NodeResultState,
-    ReasonCode, RejectCode, StoreOutcome, Verdict,
+    Action, CommandOutcome, DeviceState, ExecutionKind, ExecutionStatus, NodeResultState,
+    ReasonCode, RejectCode, StoreConflictReason, StoreOutcome, Verdict,
 )
 from nearpilot.shared.errors import StoreError, StoreOutcomeUnknown
 from nearpilot.shared.interfaces import (
@@ -24,6 +25,12 @@ from nearpilot.shared.models import (
     CommandRecord, CommandResult, Decision, ExecutionContext, ExecutionResult,
     NodeCommand, NodeResult, RecoveryEvidence,
 )
+
+# begin_send 충돌 사유 → 판정에 알리는 중단 사유 (architecture.md §4 "실행 인계와 재검사")
+_BEGIN_REASONS = {
+    StoreConflictReason.COMMAND_IN_PROGRESS: ReasonCode.COMMAND_IN_PROGRESS,
+    StoreConflictReason.STATE_CONFLICT: ReasonCode.DEVICE_BUSY,
+}
 
 
 @dataclass
@@ -35,6 +42,13 @@ class _Result:
     done: bool = False
 
 
+@dataclass(frozen=True)
+class _Cancel:
+    expected: ExecutionStatus
+    reason: ReasonCode
+    evidence: dict[str, Any]
+
+
 @dataclass
 class _Attempt:
     context: ExecutionContext
@@ -42,18 +56,30 @@ class _Attempt:
     claimed: bool = False
     target_session_id: str | None = None
     recheck: Decision | None = None
-    cancel: dict[str, Any] | None = None
+    reason: ReasonCode | None = None
+    cancel: _Cancel | None = None
     events: dict[str, _Result] = field(default_factory=dict)
     recovery: CommandRecord | None = None
     saw_progress: bool = False
     blockers: tuple[str, ...] = ()
+    internal_linked: bool = False
+    refused: bool = False
+
+
+def _action(ctx: ExecutionContext) -> Action:
+    return ctx.internal_request.action if ctx.request is None else ctx.request.action
+
+
+def _internal(ctx: ExecutionContext) -> bool:
+    return ctx.execution_kind == ExecutionKind.SERVER_INTERNAL
 
 
 class ExecutionService:
     """공통 기기 잠금으로 준비·저장을 직렬화한다. 통신 대기 중에는 잠금을 푼다.
 
-    can_execute는 RestoreService.can_execute, record_isolated는 복구 건 생성에 연결한다.
-    tick은 저장만 재시도한다. 전송 시작 불명이나 중복 인계에서 재전송하지 않는다.
+    can_execute는 ExecutionReadiness.can_execute(RestoreService), record_isolated는 복구 건 생성,
+    confirm_internal은 서버 내부 요청의 전송 전 확인(SharedLightService.can_request_off)에 연결한다.
+    tick은 저장 재시도와 예약 대기 만료 취소만 한다. 전송 시작 불명이나 중복 인계에서 재전송하지 않는다.
     """
 
     def __init__(
@@ -62,11 +88,13 @@ class ExecutionService:
         clock: Callable[[], datetime],
         lock_for: Callable[[str], AbstractContextManager[Any]],
         can_execute: Callable[[str], bool], record_isolated: Callable[..., Any],
+        confirm_internal: Callable[[ExecutionContext], bool] | None = None,
     ) -> None:
         self._repository, self._store = repository, store
         self._rechecker, self._gateway = rechecker, gateway
         self._clock, self._lock_for = clock, lock_for
         self._can_execute, self._record_isolated = can_execute, record_isolated
+        self._confirm_internal = confirm_internal
         self._attempts: dict[str, _Attempt] = {}
         self._index_lock = Lock()
 
@@ -111,7 +139,7 @@ class ExecutionService:
             self._retry(attempt)
 
     def tick(self) -> None:
-        """미완료 저장을 재시도한다. 한 기기의 실패 뒤에도 다른 기기를 시도한다."""
+        """미완료 저장과 예약 대기 만료 취소를 재시도한다. 한 기기의 실패 뒤에도 다른 기기를 시도한다."""
         with self._index_lock:
             attempts = tuple(self._attempts.values())
         first_error: StoreError | None = None
@@ -119,6 +147,7 @@ class ExecutionService:
             with self._lock_for(attempt.context.node_id):
                 try:
                     self._retry(attempt)
+                    self._expire(attempt)
                 except StoreError as error:
                     attempt.blockers = ("store_unconfirmed",)
                     if first_error is None:
@@ -143,10 +172,14 @@ class ExecutionService:
 
     def _prepare(self, attempt: _Attempt) -> NodeCommand | None:
         ctx = attempt.context
+        if attempt.refused:
+            return None
         current = self._store.execution(ctx.internal_request_id)
         if current is None:
+            if _internal(ctx) and not self._link_internal(attempt):
+                return None
             try:
-                linked = self._store.link_command(ctx.internal_request_id, ctx.node_id, ctx.request.action)
+                linked = self._store.link_command(ctx.internal_request_id, ctx.node_id, _action(ctx))
             except StoreOutcomeUnknown:
                 current = self._store.execution(ctx.internal_request_id)
                 if current is None:
@@ -157,37 +190,35 @@ class ExecutionService:
                     return None
                 current = linked.command or self._store.execution(ctx.internal_request_id)
         self._bind(attempt, current)
-        if current.status != ExecutionStatus.PENDING or attempt.claimed:
+        if current.status != ExecutionStatus.PENDING or attempt.claimed or attempt.cancel is not None:
             return None
-        if not self._can_execute(ctx.node_id):
-            attempt.blockers = ("restore_unconfirmed",)
+        if not self._ready(attempt) or not self._within_wait(attempt):
             return None
-        if not self._within_wait(attempt):
-            return None
-        try:
-            decision = self._rechecker.recheck(ctx)
-        except Exception:
-            decision = Decision(ctx.internal_request_id, ctx.request.request_id,
-                                Verdict.DENY, ReasonCode.RECHECK_FAILED, node_id=ctx.node_id)
-        if (decision.internal_request_id != ctx.internal_request_id
-            or decision.request_id != ctx.request.request_id
-            or decision.node_id not in (None, ctx.node_id)):
-            raise StoreError("재검사 판정의 요청·대상 연결이 다르다")
-        if decision.verdict != Verdict.OK:
-            attempt.recheck = decision
-            attempt.cancel = {"source": "recheck", "verdict": decision.verdict.value,
-                              "reason": decision.reason.value, "confirmed_at": self._clock()}
-            self._retry(attempt)
-            return None
-        # 재검사 중의 시간 경과와 연결 변경을 전송 직전에 다시 확인한다.
-        if not self._within_wait(attempt):
-            return None
-        if not self._can_execute(ctx.node_id):
-            attempt.blockers = ("restore_unconfirmed",)
-            return None
-        nodes = [node for node in self._repository.nodes() if node.node_id == ctx.node_id]
-        if len(nodes) != 1 or not nodes[0].session_id:
+        if not _internal(ctx):
+            try:
+                decision = self._rechecker.recheck(ctx)
+            except Exception:
+                decision = Decision(ctx.internal_request_id, ctx.request.request_id,
+                                    Verdict.DENY, ReasonCode.RECHECK_FAILED, node_id=ctx.node_id)
+            if (decision.internal_request_id != ctx.internal_request_id
+                or decision.request_id != ctx.request.request_id
+                or decision.node_id not in (None, ctx.node_id)):
+                raise StoreError("재검사 판정의 요청·대상 연결이 다르다")
+            if decision.verdict != Verdict.OK:
+                attempt.recheck = decision
+                attempt.reason = None
+                attempt.cancel = _Cancel(ExecutionStatus.PENDING, decision.reason, {
+                    "source": "recheck", "verdict": decision.verdict.value,
+                    "reason": decision.reason.value, "confirmed_at": self._clock()})
+                self._retry(attempt)
+                return None
+            # 재검사 중의 시간 경과와 연결 변경을 전송 직전에 다시 확인한다.
+            if not self._within_wait(attempt) or not self._ready(attempt):
+                return None
+        session_id = self._session_id(ctx.node_id)
+        if session_id is None:
             attempt.blockers = ("connection_unconfirmed",)
+            self._cancel(attempt, ExecutionStatus.PENDING, ReasonCode.NODE_NOT_CONNECTED, "no_connection")
             return None
         try:
             started = self._store.begin_send(current.command_id)
@@ -202,28 +233,101 @@ class ExecutionService:
                 self._bind(attempt, started.command)
             attempt.claimed = started.outcome == StoreOutcome.ALREADY_APPLIED
             attempt.blockers = ("begin_send_" + started.outcome.value,)
+            reason = _BEGIN_REASONS.get(started.conflict_reason)
+            if started.outcome == StoreOutcome.CONFLICT and reason is not None:
+                attempt.reason = reason
+                if _internal(ctx) and attempt.command.status == ExecutionStatus.PENDING:
+                    self._cancel(attempt, ExecutionStatus.PENDING, reason, "begin_send_conflict")
             return None
         attempt.claimed = True
+        attempt.reason = None
         self._bind(attempt, started.command or self._store.execution(ctx.internal_request_id))
         if attempt.command.status != ExecutionStatus.IN_PROGRESS:
             raise StoreError("전송 시작 상태를 확인하지 못했다")
-        attempt.target_session_id = nodes[0].session_id
+        attempt.target_session_id = session_id
         attempt.blockers = ()
         now = self._clock()
-        return NodeCommand(current.command_id, ctx.node_id, ctx.request.action,
+        return NodeCommand(current.command_id, ctx.node_id, _action(ctx),
                            attempt.target_session_id, now,
                            now + timedelta(seconds=ctx.settings.exec_timeout_sec))
 
-    def _within_wait(self, attempt: _Attempt) -> bool:
-        reserved_at = attempt.command.reserved_at
-        now = self._clock()
-        if reserved_at is None or reserved_at > now:
-            attempt.blockers = ("reservation_time_unconfirmed",)
+    def _link_internal(self, attempt: _Attempt) -> bool:
+        """서버 내부 요청은 저장 전에 확인한다. 확인과 전송 시작은 같은 기기 잠금 안에서 잇는다."""
+        ctx = attempt.context
+        if not attempt.internal_linked:
+            refused: ReasonCode | None = None
+            blocker = ""
+            if self._confirm_internal is None or not self._confirm_internal(ctx):
+                blocker = "internal_check"
+            elif not self._can_execute(ctx.node_id):
+                blocker, refused = "restore_unconfirmed", ReasonCode.TARGET_UNAVAILABLE
+            elif self._session_id(ctx.node_id) is None:
+                blocker, refused = "connection_unconfirmed", ReasonCode.NODE_NOT_CONNECTED
+            if blocker:
+                attempt.refused, attempt.reason, attempt.blockers = True, refused, (blocker,)
+                return False
+        saved = self._store.link_internal_request(ctx.internal_request)
+        if saved.outcome == StoreOutcome.CONFLICT:
+            attempt.blockers = ("link_conflict",)
             return False
-        if now >= reserved_at + timedelta(seconds=attempt.context.settings.reservation_wait_sec):
-            attempt.blockers = ("reservation_expired_contract_pending",)
-            return False
+        attempt.internal_linked = True
         return True
+
+    def _ready(self, attempt: _Attempt) -> bool:
+        if self._can_execute(attempt.context.node_id):
+            return True
+        attempt.blockers = ("restore_unconfirmed",)
+        attempt.reason = ReasonCode.TARGET_UNAVAILABLE
+        if _internal(attempt.context):
+            self._cancel(attempt, ExecutionStatus.PENDING, ReasonCode.TARGET_UNAVAILABLE, "restore_unconfirmed")
+        return False
+
+    def _within_wait(self, attempt: _Attempt) -> bool:
+        state = self._wait_state(attempt)
+        if state == "expired":
+            attempt.blockers = ("reservation_expired",)
+            self._cancel(attempt, ExecutionStatus.PENDING, ReasonCode.RESERVATION_EXPIRED,
+                         "reservation_expired")
+        elif state == "unconfirmed":
+            attempt.blockers = ("reservation_time_unconfirmed",)
+        return state == "ok"
+
+    def _wait_state(self, attempt: _Attempt) -> str:
+        ctx = attempt.context
+        reserved_at = ctx.reserved_at
+        if reserved_at is None:
+            # DB 쓰기가 없는 공용형 요청과 서버 내부 요청에는 예약이 없다.
+            no_reservation = _internal(ctx) or (
+                ctx.execution_kind == ExecutionKind.SHARED and ctx.usage_id is None)
+            return "ok" if no_reservation else "unconfirmed"
+        now = self._clock()
+        if reserved_at > now:
+            return "unconfirmed"
+        if now >= reserved_at + timedelta(seconds=ctx.settings.reservation_wait_sec):
+            return "expired"
+        return "ok"
+
+    def _expire(self, attempt: _Attempt) -> None:
+        current = attempt.command
+        if (current is None or current.status != ExecutionStatus.PENDING or attempt.claimed
+            or attempt.cancel is not None or self._wait_state(attempt) != "expired"):
+            return
+        attempt.blockers = ("reservation_expired",)
+        self._cancel(attempt, ExecutionStatus.PENDING, ReasonCode.RESERVATION_EXPIRED,
+                     "reservation_expired")
+
+    def _cancel(self, attempt: _Attempt, expected: ExecutionStatus, reason: ReasonCode,
+                source: str) -> None:
+        attempt.reason = reason
+        attempt.cancel = _Cancel(expected, reason, {
+            "source": source, "reason": reason.value, "confirmed_at": self._clock()})
+        self._retry(attempt)
+
+    def _session_id(self, node_id: str) -> str | None:
+        nodes = [node for node in self._repository.nodes() if node.node_id == node_id]
+        if len(nodes) != 1 or not nodes[0].session_id:
+            return None
+        return nodes[0].session_id
 
     def _receive(self, attempt: _Attempt, result: CommandResult, *, source: str) -> None:
         if result.command_id != attempt.command.command_id:
@@ -251,7 +355,13 @@ class ExecutionService:
         else:
             outcome = result.outcome
             if outcome == CommandOutcome.NOT_SENT:
-                attempt.blockers = ("not_sent_reason_contract_pending",)
+                # IOT의 미전송 증명만 전송 시작 뒤의 취소 근거다.
+                if (attempt.cancel is None and not attempt.events
+                    and attempt.command.status == ExecutionStatus.IN_PROGRESS):
+                    attempt.reason = ReasonCode.COMMAND_NOT_SENT
+                    attempt.cancel = _Cancel(ExecutionStatus.IN_PROGRESS, ReasonCode.COMMAND_NOT_SENT, {
+                        "source": source, "reason": ReasonCode.COMMAND_NOT_SENT.value,
+                        "confirmed_at": result.reported_at or self._clock()})
                 return
             # 기기 완료 근거가 없는 성공·실패·거부는 결과 불명이다.
             outcome = CommandOutcome.UNKNOWN
@@ -278,25 +388,29 @@ class ExecutionService:
     def _retry(self, attempt: _Attempt) -> None:
         ctx = attempt.context
         if attempt.cancel is not None:
+            cancel = attempt.cancel
             conflict = False
             try:
-                saved = self._store.cancel_not_sent(ctx.internal_request_id, ExecutionStatus.PENDING,
-                                                    attempt.recheck.reason, attempt.cancel)
+                saved = self._store.cancel_not_sent(ctx.internal_request_id, cancel.expected,
+                                                    cancel.reason, cancel.evidence)
                 conflict = saved.outcome == StoreOutcome.CONFLICT
                 current = saved.command or self._store.execution(ctx.internal_request_id)
             except StoreOutcomeUnknown:
                 current = self._store.execution(ctx.internal_request_id)
                 if (current is None or current.status != ExecutionStatus.NOT_SENT
-                    or current.evidence != attempt.cancel):
+                    or current.evidence != cancel.evidence):
                     raise
             if not conflict and (
                 current is None or current.status != ExecutionStatus.NOT_SENT
-                or current.evidence != attempt.cancel
+                or current.evidence != cancel.evidence
             ):
                 raise StoreError("미전송 취소 저장을 확인하지 못했다")
             self._bind(attempt, current)
             attempt.cancel = None
             attempt.blockers = ()
+            if conflict:
+                # 저장된 상태 전이를 따른다. 취소하지 못한 중단 사유를 판정에 알리지 않는다.
+                attempt.reason = None
         for event in attempt.events.values():
             if event.done:
                 continue
@@ -344,7 +458,7 @@ class ExecutionService:
         ctx = attempt.context
         if current is None or (
             current.internal_request_id != ctx.internal_request_id or current.node_id != ctx.node_id
-            or current.action != ctx.request.action or current.use_id != ctx.use_id
+            or current.action != _action(ctx) or current.use_id != ctx.use_id
             or current.usage_id != ctx.usage_id or current.execution_kind != ctx.execution_kind
             or (attempt.command is not None and current.command_id != attempt.command.command_id)
         ):
@@ -354,8 +468,16 @@ class ExecutionService:
     @staticmethod
     def _view(attempt: _Attempt) -> ExecutionResult:
         current = attempt.command
-        status = ExecutionStatus.PENDING if current is None else current.status
+        if current is None:
+            status = ExecutionStatus.NOT_SENT if attempt.refused else ExecutionStatus.PENDING
+        else:
+            status = current.status
+        reason = None
+        if attempt.recheck is None and status != ExecutionStatus.SUCCEEDED:
+            reason = attempt.reason
+        use_id = None
+        if status == ExecutionStatus.SUCCEEDED and not _internal(attempt.context):
+            use_id = attempt.context.use_id
         return ExecutionResult(attempt.context.internal_request_id, status,
                                None if current is None else current.command_id,
-                               attempt.context.use_id if status == ExecutionStatus.SUCCEEDED else None,
-                               attempt.recheck)
+                               use_id, attempt.recheck, reason)

@@ -197,7 +197,8 @@ def env():
             can_execute=lambda node_id: restored[node_id], record_isolated=recovery.record_isolated)
     request = UseRequest("visitor-1", "external-1", TargetSpec.parse("locker-1"), Action.OPEN,
                          "test", clock())
-    ctx = ExecutionContext("request-1", request, "locker-1", "use-1", "usage-1", Settings())
+    ctx = ExecutionContext("request-1", request, "locker-1", "use-1", "usage-1", Settings(),
+                           reserved_at=clock())
     store.contexts[ctx.internal_request_id] = ctx
     return SimpleNamespace(time=time, clock=clock, repository=repository, store=store,
         rechecker=rechecker, gateway=gateway, locks=locks, lock_for=lock_for, recovery=recovery,
@@ -354,11 +355,14 @@ def test_FR06_begin_not_applied_can_retry(env):
     assert len(env.gateway.calls) == 1
 
 
-@pytest.mark.parametrize("reason", [StoreConflictReason.COMMAND_IN_PROGRESS, StoreConflictReason.STATE_CONFLICT])
-def test_FR19_begin_conflict_blocks_send(env, reason):
+@pytest.mark.parametrize("reason,expected", [
+    (StoreConflictReason.COMMAND_IN_PROGRESS, ReasonCode.COMMAND_IN_PROGRESS),
+    (StoreConflictReason.STATE_CONFLICT, ReasonCode.DEVICE_BUSY),
+])
+def test_FR19_begin_conflict_blocks_send(env, reason, expected):
     env.store.begin_conflict = reason
     result = env.service.execute(env.ctx)
-    assert result.status == ExecutionStatus.PENDING
+    assert (result.status, result.reason, result.recheck) == (ExecutionStatus.PENDING, expected, None)
     assert env.gateway.calls == calls(env, "cancel") == []
 
 
@@ -372,14 +376,64 @@ def test_FR06_begin_already_applied_does_not_send(env):
     assert env.gateway.calls == []
 
 
-@pytest.mark.parametrize("reserved", [None, "future", "expired"])
-def test_FR19_missing_or_expired_reservation_blocks_send(env, reserved):
-    env.store.reserved_at = None if reserved is None else env.clock() + timedelta(
-        seconds=1 if reserved == "future" else -env.ctx.settings.reservation_wait_sec)
+@pytest.mark.parametrize("reserved", [None, "future"])
+def test_FR19_missing_or_future_reservation_blocks_send(env, reserved):
+    env.ctx = replace(env.ctx, reserved_at=None if reserved is None else env.clock() + timedelta(seconds=1))
+    env.store.contexts[env.ctx.internal_request_id] = env.ctx
     result = env.service.execute(env.ctx)
     assert result.status == ExecutionStatus.PENDING
     assert env.gateway.calls == calls(env, "cancel") == []
-    assert env.service.blockers(env.ctx.internal_request_id)
+    assert env.service.blockers(env.ctx.internal_request_id) == ("reservation_time_unconfirmed",)
+
+
+def test_FR19_expired_reservation_cancelled_with_reason(env):
+    env.ctx = replace(env.ctx, reserved_at=env.clock() - timedelta(
+        seconds=env.ctx.settings.reservation_wait_sec))
+    env.store.contexts[env.ctx.internal_request_id] = env.ctx
+    result = env.service.execute(env.ctx)
+    assert (result.status, result.reason) == (ExecutionStatus.NOT_SENT, ReasonCode.RESERVATION_EXPIRED)
+    assert env.gateway.calls == env.rechecker.calls == []
+    assert calls(env, "cancel")[0][2:4] == (ExecutionStatus.PENDING, ReasonCode.RESERVATION_EXPIRED)
+    assert env.store.usages[env.ctx.internal_request_id] == "released"
+
+
+def test_FR19_shared_without_reservation_executes(env):
+    env.ctx = replace(env.ctx, execution_kind=ExecutionKind.SHARED, use_id=None, usage_id=None,
+                      reserved_at=None)
+    env.store.contexts[env.ctx.internal_request_id] = env.ctx
+    advance(env, env.ctx.settings.reservation_wait_sec * 2)
+    assert env.service.execute(env.ctx).status == ExecutionStatus.SUCCEEDED
+
+
+def test_FR19_live_pending_expires(env):
+    env.restored[env.ctx.node_id] = False
+    assert env.service.execute(env.ctx).status == ExecutionStatus.PENDING
+    env.service.tick()
+    assert calls(env, "cancel") == []
+    advance(env, env.ctx.settings.reservation_wait_sec)
+    env.service.tick()
+    assert calls(env, "cancel")[0][2:4] == (ExecutionStatus.PENDING, ReasonCode.RESERVATION_EXPIRED)
+    result = env.service.execute(env.ctx)
+    assert (result.status, result.reason) == (ExecutionStatus.NOT_SENT, ReasonCode.RESERVATION_EXPIRED)
+    assert env.gateway.calls == []
+
+
+def test_FR19_expiry_races_begin_send(env):
+    env.store.begin_conflict = StoreConflictReason.COMMAND_IN_PROGRESS
+    env.service.execute(env.ctx)
+    env.store.begin_conflict = None
+    command_id = env.store.commands[env.ctx.internal_request_id].command_id
+    original = env.store.cancel_not_sent
+    def cancel(internal_request_id, expected, reason, evidence):
+        env.store.begin_send(command_id)
+        return original(internal_request_id, expected, reason, evidence)
+    env.store.cancel_not_sent = cancel
+    advance(env, env.ctx.settings.reservation_wait_sec)
+    env.service.tick()
+    result = env.service.execute(env.ctx)
+    assert (result.status, result.reason) == (ExecutionStatus.IN_PROGRESS, None)
+    assert env.store.usages == {}
+    assert env.gateway.calls == []
 
 
 def test_FR19_expiry_during_recheck_blocks_send(env):
@@ -387,16 +441,20 @@ def test_FR19_expiry_during_recheck_blocks_send(env):
         advance(env, ctx.settings.reservation_wait_sec)
         return Decision(ctx.internal_request_id, ctx.request.request_id, Verdict.OK, ReasonCode.OK)
     env.rechecker.hook = check
-    assert env.service.execute(env.ctx).status == ExecutionStatus.PENDING
+    result = env.service.execute(env.ctx)
+    assert (result.status, result.reason) == (ExecutionStatus.NOT_SENT, ReasonCode.RESERVATION_EXPIRED)
     assert env.gateway.calls == calls(env, "begin") == []
+    assert calls(env, "cancel")[0][3] == ReasonCode.RESERVATION_EXPIRED
 
 
 def test_FR19_restore_unconfirmed_blocks_send(env):
     env.restored[env.ctx.node_id] = False
-    assert env.service.execute(env.ctx).status == ExecutionStatus.PENDING
-    assert env.gateway.calls == env.rechecker.calls == []
+    result = env.service.execute(env.ctx)
+    assert (result.status, result.reason) == (ExecutionStatus.PENDING, ReasonCode.TARGET_UNAVAILABLE)
+    assert env.gateway.calls == env.rechecker.calls == calls(env, "cancel") == []
     env.restored[env.ctx.node_id] = True
-    assert env.service.execute(env.ctx).status == ExecutionStatus.SUCCEEDED
+    result = env.service.execute(env.ctx)
+    assert (result.status, result.reason) == (ExecutionStatus.SUCCEEDED, None)
 
 
 def test_FR19_restore_invalidated_during_recheck_blocks_send(env):
@@ -408,20 +466,37 @@ def test_FR19_restore_invalidated_during_recheck_blocks_send(env):
     assert env.gateway.calls == calls(env, "begin") == []
 
 
-def test_FR06_no_session_keeps_reservation_without_fake_cancellation(env):
+def test_FR06_no_session_cancelled_with_reason(env):
     node = env.repository.items[env.ctx.node_id]
     env.repository.items[node.node_id] = replace(node, session_id=None)
-    assert env.service.execute(env.ctx).status == ExecutionStatus.PENDING
-    assert env.gateway.calls == calls(env, "cancel") == []
+    result = env.service.execute(env.ctx)
+    assert (result.status, result.reason) == (ExecutionStatus.NOT_SENT, ReasonCode.NODE_NOT_CONNECTED)
+    assert env.gateway.calls == []
+    assert calls(env, "cancel")[0][2:4] == (ExecutionStatus.PENDING, ReasonCode.NODE_NOT_CONNECTED)
+    assert env.store.usages[env.ctx.internal_request_id] == "released"
 
 
-def test_FR19_iot_not_sent_waits_for_reason_contract(env):
+def test_FR19_iot_not_sent_cancelled_with_reason(env):
     gateway_outcome(env, CommandOutcome.NOT_SENT)
-    assert env.service.execute(env.ctx).status == ExecutionStatus.IN_PROGRESS
+    result = env.service.execute(env.ctx)
+    assert (result.status, result.reason) == (ExecutionStatus.NOT_SENT, ReasonCode.COMMAND_NOT_SENT)
+    assert calls(env, "cancel")[0][2:4] == (ExecutionStatus.IN_PROGRESS, ReasonCode.COMMAND_NOT_SENT)
+    assert calls(env, "result") == []
+    assert env.store.usages[env.ctx.internal_request_id] == "released"
     env.service.tick()
-    env.service.execute(env.ctx)
-    assert env.service.blockers(env.ctx.internal_request_id) == ("not_sent_reason_contract_pending",)
-    assert calls(env, "cancel") == calls(env, "result") == []
+    assert env.service.execute(env.ctx) == result
+    assert len(env.gateway.calls) == len(calls(env, "cancel")) == 1
+
+
+def test_FR19_iot_not_sent_cancel_unknown_retries_same_evidence(env):
+    gateway_outcome(env, CommandOutcome.NOT_SENT)
+    env.store.failures["cancel"] = (StoreOutcomeUnknown("cancel"), False)
+    assert env.service.execute(env.ctx).status == ExecutionStatus.IN_PROGRESS
+    evidence = calls(env, "cancel")[0][4]
+    advance(env, 5)
+    env.service.tick()
+    assert calls(env, "cancel")[-1][4] == evidence
+    assert env.service.execute(env.ctx).status == ExecutionStatus.NOT_SENT
     assert len(env.gateway.calls) == 1
 
 
@@ -733,3 +808,70 @@ def test_FR07_other_device_rejection_is_unknown(env):
                     error_code=RejectCode.STORAGE_ERROR)
     assert env.service.execute(env.ctx).status == ExecutionStatus.UNKNOWN
     assert env.store.usages[env.ctx.internal_request_id] == "held"
+
+
+def internal_env(env, *, confirm=True):
+    from nearpilot.shared.enums import InternalRequestCause
+    from nearpilot.shared.models import InternalRequest
+    env.repository.items["light-1"] = NodeInfo("light-1", "place-1", Capability.LIGHT,
+        Occupancy.SHARED, TrustState.TRUSTED, DeviceState.AVAILABLE, None, env.clock(),
+        session_id="connection-1")
+    internal = InternalRequest("internal-1", "light-1", Action.OFF, InternalRequestCause.LEAVE_OFF,
+                               Settings(), env.clock())
+    ctx = ExecutionContext("internal-1", None, "light-1", None, None, Settings(),
+                           ExecutionKind.SERVER_INTERNAL, internal_request=internal)
+    env.store.contexts[ctx.internal_request_id] = ctx
+    env.store.internal = []
+    def link_internal_request(req):
+        env.store.calls.append(("link_internal", req.internal_request_id))
+        env.store.internal.append(req)
+        return StoreResult(StoreOutcome.APPLIED)
+    env.store.link_internal_request = link_internal_request
+    checks = []
+    def check(c):
+        checks.append(c)
+        return confirm
+    service = ExecutionService(repository=env.repository, store=env.store, rechecker=env.rechecker,
+        gateway=env.gateway, clock=env.clock, lock_for=env.lock_for,
+        can_execute=lambda node_id: env.restored[node_id],
+        record_isolated=env.recovery.record_isolated, confirm_internal=check)
+    return ctx, service, checks
+
+
+def test_FR20_internal_request_executes_without_recheck(env):
+    ctx, service, checks = internal_env(env)
+    result = service.execute(ctx)
+    assert (result.status, result.use_id, result.reason) == (ExecutionStatus.SUCCEEDED, None, None)
+    assert env.rechecker.calls == []
+    assert checks == [ctx]
+    assert [c[0] for c in env.store.calls if c[0] in ("link_internal", "link", "begin")] == [
+        "link_internal", "link", "begin"]
+    command, _ = env.gateway.calls[0]
+    assert (command.node_id, command.action) == ("light-1", Action.OFF)
+    assert calls(env, "result")[0][4] is None
+
+
+@pytest.mark.parametrize("cause", ["check", "restore", "connection"])
+def test_FR20_internal_request_check_failure_stores_nothing(env, cause):
+    ctx, service, _ = internal_env(env, confirm=cause != "check")
+    if cause == "restore":
+        env.restored["light-1"] = False
+    if cause == "connection":
+        env.repository.items["light-1"] = replace(env.repository.items["light-1"], session_id=None)
+    result = service.execute(ctx)
+    assert result.status == ExecutionStatus.NOT_SENT
+    assert result.command_id is None
+    assert result.reason == {"check": None, "restore": ReasonCode.TARGET_UNAVAILABLE,
+                             "connection": ReasonCode.NODE_NOT_CONNECTED}[cause]
+    assert env.store.internal == [] and env.store.commands == {}
+    assert env.gateway.calls == []
+    assert service.execute(ctx) == result
+
+
+def test_FR20_internal_request_begin_conflict_cancels(env):
+    ctx, service, _ = internal_env(env)
+    env.store.begin_conflict = StoreConflictReason.COMMAND_IN_PROGRESS
+    result = service.execute(ctx)
+    assert (result.status, result.reason) == (ExecutionStatus.NOT_SENT, ReasonCode.COMMAND_IN_PROGRESS)
+    assert calls(env, "cancel")[0][2:4] == (ExecutionStatus.PENDING, ReasonCode.COMMAND_IN_PROGRESS)
+    assert env.gateway.calls == []
