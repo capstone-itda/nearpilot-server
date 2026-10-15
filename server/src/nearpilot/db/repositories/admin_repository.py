@@ -13,7 +13,13 @@ from typing import Any
 
 from nearpilot.db.repositories._common import immediate_transaction, iso, new_id, to_json
 from nearpilot.shared.enums import AdminWriteOutcome, AdminWriteReason, Step, TrustState
-from nearpilot.shared.models import AccountRegistration, AdminWriteResult, BeaconRegistration, PlaceAssignment
+from nearpilot.shared.models import (
+    AccountRegistration,
+    AdminWriteResult,
+    BeaconRegistration,
+    PlaceAssignment,
+    PolicyRevision,
+)
 
 
 class SqliteAdminRepository:
@@ -153,6 +159,68 @@ class SqliteAdminRepository:
                 {
                     "event": "assign_place", "place_id": req.place_id, "owner_user_id": req.owner_user_id,
                     "node_ids": list(req.node_ids),
+                }
+            )
+            return AdminWriteResult(outcome=AdminWriteOutcome.APPLIED, reason=AdminWriteReason.OK)
+
+    def set_policy(self, revision: PolicyRevision, expected_version: int | None) -> AdminWriteResult:
+        with immediate_transaction(self._conn):
+            node_row = self._conn.execute(
+                "SELECT 1 FROM node WHERE node_id = ?", (revision.node_id,)
+            ).fetchone()
+            if node_row is None:
+                return AdminWriteResult(
+                    outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.NODE_NOT_FOUND
+                )
+            if revision.approver_user_id is not None:
+                approver_row = self._conn.execute(
+                    "SELECT 1 FROM user WHERE user_id = ?", (revision.approver_user_id,)
+                ).fetchone()
+                if approver_row is None:
+                    return AdminWriteResult(
+                        outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.ACCOUNT_NOT_FOUND
+                    )
+
+            existing = self._conn.execute(
+                "SELECT policy_id, current_version FROM access_policy WHERE node_id = ?", (revision.node_id,)
+            ).fetchone()
+            current_version = existing["current_version"] if existing is not None else None
+            if current_version != expected_version:
+                return AdminWriteResult(
+                    outcome=AdminWriteOutcome.CONFLICT, reason=AdminWriteReason.POLICY_VERSION_MISMATCH
+                )
+            expected_new_version = 1 if current_version is None else current_version + 1
+            if revision.version != expected_new_version:
+                # 기대 버전은 맞지만 새 리비전 번호가 현재+1이 아니다 (spec §5 결정).
+                return AdminWriteResult(
+                    outcome=AdminWriteOutcome.CONFLICT, reason=AdminWriteReason.STATE_CONFLICT
+                )
+
+            if existing is None:
+                # policy_revision.policy_id가 access_policy를 참조하므로 먼저 만든다.
+                self._conn.execute(
+                    "INSERT INTO access_policy (policy_id, node_id, current_version) VALUES (?, ?, ?)",
+                    (revision.policy_id, revision.node_id, revision.version),
+                )
+
+            self._conn.execute(
+                "INSERT INTO policy_revision (policy_id, version, visibility, mode, approver_user_id, "
+                "approval_ttl_sec, approval_mode, max_uses) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    revision.policy_id, revision.version, revision.visibility.value, revision.mode.value,
+                    revision.approver_user_id, revision.approval_ttl_sec, revision.approval_mode.value,
+                    revision.max_uses,
+                ),
+            )
+            if existing is not None:
+                self._conn.execute(
+                    "UPDATE access_policy SET current_version = ? WHERE node_id = ?",
+                    (revision.version, revision.node_id),
+                )
+            self._append_audit(
+                {
+                    "event": "set_policy", "policy_id": revision.policy_id, "node_id": revision.node_id,
+                    "version": revision.version,
                 }
             )
             return AdminWriteResult(outcome=AdminWriteOutcome.APPLIED, reason=AdminWriteReason.OK)
