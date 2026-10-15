@@ -95,9 +95,22 @@ def test_FR12A_fake_admin_repository_and_conflict_result():
         def set_node_trust(self, node_id, trust_state): return result
         def assign_place(self, req): return result
         def set_policy(self, revision, expected_version): return result
+        def start_collection(self, collection_id, beacon, label, started_at): return result
+        def end_collection(self, collection_id, ended_at): return result
 
     assert isinstance(FakeAdmin(), AdminRepository)
     assert FakeAdmin().assign_place(PlaceAssignment('p1', 'owner', 'room')).outcome == AdminWriteOutcome.CONFLICT
+
+
+def test_FR16_admin_repository_records_collection_runs():
+    assert list(signature(AdminRepository.start_collection).parameters) == [
+        'self', 'collection_id', 'beacon', 'label', 'started_at',
+    ]
+    assert list(signature(AdminRepository.end_collection).parameters) == [
+        'self', 'collection_id', 'ended_at',
+    ]
+    for reason in ('BEACON_NOT_FOUND', 'COLLECTION_NOT_FOUND', 'COLLECTION_OVERLAP', 'INVALID_INTERVAL'):
+        assert AdminWriteReason(reason) == reason
 
 
 def test_FR04_FR22_announce_and_admin_audit_steps_are_distinct():

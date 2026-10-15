@@ -553,7 +553,7 @@ class RecoveryService(Protocol):
 
 @runtime_checkable
 class AdminRepository(Protocol):
-    """DB → 관리 기능·시드 스크립트의 쓰기 접점 (FR-01, FR-12A).
+    """DB → 관리 기능·시드 스크립트·수집 도구의 쓰기 접점 (FR-01, FR-12A, FR-16).
 
     API 가 직접 호출하지 않는다. 인증·권한 검사는 CORE 관리 기능이 맡는다.
     각 쓰기는 감사와 함께 한 트랜잭션으로 반영한다. FAULT 복구는 ExecutionStore 로 한다.
@@ -583,5 +583,27 @@ class AdminRepository(Protocol):
         """새 리비전 추가와 current_version 갱신은 원자적이다. 과거 리비전은 바꾸지 않는다.
 
         expected_version 은 현재 버전의 기대값이다. 정책 최초 등록이면 None 이다.
+        """
+        ...
+
+    def start_collection(
+        self, collection_id: str, beacon: BeaconKey, label: str, started_at: datetime
+    ) -> AdminWriteResult:
+        """진행 중인 수집 회차를 만든다. ended_at 은 None 이다 (FR-16, #131).
+
+        collection_id 는 tools/data_collection 이 만든다. label 은 기기 앞(node_id) 또는 "none" 이다.
+        같은 비콘의 진행 중 회차나 끝난 회차와 구간이 겹치면 COLLECTION_OVERLAP 으로 거부한다.
+        끝 시각과 다음 시작 시각이 같으면 겹치지 않는다.
+        등록되지 않은 비콘은 BEACON_NOT_FOUND, 없는 node_id 라벨은 NODE_NOT_FOUND,
+        이미 있는 collection_id 는 STATE_CONFLICT 로 거부한다.
+        """
+        ...
+
+    def end_collection(self, collection_id: str, ended_at: datetime) -> AdminWriteResult:
+        """진행 중인 수집 회차에 끝 시각을 기록한다 (FR-16, #131).
+
+        ended_at 이 started_at 보다 뒤가 아니면 INVALID_INTERVAL 로 거부한다.
+        없는 회차는 COLLECTION_NOT_FOUND, 이미 끝난 회차는 STATE_CONFLICT 로 거부한다.
+        구간은 started_at <= frame_ts < ended_at 이다. 관측 연결은 save_rssi 가 한다.
         """
         ...

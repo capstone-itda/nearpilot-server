@@ -127,7 +127,7 @@ api  ──▶  core  ──▶  db
 | 승인 저장 인터페이스 | DB | CORE | 접근 승인 요청을 저장한다 (`Repository.create_approval_request`). 소유자의 결정을 조건부로 반영한다 (`Repository.decide_approval`). 요청자·기기의 승인 이력을 조회한다 (`Repository.approvals_in_scope`). `FAULT` 복구의 소유자 승인에는 쓰지 않는다. |
 | 판정 기록 인터페이스 | DB | CORE (판정) | 판정 한 건마다 판정과 `DecisionRecord`를 한 번 저장한다 (`Repository.save_decision`). |
 | 계정 조회 인터페이스 | DB | API (`api/auth`) | `api/auth`가 토큰의 SHA-256 해시를 계산해서 넘긴다. DB는 저장한 해시와 비교해서 계정을 반환한다 (`AccountLookup.account_by_token_hash`). |
-| 관리 쓰기 인터페이스 | DB | 관리 기능 (`AdminService`), 시드 스크립트 | 계정과 비콘 등록, 기기 신뢰 변경, 장소 배치, 정책 변경을 저장한다 (`AdminRepository`). 관리 API와 `AdminService`는 담당을 배정한 뒤 이 접점 위에 만든다. |
+| 관리 쓰기 인터페이스 | DB | 관리 기능 (`AdminService`), 시드 스크립트, 수집 도구 (`tools/data_collection`) | 계정과 비콘 등록, 기기 신뢰 변경, 장소 배치, 정책 변경, 수집 회차 기록을 저장한다 (`AdminRepository`). 관리 API와 `AdminService`는 담당을 배정한 뒤 이 접점 위에 만든다. |
 | 사건별 저장 인터페이스 | DB | CORE | 예약 이후의 명령 연결, 전송 시작, 미전송 취소, 실행 결과, 이상 격리, 종료를 사건마다 원자적으로 반영한다 (`ExecutionStore`). |
 | 복원·복구 저장 인터페이스 | DB | CORE (상태 관리) | 재시작 복원 조회, 복구 건 저장과 조회, 복구 정산을 제공한다 (`restore_pending`, `save_recovery`, `recovery`, `settle_recovery`). |
 | 복구 인터페이스 | CORE (상태 관리) | API | 복구 준비 조회와 복구 승인 요청을 따로 제공한다. 준비 판단, 재검사, 불명 결과 확인은 상태 관리가 맡는다. |
@@ -291,9 +291,11 @@ DB는 승인 이력을 거르지 않고 반환한다. `core/policy`가 승인 �
 | 기기 신뢰 변경 | `node.trust_state` | `trust_state`만 바꾼다. `device_state`와 점유 세션은 바꾸지 않는다. |
 | 장소 배치 | `place`, `node.place_id` | 기기를 장소에 연결한다. |
 | 정책 변경 | `access_policy`, `policy_revision` | 새 `policy_revision` 행 추가와 `access_policy.current_version` 갱신을 한 트랜잭션에서 한다. 과거 리비전은 바꾸지 않는다. |
+| 수집 회차 기록 | `collection_run` | 회차를 진행 중으로 만들고, 끝 시각을 기록한다. 구간 규칙은 아래 "RSSI 수집 회차"를 따른다 ([#131](https://github.com/capstone-itda/nearpilot-server/issues/131)). |
 
 - DB는 `AdminRepository`를 지금 구현한다. 관리 API와 `AdminService`는 담당을 배정한 뒤 `AdminRepository` 위에 만든다.
 - 시드 스크립트도 `AdminRepository`로 시연 데이터와 시험 데이터를 넣는다. 시드 스크립트는 SQL을 직접 실행하지 않는다.
+- `tools/data_collection`도 `AdminRepository`로 수집 회차를 기록한다. 수집 도구는 SQL을 직접 실행하지 않는다 (#131).
 - `AdminRepository`는 반영 결과와 거부 사유를 반환한다. 거부 사유의 예는 비콘 중복과 상태 충돌이다.
 - 계정당 활성 비콘은 하나 이하다. `register_beacon()`은 활성 등록 때 같은 계정의 다른 비콘을 비활성화한다.
 - DB는 중복 검사, 기존 비콘 비활성화, 등록 또는 활성화, 감사 기록을 한 트랜잭션에서 반영한다.
@@ -766,7 +768,12 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - 연결된 관측은 운영 관측의 보존기간으로 삭제하지 않는다. 회차 ID로 평가용 관측을 찾는다.
 - 평가가 끝나면 계정 ID를 지운다. 공개용 데이터는 회차 구분을 유지한다. 비콘 식별자의 폐기는 requirements.md §1.4를 따른다.
 - 배포한 DB 스키마가 없어서 데이터 이전은 필요 없다. MQTT와 `RssiFrame`에는 회차 ID나 라벨을 추가하지 않는다.
-- 수집 회차의 저장·종료·조회 접점과 구간 변경의 처리는 후속 DB·수집 도구 spec에서 맞춘다.
+- `tools/data_collection`은 `AdminRepository.start_collection`으로 진행 중인 회차를 만들고, `end_collection`으로 끝 시각을 기록한다 ([#131](https://github.com/capstone-itda/nearpilot-server/issues/131)).
+  - 회차 ID는 수집 도구가 만든다. 라벨은 기기 앞(`node_id`) 또는 `none`이다.
+  - DB는 구간이 겹치는 회차를 `COLLECTION_OVERLAP`으로, 유효하지 않은 구간을 `INVALID_INTERVAL`로 거부한다.
+  - DB는 등록되지 않은 비콘을 `BEACON_NOT_FOUND`로, 없는 회차를 `COLLECTION_NOT_FOUND`로 거부한다.
+  - 회차 쓰기는 다른 관리 쓰기처럼 감사와 한 트랜잭션으로 반영한다.
+- 미결: 수집 회차의 조회 접점과 구간 변경의 처리. 평가 도구 spec에서 맞춘다.
 - 미결: 지표 8의 세부 측정 정의. 별도 이슈에서 정한다.
 
 ### 복구 준비 조회와 복구 승인
@@ -905,6 +912,8 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | `AdminRepository.set_node_trust` | 기기 ID, `TrustState` | `AdminWriteResult` |
 | `AdminRepository.assign_place` | `PlaceAssignment` | `AdminWriteResult` |
 | `AdminRepository.set_policy` | `PolicyRevision`, 예상 현재 버전 | `AdminWriteResult` |
+| `AdminRepository.start_collection` | 회차 ID, `BeaconKey`, 라벨, 시작 시각 | `AdminWriteResult` |
+| `AdminRepository.end_collection` | 회차 ID, 끝 시각 | `AdminWriteResult` |
 
 - `ApprovalRequest`는 요청자·기기·동작·정책·내부 요청 연결, 생성 시각, 적용 설정을 담는다.
 - `ApprovalRequestResult`는 승인 ID, 상태, 생성·대기 만료 시각과 새 신청 여부를 담는다.
