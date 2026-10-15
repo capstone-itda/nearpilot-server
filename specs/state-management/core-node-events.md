@@ -1,6 +1,6 @@
 # 기기 이벤트 수신
 
-- 상태: 작성 중
+- 상태: 구현 중. CORE 수신과 기존 서비스 연결을 검증했다. 서버 조립과 실행 문맥의 영속 조회가 남았다.
 - 담당: JM-220 (상태 관리)
 - 요구사항: FR-04, FR-05, FR-07, FR-13, NFR-04
 - 따르는 결정: #18, #31, #32, #38
@@ -80,7 +80,7 @@
 |---|---|---|
 | 처음 보는 기기가 발표한다 | `upsert_announced_node()`를 부른다. 신뢰 상태를 바꾸지 않는다 | `test_FR04_announce_upserts_node` |
 | 신뢰한 기기가 다른 기능으로 발표한다 | `upsert_announced_node()`를 부른다. 신뢰 되돌림은 DB가 한다 | `test_FR04_changed_announce_forwarded` |
-| 진행 중인 점유가 있는 기기가 다른 기능으로 발표한다 | DB의 신뢰 되돌림을 적용한다. 점유를 임의로 종료하지 않는다. 추가 격리 여부는 6절에서 정한다 | `test_FR04_changed_announce_during_occupancy` |
+| 진행 중인 점유가 있는 기기가 다른 기능으로 발표한다 | 점유를 보존하고 먼저 격리한다. 복구 건 저장 뒤 DB의 신뢰 되돌림을 적용한다 | `test_FR04_changed_announce_during_occupancy` |
 | 발표만 오고 `status`가 없다 | `touch_node()`와 `set_node_session()`을 부르지 않는다 | `test_FR13_announce_does_not_touch` |
 | `status`의 `sensor_fault`가 `true`다 | `isolate_device()`를 부르고 복구 건을 만든다 | `test_NFR04_sensor_fault_isolates` |
 | 이미 `FAULT`인 기기가 `sensor_fault`를 다시 보고한다 | 같은 장애의 복구 건 저장을 확인한다. 저장이 끝났으면 같은 복구 건을 유지한다 | `test_NFR04_repeat_fault_same_recovery` |
@@ -93,13 +93,28 @@
 
 ## 6. 결정
 
-- 담당자 선택 대기: 점유 중 기능·점유 방식 변경 발표에 추가 격리를 적용할지 정한다. 신뢰 되돌림과 점유 보존은 기존 계약을 따른다. DB의 발표 저장 동작을 바꾸는 선택은 팀 결정이다.
+- `node_events.py`에 `NodeEventService`를 둔다 — 담당자가 2026-10-15에 추천 구성을 선택했다.
+- 기존 실행·반납·복원·복구·공용 조명 서비스와 공통 기기 재진입 잠금을 주입한다 — 기존 상태 관리 접점을 실제로 연결한다.
+- 점유 중 기능이나 점유 방식을 바꾼 발표는 추가 격리한다 — 담당자가 2026-10-15에 선택했다. DB의 신뢰 되돌림과 점유 보존은 유지한다.
+- 점유 중 발표 변경은 격리와 복구 건 저장 뒤 발표를 저장한다 — 발표 저장 직후 재시작해도 변경 전 점유의 연결을 보존한다.
+- 장애 연결 조회와 온라인 저장보다 격리를 먼저 시도한다 — 부가 저장의 실패가 이미 확인한 이상의 격리를 생략하지 않는다.
+- 센서 이상은 격리 저장을 확인한 뒤 복구 건을 저장한다 — 격리의 `ALREADY_APPLIED`도 복구 건 확인을 생략하지 않는다.
+- `status`의 현재 연결과 온라인 시각을 저장한 뒤 복원과 공용 조명에 넘긴다 — 일반 관측으로 반납을 종료하지 않는다.
+- RSSI는 앵커 잠금 안에서 저장하고 근접 추정에 넘긴다 — 다른 조명의 잠금을 잡는 이탈 관측은 앵커 잠금 밖에서 넘긴다.
+- 근접 추정 실패도 이탈 관측의 인계를 시도한다 — 실패를 로그에 기록하고 원래 예외를 다시 던진다. IOT의 재인계로 재시도한다.
+- RSSI 인계는 저장·근접 관측·이탈 관측의 완료를 따로 기억한다 — 재인계는 실패한 소비자만 다시 호출한다. 완료한 프레임은 비콘별 마지막 순번만 남긴다.
+- 실행 결과의 원래 문맥 조회를 필수 함수로 주입한다 — 명령·요청·기기 연결을 저장과 대조한다. 현재 설정으로 원래 문맥을 만들지 않는다.
+- 결과 인계 뒤 저장한 성공만 공용 조명에 넘긴다 — `execute()`를 다시 호출하지 않는다.
 
 ## 7. 가정
 
 - 미결: `NodeEventSink`의 구현 담당. architecture.md §4는 제공 영역을 CORE로만 쓴다. 이 spec은 장애 반영을 맡은 상태 관리가 CORE 쪽 수신 접점을 구현한다고 가정한다. IOT 구현 담당을 맡는다는 뜻은 아니다.
 - 관측의 형식과 최신성 검사는 IOT의 계약을 따른다. 이 spec은 검증을 마친 보고를 받는다. 시각 오차는 근접 추정 담당에게 맡기며 이 작업에서 결정하지 않는다.
-- 선행 의존: 실행 결과는 `core-execution`, 반납 검사는 `core-release`, 복구 건은 `core-fault-recovery`, 이탈 관측은 `core-shared-light`를 쓴다. 연결할 내부 접점과 조립 순서는 담당자가 정한다. fake 검증만으로 실제 연결의 완료를 대신하지 않는다.
+- 선행 의존: 실행 결과는 `core-execution`, 반납 검사는 `core-release`, 복구 건은 `core-fault-recovery`, 이탈 관측은 `core-shared-light`를 쓴다. CORE 내부 접점은 실제 서비스로 연결했다.
+- 실행 문맥의 영속 조회는 공동 계약에 없다. `context_for(command_id)`가 원래 문맥을 반환해야 한다. 없으면 예외를 던져 인계 실패를 알린다. 서버 시작 조립과 재시작 뒤 조회 제공자는 후속 작업이다.
+- IOT가 현재 연결과 최신성을 검증한다. 이 서비스는 같은 보고의 재인계도 받는다. 재시작 뒤 RSSI의 중복 저장은 DB가 막는다. 근접 추정은 메모리 관측을 새로 시작한다.
+- CORE 내부 서비스 연결은 실제 구현으로 검증한다. DB·근접 추정·IOT는 `shared` 계약의 fake로 대신한다. 실제 MQTT 연결은 이 spec에 넣지 않는다.
+- 실행 문맥의 조회 제공자와 서버 시작 조립은 `node-events-decisions.md`의 계약 초안으로 넘긴다. 이슈는 생성하지 않는다. 전체 spec은 구현 중으로 유지한다.
 
 ## 8. 테스트
 
@@ -107,6 +122,19 @@
 |---|---|---|
 | FR-04 | `test_FR04_status_sets_node_session` | 현재 연결의 `status`로 기기 연결 ID를 저장한다 |
 | FR-05 | `test_FR05_rssi_saved_and_observed` | RSSI를 저장하고 조회한 `NodeInfo`와 함께 근접 추정에 넘긴다 |
-| FR-07 | `test_FR07_routes_result_and_safety_check` | 실행 결과와 반납 검사 결과를 담당 모듈로 넘긴다 |
+| FR-07 | `test_FR07_routes_result_to_real_execution` | 실행 결과를 실제 실행 서비스에 넘긴다. 같은 사건은 한 번만 정산한다 |
+| FR-07 | `test_FR07_routes_safety_check_to_real_release` | 실제 반납 서비스가 유효한 반납 검사로 점유를 종료한다 |
 | FR-13 | `test_FR13_status_touches_with_received_at` | `last_seen_at`을 서버 수신 시각으로 갱신한다 |
 | NFR-04 | `test_NFR04_sensor_fault_isolates` | 센서 이상이면 점유를 보존하고 기기만 격리한다 |
+| NFR-04 | `test_NFR04_retry_missing_recovery_after_isolation` | 격리 뒤 실패한 복구 건 저장을 같은 ID로 재시도한다 |
+| NFR-04 | `test_NFR04_link_query_failure_still_isolates_known_fault` | 장애 연결 조회가 실패해도 기기를 먼저 격리한다 |
+| NFR-04 | `test_NFR04_online_write_failure_does_not_skip_sensor_isolation` | 온라인 저장이 실패해도 격리와 복구 건을 먼저 저장한다. 재인계는 복구 건을 중복하지 않는다 |
+| FR-04 | `test_FR04_announce_write_failure_keeps_changed_occupied_node_isolated` | 발표 저장 실패와 새 수신 서비스의 재인계에서도 격리와 점유를 보존한다 |
+| FR-05 | `test_FR05_failed_light_handover_retries_only_missing_consumer` | 성공한 근접 관측을 중복 적용하지 않고 이탈 관측만 재시도한다 |
+| FR-05 | `test_FR05_anchor_lock_released_before_light_observation` | 이탈 관측이 앵커 잠금을 다시 기다리는 교착을 막는다 |
+| FR-07 | `test_FR07_missing_original_context_is_failure` | 실행 문맥 부재를 전달 완료로 보지 않는다 |
+| FR-07 | `test_FR07_reports_during_gateway_wait_do_not_deadlock` | 실행 서비스의 전송 대기 중 다른 스레드의 결과 인계를 받는다 |
+| FR-13 | `test_FR13_result_does_not_touch` | 과거 결과로 현재 연결·온라인 시각·물리 관측을 갱신하지 않는다 |
+
+- 실제 실행·반납·복원·복구·공용 조명 서비스를 조립해서 CORE 내부 연결을 검증한다.
+- 기기 형식 검증, 실제 MQTT와 서버 실행 진입점은 이 검증에 넣지 않는다.
