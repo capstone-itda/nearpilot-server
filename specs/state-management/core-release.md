@@ -140,7 +140,7 @@ stateDiagram-v2
 - 미결 — #90: 검사 기준의 내용 정의와 버전 관리 방식 (FR-20). 이 spec은 `UseSession.check_criteria`의 ID와 버전만 비교한다.
 - 미결 — #90: `evidence`의 필수 항목. 이 spec은 받은 `evidence`를 그대로 `finish_close`에 넘긴다.
 - 미결: 같은 `check_id`에 다른 내용이 온 충돌을 펌웨어가 보고하는 형식. 그때까지 응답 기한 초과로 다룬다 (architecture.md §4 "반납 검사와 종료").
-- 미결 — #88: `CoreService` 조립 담당. 이 spec은 `release_use(user_id, use_id) -> Decision`과 같은 시그니처의 함수를 제공한다. 판정이 MCP 도구에 연결한다고 가정한다.
+- #88 A안으로 정했다: 상태 관리가 서버를 조립한다. 판정은 `CoreService`와 MCP 앱을 만드는 연결 함수를 제공한다. 이 spec은 `release_use(user_id, use_id) -> Decision`과 같은 시그니처의 함수를 제공한다.
 - 선행 연결: 복구 건 생성 함수는 `core-fault-recovery`가 제공한다. 이번 작업은 필수 주입 접점을 fake로 검증한다. 복구 건 저장의 실제 연결 완료로 보지 않는다.
 - 선행 연결: `core-node-events`는 검사 결과를 전달한다. `core-restore`는 기기 확인 뒤 `resume_close()`를 호출한다. 서버 조립은 `tick()`을 반복 호출한다.
 - 검사 기준 내용과 필수 근거가 정해져도 반납 서비스는 기준 ID·버전을 비교하고 받은 근거를 보존한다. 검사 기준의 물리 판정은 기기가 맡는다.
