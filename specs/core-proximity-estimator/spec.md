@@ -1,6 +1,5 @@
 # 근접 추정기 (`ProximityEstimator`)
 
-- 상태: 구현 중
 - 담당: dnnals (근접 추정)
 - 요구사항: FR-16, FR-22, NFR-02
 - 따르는 결정: #26, #31, #38, #39, #40, #42
@@ -63,7 +62,7 @@
 ### 만들지 않는 것
 | 후속 작업 | 내용 | 근거 |
 |---|---|---|
-| 상태 관리 (`core-node-events`, 작성 중) | `NodeEventSink.on_rssi`에서 `observe`를 부르는 배선. 이 작업의 테스트는 `observe`를 직접 부른다 | `core-node-events` 7절 가정. `NodeEventSink`의 구현 담당은 미결이다 |
+| 상태 관리 (`core-node-events`) | `NodeEventSink.on_rssi`에서 `observe`를 부르는 배선. 이 작업의 테스트는 `observe`를 직접 부른다 | `core-node-events` |
 | (#88 결정 뒤) | 서버 시작 때 `Repository.rssi_since`로 최근 프레임을 읽어 복원 접점에 넘기는 호출 | #31, #88 |
 | (#88 결정 뒤) | 서버 시작 때 장소별로 어느 모델 버전을 읽을지 고르는 조립 코드 | #88 |
 | `feat/core-proximity-data-collection` | 수집 회차와 라벨 기록, "앞"의 거리 기준 | FR-16 |
