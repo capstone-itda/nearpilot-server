@@ -13,7 +13,7 @@ from typing import Any
 
 from nearpilot.db.repositories._common import immediate_transaction, iso, new_id, to_json
 from nearpilot.shared.enums import AdminWriteOutcome, AdminWriteReason, Step, TrustState
-from nearpilot.shared.models import AccountRegistration, AdminWriteResult, BeaconRegistration
+from nearpilot.shared.models import AccountRegistration, AdminWriteResult, BeaconRegistration, PlaceAssignment
 
 
 class SqliteAdminRepository:
@@ -112,6 +112,49 @@ class SqliteAdminRepository:
                     outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.NODE_NOT_FOUND
                 )
             self._append_audit({"event": "set_node_trust", "node_id": node_id, "trust_state": trust_state.value})
+            return AdminWriteResult(outcome=AdminWriteOutcome.APPLIED, reason=AdminWriteReason.OK)
+
+    def assign_place(self, req: PlaceAssignment) -> AdminWriteResult:
+        with immediate_transaction(self._conn):
+            owner_row = self._conn.execute(
+                "SELECT 1 FROM user WHERE user_id = ?", (req.owner_user_id,)
+            ).fetchone()
+            if owner_row is None:
+                return AdminWriteResult(
+                    outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.ACCOUNT_NOT_FOUND
+                )
+
+            # 연결할 기기가 모두 있는지 먼저 본다 — 하나라도 없으면 아무것도 바꾸지 않는다 (원자적).
+            for node_id in req.node_ids:
+                node_row = self._conn.execute("SELECT 1 FROM node WHERE node_id = ?", (node_id,)).fetchone()
+                if node_row is None:
+                    return AdminWriteResult(
+                        outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.NODE_NOT_FOUND
+                    )
+
+            existing = self._conn.execute(
+                "SELECT owner_user_id, name FROM place WHERE place_id = ?", (req.place_id,)
+            ).fetchone()
+            if existing is not None:
+                if existing["owner_user_id"] != req.owner_user_id or existing["name"] != req.name:
+                    return AdminWriteResult(
+                        outcome=AdminWriteOutcome.CONFLICT, reason=AdminWriteReason.STATE_CONFLICT
+                    )
+            else:
+                self._conn.execute(
+                    "INSERT INTO place (place_id, owner_user_id, name) VALUES (?, ?, ?)",
+                    (req.place_id, req.owner_user_id, req.name),
+                )
+
+            for node_id in req.node_ids:
+                self._conn.execute("UPDATE node SET place_id = ? WHERE node_id = ?", (req.place_id, node_id))
+
+            self._append_audit(
+                {
+                    "event": "assign_place", "place_id": req.place_id, "owner_user_id": req.owner_user_id,
+                    "node_ids": list(req.node_ids),
+                }
+            )
             return AdminWriteResult(outcome=AdminWriteOutcome.APPLIED, reason=AdminWriteReason.OK)
 
     def _activate_beacon(self, req: BeaconRegistration) -> None:
