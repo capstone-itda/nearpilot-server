@@ -779,6 +779,15 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - 기기 재접속이나 새 장애로 기존 근거가 무효이면 상태 관리는 새 유효 근거를 먼저 확인한다.
 - 상태 관리는 같은 기기의 복구, 관측, 장애 반영을 직렬화한다. DB는 저장 직전의 상태 충돌 검사를 따로 유지한다.
 - 재검사를 통과하면 상태 관리는 `settle_recovery()`로 복구 정산을 요청한다.
+- 상태 관리는 조회와 승인마다 `Repository.is_place_owner(user_id, node_id)`로 장소 소유권을 확인한다 ([#84](https://github.com/capstone-itda/nearpilot-server/issues/84)). DB는 기기와 장소를 연결해서 소유 여부만 반환한다. 소유 계정 ID는 반환하지 않는다. 기기가 없거나 장소에 배치되지 않았으면 `False`다.
+
+복구의 안전 확인과 물리 상태 동기화는 아래 근거를 쓴다 ([#85](https://github.com/capstone-itda/nearpilot-server/issues/85)).
+
+- 검사 기준: 점유 세션이 있으면 세션 생성 당시의 `check_criteria`를 쓴다. 점유 세션이 없는 공용형과 세션이 끝난 기기는 기기의 현재 `release_policy.check_criteria`를 쓴다. 기준이 없으면 안전 미확인이다.
+- 안전 확인: 상태 관리가 기존 `SafetyCheckRequest`로 현재 기기 연결에 검사를 요청한다. 현재 연결의 유효한 `passed` 결과만 안전 근거다. 새 MQTT 계약을 두지 않는다.
+- 물리 상태 동기화: 안전 근거 뒤 같은 연결에서 받은 정상 `status` 보고다. 센서 이상과 구동 중 보고는 동기화 근거가 아니다.
+- 상태 관리는 채택한 검사 결과와 보고를 `RecoveryEvidence`로 복구 건에 연결해 `save_recovery`로 저장한다. DB는 근거 참조만 저장하고 물리 조건을 다시 판단하지 않는다.
+- 일반 `status`만으로 안전을 확정하지 않는다. 검사만으로 점유, 사용분, 기기 상태를 풀지 않는다.
 
 상태 관리는 승인 요청에 결과 객체를 반환한다. 결과 객체는 `recovery_id`, `outcome`, `reason_code`, 현재 준비 상태, 부족한 조건, 완료 시각을 담는다.
 
@@ -853,7 +862,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - `RecoveryReason`은 관리 응답의 사유다. `OK`, `STORE_NOT_APPLIED`, `STORE_OUTCOME_UNKNOWN`, `NOT_OWNER`, `RECOVERY_MISMATCH`, `NOT_READY`, `STATE_CONFLICT`다.
 - `RecoveryOutcome`은 `completed`, `rejected`, `pending`이다. 호스트 판정의 `ReasonCode`와 관리 응답의 사유를 구분한다.
 - 상태 관리는 논리 정산의 `settlement_digest`를 계산한다. DB는 값을 저장하고 대조한다.
-- 미결: 정산 요약값의 직렬화와 해시 방식. 상태 관리와 DB 구현 담당이 spec에서 같은 방식을 정한다.
+- 정산 요약값은 상태 관리의 `settlement_digest()`가 계산한다. 방식은 `specs/state-management/core-fault-recovery.md` 6절에 있다. DB는 값을 다시 계산하지 않고 저장·대조만 한다. DB spec도 같은 방식을 기록한다 ([#92](https://github.com/capstone-itda/nearpilot-server/issues/92)).
 
 ### 판정·관리 저장의 공동 시그니처
 
@@ -863,6 +872,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | `Repository.decide_approval` | `ApprovalDecisionRequest` | `ApprovalDecisionResult` |
 | `Repository.approvals_in_scope` | 요청자 ID, 기기 ID | `Sequence[ApprovalRecord]` |
 | `Repository.save_decision` | `Decision`, `DecisionRecord` | `StoreResult` |
+| `Repository.is_place_owner` | 계정 ID, 기기 ID | `bool` |
 | `AdminRepository.register_account` | `AccountRegistration` | `AdminWriteResult` |
 | `AdminRepository.register_beacon` | `BeaconRegistration` | `AdminWriteResult` |
 | `AdminRepository.set_node_trust` | 기기 ID, `TrustState` | `AdminWriteResult` |
