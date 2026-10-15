@@ -37,6 +37,12 @@ class FakeCore:
                                          use_id="use-1", message="반납을 완료했다.")
         self.status = {"use_id": "use-1", "state": "ACTIVE", "rental_due_at": NOW,
                        "overtime_sec": 0.0, "closed_at": None}
+        self.devices = [{"node_id": "locker-1", "capability": "locker", "occupancy": "rental",
+                         "access": "operable"}]
+        self.device_state = {"node_id": "locker-1", "capability": "locker", "occupancy": "rental",
+                             "state": "available", "online": True, "trusted": True,
+                             "access_mode": "open"}
+        self.device_calls, self.state_calls = [], []
         self.error: Exception | None = None
         self.decision = Decision("internal-1", "r1", Verdict.OK, ReasonCode.OK, node_id="locker-1",
                                  use_id="use-1", p_max=0.97, message=None)
@@ -46,6 +52,18 @@ class FakeCore:
         if self.error:
             raise self.error
         return self.decision
+
+    def find_available_devices(self, user_id):
+        self.device_calls.append(user_id)
+        if self.error:
+            raise self.error
+        return self.devices
+
+    def get_device_state(self, user_id, node_id):
+        self.state_calls.append((user_id, node_id))
+        if self.error:
+            raise self.error
+        return self.device_state
 
     def release_use(self, user_id, use_id):
         self.releases.append((user_id, use_id))
