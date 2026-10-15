@@ -1,9 +1,9 @@
 # 결정 반영 후속 저장 (`Repository`·`ExecutionStore` 추가 접점)
 
-- 상태: 작성 중
+- 상태: 완료
 - 담당: paiwhy (DB)
-- 요구사항: FR-03, FR-07, FR-10, FR-12A, FR-14, FR-18, FR-19, FR-20, FR-21, FR-22, NFR-03
-- 따르는 결정: #60 (PR #70), #76 (PR #110), #78·#80·#81 (PR #103), #83 (PR #104), #84 (PR #105), #86 (PR #111)
+- 요구사항: FR-03, FR-07, FR-10, FR-12A, FR-14, FR-19, FR-20, FR-21, FR-22
+- 따르는 결정: #60 (PR #70), #78·#80·#81 (PR #103), #83 (PR #104), #84 (PR #105), #86 (PR #111)
 
 ## 1. 왜
 
@@ -13,7 +13,6 @@
   - `ExecutionStore.execution_context()`가 없으면 재시작 뒤 늦게 온 결과를 원래 문맥으로 정산할 수 없다 (#83).
   - `Repository.is_place_owner()`가 없으면 복구 조회·승인에서 장소 소유권을 확인할 수 없다 (#84).
   - `ExecutionStore.link_internal_request()`가 없으면 서버가 시작하는 이탈 꺼짐 명령을 저장할 수 없다 (#86).
-- `INTERNAL_ERROR`로 거부한 요청을 같은 `request_id`로 재전송하면 다시 판정하기로 했다 (#76). 지금 `link_request`와 `save_decision`은 저장된 판정을 그대로 돌려주고 덮어쓰기를 막는다.
 
 ## 2. 무엇
 
@@ -22,18 +21,15 @@
   - `reserve_if_free(ReserveRequest)`의 기존 입력
   - `save_decision(Decision, DecisionRecord)`의 `DecisionRecord.settings`
   - `execution_context(command_id)`, `link_internal_request(InternalRequest)`
-  - `link_request(UseRequest, input_digest)`의 재전송
 - 출력:
   - `Sequence[ApprovalRecord]`, `bool`
   - `ReserveResult.reserved_at`
   - `ExecutionContext | None`
   - `StoreResult`
-  - `RequestLink` (오류 거부의 재전송이면 같은 `internal_request_id`로 `is_new=True`)
 - 바뀌는 상태:
   - 새 마이그레이션으로 `use_session.reserved_at`, `approval_usage.reserved_at`을 추가한다.
   - 새 마이그레이션으로 `request.user_id`를 비울 수 있게 하고 요청 종류 `request_kind` (`visitor`, `server_internal`)를 추가한다. `request`의 적용 설정 전체를 저장할 `settings_json`을 추가한다.
   - `reserve_if_free`가 예약 시각을 저장한다. `save_decision`이 적용 설정 전체를 저장한다.
-  - `INTERNAL_ERROR`로 끝난 요청을 같은 키·같은 입력으로 재전송하면 `link_request`가 판정 칸(`verdict`, `reason_code`, `node_id`, `p_max`, `model`, `calib`, `policy_ver`, `config_ver`, `decision_context`)을 비우고 이전 판정을 감사에 남긴다. `save_decision`은 바뀌지 않는다.
 - 약속:
   - 조회 함수(`approvals_in_scope`, `is_place_owner`, `execution_context`)는 저장소를 바꾸지 않는다.
   - 쓰기 함수 하나는 `BEGIN IMMEDIATE` 트랜잭션 하나다.
@@ -51,8 +47,6 @@
 - `link_internal_request`는 사용자 ID와 판정 기록 없이 요청을 저장한다. 적용 설정을 함께 보존한다. 같은 내용은 `ALREADY_APPLIED`, 다른 내용은 `CONFLICT`다 (#86).
 - 서버 내부 요청은 이후 `link_command`, `begin_send`, `record_result`, `cancel_not_sent`를 그대로 쓴다. 세션과 사용분이 없으므로 명령, 기기 상태와 감사만 반영한다 (#86).
 - 서버 내부 요청은 방문자의 `use_id` 조회와 사용자별 조회에 나타나지 않는다 (#86, FR-21).
-- `INTERNAL_ERROR`로 거부한 요청을 같은 `(user_id, request_id)`와 같은 `input_digest`로 다시 보내면 다시 판정할 수 있어야 한다 (#76).
-- 다시 판정해도 이중 예약을 만들지 않는다. 같은 `internal_request_id`의 예약은 기존 예약을 반환한다 (#76, NFR-03).
 - `cancel_not_sent`의 새 사유 `RESERVATION_EXPIRED`, `NODE_NOT_CONNECTED`, `COMMAND_NOT_SENT`는 받은 값을 그대로 저장한다 (#78).
 - 임계값과 시간 값은 코드 상수로 쓰지 않는다. 설정에서 받는다 (`AGENTS.md`).
 
@@ -73,7 +67,6 @@
 |---|---|---|
 | `Repository.approvals_in_scope` | 제공 | 정책 검사 (`core/policy`, DB 담당) |
 | `Repository.reserve_if_free`의 `reserved_at` | 제공 | 판정 |
-| `Repository.link_request`의 오류 거부 재전송 | 제공 | 판정 |
 | `Repository.is_place_owner` | 제공 | 상태 관리 (복구 조회·승인) |
 | `ExecutionStore.execution_context` | 제공 | 상태 관리 (재시작 뒤 결과 정산) |
 | `ExecutionStore.link_internal_request` | 제공 | 상태 관리 (이탈 꺼짐) |
@@ -85,6 +78,7 @@
 | `db-recovery-retention` | 보존기간 정리, 완료 20분 뒤 `request_id` 비우기, 중복 방지 10만 건 한도 | #15 |
 | `db-approval-admin` | `AdminRepository`, 수집 회차 쓰기, 활성 비콘 교체 | #30, #41, #42 |
 | — | 근거(`evidence`) 저장 형식 | #113 결정 뒤 |
+| — | `link_request`의 `INTERNAL_ERROR` 재전송 재판정 설계(판정 칸을 비우고 `is_new=True`로 새 판정을 일으킴) | #76 — 은지(eunji719) 확인 대기, 확인되면 별도 PR |
 
 ## 5. 예외 상황
 
@@ -111,31 +105,27 @@
 | 같은 ID에 다른 내용으로 저장한다 | `CONFLICT`다 | `test_FR20_link_internal_request_conflict` |
 | 서버 내부 요청에 명령을 연결하고 결과를 저장한다 | 세션과 사용분 없이 명령, 기기 상태, 감사만 반영한다 | `test_FR20_server_internal_command_flow` |
 | 사용자별 조회를 한다 | 서버 내부 요청이 나타나지 않는다 | `test_FR21_server_internal_hidden` |
-| `INTERNAL_ERROR`로 끝난 요청을 같은 키·같은 입력으로 다시 보낸다 | 같은 `internal_request_id`, `is_new=True`, `conflict=False`를 반환한다. 판정 칸은 `NULL`이다. 이전 판정이 감사에 남는다 | `test_FR18_link_request_retry_after_internal_error` |
-| 정상 판정으로 끝난 요청을 다시 보낸다 | 지금처럼 `previous`에 기존 판정을 담는다 | `test_FR22_link_request_returns_previous` |
-| 같은 키에 다른 입력으로 다시 보낸다 | 지금처럼 `conflict=True`다 | `test_FR22_link_request_conflict` |
-| 저장된 판정이 `INTERNAL_ERROR`가 아닌데 다른 판정을 저장한다 | `CONFLICT`다 | `test_FR22_save_decision_conflict` |
-| 이전 시도가 예약을 남기고 오류로 끝났다 | 다시 판정할 때 `reserve_if_free`가 기존 예약을 반환한다. 이중 예약이 없다 | `test_NFR03_retry_after_error_no_double_reserve` |
-| 두 재전송이 동시에 들어온다 | 한쪽만 판정 칸을 비우고 `is_new=True`를 받는다. 다른 쪽은 `is_new=False`·`previous=None`(처리 중)이다 | `test_NFR03_link_request_retry_concurrent_once` |
 | 기존 DB를 새 마이그레이션으로 올린다 | 기존 요청 행이 그대로 남고 `request_kind`는 `visitor`다 | `test_schema_migration_keeps_requests` |
 
 ## 6. 결정
 
 - 예약 시각은 대여형 `use_session.reserved_at`, 승인이 필요한 공용형 `approval_usage.reserved_at`에 저장한다 — PR #101 리뷰에서 담당자가 정했다. 공용형 `open`은 저장할 행이 없으므로 `None`이다.
+- 예약 시각은 `request.received_at`을 저장한다 — `ReserveRequest`에 시각 필드가 없고, DB가 직접 현재 시각을 읽지 않아 결과가 결정적이다. 수신 시각은 실제 예약보다 조금 이르므로 예약 대기 만료가 이르게 잡히는 안전한 쪽이다.
 - `request` 테이블은 새로 만들어 옮긴다. `user_id`를 비울 수 있게 하고 `request_kind`를 추가한다 — SQLite는 기존 컬럼의 NOT NULL을 바꿀 수 없다. 가짜 계정을 만들지 않는다는 #86의 약속을 지킨다.
   - 순서: `PRAGMA foreign_keys=OFF` → 새 테이블 생성 → 행 복사 → 이전 테이블 삭제 → 이름 변경 → 인덱스 재생성 → `PRAGMA foreign_key_check` → `PRAGMA foreign_keys=ON`.
   - `request_kind`가 `visitor`이면 `user_id`가 반드시 있다는 CHECK 제약을 둔다.
 - 적용 설정은 `request.settings_json`에 JSON으로 저장한다 — 방문자 요청은 `save_decision`이, 서버 내부 요청은 `link_internal_request`가 쓴다.
 - 서버 내부 요청의 원인(`InternalRequestCause`)은 `request.internal_cause`에 저장한다 — 방문자 요청에만 의미 있는 `reason_code`(판정 사유)에 덮어 쓰지 않는다. 방문자 요청은 `NULL`이다. `target_spec`·`input_digest`는 방문자 요청의 근접 대상 지정·중복 방지에만 쓰여 서버 내부 요청에는 의미가 없다. `target_spec`은 `node_id`를 그대로 담아 NOT NULL을 만족시키고, `input_digest`는 빈 문자열이다 — `execution_context`가 서버 내부 요청을 `UseRequest`로 복원하지 않으므로 다시 해석되지 않는다.
 - `link_command`는 `request.request_kind`를 먼저 본다 — `server_internal`이면 `node.occupancy`로 판단하지 않고 곧바로 `ExecutionKind.SERVER_INTERNAL`과 `use_id=None`·`usage_id=None`을 쓴다. 공용형 기기(점유 방식 `shared`)에서 시작한 서버 내부 요청을 `SHARED`로 잘못 분류하지 않기 위해서다.
-- 오류 거부의 재전송은 `link_request`가 처리한다. `save_decision`은 바꾸지 않는다 — `core/decision/pipeline.py`는 `is_new=True`면 바로 전체 판정(`_run`)으로 들어가고, `is_new=False`·`previous=None`이면 "처리 중"으로 보고 재판정 없이 `INTERNAL_ERROR`를 반환한다(161~165줄). `shared`의 `RequestLink` 모양을 바꾸지 않고 이 기존 분기만으로 재판정을 일으키려면, DB가 `is_new` 값 자체로 신호를 보내야 한다. `core/`는 고치지 않는 곳이라 pipeline.py의 분기를 바꿀 수 없다.
-- `link_request`는 같은 `(user_id, request_id)`·같은 `input_digest`이고 저장된 `reason_code`가 `INTERNAL_ERROR`면, `BEGIN IMMEDIATE` 안에서 이전 판정을 감사에 남기고 판정 칸을 `NULL`로 비운 뒤 `RequestLink(internal_request_id, is_new=True, conflict=False)`를 반환한다 — 새 요청처럼 다시 판정하게 한다.
-- 판정 칸을 비우는 `UPDATE`는 `WHERE reason_code = 'INTERNAL_ERROR'`로 조건부로 한다. 동시에 두 재전송이 오면 한쪽만 조건에 걸려 비우고 `is_new=True`를 받는다. 다른 쪽은 그사이 `verdict`가 `NULL`이 된 행을 보고 기존의 "처리 중" 분기(`is_new=False`, `previous=None`)를 그대로 탄다 — 새 분기를 추가하지 않는다.
 
 ## 7. 가정
 
 - 근거(`evidence`) 저장 형식은 `db-execution-store`의 방식을 그대로 쓴다 — #113
 - `db-execution-store`가 이 작업 전에 병합된다. 이 작업은 그 위에 함수를 추가한다.
+- #76의 `INTERNAL_ERROR` 재전송 재판정 방식은 은지(eunji719) 확인을 기다린다 — 가정, 은지 확인 대기. 확인되면 별도 PR로 구현한다.
+  - `link_request`가 같은 `(user_id, request_id)`·같은 `input_digest`이고 저장된 `reason_code`가 `INTERNAL_ERROR`면, `BEGIN IMMEDIATE` 안에서 이전 판정을 감사에 남기고 판정 칸을 `NULL`로 비운 뒤 `RequestLink(internal_request_id, is_new=True, conflict=False)`를 반환한다 — 새 요청처럼 다시 판정하게 한다. `save_decision`은 바꾸지 않는다.
+  - 판정 칸을 비우는 `UPDATE`는 `WHERE reason_code = 'INTERNAL_ERROR'`로 조건부로 한다. 동시에 두 재전송이 오면 한쪽만 조건에 걸려 비우고 `is_new=True`를 받는다. 다른 쪽은 그사이 `verdict`가 `NULL`이 된 행을 보고 기존의 "처리 중" 분기(`is_new=False`, `previous=None`)를 그대로 탄다 — 새 분기를 추가하지 않는다.
+  - 이 방식을 고른 이유: `core/decision/pipeline.py`는 `is_new=True`면 바로 전체 판정(`_run`)으로 들어가고, `is_new=False`·`previous=None`이면 "처리 중"으로 보고 재판정 없이 `INTERNAL_ERROR`를 반환한다(161~165줄). `shared`의 `RequestLink` 모양을 바꾸지 않고 이 기존 분기만으로 재판정을 일으키려면, DB가 `is_new` 값 자체로 신호를 보내야 한다. `core/`는 고치지 않는 곳이라 pipeline.py의 분기를 바꿀 수 없다.
 
 ## 8. 테스트
 
@@ -146,5 +136,4 @@
 | FR-07, FR-22 | `test_FR07_execution_context_*`, `test_FR22_save_decision_*` | 설정 스냅샷 보존과 원래 문맥 조회 |
 | FR-12A | `test_FR12A_is_place_owner_*` | 소유 여부만 반환 |
 | FR-20, FR-21 | `test_FR20_*internal*`, `test_FR21_server_internal_hidden` | 서버 내부 요청의 저장, 실행, 숨김 |
-| FR-18, NFR-03 | `test_FR18_*retry*`, `test_NFR03_*` | 오류 거부 재전송의 재판정과 이중 예약 방지 |
 | — | `test_schema_migration_keeps_requests` | 마이그레이션이 기존 데이터를 보존한다 |
