@@ -4,7 +4,7 @@
 - 구현 브랜치: `feat/iot-node-simulator`
 - 요구사항: FR-04, FR-05, FR-06, FR-07, FR-20, NFR-08, NFR-10, NFR-11, NFR-12
 - 따르는 결정: architecture.md에 반영한 #19, #37, #61, #140~#143이다.
-- 상태: 명령 기록 저장 방식을 결정했다 (기기별 SQLite).
+- 상태: 시뮬레이터와 IOT 내부 전체 연결 시나리오를 구현했다. 실행 방법은 `server/tools/node_sim/README.md`에 있다.
 
 ## 1. 왜
 
@@ -129,3 +129,15 @@
 
 기기 재시작은 같은 기록 경로로 새 시뮬레이터를 만들어 검증한다.
 실제 브로커의 연결 시나리오는 CORE fake와 IOT 모듈을 쓴다. CORE·DB 구현은 서버 조립 검증이 맡는다.
+
+| 파일 | 확인하는 것 |
+|---|---|
+| `server/tests/iot/test_node_sim.py` | 기기 논리·기록·설정·Paho 연결 설정. 보내는 본문은 서버의 MQTT v1 변환으로 검증한다 |
+| `server/tests/iot/test_node_sim_broker.py` | 실제 Mosquitto에서 시뮬레이터·`MqttConnection`·`ReportDelivery`·`MqttCommandGateway`의 연결 |
+
+실제 브로커 시나리오는 `test_NFR12_simulator_local_ap`, `test_FR07_delayed_or_lost_result`, `test_FR07_restart_reports_unknown_over_broker`, `test_FR04_reconnect_over_broker`, `test_NFR08_misconfigured_node_blocked`다.
+
+2026-10-16에 새 테스트 37개(브로커 없이 32개, 실제 브로커 5개)를 확인했다. 실제 브로커 시나리오는 3번 반복해도 통과했다.
+구동 중 거부·재시작의 `unknown`·측정 불능 근거·IR 무드등의 `unknown`을 하나씩 바꾸면 각각 테스트가 실패하는 것도 확인했다.
+`server/`에서 실제 Mosquitto 2.1.2를 지정한 전체 `pytest`: 1,995개 통과, 기존 예상 실패 1개다. 브로커가 없으면 실제 브로커 테스트 17개만 건너뛴다.
+실제 브로커 fixture는 `tests/iot/conftest.py`로 옮겼고 접근 제어 테스트도 같은 fixture를 쓴다.
