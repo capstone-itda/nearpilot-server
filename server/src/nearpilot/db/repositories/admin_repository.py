@@ -13,7 +13,7 @@ from typing import Any
 
 from nearpilot.db.repositories._common import immediate_transaction, iso, new_id, to_json
 from nearpilot.shared.enums import AdminWriteOutcome, AdminWriteReason, Step
-from nearpilot.shared.models import AccountRegistration, AdminWriteResult
+from nearpilot.shared.models import AccountRegistration, AdminWriteResult, BeaconRegistration
 
 
 class SqliteAdminRepository:
@@ -35,6 +35,87 @@ class SqliteAdminRepository:
                 )
             self._append_audit({"event": "register_account", "user_id": req.user_id, "role": req.role.value})
             return AdminWriteResult(outcome=AdminWriteOutcome.APPLIED, reason=AdminWriteReason.OK)
+
+    def register_beacon(self, req: BeaconRegistration) -> AdminWriteResult:
+        with immediate_transaction(self._conn):
+            user_row = self._conn.execute(
+                "SELECT 1 FROM user WHERE user_id = ?", (req.user_id,)
+            ).fetchone()
+            if user_row is None:
+                return AdminWriteResult(
+                    outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.ACCOUNT_NOT_FOUND
+                )
+
+            by_id = self._conn.execute(
+                "SELECT user_id, uuid, major, minor FROM beacon WHERE beacon_id = ?", (req.beacon_id,)
+            ).fetchone()
+            if by_id is not None:
+                same = (
+                    by_id["user_id"] == req.user_id
+                    and by_id["uuid"] == req.beacon.uuid
+                    and by_id["major"] == req.beacon.major
+                    and by_id["minor"] == req.beacon.minor
+                )
+                if not same:
+                    # 같은 beacon_id가 다른 계정이나 다른 키로 바뀌는 등록은 거부한다 (spec §3 결정).
+                    return AdminWriteResult(
+                        outcome=AdminWriteOutcome.CONFLICT, reason=AdminWriteReason.STATE_CONFLICT
+                    )
+                self._activate_beacon(req)
+                self._append_audit(
+                    {
+                        "event": "register_beacon", "beacon_id": req.beacon_id, "user_id": req.user_id,
+                        "is_active": req.is_active,
+                    }
+                )
+                return AdminWriteResult(outcome=AdminWriteOutcome.APPLIED, reason=AdminWriteReason.OK)
+
+            by_key = self._conn.execute(
+                "SELECT user_id FROM beacon WHERE uuid = ? AND major = ? AND minor = ?",
+                (req.beacon.uuid, req.beacon.major, req.beacon.minor),
+            ).fetchone()
+            if by_key is not None:
+                if by_key["user_id"] != req.user_id:
+                    return AdminWriteResult(
+                        outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.BEACON_ALREADY_REGISTERED
+                    )
+                # 같은 계정이 같은 키를 다른 beacon_id로 중복 등록하는 것을 막는다 (spec §3 결정).
+                return AdminWriteResult(outcome=AdminWriteOutcome.CONFLICT, reason=AdminWriteReason.STATE_CONFLICT)
+
+            if req.is_active:
+                self._conn.execute(
+                    "UPDATE beacon SET is_active = 0 WHERE user_id = ?", (req.user_id,)
+                )
+            self._conn.execute(
+                "INSERT INTO beacon (beacon_id, user_id, uuid, major, minor, is_active) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    req.beacon_id, req.user_id, req.beacon.uuid, req.beacon.major, req.beacon.minor,
+                    1 if req.is_active else 0,
+                ),
+            )
+            self._append_audit(
+                {
+                    "event": "register_beacon", "beacon_id": req.beacon_id, "user_id": req.user_id,
+                    "is_active": req.is_active,
+                }
+            )
+            return AdminWriteResult(outcome=AdminWriteOutcome.APPLIED, reason=AdminWriteReason.OK)
+
+    def _activate_beacon(self, req: BeaconRegistration) -> None:
+        """같은 `beacon_id`의 재등록을 `is_active`대로 반영한다. 먼저 다른 비콘을 끈 뒤 이 비콘을
+
+        켠다 — `beacon_one_active_per_user` 부분 UNIQUE 인덱스가 중간에도 위반되지 않게 한다.
+        """
+        if req.is_active:
+            self._conn.execute(
+                "UPDATE beacon SET is_active = 0 WHERE user_id = ? AND beacon_id != ?",
+                (req.user_id, req.beacon_id),
+            )
+        self._conn.execute(
+            "UPDATE beacon SET is_active = ? WHERE beacon_id = ?",
+            (1 if req.is_active else 0, req.beacon_id),
+        )
 
     def _append_audit(self, payload: Mapping[str, Any]) -> None:
         """감사 payload에 토큰 원문·`token_hash`를 넣지 않는다 (NFR-08, #29)."""
