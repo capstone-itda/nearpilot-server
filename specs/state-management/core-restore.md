@@ -80,17 +80,17 @@
 | 상황 | 기대 동작 | 테스트 |
 |---|---|---|
 | `restore_pending()`이 예외를 던진다 | 모든 기기의 새 실행을 막는다. 빈 목록으로 보지 않는다 | `test_FR19_restore_failure_blocks_all` |
-| `pending` 명령의 예약 대기 제한이 서버 중단 중에 지났다 | `cancel_not_sent(expected=PENDING)`로 취소한다 | `test_FR19_restore_expired_pending_cancelled` |
-| 예약 뒤 명령 연결 전에 서버가 중단됐다 | 요청의 예약 시각으로 만료를 처리한다. 세션과 사용분을 남겨 두지 않는다 | `test_FR19_restore_request_without_command` |
-| 공용형 예약에 요청과 사용분만 있다 | 점유 세션 없이 요청의 만료 처리를 따른다 | `test_FR19_restore_shared_usage_without_command` |
+| `pending` 명령의 예약 대기 제한이 서버 중단 중에 지났다 | `cancel_not_sent(expected=PENDING)`로 취소한다. #78 전에는 보존하고 실행을 막는다 | `test_FR19_pending_kept_until_cancellation_contract` |
+| 예약 뒤 명령 연결 전에 서버가 중단됐다 | 요청의 예약 시각으로 만료를 처리한다. 세션과 사용분을 남겨 두지 않는다. #81 전에는 보존하고 실행을 막는다 | `test_FR19_restore_request_without_command_preserves_reservation` |
+| 공용형 예약에 요청과 사용분만 있다 | 점유 세션 없이 요청의 만료 처리를 따른다. #81 전에는 보존하고 실행을 막는다 | `test_FR19_restore_request_without_command_preserves_reservation` |
 | 기기 격리 뒤 복구 건 저장 전에 서버가 중단됐다 | 격리를 유지하고 누락된 복구 건을 보완한다 | `test_NFR04_restore_fault_without_recovery` |
 | `in_progress` 명령이 있다 | 새 명령을 보내지 않는다. `UNKNOWN`으로 격리하고 복구 건을 만든다 | `test_FR19_restore_in_progress_isolated` |
-| `in_progress` 명령의 늦은 성공 결과가 재시작 뒤 온다 | `record_result`로 넘긴다. `FAULT`를 자동으로 해제하지 않는다 | `test_FR07_restore_late_success_keeps_fault` |
+| `in_progress` 명령의 늦은 성공 결과가 재시작 뒤 온다 | `record_result`로 넘긴다. `FAULT`를 자동으로 해제하지 않는다 (#83 뒤 구현) | `test_FR07_restore_late_success_keeps_fault` |
 | `ACTIVE` 세션의 `rental_due_at`이 서버 중단 중에 지났다 | 점유를 유지한다. 초과시간에 중단 시간을 포함한다 | `test_FR20_restore_overdue_kept` |
 | `CLOSING` 세션이 있다 | 새 `check_id`로 반납 검사를 다시 요청한다 | `test_FR20_restore_closing_new_check` |
-| 기기가 재시작 뒤 `status`를 보내지 않는다 | 복원 상태를 끝내지 않는다. 새 실행을 막는다 | `test_FR19_restore_waits_fresh_status` |
-| 미완료 복구 건이 있다 | 같은 `recovery_id`로 복원한다. 새 복구 건을 만들지 않는다 | `test_NFR04_restore_keeps_recovery_id` |
-| 저장한 생성 시각과 기준 시각이 있다 | 재시작 시각으로 바꾸지 않는다 | `test_FR20_restore_keeps_stored_times` |
+| 기기가 재시작 뒤 `status`를 보내지 않는다 | 복원 상태를 끝내지 않는다. 새 실행을 막는다 | `test_FR19_restore_blocks_new_execution_until_confirmed` |
+| 미완료 복구 건이 있다 | 같은 `recovery_id`로 복원한다. 새 복구 건을 만들지 않는다 | `test_NFR04_restore_keeps_recovery_id_and_evidence_without_trusting_it` |
+| 저장한 생성 시각과 기준 시각이 있다 | 재시작 시각으로 바꾸지 않는다 | `test_FR20_pending_uses_stored_time_and_settings_snapshot` |
 
 ## 6. 결정
 
@@ -111,16 +111,16 @@
 
 ## 7. 가정
 
-- 미결: 판정이 기기별 복원 상태를 확인하는 접점. `shared`에 접점이 없다. 이 spec은 `core-execution`의 전송 시작 전에 복원 상태를 검사한다. 판정의 ②에서 복원 중인 기기를 후보에서 뺄지는 판정 담당과 정한다. 이슈 초안을 담당자에게 넘긴다.
-- 미결: 예약 대기 제한 만료 취소의 사유 코드. `core-execution`의 7절과 같은 이슈다.
-- DB 계약 확인 대기: 명령 미연결 요청의 `cancel_not_sent(expected=PENDING)` 처리다. 현재 인터페이스는 명령 부재 때의 기대 상태를 명시하지 않는다. 임의로 명령을 만들어 우회하지 않는다. DB 담당과 확인하고 공동 계약 보완이 필요하면 팀 결정으로 넘긴다.
-- 미결: 서버 실행 진입점. 복원은 서버 시작 때 게이트웨이 구독 뒤, 요청 수신 전에 한 번 실행한다고 가정한다.
+- 미결 — #82: 판정이 기기별 복원 상태를 확인하는 접점. `shared`에 접점이 없다. 이 spec은 `core-execution`의 전송 시작 전에 복원 상태를 검사한다. 판정의 ②에서 복원 중인 기기를 후보에서 뺄지는 판정 담당과 정한다.
+- 미결 — #78: 예약 대기 제한 만료 취소의 사유 코드. `core-execution`의 7절과 같은 이슈다.
+- 미결 — #81: 명령 미연결 요청의 `cancel_not_sent(expected=PENDING)` 처리다. 현재 인터페이스는 명령 부재 때의 기대 상태를 명시하지 않는다. 임의로 명령을 만들어 우회하지 않는다.
+- 미결 — #88: 서버 실행 진입점. 복원은 서버 시작 때 게이트웨이 구독 뒤, 요청 수신 전에 한 번 실행한다고 가정한다.
 - `in_progress` 명령을 `record_result(UNKNOWN)`으로 저장하는 근거는 서버의 재시작이다. 기기가 보고한 `unknown`과 구분하도록 근거에 출처를 남긴다 (FR-07).
 - 이번 구현은 기존 계약으로 가능한 복원과 상태 관리 인계를 검증한다. 예약 취소와 서버 조립은 완료로 표시하지 않는다.
 - 신선한 보고의 검증은 IOT가 맡는다고 가정한다. 이 서비스는 재시작 뒤 수신, 현재 연결과 온라인 유지 시간을 추가로 확인한다.
 - 센서 이상이나 구동 중인 보고로 새 실행을 열지 않는다. 현재의 정상 보고를 기다린다.
 - 예약 대기 제한은 최초 조회 때 받은 설정을 보존한다. 저장한 예약 시각으로 만료 여부를 구분한다.
-- 판정의 복원 조회 접점, 취소 사유와 명령 미연결 취소는 `restore-decisions.md`의 이슈 초안으로 넘긴다.
+- 판정의 복원 조회 접점, 취소 사유와 명령 미연결 취소의 초안은 `restore-decisions.md`에 있다. 이슈는 #82, #78, #81이다.
 - 실제 서버 시작, 판정과 실행 서비스의 차단 접점 연결, 늦은 실행 결과의 인계는 후속 작업이다. spec은 구현 중으로 유지한다.
 
 ## 8. 테스트

@@ -88,16 +88,16 @@
 | 상황 | 기대 동작 | 테스트 |
 |---|---|---|
 | 방문자 A가 켜고 B도 켠다. A만 떠난다 | 조명을 켜 둔다 | `test_FR20_light_stays_on_while_holder_remains` |
-| 유일한 유지 대상자가 떠난다 | 미수신 시간과 유예 시간 뒤 꺼짐을 요청한다 | `test_FR20_last_holder_leave_requests_off` |
+| 유일한 유지 대상자가 떠난다 | 미수신 시간과 유예 시간 뒤 꺼짐을 요청한다. #86 전에는 꺼짐 후보만 반환한다 | `test_FR20_last_holder_leave_off_candidate` |
 | 유예 중 같은 장소의 다른 앵커가 본인 비콘을 받는다 | 타이머를 초기화한다 | `test_FR20_same_place_anchor_resets_timer` |
-| 다른 장소의 앵커가 본인 비콘을 받는다 | 타이머를 초기화하지 않는다 | `test_FR20_other_place_does_not_reset` |
-| 다른 계정의 비콘을 받는다 | 타이머를 초기화하지 않는다 | `test_FR20_other_account_does_not_reset` |
+| 다른 장소의 앵커가 본인 비콘을 받는다 | 타이머를 초기화하지 않는다 | `test_FR20_other_place_account_connection_does_not_reset` |
+| 다른 계정의 비콘을 받는다 | 타이머를 초기화하지 않는다 | `test_FR20_other_place_account_connection_does_not_reset` |
 | 꺼짐 전송 직전에 새 유지 대상자가 생긴다 | 꺼짐을 보내지 않는다 | `test_FR20_recheck_holders_before_off` |
 | 유지 대상자의 승인이 만료된다 | 그 계정을 유지 대상자에서 뺀다 | `test_FR20_expired_permission_removes_holder` |
 | 조명이 켜진 지 오래됐지만 유지 대상자가 있다 | 끄지 않는다 | `test_FR20_no_time_based_off` |
 | 재시작 직후 유지 대상자가 없다 | 초기 참여 대기 전에는 끄지 않는다 | `test_FR20_restart_waits_initial_period` |
 | 초기 참여 대기 뒤 켜짐을 확인하지 못했다 | 꺼짐을 요청하지 않는다 | `test_FR20_restart_unconfirmed_light_not_off` |
-| 조명이 `FAULT`다 | 꺼짐을 요청하지 않는다 | `test_FR20_fault_light_not_off` |
+| 조명이 `FAULT`다 | 꺼짐을 요청하지 않는다 | `test_FR20_unavailable_light_not_candidate` |
 | 명시적 `off`가 성공한다 | 그 조명의 유지 대상자를 비운다 | `test_FR20_explicit_off_clears_holders` |
 
 ## 6. 결정
@@ -119,12 +119,12 @@
 
 ## 7. 가정
 
-- 미결: 서버가 시작하는 꺼짐 명령의 실행 경로. 현재 계약의 실행은 판정이 만든 `ExecutionContext`에서 시작한다. `ExecutionContext`는 원래 `UseRequest`와 `internal_request_id`를 담는다. `ExecutionStore.link_command`도 `internal_request_id`를 키로 쓴다. 방문자 요청이 없는 꺼짐에는 이 값이 없다. 이 경로는 `shared`와 DB 계약을 바꿔야 한다. 이슈 초안을 담당자에게 넘긴다.
+- 미결 — #86: 서버가 시작하는 꺼짐 명령의 실행 경로. 현재 계약의 실행은 판정이 만든 `ExecutionContext`에서 시작한다. `ExecutionContext`는 원래 `UseRequest`와 `internal_request_id`를 담는다. `ExecutionStore.link_command`도 `internal_request_id`를 키로 쓴다. 방문자 요청이 없는 꺼짐에는 이 값이 없다. 이 경로는 `shared`와 DB 계약을 바꿔야 한다.
 - 위 미결은 이미 정해진 자동 꺼짐의 저장·실행 연결에 관한 것이다. FR-20의 이탈 처리는 CORE가 내부에서 시작한다. 방문자 접근 승인을 새로 받는 기능을 요구하지 않는다.
-- 미결: 이탈에 따른 꺼짐의 활성화 방법. FR-20은 검증을 마친 뒤 활성화하라고 한다. 구현 때 활성화 방법을 정한다. 새 공용 설정이 필요한 경우에는 팀과 계약을 맞춘다.
+- 미결 — #88: 이탈에 따른 꺼짐의 활성화 방법. FR-20은 검증을 마친 뒤 활성화하라고 한다. 구현 때 활성화 방법을 정한다. 새 공용 설정이 필요한 경우에는 팀과 계약을 맞춘다.
 - 위 두 미결이 정해지기 전에는 실제 꺼짐 실행과 활성화의 구현을 보류한다. 유지 대상자 관리와 이탈 판단은 fake로 검증할 수 있다. 기록만 하는 콜백을 실제 꺼짐 경로의 완료로 보지 않는다.
 - 유지 대상자의 사용 권한은 `PolicyChecker.check()`가 `OK`를 반환하는지로 확인한다고 가정한다. 검사 주기는 이탈 판단 주기와 같다.
-- 위 가정은 기존 spec의 단위 검증에만 적용한다. 횟수형 승인 소진 뒤 유지 권한의 뜻은 정책 담당과 확인한다.
+- 위 가정은 기존 spec의 단위 검증에만 적용한다. 횟수형 승인 소진 뒤 유지 권한의 뜻은 #87에서 정한다.
 - `resume()` 이전에는 꺼짐 후보를 만들지 않는다. 재시작한 서비스는 유지 대상자와 물리 보고를 복원하지 않는다.
 - 신선한 물리 보고의 판단은 IOT가 맡는다. 이 서비스는 현재 연결과 `online_ttl_sec` 안의 수신을 확인한다.
 - 실제 꺼짐 저장·전송·전송 직전 잠금 범위, 활성화 방법과 유지 권한 확인은 `shared-light-decisions.md`의 이슈 초안으로 넘긴다. 이슈는 생성하지 않았다.
