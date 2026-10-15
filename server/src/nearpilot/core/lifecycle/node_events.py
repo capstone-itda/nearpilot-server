@@ -14,7 +14,7 @@ from nearpilot.core.lifecycle.fault_recovery import FaultRecoveryService
 from nearpilot.core.lifecycle.release import ReleaseService
 from nearpilot.core.lifecycle.restore import RestoreService
 from nearpilot.core.lifecycle.shared_light import SharedLightService
-from nearpilot.shared.enums import DeviceState, ExecutionStatus, SessionState, StoreOutcome
+from nearpilot.shared.enums import Action, DeviceState, ExecutionStatus, SessionState, StoreOutcome
 from nearpilot.shared.errors import StoreError
 from nearpilot.shared.interfaces import ExecutionStore, ProximityEstimator, Repository
 from nearpilot.shared.models import (
@@ -38,6 +38,12 @@ class _RssiDelivery:
     observed: bool = False
     light_observed: bool = False
     lock: Any = field(default_factory=Lock)
+
+
+
+def _action(context: ExecutionContext) -> Action:
+    """서버 내부 요청에는 방문자 요청이 없다 (#86)."""
+    return context.internal_request.action if context.request is None else context.request.action
 
 
 class NodeEventService:
@@ -180,7 +186,7 @@ class NodeEventService:
                 command.command_id != result.command_id
                 or command.node_id != result.node_id or context.node_id != result.node_id
                 or command.internal_request_id != context.internal_request_id
-                or command.action != context.request.action or command.use_id != context.use_id
+                or command.action != _action(context) or command.use_id != context.use_id
                 or command.usage_id != context.usage_id
                 or command.execution_kind != context.execution_kind
             ):
