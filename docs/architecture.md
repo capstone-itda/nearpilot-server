@@ -392,6 +392,7 @@ CORE는 실행·종료·안전을 판단한다. DB는 현재 상태와 기록 �
 - 센서 이상과 종료 뒤 안전 미확인은 `isolate_device`로 기기만 `FAULT`로 둔다. 점유 세션과 승인 사용분은 보존한다.
 - `Repository`의 개별 상태 갱신 함수는 쓰지 않는다. 예약 이후의 쓰기는 `ExecutionStore`로만 한다.
 - `execution_context(command_id)`는 판정이 인계한 원래 `ExecutionContext`를 반환한다 ([#83](https://github.com/capstone-itda/nearpilot-server/issues/83)). DB는 저장한 요청, 확정 대상, 점유·사용분 연결, 실행 종류, 예약 시각과 `save_decision`이 저장한 적용 `Settings`의 전체 스냅샷으로 문맥을 만든다. 현재 설정으로 채우지 않는다. 명령이 없으면 `None`이다.
+- 근거(`evidence`)의 값은 JSON 기본 타입(`str`, `int`, `float`, `bool`, `None`, list, 문자열 키 mapping)만 쓴다. 시각은 UTC ISO 8601 문자열로 넣는다. DB는 저장한 값을 그대로 돌려준다 ([#113](https://github.com/capstone-itda/nearpilot-server/issues/113)).
 - 상태 관리는 재시작 뒤 늦은 실행 결과를 이 문맥으로 정산한다. 문맥이 없거나 조회에 실패하면 인계 실패로 알린다. 새 명령을 만들거나 실행을 다시 인계하지 않는다.
 
 ### 재시작 복원 조회
@@ -440,6 +441,7 @@ DB는 기기별 복원 묶음을 반환한다. 복원 묶음 하나는 현재 �
 - 같은 미해결 장애는 같은 `recovery_id`를 유지한다. 별개의 장애는 새 `recovery_id`다. 이전 복구 건의 복구 승인은 새 장애에 적용하지 않는다.
 - 저장 여부가 불명이면 상태 관리는 `recovery(recovery_id)`로 조회한다. `recovery_id`가 같은데 대상 연결이 다르면 DB는 충돌을 반환한다.
 - DB는 완료 결과, 그때 채택한 근거, 정산 내용을 보존한다. 완료 뒤의 새 보고로 당시 근거를 덮어쓰지 않는다.
+- 근거(`evidence`)의 값은 JSON 기본 타입(`str`, `int`, `float`, `bool`, `None`, list, 문자열 키 mapping)만 쓴다. 시각은 UTC ISO 8601 문자열로 넣는다. DB는 저장한 값을 그대로 돌려준다 ([#113](https://github.com/capstone-itda/nearpilot-server/issues/113)).
 
 `settle_recovery()`는 아래 논리 정보를 받는다. DB는 ID로 기존 기록을 조회할 수 있다. 상태 관리는 모든 기록을 복사해서 넘기지 않는다.
 
@@ -721,6 +723,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - 기준 `version`은 1부터 시작하는 정수다. 검사 항목이나 판정 조건을 바꾸면 1 올린다.
 - `evidence`는 기준의 검사 항목마다 `{"value": bool, "observed_at": ISO 8601}`을 담는다. 기준의 항목이 하나라도 없으면 유효하지 않은 결과다.
 - 기기는 모든 항목이 `true`일 때만 `passed`다. 하나라도 `false`이면 `not_ready`다. 측정에 실패하면 `unknown`이다.
+- 근거(`evidence`)의 값은 JSON 기본 타입(`str`, `int`, `float`, `bool`, `None`, list, 문자열 키 mapping)만 쓴다. 시각은 UTC ISO 8601 문자열로 넣는다. DB는 저장한 값을 그대로 돌려준다 ([#113](https://github.com/capstone-itda/nearpilot-server/issues/113)).
 - 미결: 같은 `check_id`에 다른 내용이 온 충돌을 펌웨어가 보고하는 형식. 펌웨어 담당을 배정한 뒤 정한다. 그때까지 서버는 응답 기한 초과로 취급한다.
 
 ### 기기 발표와 관측의 저장
