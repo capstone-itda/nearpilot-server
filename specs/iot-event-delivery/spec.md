@@ -4,7 +4,7 @@
 - 구현 브랜치: `feat/iot-event-delivery`
 - 요구사항: FR-04, FR-05, FR-07, FR-13, FR-20, NFR-08
 - 따르는 결정: architecture.md에 반영한 #19, #31, #32, #38, #140~#143이다.
-- 상태: S1·S4를 결정했다. 선행 작업 `iot-messages`와 연결 모듈은 main에 있다.
+- 상태: 보고 검증과 실행 중 메모리 재인계를 구현했다. 명령 대기의 연결은 `iot-command-gateway`가 한다.
 
 ## 1. 왜
 
@@ -131,3 +131,7 @@ CORE 인계 실패를 전달 완료로 버리면 실행 결과와 장애 근거�
 | NFR-08 | `test_NFR08_rejection_logs_omit_secrets` | 거부 기록에 비밀값을 남기지 않는다 |
 
 CORE는 `NodeEventSink` fake로 대신한다. 시간과 인계 실패를 제어하고 실제 대기 없이 재시도를 확인한다.
+
+2026-10-16에 `server/tests/iot/test_delivery.py`의 새 테스트 37개를 확인했다.
+연결 동률·포화 거부·줄 분리·`not_ready` 근거 검사를 하나씩 없애면 각각 테스트가 실패하는 것도 확인했다.
+`server/`에서 실제 Mosquitto 2.1.2를 지정한 전체 `pytest`: 1,936개 통과, 기존 예상 실패 1개다.
