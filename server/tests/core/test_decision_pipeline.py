@@ -900,3 +900,71 @@ def test_FR11_배정_정보를_공개하지_않는다():
     ok = pipe.decide(request(ANY, request_id="r9"))
     text = repr(ok)
     assert "allocation" not in text and "locker-1" not in text and "u1" not in text
+
+
+# ── ⓪ 오류로 거부한 요청의 재판정 (#76) ─────────────────────────────────
+
+
+def _retrying_link(repo):
+    """DB 가 약속하는 ⓪ 동작: 같은 키는 같은 내부 ID 를 쓰고, INTERNAL_ERROR 로 끝난 판정만 한 번 새 시도로 넘긴다."""
+    state = {"decision": None, "in_progress": False}
+
+    def link(req, digest):
+        if state["in_progress"]:
+            return RequestLink("i1", False, False)
+        prev = state["decision"]
+        if prev is None or prev.reason is ReasonCode.INTERNAL_ERROR:
+            state["decision"], state["in_progress"] = None, True
+            return RequestLink("i1", True, False)
+        return RequestLink("i1", False, False, previous=prev)
+
+    def save(decision, record):
+        state["decision"], state["in_progress"] = decision, False
+        repo.saved.append(decision)
+        return StoreResult(StoreOutcome.APPLIED)
+
+    repo.link_request = link
+    repo.save_decision = save
+    return state
+
+
+def test_FR18_오류로_거부한_요청을_같은_입력으로_다시_보내면_다시_판정한다():
+    pipe, repo, *_ = build()
+    _retrying_link(repo)
+    repo.raise_on = "rssi_since"
+    assert pipe.decide(request()).reason is ReasonCode.INTERNAL_ERROR
+    repo.raise_on = None
+    d = pipe.decide(request())
+    assert (d.verdict, d.reason, d.internal_request_id) == (Verdict.OK, ReasonCode.OK, "i1")
+    assert [x.reason for x in repo.saved] == [ReasonCode.INTERNAL_ERROR, ReasonCode.OK]
+
+
+def test_FR18_재판정도_실패하면_다음_재전송이_다시_판정한다():
+    pipe, repo, *_ = build()
+    _retrying_link(repo)
+    repo.raise_on = "rssi_since"
+    assert pipe.decide(request()).reason is ReasonCode.INTERNAL_ERROR
+    assert pipe.decide(request()).reason is ReasonCode.INTERNAL_ERROR
+    repo.raise_on = None
+    assert pipe.decide(request()).verdict is Verdict.OK
+
+
+def test_FR18_확정한_판정은_재전송해도_다시_판정하지_않는다():
+    pipe, repo, *_ = build()
+    _retrying_link(repo)
+    first = pipe.decide(request())
+    assert first.verdict is Verdict.OK
+    assert pipe.decide(request()) == first
+    assert len(repo.reserved) == 1
+
+
+def test_FR18_재판정이_진행_중이면_같은_키는_다시_판정하지_않고_거부한다():
+    pipe, repo, *_ = build()
+    state = _retrying_link(repo)
+    repo.raise_on = "rssi_since"
+    pipe.decide(request())
+    repo.raise_on = None
+    repo.link_request(request(), "d")  # 첫 번째 재전송이 시도를 가져갔다
+    assert state["in_progress"]
+    d = pipe.decide(request())  # 동시에 온 두 번째 재전송
+    assert d.verdict is Verdict.DENY and len(repo.reserved) == 0
