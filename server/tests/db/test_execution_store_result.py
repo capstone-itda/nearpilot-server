@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from nearpilot.shared.enums import Action, CommandOutcome, StoreConflictReason, StoreOutcome
 
-from tests.db.conftest import (
+from conftest import (
     insert_approval,
     insert_approval_usage,
     insert_node,

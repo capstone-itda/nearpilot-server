@@ -6,7 +6,7 @@ import pytest
 
 from nearpilot.shared.enums import Action, StoreOutcome
 
-from tests.db.conftest import (
+from conftest import (
     insert_approval,
     insert_approval_usage,
     insert_node,

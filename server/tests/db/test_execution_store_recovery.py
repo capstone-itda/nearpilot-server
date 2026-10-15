@@ -21,7 +21,7 @@ from nearpilot.shared.enums import (
 )
 from nearpilot.shared.models import ApprovalUsageSettlement, RecoveryEvidence, RecoveryRecord, RecoverySettlement
 
-from tests.db.conftest import (
+from conftest import (
     insert_approval,
     insert_approval_usage,
     insert_node,

@@ -8,7 +8,7 @@ import pytest
 
 from nearpilot.shared.enums import Action, ApprovalUsageState, ExecutionStatus, RecoveryStatus, SessionState
 
-from tests.db.conftest import (
+from conftest import (
     insert_approval,
     insert_approval_usage,
     insert_node,

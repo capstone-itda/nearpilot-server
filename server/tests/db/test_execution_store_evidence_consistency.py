@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from nearpilot.shared.enums import Action, EndReason, ExecutionStatus, ReasonCode, StoreOutcome
 
-from tests.db.conftest import insert_node, insert_place, insert_request, insert_use_session, insert_user
+from conftest import insert_node, insert_place, insert_request, insert_use_session, insert_user
 
 
 def test_FR19_execution_evidence_with_datetime_mismatches_after_requery(store, conn):

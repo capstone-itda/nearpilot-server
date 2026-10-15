@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from nearpilot.shared.enums import Action, ExecutionKind, ExecutionStatus, StoreOutcome
 
-from tests.db.conftest import (
+from conftest import (
     insert_approval,
     insert_approval_usage,
     insert_node,

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from nearpilot.shared.enums import Action, EndReason, StoreConflictReason, StoreOutcome
 
-from tests.db.conftest import insert_node, insert_place, insert_request, insert_use_session, insert_user
+from conftest import insert_node, insert_place, insert_request, insert_use_session, insert_user
 
 _CLOSED_AT = datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc)
 

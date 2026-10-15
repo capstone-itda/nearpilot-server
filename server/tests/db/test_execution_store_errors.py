@@ -13,7 +13,7 @@ from nearpilot.db.schema import connect
 from nearpilot.shared.enums import Action
 from nearpilot.shared.errors import StoreNotApplied
 
-from tests.db.conftest import insert_node, insert_place, insert_request, insert_use_session, insert_user
+from conftest import insert_node, insert_place, insert_request, insert_use_session, insert_user
 
 
 def test_NFR03_store_not_applied_on_busy(tmp_path):

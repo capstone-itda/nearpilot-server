@@ -22,7 +22,59 @@ from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import SafetyCheckOutcome, Verdict
 from nearpilot.shared.models import SafetyCheckResult
 
-from tests.db.conftest import insert_node, insert_place, insert_request, insert_use_session, insert_user
+# tests/db/conftest.py와 같은 역할의 최소 seed 함수다. pytest는 tests/db/, tests/integration/를
+# 각각 독립된 최상위 모듈로 다루므로(둘 다 __init__.py가 없다) 디렉터리를 넘는 임포트를 하지
+# 않는다 (tests/db/test_reserve.py 등의 기존 관례 — bare `from conftest import ...`).
+
+
+def insert_user(conn, user_id="visitor-1", token_hash="hash-1", role="visitor", name="tester"):
+    conn.execute(
+        "INSERT INTO user (user_id, name, token_hash, role) VALUES (?, ?, ?, ?)",
+        (user_id, name, token_hash, role),
+    )
+
+
+def insert_place(conn, place_id="place1", owner_user_id="visitor-1", name="place"):
+    conn.execute(
+        "INSERT INTO place (place_id, owner_user_id, name) VALUES (?, ?, ?)",
+        (place_id, owner_user_id, name),
+    )
+
+
+def insert_node(
+    conn, node_id="locker-1", place_id="place1", capability="locker", occupancy="rental",
+    trust_state="trusted", device_state="ACTIVE", session_id=None,
+):
+    conn.execute(
+        "INSERT INTO node (node_id, place_id, capability, occupancy, trust_state, device_state, "
+        "exclusive_group, release_policy, session_id, session_first_seen_at, last_seen_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, NULL, '{}', ?, NULL, NULL)",
+        (node_id, place_id, capability, occupancy, trust_state, device_state, session_id),
+    )
+
+
+def insert_request(
+    conn, internal_request_id="internal-1", user_id="visitor-1", request_id="ext-1",
+    input_digest="digest-1", target_spec="nearest:locker", action="open",
+    received_at="2026-01-01T00:00:00+00:00",
+):
+    conn.execute(
+        "INSERT INTO request (internal_request_id, user_id, request_id, input_digest, "
+        "parent_internal_request_id, node_id, target_spec, action, received_at) "
+        "VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+        (internal_request_id, user_id, request_id, input_digest, target_spec, action, received_at),
+    )
+
+
+def insert_use_session(
+    conn, use_id="use-1", internal_request_id="internal-1", user_id="visitor-1",
+    node_id="locker-1", state="ACTIVE", rental_due_at=None,
+):
+    conn.execute(
+        "INSERT INTO use_session (use_id, internal_request_id, user_id, node_id, state, "
+        "rental_due_at, release_policy) VALUES (?, ?, ?, ?, ?, ?, '{}')",
+        (use_id, internal_request_id, user_id, node_id, state, rental_due_at),
+    )
 
 
 class Clock:
