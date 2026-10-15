@@ -11,11 +11,12 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
-from nearpilot.db.repositories._common import immediate_transaction, iso, new_id, to_json
+from nearpilot.db.repositories._common import immediate_transaction, iso, new_id, parse_iso, to_json
 from nearpilot.shared.enums import AdminWriteOutcome, AdminWriteReason, Step, TrustState
 from nearpilot.shared.models import (
     AccountRegistration,
     AdminWriteResult,
+    BeaconKey,
     BeaconRegistration,
     PlaceAssignment,
     PolicyRevision,
@@ -223,6 +224,81 @@ class SqliteAdminRepository:
                     "version": revision.version,
                 }
             )
+            return AdminWriteResult(outcome=AdminWriteOutcome.APPLIED, reason=AdminWriteReason.OK)
+
+    def start_collection(
+        self, collection_id: str, beacon: BeaconKey, label: str, started_at: datetime
+    ) -> AdminWriteResult:
+        with immediate_transaction(self._conn):
+            beacon_row = self._conn.execute(
+                "SELECT beacon_id FROM beacon WHERE uuid = ? AND major = ? AND minor = ?",
+                (beacon.uuid, beacon.major, beacon.minor),
+            ).fetchone()
+            if beacon_row is None:
+                return AdminWriteResult(
+                    outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.BEACON_NOT_FOUND
+                )
+            beacon_id = beacon_row["beacon_id"]
+
+            if label != "none":
+                node_row = self._conn.execute("SELECT 1 FROM node WHERE node_id = ?", (label,)).fetchone()
+                if node_row is None:
+                    return AdminWriteResult(
+                        outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.NODE_NOT_FOUND
+                    )
+
+            existing = self._conn.execute(
+                "SELECT 1 FROM collection_run WHERE collection_id = ?", (collection_id,)
+            ).fetchone()
+            if existing is not None:
+                return AdminWriteResult(
+                    outcome=AdminWriteOutcome.CONFLICT, reason=AdminWriteReason.STATE_CONFLICT
+                )
+
+            # 진행 중이거나(ended_at IS NULL) started_at 이후에 끝난 회차와 겹친다.
+            # 끝 시각과 다음 시작 시각이 같으면 겹치지 않는다 (spec §3 결정).
+            overlap = self._conn.execute(
+                "SELECT 1 FROM collection_run WHERE beacon_id = ? AND (ended_at IS NULL OR ended_at > ?)",
+                (beacon_id, iso(started_at)),
+            ).fetchone()
+            if overlap is not None:
+                return AdminWriteResult(
+                    outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.COLLECTION_OVERLAP
+                )
+
+            self._conn.execute(
+                "INSERT INTO collection_run (collection_id, beacon_id, label, started_at, ended_at) "
+                "VALUES (?, ?, ?, ?, NULL)",
+                (collection_id, beacon_id, label, iso(started_at)),
+            )
+            self._append_audit(
+                {"event": "start_collection", "collection_id": collection_id, "beacon_id": beacon_id}
+            )
+            return AdminWriteResult(outcome=AdminWriteOutcome.APPLIED, reason=AdminWriteReason.OK)
+
+    def end_collection(self, collection_id: str, ended_at: datetime) -> AdminWriteResult:
+        with immediate_transaction(self._conn):
+            row = self._conn.execute(
+                "SELECT started_at, ended_at FROM collection_run WHERE collection_id = ?", (collection_id,)
+            ).fetchone()
+            if row is None:
+                return AdminWriteResult(
+                    outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.COLLECTION_NOT_FOUND
+                )
+            if row["ended_at"] is not None:
+                return AdminWriteResult(
+                    outcome=AdminWriteOutcome.CONFLICT, reason=AdminWriteReason.STATE_CONFLICT
+                )
+            if ended_at <= parse_iso(row["started_at"]):
+                return AdminWriteResult(
+                    outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.INVALID_INTERVAL
+                )
+
+            self._conn.execute(
+                "UPDATE collection_run SET ended_at = ? WHERE collection_id = ?",
+                (iso(ended_at), collection_id),
+            )
+            self._append_audit({"event": "end_collection", "collection_id": collection_id})
             return AdminWriteResult(outcome=AdminWriteOutcome.APPLIED, reason=AdminWriteReason.OK)
 
     def _activate_beacon(self, req: BeaconRegistration) -> None:
