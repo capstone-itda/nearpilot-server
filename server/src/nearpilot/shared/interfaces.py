@@ -596,6 +596,7 @@ class AdminRepository(Protocol):
         끝 시각과 다음 시작 시각이 같으면 겹치지 않는다.
         등록되지 않은 비콘은 BEACON_NOT_FOUND, 없는 node_id 라벨은 NODE_NOT_FOUND,
         이미 있는 collection_id 는 STATE_CONFLICT 로 거부한다.
+        비활성 비콘은 BEACON_NOT_FOUND 로 거부한다 (#138).
         """
         ...
 
