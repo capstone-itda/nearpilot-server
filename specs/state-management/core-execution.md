@@ -130,19 +130,19 @@ sequenceDiagram
 | 같은 `internal_request_id`를 두 스레드가 동시에 인계한다 | `send()`를 한 번만 부른다 | `test_NFR03_concurrent_handover_sends_once` |
 | 재검사가 `ASK`를 반환한다 | 전송하지 않는다. `cancel_not_sent(expected=PENDING)`를 부른다. `recheck`에 그 판정을 담는다 | `test_FR18_recheck_reject_blocks_send` |
 | `recheck()`가 예외를 던진다 | 전송하지 않는다. `RECHECK_FAILED`로 정리한다 | `test_FR18_recheck_exception_blocks_send` |
-| 정상 운영 중 미전송 예약의 대기 제한이 지난다 | 예약 시각 기준으로 만료 취소한다. 재시작을 기다리지 않는다 | `test_FR19_live_pending_expires` |
+| 정상 운영 중 미전송 예약의 대기 제한이 지난다 | 예약 시각 기준으로 만료 취소한다. 재시작을 기다리지 않는다 (#78, #80 뒤 구현) | `test_FR19_live_pending_expires` |
 | 재검사 중 예약 대기 제한이 지난다 | 전송하지 않고 조건부 취소한다 | `test_FR19_expiry_during_recheck_blocks_send` |
-| 만료 취소와 전송 시작이 경합한다 | DB에서 성공한 상태 전이만 따른다. 전송 시작 뒤 임의로 사용분을 반환하지 않는다 | `test_FR19_expiry_races_begin_send` |
-| 다른 명령이 같은 기기에서 진행 중이다 | `begin_send()`가 `COMMAND_IN_PROGRESS`다. 전송하지 않는다 | `test_FR19_command_in_progress_not_sent` |
-| 반납이 시작되어 기기가 `CLOSING`이다 | `begin_send()`가 `STATE_CONFLICT`다. 전송하지 않는다 | `test_FR19_closing_blocks_send` |
-| 기기의 현재 연결 ID가 없다 | 전송하지 않는다. 미전송으로 정리한다 | `test_FR06_no_session_not_sent` |
-| IOT가 `NOT_SENT`를 반환한다 | `cancel_not_sent(expected=IN_PROGRESS)`를 부른다 | `test_FR19_not_sent_releases_usage` |
-| IOT가 `UNKNOWN`을 반환한다 | `record_result(UNKNOWN)`을 부른다. 사용분을 반환하지 않는다. 복구 건을 만든다 | `test_FR07_unknown_isolates_and_holds` |
-| IOT가 `FAILED`를 반환한다 | `record_result(FAILED)`을 부른다. 복구 건을 만든다 | `test_FR07_failed_isolates` |
+| 만료 취소와 전송 시작이 경합한다 | DB에서 성공한 상태 전이만 따른다. 전송 시작 뒤 임의로 사용분을 반환하지 않는다 (#78, #80 뒤 구현) | `test_FR19_expiry_races_begin_send` |
+| 다른 명령이 같은 기기에서 진행 중이다 | `begin_send()`가 `COMMAND_IN_PROGRESS`다. 전송하지 않는다 | `test_FR19_begin_conflict_blocks_send` |
+| 반납이 시작되어 기기가 `CLOSING`이다 | `begin_send()`가 `STATE_CONFLICT`다. 전송하지 않는다 | `test_FR19_begin_conflict_blocks_send` |
+| 기기의 현재 연결 ID가 없다 | 전송하지 않는다. 미전송으로 정리한다. #78 전에는 예약을 보존한다 | `test_FR06_no_session_keeps_reservation_without_fake_cancellation` |
+| IOT가 `NOT_SENT`를 반환한다 | `cancel_not_sent(expected=IN_PROGRESS)`를 부른다. #78 전에는 `in_progress`를 유지한다 | `test_FR19_iot_not_sent_waits_for_reason_contract` |
+| IOT가 `UNKNOWN`을 반환한다 | `record_result(UNKNOWN)`을 부른다. 사용분을 반환하지 않는다. 복구 건을 만든다 | `test_NFR04_failed_or_unknown_creates_recovery_and_holds_usage` |
+| IOT가 `FAILED`를 반환한다 | `record_result(FAILED)`을 부른다. 복구 건을 만든다 | `test_NFR04_failed_or_unknown_creates_recovery_and_holds_usage` |
 | IOT가 `REJECTED`를 반환한다 | `record_result(REJECTED)`을 부른다. 복구 건을 만들지 않는다 | `test_FR19_device_busy_rejected_not_fault` |
-| 재조작이 `REJECTED`다 | 기존 점유와 `rental_due_at`을 보존한다. `rental_due_at`을 넘기지 않는다 | `test_FR19_reoperation_reject_keeps_session` |
-| 재조작이 성공한다 | `rental_due_at`에 `None`을 넘긴다 | `test_FR19_reoperation_success_keeps_due` |
-| `record_result`가 `StoreOutcomeUnknown`을 던진다 | `execution()`으로 다시 조회한다. 확인 전에는 `SUCCEEDED`를 반환하지 않는다 | `test_FR19_store_unknown_requeries` |
+| 재조작이 `REJECTED`다 | 기존 점유와 `rental_due_at`을 보존한다. `rental_due_at`을 넘기지 않는다 | `test_FR19_reoperation_reject_keeps_existing_due` |
+| 재조작이 성공한다 | `rental_due_at`에 `None`을 넘긴다 | `test_FR19_reoperation_and_shared_success_keep_due` |
+| `record_result`가 `StoreOutcomeUnknown`을 던진다 | `execution()`으로 다시 조회한다. 확인 전에는 `SUCCEEDED`를 반환하지 않는다 | `test_FR19_store_unknown_requeries_before_success` |
 | 결과 대기가 끝난 뒤 성공 결과가 온다 | `record_result`로 넘긴다. DB가 `CONFLICT`를 반환하면 `FAULT`를 유지한다 | `test_FR07_late_success_keeps_fault` |
 | 같은 결과 사건이 `send()` 반환과 `on_result()`로 두 번 온다 | 완료한 사건은 중복 저장하지 않는다. 저장 재시도는 `ALREADY_APPLIED`를 따른다 | `test_FR07_same_event_settled_once` |
 
@@ -162,21 +162,21 @@ sequenceDiagram
 
 ## 7. 가정
 
-- 미결: 아래 취소에 쓰는 사유 코드. `cancel_not_sent`는 `ReasonCode`를 받지만 세 경우에 맞는 값이 없다.
+- 미결 — #78: 아래 취소에 쓰는 사유 코드. `cancel_not_sent`는 `ReasonCode`를 받지만 세 경우에 맞는 값이 없다.
   - 예약 대기 제한의 만료 취소
   - 기기의 현재 연결 ID가 없어서 보내지 않은 명령의 취소
   - IOT가 미전송을 증명한 명령의 취소
-- 위 사유 코드 추가는 팀 결정이다. 이슈 초안을 담당자에게 넘긴다.
-- 미결: 재검사가 아닌 이유로 전송을 막았을 때 판정에 사유를 알리는 방법. `ExecutionResult`에는 사유 필드가 없다. `COMMAND_IN_PROGRESS`, `STATE_CONFLICT`, 연결 없음을 판정이 구분할 수 없다. 이슈 초안을 담당자에게 넘긴다.
+- 위 사유 코드 추가는 팀 결정이다.
+- 미결 — #79: 재검사가 아닌 이유로 전송을 막았을 때 판정에 사유를 알리는 방법. `ExecutionResult`에는 사유 필드가 없다. `COMMAND_IN_PROGRESS`, `STATE_CONFLICT`, 연결 없음을 판정이 구분할 수 없다.
 - 위 두 미결이 정해지기 전에는 그 경로의 구현을 보류한다. 임시 `not_sent` 반환으로 취소 저장과 사유 전달의 완료를 대신하지 않는다.
-- 계약 확인 대기: 인계 전 예약과 명령 미연결 예약의 시각을 정상 운영 중 확보하는 경로다. `ExecutionContext`와 기존 조회 계약으로 충족하지 못하면 판정·DB 담당과 접점을 정한다.
+- 미결 — #80, #81: 인계 전 예약과 명령 미연결 예약의 시각을 정상 운영 중 확보하는 경로다. `ExecutionContext`와 기존 조회 계약으로 충족하지 못하면 판정·DB 담당과 접점을 정한다.
 - 선행 의존: 복구 건 생성은 `core-fault-recovery`, 복원 상태는 `core-restore`가 제공한다. 이 spec은 두 spec보다 먼저 단독 완료할 수 있다고 가정하지 않는다.
 - 이번 구현은 명령에 저장한 `reserved_at`을 전송 직전까지 확인한다. 시각이 없거나 만료하면 전송을 막는다. 인계 전 예약의 만료 감시와 취소 저장은 선행 계약 뒤 구현한다.
 - 연결 없음과 복원 미완료는 `pending`을 유지한다. IOT의 확실한 미전송은 취소 사유가 정해질 때까지 `in_progress`를 유지한다. 임시 `not_sent`를 반환하지 않는다.
 - `begin_send` 충돌은 저장한 진행 상태를 보존한다. 판정에 구동 경합 사유를 전달하는 접점은 구현하지 않는다.
 - `NodeResult`의 검증은 IOT가 맡는다. 이 서비스는 요청·명령·기기 연결과 완료 상태를 추가로 확인한다.
-- 재시작 뒤 늦은 결과의 인계에는 원래 `ExecutionContext`가 필요하다. 서버 조립과 문맥 조회의 연결은 `core-node-events` 후속 작업이다.
-- 선행 계약 이슈 초안은 `execution-decisions.md`에 둔다. 이슈는 생성하지 않는다.
+- 재시작 뒤 늦은 결과의 인계에는 원래 `ExecutionContext`가 필요하다. 서버 조립과 문맥 조회의 연결은 `core-node-events` 후속 작업이다 (#83, #88).
+- 선행 계약 이슈 초안은 `execution-decisions.md`에 있다. 이슈는 #78, #79, #80이다.
 
 ## 8. 테스트
 
