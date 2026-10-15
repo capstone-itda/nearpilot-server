@@ -510,6 +510,19 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - 전송 시작과 반납 시작은 기기와 세션의 현재 상태를 원자적으로 검사한다. 반납을 시작해서 `CLOSING`이면 DB는 새 명령의 전송 시작을 막는다.
 - 공용형 조작에는 점유 세션이 없다. 공용형의 승인 사용분 확보 접점은 이 절의 범위가 아니다.
 
+### 서버 내부 요청
+
+[#86](https://github.com/capstone-itda/nearpilot-server/issues/86)의 A안을 따른다.
+공용 조명의 이탈 꺼짐처럼 방문자 요청 없이 서버가 시작하는 명령은 서버 내부 요청으로 식별하고 저장한다.
+
+- 상태 관리는 `InternalRequest`(내부 요청 ID, 기기, 동작, 원인, 적용 `Settings`, 생성 시각)를 만든다. 사용자 ID는 없다. 가짜 방문자 계정을 만들지 않는다.
+- 상태 관리는 `ExecutionStore.link_internal_request()`로 요청을 저장한 뒤 `link_command`, `begin_send`, `record_result`, `cancel_not_sent`를 그대로 쓴다. 결과 정산과 감사 기록은 방문자 요청과 같은 경로다.
+- `ExecutionContext`의 `execution_kind`는 `server_internal`이다. `request`, `use_id`, `usage_id`는 `None`이고 `internal_request`를 담는다.
+- 서버 내부 요청은 판정 ⓪~⑥을 거치지 않는다. 판정 기록(`DecisionRecord`)이 없다. 판정의 실행 직전 재검사도 적용하지 않는다. 상태 관리는 전송 직전에 유지 대상자, 현재 연결, 온라인, 장애, 미완료 명령과 복원 상태를 다시 확인한다.
+- 서버 내부 요청은 방문자의 `use_id` 조회(FR-21)와 호스트 응답에 나타나지 않는다.
+- DB는 요청 테이블에 요청 종류를 두고 서버 내부 요청의 사용자 ID를 비운다.
+- 재시작 복원에서 서버 내부 요청은 명령 기록(`CommandRecord`)으로만 나타난다. 예약과 사용분이 없다.
+
 ### 이탈 판단의 관측 계약
 
 [#18](https://github.com/capstone-itda/nearpilot-server/issues/18)의 B안을 따른다.
@@ -521,6 +534,7 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - 과거 관측의 재전송은 새 수신으로 인정하지 않는다. 다른 계정과 다른 장소의 관측은 타이머를 초기화하지 않는다.
 - 근접 추정은 확률 계산을 맡는다. 상태 관리는 유효 관측의 장소 범위로 이탈 시간을 잰다.
 - 이 계약은 새 조작의 허가·근접 검사를 면제하지 않는다. 대여형은 이탈만으로 점유를 해제하지 않는다.
+- 유지 대상자의 사용 권한은 `PolicyChecker.check()`로 확인한다. 결과가 `OK`이거나 사유가 `APPROVAL_EXHAUSTED`이면 유지 권한이 있다. 그 밖의 거부는 유지 대상자에서 뺀다 ([#87](https://github.com/capstone-itda/nearpilot-server/issues/87)). 유지 권한 확인은 새 조작을 허가하거나 승인 사용분을 예약하지 않는다.
 - 관측 전달 모델의 상세 타입과 비콘 매핑 접점은 공동 인터페이스와 관련 spec에서 맞춘다.
 
 ### 근접 사후확률의 범위

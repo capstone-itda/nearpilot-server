@@ -21,6 +21,7 @@ from nearpilot.shared.enums import (
     AdminWriteReason,
     ApprovalUsageState,
     ExecutionKind,
+    InternalRequestCause,
     StoreConflictReason,
     RecoveryStatus,
     RecoveryBlocker,
@@ -378,11 +379,29 @@ class CheckCriteria:
 
 
 @dataclass(frozen=True, slots=True)
+class InternalRequest:
+    """서버가 방문자 요청 없이 시작한 명령 요청 (#86). 사용자 ID 가 없다.
+
+    판정 ⓪~⑥을 거치지 않으므로 판정 기록이 없다. settings 는 시작할 때 적용한 설정이다.
+    방문자의 use_id 조회(FR-21)와 호스트 응답에 나타나지 않는다.
+    """
+
+    internal_request_id: str
+    node_id: str
+    action: Action
+    cause: InternalRequestCause
+    settings: Settings
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionContext:
     """판정 → 상태 관리 실행 인계 (#16). CORE 내부 값이며 호스트 응답이 아니다."""
 
     internal_request_id: str
-    request: UseRequest  # 토큰 계정, 외부 요청 ID, 원래 대상 지정과 동작
+    request: UseRequest | None  # 토큰 계정, 외부 요청 ID, 원래 대상 지정과 동작. 서버 내부 요청은 None
+    # SERVER_INTERNAL 일 때만 있다 (#86). 키워드로만 받는다.
+    internal_request: InternalRequest | None = field(default=None, kw_only=True)
     node_id: str  # 확정한 물리 대상. 재검사와 실행이 바꾸지 않는다.
     use_id: str | None  # 공용형이면 None
     usage_id: str | None  # 승인이 필요 없으면 None
@@ -393,8 +412,18 @@ class ExecutionContext:
     reserved_at: datetime | None = None
 
     def __post_init__(self) -> None:
-        if (self.execution_kind == ExecutionKind.SHARED) != (self.use_id is None):
+        internal = self.execution_kind == ExecutionKind.SERVER_INTERNAL
+        no_session = self.execution_kind in (ExecutionKind.SHARED, ExecutionKind.SERVER_INTERNAL)
+        if no_session != (self.use_id is None):
             raise ValueError("공용형은 use_id 가 없고 대여형은 use_id 가 있어야 한다")
+        if internal != (self.request is None) or internal != (self.internal_request is not None):
+            raise ValueError("서버 내부 요청만 방문자 요청 없이 internal_request 를 담는다")
+        if self.internal_request is not None and (
+            self.usage_id is not None
+            or self.internal_request.internal_request_id != self.internal_request_id
+            or self.internal_request.node_id != self.node_id
+        ):
+            raise ValueError("서버 내부 요청의 연결이 다르다")
 
 
 @dataclass(frozen=True, slots=True)
