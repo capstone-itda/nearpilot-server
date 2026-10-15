@@ -133,6 +133,7 @@
 - `use_session`에 `check_id`, `check_evidence`(JSON) 컬럼을 추가한다 — `finish_close`가 채택한 반납 검사를 보존하고 `close_result`가 돌려줘야 한다. `0001_initial.sql`에는 이 컬럼이 없었다.
 - 새 컬럼은 `0002_execution_store.sql`로 추가한다. `0001_initial.sql`은 고치지 않는다 (`db/schema/__init__.py`의 `PRAGMA user_version` 마이그레이션 규칙).
 - `settlement_digest`의 해시·직렬화 방식은 상태 관리가 계산해서 넘긴다. DB는 비어 있지 않은 임의의 문자열로 저장하고 문자열 비교만 한다 — `architecture.md` §4 "복구 건과 복구 정산"이 이미 계산 책임을 상태 관리에 두었다. 이 선택은 DB 구현을 막지 않는다.
+  - 상태 관리가 정한 방식(#92): 정규 JSON(키 정렬, 공백 없음, UTF-8)으로 직렬화한 뒤 SHA-256을 적용한다. 값은 소문자 hex 64자다. `core/lifecycle/fault_recovery.settlement_digest()`가 계산한다. DB는 이 값을 계산하지 않고 `recovery.settlement_digest` 컬럼에 저장·대조만 한다.
 - `SqliteExecutionStore`를 `db/repositories/execution_store.py`에 둔다. `SqliteRepository`와 같은 `sqlite3.Connection`을 받는다 — DB 쓰기 경로는 하나다 (`AGENTS.md` 의존 규칙 5).
 - `CommandRecord.reserved_at`은 `request.received_at`을 그대로 쓴다. 새 컬럼을 두지 않는다 — ⓪~⑥ 판정과 `reserve_if_free()`는 같은 호출 안에서 동기적으로 끝나므로 "예약 시각"과 "요청 수신 시각"은 실질적으로 같다. `use_session`과 `request`에는 애초에 별도의 예약 시각 컬럼이 없다(`0001_initial.sql`). `link_command`는 `now`를 인자로 받지 않으므로(`interfaces.py`) 호출 시각을 대신 쓸 수도 없다.
 - `link_command`의 실행 종류 판단은 `node.occupancy`를 가장 먼저 보고, 대여형이면 이번 요청의 점유 세션 유무 → 기기의 `ACTIVE` 세션 유무 순서로만 본다. `approval_usage` 행의 존재는 보지 않는다 — `open` 정책의 재조작은 승인 사용분을 예약하지 않아 행이 없으므로(#27), 사용분로 판단하면 공용형과 구분하지 못한다.
