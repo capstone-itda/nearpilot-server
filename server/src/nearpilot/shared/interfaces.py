@@ -41,6 +41,7 @@ from nearpilot.shared.models import (
     AdminWriteResult,
     Account,
     Approval,
+    ApprovalRecord,
     AuditEvent,
     BeaconKey,
     CloseResult,
@@ -165,6 +166,14 @@ class Repository(Protocol):
     def valid_approval(
         self, user_id: str, node_id: str, action: Action, policy_version: int, now: datetime
     ) -> Approval | None: ...
+
+    def approvals_in_scope(self, user_id: str, node_id: str) -> Sequence[ApprovalRecord]:
+        """요청자·기기의 승인 이력을 모두 반환한다 (#60, FR-03, FR-14).
+
+        시각·동작·정책 버전으로 거르지 않는다. 사유 선택은 core/policy 가 한다.
+        조회만 한다. 저장소를 바꾸지 않고 승인 사용분을 예약하지 않는다.
+        """
+        ...
 
     def create_approval_request(self, req: ApprovalRequest) -> ApprovalRequestResult:
         """요청자·기기·동작·정책 버전이 같고 유효한 pending 이 있으면 기존 신청을 반환한다 (FR-03).

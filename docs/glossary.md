@@ -46,6 +46,7 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 허가 | 판정 `OK`로 기기 실행을 허락하는 것 | `Verdict.OK` | 승인 |
 | 승인 | 소유자가 제한 기기의 접근 요청을 받아들이는 것 | `approval` | 허가 |
 | 대기 승인 | 소유자가 아직 결정하지 않은 승인 요청 | `approval.status`의 `pending` | |
+| 승인 이력 | 요청자와 기기 하나에 대한 승인 기록 전체. 정책 검사가 승인 필요 사유를 고르는 데 쓴다 | `Repository.approvals_in_scope`, `ApprovalRecord` | |
 | 승인 사용분 | 승인 하나에서 요청 하나가 쓰는 사용 횟수 | `approval_usage` | |
 | 복구 승인 | 소유자가 `FAULT` 기기의 복구 건 하나의 복구를 허용하는 것. 승인과 별개다. 승인의 유효시간을 적용하지 않는다 | | |
 | 정책 검사 | ④에서 접근 정책과 승인을 검사하는 것. 결과는 허용, 승인 필요, 거부다 | `PolicyChecker.check`, `PolicyCheckResult` | |
