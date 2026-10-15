@@ -108,7 +108,7 @@
 
 ## 7. 가정
 
-- 미결 — #88: `NodeEventSink`의 구현 담당. architecture.md §4는 제공 영역을 CORE로만 쓴다. 이 spec은 장애 반영을 맡은 상태 관리가 CORE 쪽 수신 접점을 구현한다고 가정한다. IOT 구현 담당을 맡는다는 뜻은 아니다.
+- #88 A안으로 정했다: 상태 관리가 CORE 쪽 `NodeEventSink`를 구현하고 서버 조립에서 연결한다.
 - 관측의 형식과 최신성 검사는 IOT의 계약을 따른다. 이 spec은 검증을 마친 보고를 받는다. 시각 오차는 근접 추정 담당에게 맡기며 이 작업에서 결정하지 않는다.
 - 선행 의존: 실행 결과는 `core-execution`, 반납 검사는 `core-release`, 복구 건은 `core-fault-recovery`, 이탈 관측은 `core-shared-light`를 쓴다. CORE 내부 접점은 실제 서비스로 연결했다.
 - #83 A안으로 정했다: `ExecutionStore.execution_context(command_id)`가 원래 문맥을 반환한다. 서버 조립은 이 함수를 `context_for`에 연결한다. 없으면 예외를 던져 인계 실패를 알린다. 서버 시작 조립은 후속 작업이다.
