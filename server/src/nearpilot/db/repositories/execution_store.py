@@ -38,13 +38,16 @@ from nearpilot.shared.enums import (
 )
 from nearpilot.shared.models import (
     ApprovalUsageRecord,
+    ApprovalUsageSettlement,
     CloseResult,
     CommandRecord,
     Decision,
     NodeInfo,
     PendingRequestRecord,
+    RecoveryCompletion,
     RecoveryEvidence,
     RecoveryRecord,
+    RecoverySettlement,
     RestoreBundle,
     RestoredSession,
     StoreResult,
@@ -871,12 +874,29 @@ class SqliteExecutionStore:
 
     @staticmethod
     def _recovery_from_row(row: sqlite3.Row) -> RecoveryRecord:
-        """`evidence` 컬럼은 `RecoveryEvidence` 필드를 그대로 담은 JSON 배열이다 (이번 작업의 결정).
+        """`evidence` 컬럼은 `RecoveryEvidence` 필드를 그대로 담은 JSON 배열이다 (6절 결정).
 
-        `completed_at IS NULL`인 행만 읽는 호출부(`restore_pending`)에서 쓰므로 `completion`은
-        항상 `None`이다. 완료 정산 복원은 `settle_recovery`를 구현하는 작업(7단계)이 맡는다.
+        `completed_at`이 있으면 `completion`을 함께 채운다. `restore_pending`은
+        `completed_at IS NULL`인 행만 읽으므로 그 호출에서는 항상 `None`이다.
         """
-        evidence = tuple(
+        evidence = SqliteExecutionStore._evidence_tuple_from_json(row["evidence"])
+        completion = None
+        if row["completed_at"] is not None:
+            completion = RecoveryCompletion(
+                settlement=SqliteExecutionStore._settlement_from_row(row),
+                completed_at=parse_iso(row["completed_at"]),
+            )
+        return RecoveryRecord(
+            recovery_id=row["recovery_id"], node_id=row["node_id"],
+            internal_request_ids=tuple(json.loads(row["internal_request_ids"] or "[]")),
+            command_ids=tuple(json.loads(row["command_ids"] or "[]")),
+            use_id=row["use_id"], created_at=parse_iso(row["created_at"]),
+            status=RecoveryStatus(row["status"]), evidence=evidence, completion=completion,
+        )
+
+    @staticmethod
+    def _evidence_tuple_from_json(value: str | None) -> tuple[RecoveryEvidence, ...]:
+        return tuple(
             RecoveryEvidence(
                 evidence_id=item["evidence_id"], session_id=item["session_id"],
                 observed_at=parse_iso(item["observed_at"]),
@@ -886,12 +906,223 @@ class SqliteExecutionStore:
                 safety_confirmed=item.get("safety_confirmed"),
                 physical_state_synced=item.get("physical_state_synced"),
             )
-            for item in json.loads(row["evidence"] or "[]")
+            for item in json.loads(value or "[]")
         )
-        return RecoveryRecord(
+
+    @staticmethod
+    def _settlement_from_row(row: sqlite3.Row) -> RecoverySettlement:
+        """`settlement_json` 컬럼 하나에 정산 내용을 담는다 (6절 결정, 담당자 지시).
+
+        `settlement_digest`·`approved_by_user_id`·`approved_at`은 `0001_initial.sql`의
+        기존 컬럼을 그대로 쓴다.
+        """
+        content = json.loads(row["settlement_json"])
+        usage_settlements = tuple(
+            ApprovalUsageSettlement(
+                usage_id=item["usage_id"], expected_state=ApprovalUsageState(item["expected_state"]),
+                state=ApprovalUsageState(item["state"]),
+            )
+            for item in content["usage_settlements"]
+        )
+        return RecoverySettlement(
             recovery_id=row["recovery_id"], node_id=row["node_id"],
-            internal_request_ids=tuple(json.loads(row["internal_request_ids"] or "[]")),
-            command_ids=tuple(json.loads(row["command_ids"] or "[]")),
-            use_id=row["use_id"], created_at=parse_iso(row["created_at"]),
-            status=RecoveryStatus(row["status"]), evidence=evidence, completion=None,
+            approved_by_user_id=row["approved_by_user_id"], approved_at=parse_iso(row["approved_at"]),
+            settlement_digest=row["settlement_digest"],
+            expected_node_state=DeviceState(content["expected_node_state"]),
+            expected_recovery_status=RecoveryStatus(content["expected_recovery_status"]),
+            expected_commands={k: ExecutionStatus(v) for k, v in content["expected_commands"].items()},
+            expected_sessions={k: SessionState(v) for k, v in content["expected_sessions"].items()},
+            evidence=SqliteExecutionStore._evidence_tuple_from_json(json.dumps(content["evidence"])),
+            usage_settlements=usage_settlements,
+            use_id=content["use_id"],
+            closed_at=parse_iso(content["closed_at"]) if content["closed_at"] else None,
+            end_reason=EndReason(content["end_reason"]) if content["end_reason"] else None,
         )
+
+    @staticmethod
+    def _evidence_json(evidence: Sequence[RecoveryEvidence]) -> str:
+        return json.dumps([
+            {
+                "evidence_id": item.evidence_id, "session_id": item.session_id,
+                "observed_at": iso(item.observed_at),
+                "execution_outcome": item.execution_outcome.value if item.execution_outcome else None,
+                "safety_confirmed": item.safety_confirmed,
+                "physical_state_synced": item.physical_state_synced,
+            }
+            for item in evidence
+        ])
+
+    @staticmethod
+    def _settlement_to_json(settlement: RecoverySettlement) -> str:
+        """`RecoverySettlement`에서 전용 컬럼(`settlement_digest`·`approved_by_user_id`·
+        `approved_at`)이 아닌 나머지를 JSON TEXT 컬럼 `settlement_json` 하나로 담는다 (6절 결정)."""
+        return json.dumps({
+            "expected_node_state": settlement.expected_node_state.value,
+            "expected_recovery_status": settlement.expected_recovery_status.value,
+            "expected_commands": {k: v.value for k, v in settlement.expected_commands.items()},
+            "expected_sessions": {k: v.value for k, v in settlement.expected_sessions.items()},
+            "evidence": json.loads(SqliteExecutionStore._evidence_json(settlement.evidence)),
+            "usage_settlements": [
+                {"usage_id": u.usage_id, "expected_state": u.expected_state.value, "state": u.state.value}
+                for u in settlement.usage_settlements
+            ],
+            "use_id": settlement.use_id,
+            "closed_at": iso(settlement.closed_at) if settlement.closed_at else None,
+            "end_reason": settlement.end_reason.value if settlement.end_reason else None,
+        })
+
+    # ── 복구 건과 복구 정산 (#17 7단계) ──────────────────────────────
+
+    def save_recovery(self, record: RecoveryRecord) -> StoreResult:
+        """복구 건과 근거를 저장한다. 대상 연결은 바꾸지 않고 완료 근거는 덮어쓰지 않는다 (NFR-04).
+
+        같은 대상 연결·같은 근거·같은 상태는 `ALREADY_APPLIED`다. 대상 연결이 다르면
+        `CONFLICT`다. 점유·사용분·기기 상태는 건드리지 않는다 — 근거 저장과 복구 정산은
+        별개다. 완료된 복구 건은 새 근거로 덮어쓰지 않고 기존 완료 결과를 그대로 돌려준다.
+        """
+        with immediate_transaction(self._conn):
+            row = self._conn.execute(
+                "SELECT * FROM recovery WHERE recovery_id = ?", (record.recovery_id,)
+            ).fetchone()
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO recovery (recovery_id, node_id, use_id, internal_request_ids, "
+                    "command_ids, created_at, status, evidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        record.recovery_id, record.node_id, record.use_id,
+                        json.dumps(list(record.internal_request_ids)), json.dumps(list(record.command_ids)),
+                        iso(record.created_at), record.status.value, self._evidence_json(record.evidence),
+                    ),
+                )
+                updated = self._conn.execute(
+                    "SELECT * FROM recovery WHERE recovery_id = ?", (record.recovery_id,)
+                ).fetchone()
+                return StoreResult(outcome=StoreOutcome.APPLIED, recovery=self._recovery_from_row(updated))
+
+            stored_request_ids = tuple(json.loads(row["internal_request_ids"] or "[]"))
+            stored_command_ids = tuple(json.loads(row["command_ids"] or "[]"))
+            if (
+                row["node_id"] != record.node_id or row["use_id"] != record.use_id
+                or stored_request_ids != record.internal_request_ids
+                or stored_command_ids != record.command_ids or row["created_at"] != iso(record.created_at)
+            ):
+                return StoreResult(
+                    outcome=StoreOutcome.CONFLICT, recovery=self._recovery_from_row(row),
+                    conflict_reason=StoreConflictReason.LINK_MISMATCH,
+                )
+            if row["completed_at"] is not None:
+                return StoreResult(outcome=StoreOutcome.ALREADY_APPLIED, recovery=self._recovery_from_row(row))
+            new_evidence_json = self._evidence_json(record.evidence)
+            if row["evidence"] == new_evidence_json and row["status"] == record.status.value:
+                return StoreResult(outcome=StoreOutcome.ALREADY_APPLIED, recovery=self._recovery_from_row(row))
+            self._conn.execute(
+                "UPDATE recovery SET status = ?, evidence = ? WHERE recovery_id = ?",
+                (record.status.value, new_evidence_json, record.recovery_id),
+            )
+            updated = self._conn.execute(
+                "SELECT * FROM recovery WHERE recovery_id = ?", (record.recovery_id,)
+            ).fetchone()
+            return StoreResult(outcome=StoreOutcome.APPLIED, recovery=self._recovery_from_row(updated))
+
+    def recovery(self, recovery_id: str) -> RecoveryRecord | None:
+        row = self._conn.execute(
+            "SELECT * FROM recovery WHERE recovery_id = ?", (recovery_id,)
+        ).fetchone()
+        return None if row is None else self._recovery_from_row(row)
+
+    def settle_recovery(self, settlement: RecoverySettlement) -> StoreResult:
+        """연결과 예상 상태를 검사하고 승인·근거·사용분·점유 종료·기기 복구·감사를 한 트랜잭션에서 커밋한다.
+
+        `finish_close`를 거치지 않는다 — 반납 `check_id` 대신 복구 근거를 쓴다. 같은
+        `recovery_id`·같은 논리 정산(`settlement_digest`로 비교)은 `ALREADY_APPLIED`다.
+        다른 연결·요약값·예상 상태는 `CONFLICT`다. 늦은 결과로 완료 정산을 뒤집지 않는다
+        (NFR-04).
+        """
+        with immediate_transaction(self._conn):
+            row = self._conn.execute(
+                "SELECT * FROM recovery WHERE recovery_id = ?", (settlement.recovery_id,)
+            ).fetchone()
+            if row is None:
+                raise LookupError(f"복구 건 {settlement.recovery_id} 가 없다")
+            if row["completed_at"] is not None:
+                if row["settlement_digest"] == settlement.settlement_digest:
+                    return StoreResult(outcome=StoreOutcome.ALREADY_APPLIED, recovery=self._recovery_from_row(row))
+                return StoreResult(
+                    outcome=StoreOutcome.CONFLICT, recovery=self._recovery_from_row(row),
+                    conflict_reason=StoreConflictReason.CONTENT_CONFLICT,
+                )
+            if row["node_id"] != settlement.node_id or row["use_id"] != settlement.use_id:
+                return StoreResult(outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.LINK_MISMATCH)
+
+            node_row = self._conn.execute(
+                "SELECT device_state FROM node WHERE node_id = ?", (settlement.node_id,)
+            ).fetchone()
+            if node_row is None:
+                raise LookupError(f"기기 {settlement.node_id} 가 없다")
+            if node_row["device_state"] != settlement.expected_node_state.value:
+                return StoreResult(outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.STATE_CONFLICT)
+            if RecoveryStatus(row["status"]) != settlement.expected_recovery_status:
+                return StoreResult(outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.STATE_CONFLICT)
+            for command_id, expected_status in settlement.expected_commands.items():
+                command_row = self._conn.execute(
+                    "SELECT status FROM node_command WHERE command_id = ?", (command_id,)
+                ).fetchone()
+                if command_row is None or command_row["status"] != expected_status.value:
+                    return StoreResult(
+                        outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.STATE_CONFLICT
+                    )
+            for use_id_key, expected_state in settlement.expected_sessions.items():
+                session_row = self._conn.execute(
+                    "SELECT state FROM use_session WHERE use_id = ?", (use_id_key,)
+                ).fetchone()
+                if session_row is None or session_row["state"] != expected_state.value:
+                    return StoreResult(
+                        outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.STATE_CONFLICT
+                    )
+            for usage_settlement in settlement.usage_settlements:
+                usage_row = self._conn.execute(
+                    "SELECT state FROM approval_usage WHERE usage_id = ?", (usage_settlement.usage_id,)
+                ).fetchone()
+                if usage_row is None or usage_row["state"] != usage_settlement.expected_state.value:
+                    return StoreResult(
+                        outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.STATE_CONFLICT
+                    )
+
+            for usage_settlement in settlement.usage_settlements:
+                self._conn.execute(
+                    "UPDATE approval_usage SET state = ? WHERE usage_id = ?",
+                    (usage_settlement.state.value, usage_settlement.usage_id),
+                )
+            if settlement.use_id is not None:
+                self._conn.execute(
+                    "UPDATE use_session SET state = ?, closed_at = ?, end_reason = ? WHERE use_id = ?",
+                    (
+                        SessionState.CLOSED.value, iso(settlement.closed_at), settlement.end_reason.value,
+                        settlement.use_id,
+                    ),
+                )
+            self._conn.execute(
+                "UPDATE node SET device_state = ? WHERE node_id = ?",
+                (DeviceState.AVAILABLE.value, settlement.node_id),
+            )
+            self._conn.execute(
+                "UPDATE recovery SET approved_by_user_id = ?, approved_at = ?, settlement_digest = ?, "
+                "settlement_json = ?, completed_at = ? WHERE recovery_id = ?",
+                (
+                    settlement.approved_by_user_id, iso(settlement.approved_at), settlement.settlement_digest,
+                    self._settlement_to_json(settlement), iso(datetime.now(timezone.utc)),
+                    settlement.recovery_id,
+                ),
+            )
+            self._append_audit(
+                None, None,
+                {
+                    "event": "settle_recovery", "recovery_id": settlement.recovery_id,
+                    "node_id": settlement.node_id, "settlement_digest": settlement.settlement_digest,
+                },
+                step=Step.FAULT,
+            )
+            updated = self._conn.execute(
+                "SELECT * FROM recovery WHERE recovery_id = ?", (settlement.recovery_id,)
+            ).fetchone()
+            return StoreResult(outcome=StoreOutcome.APPLIED, recovery=self._recovery_from_row(updated))

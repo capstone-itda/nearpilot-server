@@ -141,7 +141,12 @@
 - "명령 연결 전의 예약 요청"은 `request.verdict = 'OK'`이고 `node_command`에 연결이 없는 요청으로 찾는다 — 판정(`core/decision/pipeline.py`)이 실행 인계보다 먼저 `save_decision()`으로 `request.node_id`를 저장하므로, 명령이 생기기 전에도 대상 기기를 알 수 있다. 이미 `cancel_not_sent`로 취소된 요청(`_already_cancelled`)은 뺀다.
 - `RestoredSession.created_at`은 세션을 만든 `internal_request_id`의 `request.received_at`을 쓴다. `use_session`에는 생성 시각 컬럼이 없다 — `CommandRecord.reserved_at`과 같은 근거다.
 - `RestoredSession.evidence`는 채우지 않는다(기본값 `{}`) — "종료 사유와 관련 근거"는 `CLOSED`된 세션에만 의미가 있는데, `restore_pending`은 `RESERVED`·`ACTIVE`·`CLOSING`만 돌려준다.
-- `recovery.evidence` 컬럼은 `RecoveryEvidence`의 필드(`evidence_id`, `session_id`, `observed_at`, `execution_outcome`, `safety_confirmed`, `physical_state_synced`)를 그대로 담은 JSON 배열로 저장한다 — `save_recovery`(7단계)가 쓸 형식을 `restore_pending`의 읽기 쪽에서 먼저 정했다. `completed_at IS NULL`인 행만 돌려주므로 `RecoveryRecord.completion`은 항상 `None`이다.
+- `recovery.evidence` 컬럼은 `RecoveryEvidence`의 필드(`evidence_id`, `session_id`, `observed_at`, `execution_outcome`, `safety_confirmed`, `physical_state_synced`)를 그대로 담은 JSON 배열로 저장한다 — `save_recovery`(7단계)가 쓸 형식을 `restore_pending`의 읽기 쪽에서 먼저 정했다. `restore_pending`은 `completed_at IS NULL`인 행만 돌려주므로 그 호출에서는 `RecoveryRecord.completion`이 항상 `None`이다. `recovery()`는 `completed_at`이 있으면 `completion`을 채운다.
+- `save_recovery`는 대상 연결(`node_id`, `use_id`, `internal_request_ids`, `command_ids`, `created_at`)이 같은지만 보고 다르면 `CONFLICT`·`LINK_MISMATCH`다. 내용(`status`, `evidence`)이 같으면 `ALREADY_APPLIED`, 다르면 갱신하고 `APPLIED`다. 이미 완료된(`completed_at` 있음) 복구 건은 새 근거로 덮어쓰지 않고 `ALREADY_APPLIED`와 기존 완료 결과를 반환한다 — "완료 뒤의 새 보고로 당시 근거를 덮어쓰지 않는다"(architecture.md §4).
+- `settle_recovery`는 완료 여부 → 대상 연결(`node_id`, `use_id`) → 기기 상태 → 복구 건 상태 → 명령별 예상 상태 → 세션별 예상 상태 → 사용분별 예상 상태 순서로 검사한다. 하나라도 다르면 `CONFLICT`다(연결 불일치는 `LINK_MISMATCH`, 나머지는 `STATE_CONFLICT`). 완료된 복구 건은 `settlement_digest`로만 비교한다 — 같으면 `ALREADY_APPLIED`, 다르면 `CONFLICT`·`CONTENT_CONFLICT`다.
+- `settle_recovery`가 기기를 복구하는 목표 상태는 점유 방식과 관계없이 `AVAILABLE`이다 — 공용형은 `reserve_if_free()`가 `device_state`를 건드리지 않는 것과 같은 이유로, 대여형의 상태 머신(`RESERVED`·`ACTIVE`·`CLOSING`) 밖에서는 `AVAILABLE`이 기본값이다.
+- `settle_recovery`의 완료 시각(`completed_at`)은 DB가 커밋 시점의 시각으로 만든다. `RecoverySettlement.approved_at`(소유자 승인 시각)과는 다른 값이다.
+- `settle_recovery`의 감사 기록은 `Step.FAULT`를 쓴다 — `isolate_device`와 같은 장애·복구 범주다. `internal_request_id`·`command_id` 없이 `recovery_id`로 식별한다.
 
 ## 7. 가정
 
