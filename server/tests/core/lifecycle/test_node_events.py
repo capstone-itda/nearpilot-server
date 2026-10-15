@@ -248,7 +248,7 @@ def command(env, *, shared=False):
         TargetSpec.parse("nearest:light" if shared else "nearest:locker"),
         Action.ON if shared else Action.OPEN, "test", env.clock()), "locker",
         None if shared else "use", "usage", env.settings,
-        ExecutionKind.SHARED if shared else ExecutionKind.RENTAL_INITIAL)
+        ExecutionKind.SHARED if shared else ExecutionKind.RENTAL_INITIAL, env.clock())
     saved = CommandRecord("command", "request", "locker", ctx.request.action,
         ExecutionStatus.IN_PROGRESS, ctx.execution_kind, ctx.use_id, ctx.usage_id,
         env.clock(), env.clock(), True)
