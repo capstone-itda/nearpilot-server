@@ -294,6 +294,64 @@ def test_NFR03_reserve_stress(tmp_path):
     check_conn.close()
 
 
+def test_FR19_reserve_returns_reserved_at(conn, repo):
+    _setup_rental(conn)
+    _seed_request(conn, internal_request_id="req1", received_at="2026-01-01T00:00:00+00:00")
+
+    result = repo.reserve_if_free(_request())
+
+    assert result.reserved_at is not None
+    assert result.reserved_at.isoformat() == "2026-01-01T00:00:00+00:00"
+    row = conn.execute("SELECT reserved_at FROM use_session WHERE use_id = ?", (result.use_id,)).fetchone()
+    assert row["reserved_at"] == "2026-01-01T00:00:00+00:00"
+
+
+def test_FR19_reserve_shared_usage_reserved_at(conn, repo):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="light1", capability="light", occupancy="shared")
+    insert_policy(conn, node_id="light1", max_uses=None)
+    insert_approval(conn, approval_id="appr1", node_id="light1", internal_request_id="other")
+    _seed_request(
+        conn, internal_request_id="req1", node_id="light1", received_at="2026-01-01T00:00:00+00:00"
+    )
+
+    result = repo.reserve_if_free(_request(node_id="light1", approval_id="appr1", action=Action.ON))
+
+    assert result.reserved_at is not None
+    assert result.reserved_at.isoformat() == "2026-01-01T00:00:00+00:00"
+    row = conn.execute(
+        "SELECT reserved_at FROM approval_usage WHERE usage_id = ?", (result.usage_id,)
+    ).fetchone()
+    assert row["reserved_at"] == "2026-01-01T00:00:00+00:00"
+
+
+def test_FR19_reserve_no_write_reserved_at_none(conn, repo):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="light1", capability="light", occupancy="shared", device_state="AVAILABLE")
+    _seed_request(conn, internal_request_id="req1", node_id="light1")
+
+    open_result = repo.reserve_if_free(_request(node_id="light1", action=Action.ON))
+    assert open_result.reserved_at is None
+
+    insert_node(conn, node_id="node1", occupancy="rental", device_state="FAULT")
+    _seed_request(conn, internal_request_id="req2")
+    busy_result = repo.reserve_if_free(_request(internal_request_id="req2"))
+    assert busy_result.reserved_at is None
+
+
+def test_FR19_reserve_duplicate_keeps_reserved_at(conn, repo):
+    _setup_rental(conn)
+    _seed_request(conn, internal_request_id="req1", received_at="2026-01-01T00:00:00+00:00")
+
+    first = repo.reserve_if_free(_request())
+    second = repo.reserve_if_free(_request())
+
+    assert first.reserved_at is not None
+    assert second.reserved_at == first.reserved_at
+
+
 def test_NFR03_threads(tmp_path):
     """스레드마다 연결을 따로 쓴다. 쓰기 경합은 busy_timeout 안에서 기다리고, 예외 없이 끝난다."""
     db_path = str(tmp_path / "threads.db")
