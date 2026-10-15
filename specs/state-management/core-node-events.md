@@ -1,9 +1,9 @@
 # 기기 이벤트 수신
 
-- 상태: 구현 중. CORE 수신과 기존 서비스 연결을 검증했다. 서버 조립과 실행 문맥의 영속 조회가 남았다.
+- 상태: 구현 중
 - 담당: JM-220 (상태 관리)
 - 요구사항: FR-04, FR-05, FR-07, FR-13, NFR-04
-- 따르는 결정: #18, #31, #32, #38
+- 따르는 결정: #18, #31, #32, #38, #83, #86, #88
 
 ## 1. 왜
 
@@ -30,6 +30,7 @@
   - 같은 보고를 다시 받아도 결과가 같다.
   - 과거 명령의 결과로 현재 온라인 시각과 안전 상태를 갱신하지 않는다.
   - 실행 결과는 `core-execution`, 반납 검사 결과는 `core-release`로 넘긴다.
+  - 서버 내부 요청의 실행 결과도 같은 경로로 넘긴다 (#86).
 
 ## 3. 제약
 
@@ -49,6 +50,8 @@
 - 일반 `status`는 종료 안전의 근거가 아니다. 반납 종료는 반납 검사 결과로만 결정한다 (FR-07).
 - 기기별 관측, 장애 반영, 복구는 같은 기기 잠금으로 직렬화한다 (architecture.md §4 "복구 준비 조회와 복구 승인").
 - 저장 함수가 `StoreError`를 던지면 예외를 다시 던진다. 인계 실패를 성공으로 처리하지 않는다 (architecture.md §4 "기기 보고의 인계").
+- 실행 결과의 원래 문맥은 `context_for(command_id)`로 읽는다. 서버 조립은 `ExecutionStore.execution_context`를 연결한다 (#83). 문맥이 없거나 조회가 실패하면 인계 실패로 알린다.
+- 서버 내부 요청의 문맥은 `request`가 없다. 저장한 명령의 동작은 `internal_request.action`과 대조한다. 성공한 내부 꺼짐은 `core-shared-light`에 넘겨 유지 대상자를 비운다 (architecture.md §4 "서버 내부 요청").
 
 ## 4. 경계
 
@@ -90,6 +93,7 @@
 | `save_rssi()`가 `StoreNotApplied`를 던진다 | 예외를 다시 던진다 | `test_FR05_rssi_store_error_propagates` |
 | `observe()`가 예외를 던진다 | 저장한 관측을 유지한다. 실패를 기록한다 | `test_FR05_observe_error_keeps_saved_rssi` |
 | 같은 기기의 `status`와 복구 승인이 동시에 온다 | 같은 기기 잠금으로 하나씩 처리한다 | `test_NFR04_node_events_serialized` |
+| 서버 내부 꺼짐의 결과가 늦게 온다 | 원래 문맥으로 실행 서비스에 넘긴다. 성공이면 공용 조명에 넘긴다 | `test_FR20_internal_off_result_routed` |
 
 ## 6. 결정
 
@@ -108,13 +112,12 @@
 
 ## 7. 가정
 
-- #88 A안으로 정했다: 상태 관리가 CORE 쪽 `NodeEventSink`를 구현하고 서버 조립에서 연결한다.
+- #88 A안: 상태 관리가 CORE 쪽 `NodeEventSink`를 구현하고 서버 조립에서 연결한다. 서버 조립은 이 spec에 넣지 않는다.
+- #83 A안: `ExecutionStore.execution_context(command_id)`가 원래 문맥을 반환한다. 서버 조립은 이 함수를 `context_for`에 연결한다.
 - 관측의 형식과 최신성 검사는 IOT의 계약을 따른다. 이 spec은 검증을 마친 보고를 받는다. 시각 오차는 근접 추정 담당에게 맡기며 이 작업에서 결정하지 않는다.
-- 선행 의존: 실행 결과는 `core-execution`, 반납 검사는 `core-release`, 복구 건은 `core-fault-recovery`, 이탈 관측은 `core-shared-light`를 쓴다. CORE 내부 접점은 실제 서비스로 연결했다.
-- #83 A안으로 정했다: `ExecutionStore.execution_context(command_id)`가 원래 문맥을 반환한다. 서버 조립은 이 함수를 `context_for`에 연결한다. 없으면 예외를 던져 인계 실패를 알린다. 서버 시작 조립은 후속 작업이다.
+- 실행 결과는 `core-execution`, 반납 검사는 `core-release`, 복구 건은 `core-fault-recovery`, 이탈 관측은 `core-shared-light`를 쓴다. CORE 내부 접점은 실제 서비스로 연결했다.
 - IOT가 현재 연결과 최신성을 검증한다. 이 서비스는 같은 보고의 재인계도 받는다. 재시작 뒤 RSSI의 중복 저장은 DB가 막는다. 근접 추정은 메모리 관측을 새로 시작한다.
 - CORE 내부 서비스 연결은 실제 구현으로 검증한다. DB·근접 추정·IOT는 `shared` 계약의 fake로 대신한다. 실제 MQTT 연결은 이 spec에 넣지 않는다.
-- 실행 문맥의 조회 제공자와 서버 시작 조립의 초안은 `node-events-decisions.md`에 있다. 이슈는 #83, #88이다. 전체 spec은 구현 중으로 유지한다.
 
 ## 8. 테스트
 
@@ -135,6 +138,7 @@
 | FR-07 | `test_FR07_missing_original_context_is_failure` | 실행 문맥 부재를 전달 완료로 보지 않는다 |
 | FR-07 | `test_FR07_reports_during_gateway_wait_do_not_deadlock` | 실행 서비스의 전송 대기 중 다른 스레드의 결과 인계를 받는다 |
 | FR-13 | `test_FR13_result_does_not_touch` | 과거 결과로 현재 연결·온라인 시각·물리 관측을 갱신하지 않는다 |
+| FR-20 | `test_FR20_internal_off_result_routed` | 서버 내부 꺼짐의 결과를 실행 서비스와 공용 조명에 넘긴다 |
 
 - 실제 실행·반납·복원·복구·공용 조명 서비스를 조립해서 CORE 내부 연결을 검증한다.
 - 기기 형식 검증, 실제 MQTT와 서버 실행 진입점은 이 검증에 넣지 않는다.
