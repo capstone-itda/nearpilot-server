@@ -101,6 +101,9 @@ def test_fr19_fake_store_satisfies_protocol():
         def link_command(self, internal_request_id, node_id, action):
             return StoreResult(StoreOutcome.APPLIED, record)
 
+        def link_internal_request(self, req):
+            return StoreResult(StoreOutcome.APPLIED)
+
         def begin_send(self, command_id):
             return StoreResult(StoreOutcome.APPLIED, record)
 

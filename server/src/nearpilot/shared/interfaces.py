@@ -50,6 +50,7 @@ from nearpilot.shared.models import (
     Decision,
     ExecutionContext,
     ExecutionResult,
+    InternalRequest,
     NodeAnnounce,
     NodeCommand,
     NodeInfo,
@@ -226,6 +227,16 @@ class ExecutionStore(Protocol):
 
     def link_command(self, internal_request_id: str, node_id: str, action: Action) -> StoreResult:
         """요청의 명령을 연결한다. 이미 있으면 기존 명령과 진행 상태를 반환한다. 키: internal_request_id"""
+        ...
+
+    def link_internal_request(self, req: InternalRequest) -> StoreResult:
+        """서버 내부 요청을 사용자 ID 와 판정 기록 없이 저장한다 (#86). 키: internal_request_id
+
+        같은 내용은 ALREADY_APPLIED, 다른 내용은 CONFLICT 다. 적용 settings 를 함께 보존한다.
+        이후 link_command·begin_send·record_result·cancel_not_sent 를 그대로 쓴다.
+        세션과 사용분이 없으므로 명령, 기기 상태와 감사만 반영한다.
+        방문자의 use_id 조회(FR-21)와 호스트 응답에 나타나지 않는다.
+        """
         ...
 
     def begin_send(self, command_id: str) -> StoreResult:

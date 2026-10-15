@@ -90,7 +90,8 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 실행 직전 재검사 | 기기에 명령을 보내기 직전에 허가, 근접, 대상을 다시 검사하는 것 | `DecisionRechecker.recheck` | |
 | 실행 인계 | 판정이 허가와 예약을 마친 요청의 실행을 상태 관리에 넘기는 것 | `ExecutionContext`, `ExecutionService.execute` | |
 | 사건별 저장 | 예약 이후의 사건 하나에 딸린 기록을 한 트랜잭션으로 반영하는 것 | `ExecutionStore` | |
-| 실행 종류 | 실행 인계가 구분하는 조작의 종류. 최초 대여, 기존 대여의 재조작, 공용형 조작이다 | `ExecutionKind` | |
+| 실행 종류 | 실행 인계가 구분하는 조작의 종류. 최초 대여, 기존 대여의 재조작, 공용형 조작, 서버 내부 요청이다 | `ExecutionKind` | |
+| 서버 내부 요청 | 방문자 요청 없이 서버가 시작한 명령 요청. 사용자 ID와 판정 기록이 없다 | `InternalRequest`, `ExecutionKind.SERVER_INTERNAL` | |
 | 최초 대여 | 점유 세션을 새로 만드는 대여형 조작 | | |
 | 재조작 | 대여 중인 본인이 기존 점유 세션의 기기에 하는 새 조작. 새 요청과 새 명령을 기존 `use_id`에 연결한다 | | |
 | 구동 중 | 기기의 구동부가 물리 동작을 하는 상태. 기기 상태 `ACTIVE`(대여 중)와 다르다 | `actuator_state`의 `busy` | |

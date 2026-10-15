@@ -275,6 +275,14 @@ class ExecutionKind(StrEnum):
     RENTAL_INITIAL = "rental_initial"
     RENTAL_REOPERATION = "rental_reoperation"
     SHARED = "shared"
+    # 서버가 방문자 요청 없이 시작한 명령 (#86). 판정 ⓪~⑥과 판정 기록이 없다.
+    SERVER_INTERNAL = "server_internal"
+
+
+class InternalRequestCause(StrEnum):
+    """서버 내부 요청의 원인 (#86)."""
+
+    LEAVE_OFF = "leave_off"  # 공용 조명의 모든 유지 대상자 이탈 (FR-20)
 
 
 class StoreConflictReason(StrEnum):
