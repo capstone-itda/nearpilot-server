@@ -1,0 +1,11 @@
+{
+  "place_id": "place-a",
+  "beacon": {"uuid": "11111111-2222-3333-4444-555555555555", "major": 1, "minor": 1},
+  "settle_sec": 5,
+  "run_sec": 30.0,
+  "runs": [
+    {"label": "locker-1", "spot": "앞 위치, 손에 들고 화면 위"},
+    {"label": "none", "spot": "locker-1 뒤 2 m"},
+    {"label": "locker-2", "spot": "앞 위치에서 왼쪽 0.2 m, 손에 들고 화면 위"}
+  ]
+}
