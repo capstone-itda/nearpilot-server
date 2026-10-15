@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -56,3 +56,26 @@ def status_response(status: Mapping[str, Any]) -> dict[str, Any]:
 
 def status_denied(reason: ReasonCode) -> dict[str, Any]:
     return status_response({"reason_code": reason.value})
+
+
+_DEVICE_KEYS = ("node_id", "capability", "occupancy", "access")
+_STATE_KEYS = ("node_id", "capability", "occupancy", "state", "online", "trusted", "access_mode")
+
+
+def devices_response(devices: Sequence[Mapping[str, Any]], reason: ReasonCode | None = None) -> dict[str, Any]:
+    """후보 목록. 항목마다 허용 목록의 키만 내보낸다 (FR-11)."""
+    return {
+        "devices": [{key: device.get(key) for key in _DEVICE_KEYS} for device in devices],
+        "reason": reason.value if reason else None,
+    }
+
+
+def device_state_response(state: Mapping[str, Any]) -> dict[str, Any]:
+    """기기 상태. 성공과 실패의 모양이 같다 (FR-14). 허용 목록 밖의 키는 버린다."""
+    out: dict[str, Any] = {key: state.get(key) for key in _STATE_KEYS}
+    out["reason"] = state.get("reason_code")
+    return out
+
+
+def device_state_denied(reason: ReasonCode) -> dict[str, Any]:
+    return device_state_response({"reason_code": reason.value})

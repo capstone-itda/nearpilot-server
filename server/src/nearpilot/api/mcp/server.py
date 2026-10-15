@@ -1,4 +1,4 @@
-"""FR-08·FR-09 MCP 엔드포인트와 request_use 도구.
+"""FR-08·FR-09 MCP 엔드포인트와 도구.
 
 stateless + JSON 응답이다. 요청마다 토큰으로 계정을 정하고, 판정은 `CoreService.request_use` 가 한다.
 """
@@ -16,7 +16,8 @@ from starlette.applications import Starlette
 from nearpilot.api.auth.authenticator import Authenticator
 from nearpilot.api.mcp.middleware import ACCOUNT_KEY, AuthMiddleware
 from nearpilot.api.mcp.response import (
-    denied_response, host_response, status_denied, status_response,
+    denied_response, device_state_denied, device_state_response, devices_response, host_response,
+    status_denied, status_response,
 )
 from nearpilot.shared.enums import Action, ReasonCode
 from nearpilot.shared.interfaces import CoreService
@@ -31,6 +32,11 @@ _TOOL_DESCRIPTION = (
 
 _RELEASE_DESCRIPTION = "본인의 사용(use_id)을 종료한다. 반납 검사를 거쳐 종료한다."
 _STATUS_DESCRIPTION = "본인의 사용(use_id) 상태와 종료 이력을 조회한다."
+_DEVICES_DESCRIPTION = (
+    "주변에서 쓸 수 있는 기기 목록을 조회한다. access 가 operable 이면 바로 요청할 수 있고 "
+    "approval_required 이면 승인이 필요하다."
+)
+_DEVICE_STATE_DESCRIPTION = "기기(node_id)의 상태를 조회한다. 근접 검사는 하지 않는다."
 
 
 def _account_of(ctx: Context) -> Account | None:
@@ -91,6 +97,32 @@ def build_app(
         except Exception:  # noqa: BLE001
             log.exception("get_use_status 도구 처리 중 예외")
             return status_denied(ReasonCode.INTERNAL_ERROR)
+
+    @mcp.tool(name="find_available_devices", description=_DEVICES_DESCRIPTION)
+    async def find_available_devices(ctx: Context) -> dict:
+        try:
+            account = _account_of(ctx)
+            if account is None:
+                return devices_response([], ReasonCode.INTERNAL_ERROR)
+            return devices_response(
+                await asyncio.to_thread(core.find_available_devices, account.user_id))
+        except Exception:  # noqa: BLE001
+            log.exception("find_available_devices 도구 처리 중 예외")
+            return devices_response([], ReasonCode.INTERNAL_ERROR)
+
+    @mcp.tool(name="get_device_state", description=_DEVICE_STATE_DESCRIPTION)
+    async def get_device_state(node_id: str, ctx: Context) -> dict:
+        try:
+            account = _account_of(ctx)
+            if account is None:
+                return device_state_denied(ReasonCode.INTERNAL_ERROR)
+            if not node_id:
+                return device_state_denied(ReasonCode.INVALID_INPUT)
+            return device_state_response(
+                await asyncio.to_thread(core.get_device_state, account.user_id, node_id))
+        except Exception:  # noqa: BLE001
+            log.exception("get_device_state 도구 처리 중 예외")
+            return device_state_denied(ReasonCode.INTERNAL_ERROR)
 
     app = mcp.streamable_http_app(json_response=True, stateless_http=True)
     app.add_middleware(AuthMiddleware, authenticator=authenticator)
