@@ -338,6 +338,25 @@ def test_FR18_진행_중인_같은_키는_다시_판정하지_않고_거부한�
     assert d.verdict is Verdict.DENY and repo.reserved == []
 
 
+def test_FR18_다른_계정의_같은_request_id는_서로_다른_요청으로_판정한다():
+    pipe, repo, *_ = build()
+    seen: dict[tuple[str, str], str] = {}
+
+    def link(req, digest):
+        key = (req.user_id, req.request_id)
+        if key in seen:
+            return RequestLink(seen[key], False, False)
+        seen[key] = f"i{len(seen) + 1}"
+        return RequestLink(seen[key], True, False)
+
+    repo.link_request = link
+    a = pipe.decide(request())
+    other = UseRequest("u2", "r1", TargetSpec.parse("nearest:locker"), Action.OPEN, "claude", NOW)
+    b = pipe.decide(other)
+    assert a.internal_request_id != b.internal_request_id
+    assert [r.internal_request_id for r in repo.reserved] == ["i1", "i2"]
+
+
 def test_FR18_digest는_request_id_received_at_host_kind에_영향받지_않는다():
     a = input_digest(request(request_id="r1"))
     b = input_digest(UseRequest("u1", "r2", TargetSpec.parse("nearest:locker"), Action.OPEN,
