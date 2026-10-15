@@ -224,7 +224,10 @@ class SqliteExecutionStore:
             ),
         )
         self._release_reservation(command_row["internal_request_id"])
-        self._append_audit(command_row["internal_request_id"], command_row["command_id"], reason, evidence)
+        self._append_audit(
+            command_row["internal_request_id"], command_row["command_id"],
+            {"event": "cancel_not_sent", "reason": reason.value, "evidence": dict(evidence)},
+        )
         updated = self._conn.execute(
             "SELECT * FROM node_command WHERE command_id = ?", (command_row["command_id"],)
         ).fetchone()
@@ -258,7 +261,10 @@ class SqliteExecutionStore:
         if own_session is not None and own_session["state"] != SessionState.RESERVED.value:
             return StoreResult(outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.STATE_CONFLICT)
         self._release_reservation(internal_request_id)
-        self._append_audit(internal_request_id, None, reason, evidence)
+        self._append_audit(
+            internal_request_id, None,
+            {"event": "cancel_not_sent", "reason": reason.value, "evidence": dict(evidence)},
+        )
         return StoreResult(outcome=StoreOutcome.APPLIED, command=None)
 
     def _release_reservation(self, internal_request_id: str) -> None:
@@ -289,19 +295,165 @@ class SqliteExecutionStore:
         )
 
     def _append_audit(
-        self, internal_request_id: str | None, command_id: str | None, reason: ReasonCode,
-        evidence: Mapping[str, Any],
+        self, internal_request_id: str | None, command_id: str | None, payload: Mapping[str, Any],
+        *, step: Step = Step.EXEC,
     ) -> None:
         """`ExecutionStore` 안에서 쓰는 감사 행의 `event_id`는 DB가 만든다 (`architecture.md` §4)."""
         self._conn.execute(
             "INSERT INTO audit_log (log_id, event_id, internal_request_id, command_id, step, "
             "payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
-                new_id(), new_id(), internal_request_id, command_id, Step.EXEC.value,
-                to_json({"event": "cancel_not_sent", "reason": reason.value, "evidence": dict(evidence)}),
-                iso(datetime.now(timezone.utc)),
+                new_id(), new_id(), internal_request_id, command_id, step.value,
+                to_json(payload), iso(datetime.now(timezone.utc)),
             ),
         )
+
+    # ── 실행 결과 (#17 3단계) ────────────────────────────────────────
+
+    def record_result(
+        self, command_id: str, outcome: CommandOutcome, occurred_at: datetime,
+        rental_due_at: datetime | None, evidence: Mapping[str, Any],
+    ) -> StoreResult:
+        if outcome == CommandOutcome.NOT_SENT:
+            raise ValueError("NOT_SENT 는 cancel_not_sent 로 반영한다")
+        with immediate_transaction(self._conn):
+            row = self._conn.execute(
+                "SELECT * FROM node_command WHERE command_id = ?", (command_id,)
+            ).fetchone()
+            if row is None:
+                raise LookupError(f"명령 {command_id} 가 없다")
+            if ExecutionStatus(row["status"]) != ExecutionStatus.IN_PROGRESS:
+                return self._record_result_not_in_progress(row, outcome, occurred_at, evidence)
+            if outcome == CommandOutcome.SUCCEEDED:
+                return self._apply_succeeded(row, occurred_at, rental_due_at, evidence)
+            if outcome == CommandOutcome.REJECTED:
+                return self._apply_rejected(row, occurred_at, evidence)
+            return self._apply_failed_or_unknown(row, outcome, occurred_at, evidence)
+
+    def _record_result_not_in_progress(
+        self, row: sqlite3.Row, outcome: CommandOutcome, occurred_at: datetime, evidence: Mapping[str, Any],
+    ) -> StoreResult:
+        """전송 전(`PENDING`)이거나 이미 결과가 있는 명령이다. 같은 결과의 재호출만 `ALREADY_APPLIED`다.
+
+        다른 결과는 `CONFLICT`다. 늦은 성공도 기존 결과(`FAILED`·`UNKNOWN` 등)를 덮어쓰지
+        않는다 — 늦은 성공으로 `FAULT`를 해제하지 않는다 (FR-07).
+        """
+        if (
+            row["outcome"] == outcome.value and row["occurred_at"] == iso(occurred_at)
+            and from_json(row["evidence"]) == dict(evidence)
+        ):
+            return StoreResult(outcome=StoreOutcome.ALREADY_APPLIED, command=self._command_from_row(row))
+        return StoreResult(
+            outcome=StoreOutcome.CONFLICT, command=self._command_from_row(row),
+            conflict_reason=StoreConflictReason.CONTENT_CONFLICT,
+        )
+
+    def _apply_succeeded(
+        self, row: sqlite3.Row, occurred_at: datetime, rental_due_at: datetime | None,
+        evidence: Mapping[str, Any],
+    ) -> StoreResult:
+        """최초 대여는 기기·세션을 `ACTIVE`로 두고 `rental_due_at`을 저장한다 (FR-19).
+
+        재조작·공용형은 기존 점유를 보존한다 — 건드릴 세션이 없거나 이미 `ACTIVE`다.
+        """
+        self._set_result(row, CommandOutcome.SUCCEEDED, occurred_at, evidence)
+        if row["execution_kind"] == ExecutionKind.RENTAL_INITIAL.value:
+            self._conn.execute(
+                "UPDATE use_session SET state = ?, rental_due_at = ? WHERE use_id = ?",
+                (SessionState.ACTIVE.value, iso(rental_due_at) if rental_due_at else None, row["use_id"]),
+            )
+            self._conn.execute(
+                "UPDATE node SET device_state = ? WHERE node_id = ?",
+                (DeviceState.ACTIVE.value, row["node_id"]),
+            )
+        self._consume_usage(row["usage_id"])
+        self._append_audit(
+            row["internal_request_id"], row["command_id"],
+            {"event": "record_result", "outcome": CommandOutcome.SUCCEEDED.value, "evidence": dict(evidence)},
+        )
+        return StoreResult(outcome=StoreOutcome.APPLIED, command=self._reload_command(row["command_id"]))
+
+    def _apply_rejected(
+        self, row: sqlite3.Row, occurred_at: datetime, evidence: Mapping[str, Any],
+    ) -> StoreResult:
+        """검증된 `DEVICE_BUSY` 접수·실행 전 거부다. 기기를 `FAULT`로 두지 않는다 (FR-19).
+
+        최초 대여는 이번 예약만 취소한다. 재조작·공용형은 기존 점유를 보존하고 이번
+        요청의 사용분만 돌려준다.
+        """
+        self._set_result(row, CommandOutcome.REJECTED, occurred_at, evidence)
+        if row["execution_kind"] == ExecutionKind.RENTAL_INITIAL.value:
+            self._conn.execute(
+                "UPDATE use_session SET state = ?, end_reason = ?, closed_at = ? WHERE use_id = ?",
+                (SessionState.CLOSED.value, EndReason.CANCELLED.value, iso(occurred_at), row["use_id"]),
+            )
+            self._conn.execute(
+                "UPDATE node SET device_state = ? WHERE node_id = ?",
+                (DeviceState.AVAILABLE.value, row["node_id"]),
+            )
+        self._release_usage(row["usage_id"])
+        self._append_audit(
+            row["internal_request_id"], row["command_id"],
+            {"event": "record_result", "outcome": CommandOutcome.REJECTED.value, "evidence": dict(evidence)},
+        )
+        return StoreResult(outcome=StoreOutcome.APPLIED, command=self._reload_command(row["command_id"]))
+
+    def _apply_failed_or_unknown(
+        self, row: sqlite3.Row, outcome: CommandOutcome, occurred_at: datetime, evidence: Mapping[str, Any],
+    ) -> StoreResult:
+        """기기를 `FAULT`로 격리한다. 점유 세션은 어느 실행 종류든 그대로 보존한다 (FR-07, NFR-04)."""
+        self._set_result(row, outcome, occurred_at, evidence)
+        self._conn.execute(
+            "UPDATE node SET device_state = ? WHERE node_id = ?", (DeviceState.FAULT.value, row["node_id"])
+        )
+        self._hold_usage(row["usage_id"])
+        self._append_audit(
+            row["internal_request_id"], row["command_id"],
+            {"event": "record_result", "outcome": outcome.value, "evidence": dict(evidence)},
+        )
+        return StoreResult(outcome=StoreOutcome.APPLIED, command=self._reload_command(row["command_id"]))
+
+    def _set_result(
+        self, row: sqlite3.Row, outcome: CommandOutcome, occurred_at: datetime, evidence: Mapping[str, Any],
+    ) -> None:
+        self._conn.execute(
+            "UPDATE node_command SET status = ?, outcome = ?, occurred_at = ?, evidence = ? "
+            "WHERE command_id = ? AND status = ?",
+            (
+                outcome.value, outcome.value, iso(occurred_at), to_json(evidence),
+                row["command_id"], ExecutionStatus.IN_PROGRESS.value,
+            ),
+        )
+
+    def _consume_usage(self, usage_id: str | None) -> None:
+        if usage_id is None:
+            return
+        self._conn.execute(
+            "UPDATE approval_usage SET state = ? WHERE usage_id = ? AND state = ?",
+            (ApprovalUsageState.CONSUMED.value, usage_id, ApprovalUsageState.RESERVED.value),
+        )
+
+    def _release_usage(self, usage_id: str | None) -> None:
+        if usage_id is None:
+            return
+        self._conn.execute(
+            "UPDATE approval_usage SET state = ? WHERE usage_id = ? AND state = ?",
+            (ApprovalUsageState.RELEASED.value, usage_id, ApprovalUsageState.RESERVED.value),
+        )
+
+    def _hold_usage(self, usage_id: str | None) -> None:
+        if usage_id is None:
+            return
+        self._conn.execute(
+            "UPDATE approval_usage SET state = ? WHERE usage_id = ? AND state = ?",
+            (ApprovalUsageState.HELD.value, usage_id, ApprovalUsageState.RESERVED.value),
+        )
+
+    def _reload_command(self, command_id: str) -> CommandRecord:
+        row = self._conn.execute(
+            "SELECT * FROM node_command WHERE command_id = ?", (command_id,)
+        ).fetchone()
+        return self._command_from_row(row)
 
     def execution(self, internal_request_id: str) -> CommandRecord | None:
         row = self._conn.execute(
