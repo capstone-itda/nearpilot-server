@@ -58,3 +58,16 @@ def immediate_transaction(conn: sqlite3.Connection):
         raise
     else:
         conn.execute("COMMIT")
+
+
+@contextmanager
+def deferred_transaction(conn: sqlite3.Connection):
+    """읽기 전용 조회 여러 번을 하나의 일관된 스냅숏으로 묶는다 (`restore_pending`, FR-19).
+
+    쓰지 않으므로 `BEGIN IMMEDIATE`로 쓰기 잠금을 기다릴 필요가 없다. 끝나면 항상 롤백한다.
+    """
+    conn.execute("BEGIN DEFERRED")
+    try:
+        yield
+    finally:
+        conn.execute("ROLLBACK")

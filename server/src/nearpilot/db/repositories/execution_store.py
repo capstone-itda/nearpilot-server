@@ -6,16 +6,21 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
-from collections.abc import Mapping
+from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
-from nearpilot.db.repositories._common import from_json, immediate_transaction, iso, new_id, parse_iso, to_json
+from nearpilot.db.repositories._common import (
+    deferred_transaction, from_json, immediate_transaction, iso, new_id, parse_iso, to_json,
+)
 from nearpilot.shared.enums import (
     Action,
     ApprovalUsageState,
+    Capability,
     CommandOutcome,
     DeviceState,
     EndReason,
@@ -23,12 +28,30 @@ from nearpilot.shared.enums import (
     ExecutionStatus,
     Occupancy,
     ReasonCode,
+    RecoveryStatus,
     SessionState,
     Step,
     StoreConflictReason,
     StoreOutcome,
+    TrustState,
+    Verdict,
 )
-from nearpilot.shared.models import CloseResult, CommandRecord, StoreResult, UseSession
+from nearpilot.shared.models import (
+    ApprovalUsageRecord,
+    CloseResult,
+    CommandRecord,
+    Decision,
+    NodeInfo,
+    PendingRequestRecord,
+    RecoveryEvidence,
+    RecoveryRecord,
+    RestoreBundle,
+    RestoredSession,
+    StoreResult,
+    TargetSpec,
+    UseRequest,
+    UseSession,
+)
 
 
 def _evidence_matches(stored_json: str | None, evidence: Mapping[str, Any]) -> bool:
@@ -665,4 +688,195 @@ class SqliteExecutionStore:
             outcome=CommandOutcome(row["outcome"]) if row["outcome"] else None,
             occurred_at=parse_iso(row["occurred_at"]) if row["occurred_at"] else None,
             evidence=from_json(row["evidence"]),
+        )
+
+    # ── 복원 조회 (#17 6단계) ────────────────────────────────────────
+
+    def restore_pending(self) -> Sequence[RestoreBundle]:
+        """미완료 요청·명령·세션·사용분·복구 건과 `FAULT` 기기를 일관된 읽기 시점에 조회한다.
+
+        조회 오류는 예외로 그대로 올라간다 — 빈 목록으로 바꾸지 않는다 (FR-19 재시작 복원).
+        """
+        with deferred_transaction(self._conn):
+            read_at = datetime.now(timezone.utc)
+            commands_by_node = self._pending_commands_by_node()
+            linked_ids = {
+                row["internal_request_id"]
+                for row in self._conn.execute("SELECT internal_request_id FROM node_command")
+            }
+            requests_by_node = self._pending_requests_by_node(linked_ids)
+            sessions_by_node = self._restored_sessions_by_node()
+            usages_by_node = self._pending_usages_by_node()
+            recoveries_by_node = self._unresolved_recoveries_by_node()
+            fault_node_ids = {
+                row["node_id"] for row in self._conn.execute(
+                    "SELECT node_id FROM node WHERE device_state = ?", (DeviceState.FAULT.value,)
+                )
+            }
+            node_ids = (
+                set(commands_by_node) | set(requests_by_node) | set(sessions_by_node)
+                | set(usages_by_node) | set(recoveries_by_node) | fault_node_ids
+            )
+            bundles = []
+            for node_id in node_ids:
+                node_row = self._conn.execute("SELECT * FROM node WHERE node_id = ?", (node_id,)).fetchone()
+                if node_row is None:
+                    continue
+                bundles.append(RestoreBundle(
+                    node=self._node_from_row(node_row), read_at=read_at,
+                    requests=tuple(requests_by_node.get(node_id, ())),
+                    commands=tuple(commands_by_node.get(node_id, ())),
+                    sessions=tuple(sessions_by_node.get(node_id, ())),
+                    approval_usages=tuple(usages_by_node.get(node_id, ())),
+                    recoveries=tuple(recoveries_by_node.get(node_id, ())),
+                ))
+            return tuple(bundles)
+
+    def _pending_commands_by_node(self) -> dict[str, list[CommandRecord]]:
+        """전송 전(`PENDING`)이거나 결과를 확정하지 못한(`IN_PROGRESS`) 명령이다."""
+        by_node: dict[str, list[CommandRecord]] = defaultdict(list)
+        for row in self._conn.execute(
+            "SELECT * FROM node_command WHERE status IN (?, ?)",
+            (ExecutionStatus.PENDING.value, ExecutionStatus.IN_PROGRESS.value),
+        ):
+            by_node[row["node_id"]].append(self._command_from_row(row))
+        return by_node
+
+    def _pending_requests_by_node(self, linked_ids: set[str]) -> dict[str, list[PendingRequestRecord]]:
+        """`link_command` 전에 멈춘 예약 요청이다. 이미 취소된 요청은 뺀다 (6절 결정)."""
+        by_node: dict[str, list[PendingRequestRecord]] = defaultdict(list)
+        for row in self._conn.execute(
+            "SELECT * FROM request WHERE verdict = ? AND node_id IS NOT NULL", (Verdict.OK.value,)
+        ):
+            internal_request_id = row["internal_request_id"]
+            if internal_request_id in linked_ids or self._already_cancelled(internal_request_id):
+                continue
+            node_id = row["node_id"]
+            node_row = self._conn.execute(
+                "SELECT occupancy FROM node WHERE node_id = ?", (node_id,)
+            ).fetchone()
+            if node_row is None:
+                continue
+            execution_kind, use_id = self._resolve_execution_kind(
+                internal_request_id, node_id, node_row["occupancy"]
+            )
+            usage_row = self._conn.execute(
+                "SELECT usage_id FROM approval_usage WHERE internal_request_id = ?", (internal_request_id,)
+            ).fetchone()
+            by_node[node_id].append(PendingRequestRecord(
+                internal_request_id=internal_request_id,
+                request=self._use_request_from_row(row),
+                input_digest=row["input_digest"],
+                execution_kind=execution_kind,
+                use_id=use_id,
+                usage_id=usage_row["usage_id"] if usage_row else None,
+                reserved_at=parse_iso(row["received_at"]),
+                decision=self._decision_from_row(row, use_id),
+            ))
+        return by_node
+
+    def _restored_sessions_by_node(self) -> dict[str, list[RestoredSession]]:
+        """`RESERVED`·`ACTIVE`·`CLOSING` 점유 세션이다. 생성 시각은 원래 요청의 수신 시각이다."""
+        by_node: dict[str, list[RestoredSession]] = defaultdict(list)
+        for row in self._conn.execute(
+            "SELECT * FROM use_session WHERE state IN (?, ?, ?)",
+            (SessionState.RESERVED.value, SessionState.ACTIVE.value, SessionState.CLOSING.value),
+        ):
+            request_row = self._conn.execute(
+                "SELECT received_at FROM request WHERE internal_request_id = ?",
+                (row["internal_request_id"],),
+            ).fetchone()
+            if request_row is None:
+                raise LookupError(f"점유 세션 {row['use_id']} 의 원래 요청을 확인하지 못했다")
+            by_node[row["node_id"]].append(RestoredSession(
+                session=self._session_from_row(row), user_id=row["user_id"],
+                created_at=parse_iso(request_row["received_at"]),
+            ))
+        return by_node
+
+    def _pending_usages_by_node(self) -> dict[str, list[ApprovalUsageRecord]]:
+        """예약(`reserved`)·보류(`held`) 상태의 승인 사용분이다. 점유 세션이 없는 공용형도 포함한다."""
+        by_node: dict[str, list[ApprovalUsageRecord]] = defaultdict(list)
+        for row in self._conn.execute(
+            "SELECT au.usage_id, au.approval_id, au.internal_request_id, au.command_id, au.state, "
+            "a.node_id FROM approval_usage au JOIN approval a ON a.approval_id = au.approval_id "
+            "WHERE au.state IN (?, ?)",
+            (ApprovalUsageState.RESERVED.value, ApprovalUsageState.HELD.value),
+        ):
+            by_node[row["node_id"]].append(ApprovalUsageRecord(
+                usage_id=row["usage_id"], approval_id=row["approval_id"],
+                internal_request_id=row["internal_request_id"], command_id=row["command_id"],
+                state=ApprovalUsageState(row["state"]),
+            ))
+        return by_node
+
+    def _unresolved_recoveries_by_node(self) -> dict[str, list[RecoveryRecord]]:
+        """완료하지 못한(`completed_at IS NULL`) 복구 건이다. 완료 결과는 항상 `None`이다."""
+        by_node: dict[str, list[RecoveryRecord]] = defaultdict(list)
+        for row in self._conn.execute("SELECT * FROM recovery WHERE completed_at IS NULL"):
+            by_node[row["node_id"]].append(self._recovery_from_row(row))
+        return by_node
+
+    @staticmethod
+    def _node_from_row(row: sqlite3.Row) -> NodeInfo:
+        return NodeInfo(
+            node_id=row["node_id"],
+            place_id=row["place_id"],
+            capability=Capability(row["capability"]),
+            occupancy=Occupancy(row["occupancy"]),
+            trust_state=TrustState(row["trust_state"]),
+            device_state=DeviceState(row["device_state"]),
+            exclusive_group=row["exclusive_group"],
+            last_seen_at=parse_iso(row["last_seen_at"]) if row["last_seen_at"] else None,
+            release_policy=from_json(row["release_policy"]),
+            session_id=row["session_id"],
+            session_first_seen_at=(
+                parse_iso(row["session_first_seen_at"]) if row["session_first_seen_at"] else None
+            ),
+        )
+
+    @staticmethod
+    def _use_request_from_row(row: sqlite3.Row) -> UseRequest:
+        return UseRequest(
+            user_id=row["user_id"], request_id=row["request_id"],
+            target=TargetSpec.parse(row["target_spec"]), action=Action(row["action"]),
+            host_kind=row["host_kind"], received_at=parse_iso(row["received_at"]),
+            parent_internal_request_id=row["parent_internal_request_id"],
+        )
+
+    @staticmethod
+    def _decision_from_row(row: sqlite3.Row, use_id: str | None) -> Decision | None:
+        if row["verdict"] is None:
+            return None
+        return Decision(
+            internal_request_id=row["internal_request_id"], request_id=row["request_id"] or "",
+            verdict=Verdict(row["verdict"]), reason=ReasonCode(row["reason_code"]),
+            node_id=row["node_id"], use_id=use_id, p_max=row["p_max"],
+        )
+
+    @staticmethod
+    def _recovery_from_row(row: sqlite3.Row) -> RecoveryRecord:
+        """`evidence` 컬럼은 `RecoveryEvidence` 필드를 그대로 담은 JSON 배열이다 (이번 작업의 결정).
+
+        `completed_at IS NULL`인 행만 읽는 호출부(`restore_pending`)에서 쓰므로 `completion`은
+        항상 `None`이다. 완료 정산 복원은 `settle_recovery`를 구현하는 작업(7단계)이 맡는다.
+        """
+        evidence = tuple(
+            RecoveryEvidence(
+                evidence_id=item["evidence_id"], session_id=item["session_id"],
+                observed_at=parse_iso(item["observed_at"]),
+                execution_outcome=(
+                    CommandOutcome(item["execution_outcome"]) if item.get("execution_outcome") else None
+                ),
+                safety_confirmed=item.get("safety_confirmed"),
+                physical_state_synced=item.get("physical_state_synced"),
+            )
+            for item in json.loads(row["evidence"] or "[]")
+        )
+        return RecoveryRecord(
+            recovery_id=row["recovery_id"], node_id=row["node_id"],
+            internal_request_ids=tuple(json.loads(row["internal_request_ids"] or "[]")),
+            command_ids=tuple(json.loads(row["command_ids"] or "[]")),
+            use_id=row["use_id"], created_at=parse_iso(row["created_at"]),
+            status=RecoveryStatus(row["status"]), evidence=evidence, completion=None,
         )
