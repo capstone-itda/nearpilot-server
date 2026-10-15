@@ -1,6 +1,6 @@
 # FR-09 기기 조회 (find_available_devices, get_device_state)
 
-- 상태: 진행 중
+- 상태: 완료
 - 담당: eunji719 (판정)
 - 요구사항: FR-09, FR-11, FR-14
 - 따르는 결정: #23, #42
