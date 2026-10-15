@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
@@ -27,7 +28,17 @@ from nearpilot.shared.enums import (
     StoreConflictReason,
     StoreOutcome,
 )
-from nearpilot.shared.models import CommandRecord, StoreResult
+from nearpilot.shared.models import CloseResult, CommandRecord, StoreResult, UseSession
+
+
+def _evidence_matches(stored_json: str | None, evidence: Mapping[str, Any]) -> bool:
+    """저장된 근거와 이번 호출의 근거가 같은 사건인지 본다.
+
+    `evidence`에 `datetime`이 섞여 있으면(JSON은 문자열로만 담는다) 호출 쪽 값도
+    `to_json`으로 한 번 거쳐서 같은 문자열화를 적용한 뒤 비교한다. 그래야 `datetime` 객체와
+    저장된 문자열의 타입 차이만으로 다른 사건으로 오판하지 않는다.
+    """
+    return from_json(to_json(evidence)) == from_json(stored_json)
 
 
 class SqliteExecutionStore:
@@ -203,8 +214,11 @@ class SqliteExecutionStore:
     ) -> StoreResult:
         status = ExecutionStatus(command_row["status"])
         if status == ExecutionStatus.NOT_SENT:
-            if from_json(command_row["evidence"]) == dict(evidence):
-                return StoreResult(outcome=StoreOutcome.ALREADY_APPLIED, command=self._command_from_row(command_row))
+            if _evidence_matches(command_row["evidence"], evidence):
+                return StoreResult(
+                    outcome=StoreOutcome.ALREADY_APPLIED,
+                    command=replace(self._command_from_row(command_row), evidence=dict(evidence)),
+                )
             return StoreResult(
                 outcome=StoreOutcome.CONFLICT, command=self._command_from_row(command_row),
                 conflict_reason=StoreConflictReason.CONTENT_CONFLICT,
@@ -231,7 +245,10 @@ class SqliteExecutionStore:
         updated = self._conn.execute(
             "SELECT * FROM node_command WHERE command_id = ?", (command_row["command_id"],)
         ).fetchone()
-        return StoreResult(outcome=StoreOutcome.APPLIED, command=self._command_from_row(updated))
+        return StoreResult(
+            outcome=StoreOutcome.APPLIED,
+            command=replace(self._command_from_row(updated), evidence=dict(evidence)),
+        )
 
     def _cancel_unlinked(
         self, internal_request_id: str, expected: ExecutionStatus, reason: ReasonCode,
@@ -336,6 +353,136 @@ class SqliteExecutionStore:
             outcome = StoreOutcome.ALREADY_APPLIED if already_fault else StoreOutcome.APPLIED
             return StoreResult(outcome=outcome)
 
+    # ── 반납 시작·종료 (#17 5단계) ───────────────────────────────────
+
+    def begin_close(self, use_id: str, reason: EndReason) -> StoreResult:
+        """대여형 기기·세션을 `ACTIVE` → `CLOSING`으로 둔다. 키: `use_id`.
+
+        같은 기기의 결과를 확정하지 못한 구동 명령이 있으면 `CONFLICT`·`COMMAND_IN_PROGRESS`다
+        (FR-19 "구동 중 추가 명령 제한의 저장"). 전송 시작(`begin_send`)과 반납 시작의 검사·쓰기는
+        같은 `node_command` 조건을 보는 한 트랜잭션이라 서로 경합하면 한쪔만 성공한다.
+        """
+        with immediate_transaction(self._conn):
+            row = self._conn.execute("SELECT * FROM use_session WHERE use_id = ?", (use_id,)).fetchone()
+            if row is None:
+                raise LookupError(f"점유 세션 {use_id} 가 없다")
+            state = SessionState(row["state"])
+            if state == SessionState.CLOSING:
+                if row["end_reason"] == reason.value:
+                    return StoreResult(outcome=StoreOutcome.ALREADY_APPLIED, session=self._session_from_row(row))
+                return StoreResult(
+                    outcome=StoreOutcome.CONFLICT, session=self._session_from_row(row),
+                    conflict_reason=StoreConflictReason.CONTENT_CONFLICT,
+                )
+            if state != SessionState.ACTIVE:
+                return StoreResult(
+                    outcome=StoreOutcome.CONFLICT, session=self._session_from_row(row),
+                    conflict_reason=StoreConflictReason.STATE_CONFLICT,
+                )
+            node_row = self._conn.execute(
+                "SELECT device_state FROM node WHERE node_id = ?", (row["node_id"],)
+            ).fetchone()
+            if node_row is None:
+                raise LookupError(f"기기 {row['node_id']} 가 없다")
+            if node_row["device_state"] != DeviceState.ACTIVE.value:
+                return StoreResult(outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.STATE_CONFLICT)
+            in_progress = self._conn.execute(
+                "SELECT 1 FROM node_command WHERE node_id = ? AND status = ?",
+                (row["node_id"], ExecutionStatus.IN_PROGRESS.value),
+            ).fetchone()
+            if in_progress is not None:
+                return StoreResult(
+                    outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.COMMAND_IN_PROGRESS
+                )
+            self._conn.execute(
+                "UPDATE use_session SET state = ?, end_reason = ? WHERE use_id = ?",
+                (SessionState.CLOSING.value, reason.value, use_id),
+            )
+            self._conn.execute(
+                "UPDATE node SET device_state = ? WHERE node_id = ?",
+                (DeviceState.CLOSING.value, row["node_id"]),
+            )
+            updated = self._conn.execute("SELECT * FROM use_session WHERE use_id = ?", (use_id,)).fetchone()
+            return StoreResult(outcome=StoreOutcome.APPLIED, session=self._session_from_row(updated))
+
+    def finish_close(
+        self, use_id: str, closed_at: datetime, check_id: str, evidence: Mapping[str, Any],
+    ) -> StoreResult:
+        """세션 `CLOSED`, 기기 `AVAILABLE`, `closed_at`, 채택한 검사 근거를 한 트랜잭션에서 저장한다.
+
+        같은 `use_id`·같은 `check_id`의 재호출은 `ALREADY_APPLIED`다. 다른 `check_id`나 다른
+        근거는 `CONFLICT`다. DB는 문·구동부·센서 조건을 다시 판단하지 않는다 (FR-20).
+        """
+        with immediate_transaction(self._conn):
+            row = self._conn.execute("SELECT * FROM use_session WHERE use_id = ?", (use_id,)).fetchone()
+            if row is None:
+                raise LookupError(f"점유 세션 {use_id} 가 없다")
+            state = SessionState(row["state"])
+            if state == SessionState.CLOSED:
+                if row["check_id"] == check_id and _evidence_matches(row["check_evidence"], evidence):
+                    return StoreResult(outcome=StoreOutcome.ALREADY_APPLIED, session=self._session_from_row(row))
+                return StoreResult(
+                    outcome=StoreOutcome.CONFLICT, session=self._session_from_row(row),
+                    conflict_reason=StoreConflictReason.CONTENT_CONFLICT,
+                )
+            if state != SessionState.CLOSING:
+                return StoreResult(outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.STATE_CONFLICT)
+            node_row = self._conn.execute(
+                "SELECT device_state FROM node WHERE node_id = ?", (row["node_id"],)
+            ).fetchone()
+            if node_row is None:
+                raise LookupError(f"기기 {row['node_id']} 가 없다")
+            if node_row["device_state"] != DeviceState.CLOSING.value:
+                return StoreResult(outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.STATE_CONFLICT)
+            self._conn.execute(
+                "UPDATE use_session SET state = ?, closed_at = ?, check_id = ?, check_evidence = ? "
+                "WHERE use_id = ?",
+                (SessionState.CLOSED.value, iso(closed_at), check_id, to_json(evidence), use_id),
+            )
+            self._conn.execute(
+                "UPDATE node SET device_state = ? WHERE node_id = ?",
+                (DeviceState.AVAILABLE.value, row["node_id"]),
+            )
+            self._append_audit(
+                row["internal_request_id"], None,
+                {
+                    "event": "finish_close", "use_id": use_id, "check_id": check_id,
+                    "evidence": dict(evidence),
+                },
+                step=Step.CLOSE,
+            )
+            updated = self._conn.execute("SELECT * FROM use_session WHERE use_id = ?", (use_id,)).fetchone()
+            return StoreResult(outcome=StoreOutcome.APPLIED, session=self._session_from_row(updated))
+
+    def close_result(self, use_id: str) -> CloseResult | None:
+        """반납의 저장된 완료 기록을 돌려준다. 기기의 현재 상태가 아니다 (FR-20).
+
+        `check_id`가 없으면 (취소·거부로 `CLOSED`된 세션 포함) 반납 완료 기록이 아니다.
+        """
+        row = self._conn.execute(
+            "SELECT state, closed_at, end_reason, check_id, check_evidence FROM use_session WHERE use_id = ?",
+            (use_id,),
+        ).fetchone()
+        if row is None or row["state"] != SessionState.CLOSED.value or row["check_id"] is None:
+            return None
+        return CloseResult(
+            use_id=use_id, closed_at=parse_iso(row["closed_at"]), end_reason=EndReason(row["end_reason"]),
+            check_id=row["check_id"], evidence=from_json(row["check_evidence"]),
+        )
+
+    @staticmethod
+    def _session_from_row(row: sqlite3.Row) -> UseSession:
+        return UseSession(
+            use_id=row["use_id"],
+            internal_request_id=row["internal_request_id"],
+            node_id=row["node_id"],
+            state=SessionState(row["state"]),
+            rental_due_at=parse_iso(row["rental_due_at"]) if row["rental_due_at"] else None,
+            closed_at=parse_iso(row["closed_at"]) if row["closed_at"] else None,
+            end_reason=EndReason(row["end_reason"]) if row["end_reason"] else None,
+            release_policy=from_json(row["release_policy"]),
+        )
+
     # ── 실행 결과 (#17 3단계) ────────────────────────────────────────
 
     def record_result(
@@ -368,9 +515,12 @@ class SqliteExecutionStore:
         """
         if (
             row["outcome"] == outcome.value and row["occurred_at"] == iso(occurred_at)
-            and from_json(row["evidence"]) == dict(evidence)
+            and _evidence_matches(row["evidence"], evidence)
         ):
-            return StoreResult(outcome=StoreOutcome.ALREADY_APPLIED, command=self._command_from_row(row))
+            return StoreResult(
+                outcome=StoreOutcome.ALREADY_APPLIED,
+                command=replace(self._command_from_row(row), evidence=dict(evidence)),
+            )
         return StoreResult(
             outcome=StoreOutcome.CONFLICT, command=self._command_from_row(row),
             conflict_reason=StoreConflictReason.CONTENT_CONFLICT,
@@ -399,7 +549,10 @@ class SqliteExecutionStore:
             row["internal_request_id"], row["command_id"],
             {"event": "record_result", "outcome": CommandOutcome.SUCCEEDED.value, "evidence": dict(evidence)},
         )
-        return StoreResult(outcome=StoreOutcome.APPLIED, command=self._reload_command(row["command_id"]))
+        return StoreResult(
+            outcome=StoreOutcome.APPLIED,
+            command=replace(self._reload_command(row["command_id"]), evidence=dict(evidence)),
+        )
 
     def _apply_rejected(
         self, row: sqlite3.Row, occurred_at: datetime, evidence: Mapping[str, Any],
@@ -424,7 +577,10 @@ class SqliteExecutionStore:
             row["internal_request_id"], row["command_id"],
             {"event": "record_result", "outcome": CommandOutcome.REJECTED.value, "evidence": dict(evidence)},
         )
-        return StoreResult(outcome=StoreOutcome.APPLIED, command=self._reload_command(row["command_id"]))
+        return StoreResult(
+            outcome=StoreOutcome.APPLIED,
+            command=replace(self._reload_command(row["command_id"]), evidence=dict(evidence)),
+        )
 
     def _apply_failed_or_unknown(
         self, row: sqlite3.Row, outcome: CommandOutcome, occurred_at: datetime, evidence: Mapping[str, Any],
@@ -439,7 +595,10 @@ class SqliteExecutionStore:
             row["internal_request_id"], row["command_id"],
             {"event": "record_result", "outcome": outcome.value, "evidence": dict(evidence)},
         )
-        return StoreResult(outcome=StoreOutcome.APPLIED, command=self._reload_command(row["command_id"]))
+        return StoreResult(
+            outcome=StoreOutcome.APPLIED,
+            command=replace(self._reload_command(row["command_id"]), evidence=dict(evidence)),
+        )
 
     def _set_result(
         self, row: sqlite3.Row, outcome: CommandOutcome, occurred_at: datetime, evidence: Mapping[str, Any],

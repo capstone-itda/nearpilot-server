@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from datetime import datetime, timezone
 
 from nearpilot.db.repositories.execution_store import SqliteExecutionStore
 from nearpilot.db.schema import connect
@@ -238,6 +239,27 @@ def test_FR19_cancel_not_sent_reoperation_scope(store, conn):
     # 이번 요청의 사용분만 반환한다.
     usage = conn.execute("SELECT state FROM approval_usage WHERE usage_id = 'usage1'").fetchone()
     assert usage["state"] == "released"
+
+
+def test_FR19_cancel_not_sent_evidence_with_datetime(store, conn):
+    """`evidence`에 `datetime`이 섞여 있어도 저장이 터지지 않고, 재호출은 `ALREADY_APPLIED`다.
+
+    상태 관리의 `execution.py`는 `attempt.cancel`에 `confirmed_at`(datetime)을 그대로 담아
+    넘긴다. 저장 뒤 돌아온 `StoreResult.command.evidence`는 원래 넘긴 객체와 같아야, CORE가
+    `current.evidence != attempt.cancel`로 저장을 확인하는 검증을 통과한다.
+    """
+    _seed_initial(conn)
+    linked = store.link_command("req1", "node1", Action.OPEN)
+    evidence = {"source": "recheck", "confirmed_at": datetime(2026, 1, 1, tzinfo=timezone.utc)}
+
+    first = store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.RECHECK_FAILED, evidence)
+    second = store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.RECHECK_FAILED, evidence)
+
+    assert first.outcome == StoreOutcome.APPLIED
+    assert first.command.evidence == evidence
+    assert second.outcome == StoreOutcome.ALREADY_APPLIED
+    assert second.command.evidence == evidence
+    assert second.command.command_id == linked.command.command_id
 
 
 def test_FR19_cancel_not_sent_result_exists_conflict(store, conn):
