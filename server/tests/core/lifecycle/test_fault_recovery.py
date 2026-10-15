@@ -3,21 +3,22 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from threading import Barrier, Lock, RLock
 from types import SimpleNamespace
 
 import pytest
 
-from nearpilot.core.lifecycle.fault_recovery import FaultRecoveryService
+from nearpilot.core.lifecycle.fault_recovery import FaultRecoveryService, settlement_digest
 from nearpilot.core.lifecycle.release import ReleaseService
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, Capability, DeviceState, EndReason, ExecutionStatus, Occupancy, RecoveryStatus,
+    Action, ApprovalUsageState, Capability, CommandOutcome, DeviceState, EndReason, ExecutionStatus, Occupancy, RecoveryStatus,
     SafetyCheckOutcome, SessionState, StoreConflictReason, StoreOutcome, TrustState,
 )
 from nearpilot.shared.errors import StoreError, StoreNotApplied, StoreOutcomeUnknown
 from nearpilot.shared.models import (
-    CommandRecord, NodeInfo, RecoveryCompletion, RecoveryEvidence, RecoveryRecord,
+    ApprovalUsageSettlement, CommandRecord, NodeInfo, RecoveryCompletion, RecoveryEvidence, RecoveryRecord,
     RecoverySettlement, RestoreBundle, SafetyCheckResult, StoreResult, UseSession,
 )
 
@@ -530,3 +531,122 @@ def test_NFR04_release_unconfirmed_limit_connected_to_recovery(env):
     assert env.repository.use.state == SessionState.CLOSING
     assert env.store.saves[0].evidence == ()
     assert env.store.usage_state == "held"
+
+
+# ── 정산 요약값 (NFR-04, architecture.md §4 "복구 건과 복구 정산") ─────────
+
+def _digest_fields(**overrides):
+    at = datetime(2026, 10, 15, 3, 0, tzinfo=timezone.utc)
+    fields = dict(
+        recovery_id="recovery-1", node_id="locker-1",
+        expected_node_state=DeviceState.FAULT,
+        expected_recovery_status=RecoveryStatus.READY,
+        expected_commands={"command-1": ExecutionStatus.UNKNOWN, "command-2": ExecutionStatus.FAILED},
+        expected_sessions={"use-1": SessionState.CLOSING},
+        evidence=(
+            RecoveryEvidence("evidence-1", "connection-2", at, safety_confirmed=True),
+            RecoveryEvidence("evidence-2", "connection-2", at, physical_state_synced=True),
+        ),
+        usage_settlements=(
+            ApprovalUsageSettlement("usage-1", ApprovalUsageState.HELD, ApprovalUsageState.CONSUMED),
+        ),
+        use_id="use-1", closed_at=at, end_reason=EndReason.FAULT,
+    )
+    fields.update(overrides)
+    return fields
+
+
+def test_NFR04_settlement_digest_excludes_approval_account_and_time():
+    fields = _digest_fields()
+    digest = settlement_digest(**fields)
+    first = RecoverySettlement(
+        approved_by_user_id="owner-1", approved_at=datetime(2026, 10, 15, 4, tzinfo=timezone.utc),
+        settlement_digest=digest, **fields,
+    )
+    again = replace(first, approved_by_user_id="owner-2", approved_at=first.approved_at + timedelta(hours=1))
+    assert settlement_digest(**_settlement_fields(again)) == first.settlement_digest
+
+
+def test_NFR04_settlement_digest_ignores_input_order_and_time_zone():
+    fields = _digest_fields()
+    kst = timezone(timedelta(hours=9))
+    reordered = _digest_fields(
+        expected_commands=dict(reversed(list(fields["expected_commands"].items()))),
+        evidence=tuple(
+            replace(e, observed_at=e.observed_at.astimezone(kst)) for e in reversed(fields["evidence"])
+        ),
+        closed_at=fields["closed_at"].astimezone(kst),
+    )
+    assert settlement_digest(**reordered) == settlement_digest(**fields)
+
+
+@pytest.mark.parametrize("change", [
+    {"recovery_id": "recovery-2"},
+    {"expected_commands": {"command-1": ExecutionStatus.UNKNOWN}},
+    {"expected_sessions": {"use-1": SessionState.ACTIVE}},
+    {"usage_settlements": (
+        ApprovalUsageSettlement("usage-1", ApprovalUsageState.HELD, ApprovalUsageState.RELEASED),
+    )},
+    {"evidence": (
+        RecoveryEvidence(
+            "evidence-1", "connection-2", datetime(2026, 10, 15, 3, 0, tzinfo=timezone.utc),
+            safety_confirmed=False,
+        ),
+    )},
+    {"closed_at": datetime(2026, 10, 15, 3, 1, tzinfo=timezone.utc)},
+])
+def test_NFR04_settlement_digest_changes_with_settlement_content(change):
+    assert settlement_digest(**_digest_fields(**change)) != settlement_digest(**_digest_fields())
+
+
+def test_NFR04_settlement_digest_shared_recovery_has_no_close():
+    fields = _digest_fields(expected_sessions={}, use_id=None, closed_at=None, end_reason=None)
+    digest = settlement_digest(**fields)
+    assert digest != settlement_digest(**_digest_fields())
+    assert RecoverySettlement(
+        approved_by_user_id="owner-1", approved_at=datetime(2026, 10, 15, 4, tzinfo=timezone.utc),
+        settlement_digest=digest, **fields,
+    ).use_id is None
+
+
+def test_NFR04_settlement_digest_canonical_format():
+    at = datetime(2026, 10, 15, 12, 0, tzinfo=timezone(timedelta(hours=9)))
+    fields = dict(
+        recovery_id="r", node_id="n", expected_node_state=DeviceState.FAULT,
+        expected_recovery_status=RecoveryStatus.READY,
+        expected_commands={}, expected_sessions={},
+        evidence=(RecoveryEvidence("e", "c", at, execution_outcome=CommandOutcome.FAILED),),
+        usage_settlements=(),
+    )
+    canonical = (
+        '{"closed_at":null,"end_reason":null,"evidence":[{"evidence_id":"e",'
+        '"execution_outcome":"failed","observed_at":"2026-10-15T03:00:00+00:00",'
+        '"physical_state_synced":null,"safety_confirmed":null,"session_id":"c"}],'
+        '"expected_commands":{},"expected_node_state":"FAULT","expected_recovery_status":"ready",'
+        '"expected_sessions":{},"node_id":"n","recovery_id":"r","usage_settlements":[],'
+        '"use_id":null,"v":1}'
+    )
+    assert settlement_digest(**fields) == sha256(canonical.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.parametrize("change", [
+    {"closed_at": datetime(2026, 10, 15, 3, 0)},
+    {"evidence": (RecoveryEvidence("evidence-1", "connection-2", datetime(2026, 10, 15, 3, 0)),)},
+    {"evidence": (
+        RecoveryEvidence("evidence-1", "c", datetime(2026, 10, 15, tzinfo=timezone.utc)),
+        RecoveryEvidence("evidence-1", "c", datetime(2026, 10, 15, tzinfo=timezone.utc)),
+    )},
+])
+def test_NFR04_settlement_digest_rejects_ambiguous_input(change):
+    with pytest.raises(ValueError):
+        settlement_digest(**_digest_fields(**change))
+
+
+def _settlement_fields(settlement):
+    return {
+        name: getattr(settlement, name) for name in (
+            "recovery_id", "node_id", "expected_node_state", "expected_recovery_status",
+            "expected_commands", "expected_sessions", "evidence", "usage_settlements",
+            "use_id", "closed_at", "end_reason",
+        )
+    }

@@ -50,6 +50,7 @@ from nearpilot.shared.models import (
     Decision,
     ExecutionContext,
     ExecutionResult,
+    InternalRequest,
     NodeAnnounce,
     NodeCommand,
     NodeInfo,
@@ -212,6 +213,14 @@ class Repository(Protocol):
 
     def session_owner_matches(self, use_id: str, user_id: str) -> bool: ...  # FR-21
 
+    def is_place_owner(self, user_id: str, node_id: str) -> bool:
+        """기기가 속한 장소의 소유 계정이 user_id 인지 반환한다 (FR-12A, #84).
+
+        복구 준비 조회와 복구 승인마다 CORE 가 부른다. 소유 계정 ID 는 반환하지 않는다.
+        기기가 없거나 장소에 배치되지 않았으면 False 다. 조회 오류는 StoreError 로 알린다.
+        """
+        ...
+
 
 @runtime_checkable
 class ExecutionStore(Protocol):
@@ -226,6 +235,16 @@ class ExecutionStore(Protocol):
 
     def link_command(self, internal_request_id: str, node_id: str, action: Action) -> StoreResult:
         """요청의 명령을 연결한다. 이미 있으면 기존 명령과 진행 상태를 반환한다. 키: internal_request_id"""
+        ...
+
+    def link_internal_request(self, req: InternalRequest) -> StoreResult:
+        """서버 내부 요청을 사용자 ID 와 판정 기록 없이 저장한다 (#86). 키: internal_request_id
+
+        같은 내용은 ALREADY_APPLIED, 다른 내용은 CONFLICT 다. 적용 settings 를 함께 보존한다.
+        이후 link_command·begin_send·record_result·cancel_not_sent 를 그대로 쓴다.
+        세션과 사용분이 없으므로 명령, 기기 상태와 감사만 반영한다.
+        방문자의 use_id 조회(FR-21)와 호스트 응답에 나타나지 않는다.
+        """
         ...
 
     def begin_send(self, command_id: str) -> StoreResult:
@@ -249,6 +268,9 @@ class ExecutionStore(Protocol):
         최초 대여: 기기 AVAILABLE, 세션 CLOSED·cancelled. 재조작: 기존 점유·rental_due_at 보존.
         공통: 이번 요청의 사용분 released, 명령 NOT_SENT, 감사. 기존 대여의 사용분은 바꾸지 않는다.
         재검사 실패와 예약 대기 제한은 expected=PENDING, IOT 의 NOT_SENT 증명은 expected=IN_PROGRESS 다.
+        명령을 연결하지 않은 요청도 expected=PENDING 으로 취소한다 (#81). 예약과 사용분만 정리하고 명령을 만들지 않는다.
+        reason: 재검사 거부는 재검사의 사유, 검사 오류는 RECHECK_FAILED, 예약 대기 제한은 RESERVATION_EXPIRED,
+        현재 연결 없음은 NODE_NOT_CONNECTED, IOT 미전송 증명은 COMMAND_NOT_SENT 다 (#78).
         """
         ...
 
@@ -310,6 +332,15 @@ class ExecutionStore(Protocol):
 
     def execution(self, internal_request_id: str) -> CommandRecord | None:
         """반영 여부가 불명일 때 다시 조회한다."""
+        ...
+
+    def execution_context(self, command_id: str) -> ExecutionContext | None:
+        """명령 ID 로 판정이 인계한 원래 실행 문맥을 조회한다 (#83). 키: command_id
+
+        원래 UseRequest, 확정 node_id, use_id·usage_id, execution_kind, reserved_at 과
+        save_decision 이 저장한 적용 Settings 의 전체 스냅샷으로 만든다. 현재 설정으로 채우지 않는다.
+        재시작 뒤 늦은 결과의 정산에 쓴다. 명령이 없으면 None 이다. 조회 오류는 StoreError 로 알린다.
+        """
         ...
 
 
@@ -378,6 +409,18 @@ class ExecutionService(Protocol):
     """
 
     def execute(self, ctx: ExecutionContext) -> ExecutionResult: ...
+
+
+@runtime_checkable
+class ExecutionReadiness(Protocol):
+    """상태 관리 제공, 판정 사용. 기기별 새 실행 가능 여부 (#82).
+
+    재시작 복원을 마치고 현재 연결의 정상 보고를 확인한 기기만 True 다.
+    최초 복원 조회가 실패했거나 현재 연결을 확인하지 못했으면 False 다.
+    판정은 ②에서 False 인 기기를 후보에서 뺀다. 상태 관리는 전송 직전에도 다시 검사한다.
+    """
+
+    def can_execute(self, node_id: str) -> bool: ...
 
 
 # ── CORE 내부 (decision ↔ proximity) ────────────────────────────────

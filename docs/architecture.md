@@ -95,13 +95,16 @@ nearpilot-server/
 
 | 역할 | 담당 폴더 | 책임 |
 |---|---|---|
-| **판정** | `src/nearpilot/core/decision/`, `core/allocation/`, `api/mcp/`, `api/auth/` | 판정 ⓪~⑥ 조합, 근접, 정책, 점유 결과의 반영, 실행 직전 재검사, 전역 할당, MCP 도구 6개, 토큰으로 계정 식별 |
+| **판정** | `src/nearpilot/core/decision/`, `core/allocation/`, `api/mcp/`, `api/auth/` | 판정 ⓪~⑥ 조합, 근접, 정책, 점유 결과의 반영, 실행 직전 재검사, 전역 할당, MCP 도구 6개, 토큰으로 계정 식별, `CoreService`와 MCP 앱을 만드는 연결 함수 |
 | **근접 추정** | `src/nearpilot/core/proximity/`, `tools/data_collection/` | 관측 모델과 HMM, 사후확률 계산, 근접 추정 인터페이스, 수집 회차와 라벨 기록 |
-| **상태 관리** | `src/nearpilot/core/lifecycle/`, `iot/`, `tools/node_sim/` | 예약 뒤의 상태 전이, 대여 점유 유지와 초과시간 계산, 명시적 해제, `FAULT` 복구, MQTT 게이트웨이, 기기 시뮬레이터 |
+| **상태 관리** | `src/nearpilot/core/lifecycle/`, `iot/`, `tools/node_sim/` | 예약 뒤의 상태 전이, 대여 점유 유지와 초과시간 계산, 명시적 해제, `FAULT` 복구, MQTT 게이트웨이, 기기 시뮬레이터, CORE 쪽 `NodeEventSink`, 서버 실행 진입점과 CORE 서비스 조립 |
 | **DB** | `src/nearpilot/db/`, `core/policy/`, `tools/evaluation/` | 스키마, 저장소, 원자적 점유와 승인 사용분, 감사 로그, 평가 스크립트, 접근 정책과 승인 검사, 토큰 해시로 계정 조회 (`AccountLookup`), 관리 쓰기 접점 (`AdminRepository`) |
 | **공동** | `src/nearpilot/shared/`, `tests/integration/` | 계층 간 계약, 계층을 합친 시나리오 테스트 |
 
 - 이 표는 역할별 담당 범위를 기록한다. 개인 이름은 쓰지 않는다.
+- [#88](https://github.com/capstone-itda/nearpilot-server/issues/88)의 A안을 따른다. 상태 관리는 서버 실행 진입점과 조립 모듈을 만든다. 조립은 설정, DB 저장소, MQTT 게이트웨이와 CORE 서비스를 만들고 연결한다. 판정은 `CoreService`와 MCP 앱을 만드는 연결 함수만 제공한다. 진입점이 이 함수로 MCP 엔드포인트를 붙인다.
+- 조립은 게이트웨이를 구독한 뒤, 요청을 받기 전에 재시작 복원을 한 번 실행한다. 모든 상태 관리 서비스에 같은 복구 서비스와 기기별 잠금을 주입한다. 반납 검사와 이탈 판단의 `tick()`을 주기적으로 호출한다.
+- 미결: 진입점과 조립 모듈의 경로와 실행 명령. 상태 관리 spec에서 정한다.
 - 미결: `api/rest/`와 `api/ws/`의 담당. 앱과 대시보드의 담당을 정할 때 함께 배정한다.
 - 미결: 앱(`app/`)과 대시보드(`dashboard/`)의 담당. 서버 담당 업무를 먼저 마친 사람이 맡는다.
 - 미결: 펌웨어(`firmware/`)의 담당과 IOT 구현의 담당 배정. 팀이 펌웨어 담당을 배정할 때 함께 정한다.
@@ -146,7 +149,7 @@ api  ──▶  core  ──▶  db
 
 ### 실행 인계와 재검사
 
-[#16](https://github.com/capstone-itda/nearpilot-server/issues/16)의 인계 계약과 [#35](https://github.com/capstone-itda/nearpilot-server/issues/35)의 A안을 따른다.
+[#16](https://github.com/capstone-itda/nearpilot-server/issues/16)의 인계 계약, [#35](https://github.com/capstone-itda/nearpilot-server/issues/35)의 A안, [#79](https://github.com/capstone-itda/nearpilot-server/issues/79)의 A안과 [#80](https://github.com/capstone-itda/nearpilot-server/issues/80)의 B안을 따른다.
 판정은 최초 허가와 필요한 예약 뒤 `context` 하나를 상태 관리에 전달한다.
 
 | 정보 | 약속 |
@@ -157,6 +160,7 @@ api  ──▶  core  ──▶  db
 | `use_id`, `usage_id` | 자기 예약과 승인 사용분을 찾는다. 없으면 `None`이다. 재조작의 `use_id`는 기존 대여의 점유 세션이다. `usage_id`는 이번 요청의 승인 사용분이다. |
 | `execution_kind` | 최초 대여, 기존 대여의 재조작, 공용형 조작을 구분한다. |
 | 적용한 `Settings` | 실제 설정 값과 버전을 유지한다. |
+| `reserved_at` | DB가 `ReserveResult`로 반환한 예약 시각이다. 예약 대기 제한은 이 시각부터 잰다. 인계 시각부터 다시 세지 않는다. DB 쓰기가 없는 공용형 `open` 요청은 `None`이다. |
 
 - 상태 관리는 `execute(context)`를 제공한다. 판정은 이 접점으로 실행을 인계한다.
 - 판정은 `recheck(context)`를 제공한다. 상태 관리는 전송 직전에 이 접점을 호출한다.
@@ -183,12 +187,27 @@ api  ──▶  core  ──▶  db
 - 재검사의 검사 오류는 `DENY`와 `RECHECK_FAILED`로 반환한다. `RECHECK_FAILED`는 정상 거부에 쓰지 않는다.
 - ⓪의 `input_digest`는 판정이 정규화 입력(대상 지정, 동작, 원 요청 연결 ID)으로 계산해서 `Repository.link_request`에 넘긴다. DB는 값을 저장하고 비교만 한다. 정규화 필드가 바뀌어도 DB 스키마는 바뀌지 않는다.
 - 판정 단계에서 예상하지 못한 예외가 나면 `DENY`와 `INTERNAL_ERROR`로 반환한다. 호스트 응답에는 일반 안내만 넣는다. 예외 내용과 오류 단계는 감사 기록에만 남긴다.
+- `INTERNAL_ERROR`로 거부한 요청을 같은 `(계정, request_id)`와 같은 정규화 입력으로 재전송하면 판정은 다시 판정한다 ([#76](https://github.com/capstone-itda/nearpilot-server/issues/76)). 일시 장애로 거부한 요청이 영구 거부로 남지 않는다.
+- 미결: `Repository.link_request`가 오류로 끝난 키를 새 시도로 인정하는 방법과 이중 예약을 막는 조건. 판정과 DB 담당이 spec에서 정한다.
+  - 이 미결은 이전 시도가 남긴 예약의 처리도 포함한다. 실행 인계 전에 오류로 끝난 예약은 상태 관리가 `ExecutionContext.reserved_at`을 받지 못해 예약 대기 제한으로 만료 취소할 수 없다 ([#80](https://github.com/capstone-itda/nearpilot-server/issues/80)).
 - `recheck()`가 예외를 던지면 상태 관리는 검사 오류와 같게 처리한다.
 - `ExecutionResult`는 재검사가 전송을 막았을 때 그 `Decision`을 함께 담는다. 호스트 응답 변환은 판정이 맡는다 (FR-09).
+- 재검사 밖의 이유로 실행을 막으면 `ExecutionResult.reason`에 중단 사유를 담는다. `reason`은 `recheck`가 없을 때만 쓴다. 판정은 `recheck`가 있으면 그 판정을, 없으면 `reason`으로 `DENY` 사유를 정한다.
+
+| 중단 원인 | `reason` |
+|---|---|
+| 같은 기기의 다른 구동 명령 | `COMMAND_IN_PROGRESS` |
+| `CLOSING`·`FAULT` 같은 상태 충돌 | `DEVICE_BUSY` |
+| 재시작 복원 미완료 | `TARGET_UNAVAILABLE` |
+| 기기의 현재 연결 없음 | `NODE_NOT_CONNECTED` |
+| 예약 대기 제한 만료 | `RESERVATION_EXPIRED` |
+| IOT의 미전송 증명 | `COMMAND_NOT_SENT` |
+
+- `RESERVATION_EXPIRED`, `NODE_NOT_CONNECTED`, `COMMAND_NOT_SENT`는 내부 사유다. 호스트에 보이는 사유는 판정이 정한다. 판정은 내부 판단 근거를 호스트에 공개하지 않는다. 예를 들어 현재 연결 없음은 `TARGET_UNAVAILABLE` 수준으로만 보인다.
 
 ### 예약과 승인 사용분
 
-[#27](https://github.com/capstone-itda/nearpilot-server/issues/27)의 결정을 따른다.
+[#27](https://github.com/capstone-itda/nearpilot-server/issues/27)의 결정과 [#77](https://github.com/capstone-itda/nearpilot-server/issues/77)의 A안을 따른다.
 판정은 대여형과 공용형 모두 `Repository.reserve_if_free()` 하나만 호출한다.
 
 | 기기와 요청 | DB가 반영하는 내용 | `ReserveResult` |
@@ -198,10 +217,12 @@ api  ──▶  core  ──▶  db
 | 공용형이고 정책이 `open`이며 `approval_id`가 `None`이다 | 아무것도 쓰지 않는다. | 결과는 `RESERVED`다. `use_id`와 `usage_id`는 `None`이다. |
 
 - 판정은 기기의 점유 방식에 따라 호출을 나누지 않는다. DB가 기기의 `occupancy`를 보고 건너뛸 검사를 정한다.
+- 승인이 필요한 공용형 요청도 ④가 반환한 `approval_id`로 `reserve_if_free()`를 호출해서 사용분을 확보한다. 점유 세션은 만들지 않는다. 사용분 확보 전용 DB 호출은 두지 않는다.
 - 호출 하나는 `BEGIN IMMEDIATE` 트랜잭션 하나다. 대여형의 ⑤⑥ 검사, `RESERVED` 생성, 승인 사용분 예약과 공용형의 승인 사용분 예약은 같은 쓰기 경로다.
 - 공용형 예약은 `approval_usage`의 `reserved` 행만 만든다. DB는 기기 상태와 점유 세션을 바꾸지 않는다.
 - 승인 방식이 `time_window`이고 `max_uses`가 NULL이어도 DB는 요청별 사용분 행을 만든다. 사용분 행은 명령과 감사 기록을 연결한다. DB는 횟수 검사만 생략한다.
 - 예약한 사용분의 소진, 보류, 반환은 `ExecutionStore`가 반영한다.
+- DB는 예약을 쓴 결과에 저장한 예약 시각 `reserved_at`을 담는다. 승인이 필요한 공용형 요청도 사용분 행을 쓰므로 `reserved_at`이 있다. 쓰기가 없는 결과는 `None`이다. 판정은 이 값을 `ExecutionContext.reserved_at`으로 그대로 넘긴다 ([#80](https://github.com/capstone-itda/nearpilot-server/issues/80)).
 
 ### 승인 요청과 소유자 결정
 
@@ -353,6 +374,7 @@ CORE는 실행·종료·안전을 판단한다. DB는 현재 상태와 기록 �
 | 안전 종료 | `finish_close` | `use_id` |
 | 반납 완료 기록 조회 | `close_result` | `use_id` |
 | 반영 여부 재조회 | `execution` | `internal_request_id` |
+| 원래 실행 문맥 조회 | `execution_context` | `command_id` |
 | 복원 조회 | `restore_pending` | 없음 |
 | 복구 건 저장 | `save_recovery` | `recovery_id` |
 | 복구 건 조회 | `recovery` | `recovery_id` |
@@ -362,11 +384,15 @@ CORE는 실행·종료·안전을 판단한다. DB는 현재 상태와 기록 �
 - 사건은 새 사건 ID 없이 식별 키와 함수로 식별한다. 결과는 `applied`, `already_applied`, `conflict` 중 하나다.
 - 실행 결과는 명령 하나에 하나만 확정한다. 이미 다른 결과가 있으면 `conflict`다. 상충한 결과는 감사 기록에 남긴다.
 - 미전송 취소는 기대 상태를 함께 받는다. 재검사 실패와 예약 대기 제한은 `pending`에서만 취소한다. IOT가 미전송을 증명하면 `in_progress`에서도 취소한다.
+- 명령을 연결하지 않은 요청도 `cancel_not_sent(expected=pending)`로 취소한다. DB는 예약과 사용분만 정리하고 명령을 만들지 않는다 ([#81](https://github.com/capstone-itda/nearpilot-server/issues/81)).
+- 미전송 취소의 사유는 원인별로 구분한다. 재검사 거부는 재검사의 사유, 검사 오류는 `RECHECK_FAILED`, 예약 대기 제한은 `RESERVATION_EXPIRED`, 현재 연결 없음은 `NODE_NOT_CONNECTED`, IOT의 미전송 증명은 `COMMAND_NOT_SENT`다 ([#78](https://github.com/capstone-itda/nearpilot-server/issues/78)). 검사 오류용 사유를 정상 만료에 쓰지 않는다.
 - 최초 대여의 확실한 미전송 취소는 대여형 기기를 `AVAILABLE`로, 점유 세션을 `cancelled` 사유의 `CLOSED`로 둔다.
 - 저장 오류는 `StoreNotApplied`와 `StoreOutcomeUnknown` 예외로 구분한다. `StoreOutcomeUnknown`이면 `execution`으로 다시 조회한다.
 - 최초 대여의 실행 성공 때 CORE는 인계받은 `Settings`로 `rental_due_at`을 계산해서 전달한다. 재조작의 성공은 `rental_due_at`을 갱신하지 않는다.
 - 센서 이상과 종료 뒤 안전 미확인은 `isolate_device`로 기기만 `FAULT`로 둔다. 점유 세션과 승인 사용분은 보존한다.
 - `Repository`의 개별 상태 갱신 함수는 쓰지 않는다. 예약 이후의 쓰기는 `ExecutionStore`로만 한다.
+- `execution_context(command_id)`는 판정이 인계한 원래 `ExecutionContext`를 반환한다 ([#83](https://github.com/capstone-itda/nearpilot-server/issues/83)). DB는 저장한 요청, 확정 대상, 점유·사용분 연결, 실행 종류, 예약 시각과 `save_decision`이 저장한 적용 `Settings`의 전체 스냅샷으로 문맥을 만든다. 현재 설정으로 채우지 않는다. 명령이 없으면 `None`이다.
+- 상태 관리는 재시작 뒤 늦은 실행 결과를 이 문맥으로 정산한다. 문맥이 없거나 조회에 실패하면 인계 실패로 알린다. 새 명령을 만들거나 실행을 다시 인계하지 않는다.
 
 ### 재시작 복원 조회
 
@@ -396,6 +422,9 @@ DB는 기기별 복원 묶음을 반환한다. 복원 묶음 하나는 현재 �
 - 전송 시작 기록만으로 상태 관리는 실제 실행과 확실한 미전송을 판단하지 않는다. 결과가 불명이면 상태 관리는 새 명령을 자동으로 보내지 않는다.
 - 과거의 안전 근거는 복원 자료다. 과거의 안전 근거는 현재 안전 확인을 대신하지 않는다.
 - 상태 관리는 기기의 복원과 확인을 끝내기 전에 그 기기의 새 실행과 재사용을 허가하지 않는다.
+- 상태 관리는 기기별 새 실행 가능 여부를 `ExecutionReadiness.can_execute(node_id)`로 판정에 제공한다 ([#82](https://github.com/capstone-itda/nearpilot-server/issues/82)). 최초 복원 조회가 실패했거나 현재 연결의 정상 보고를 확인하지 못한 기기는 `False`다.
+- 판정은 ②에서 `False`인 기기를 미신뢰·오프라인·`FAULT` 기기처럼 후보에서 뺀다. ③에는 ②에서 걸러낸 후보만 넘긴다. 복원 중인 기기만 남아 명시 지정이 막히면 `TARGET_UNAVAILABLE`로 거부한다. 호스트에 복원 중이라는 사실을 따로 공개하지 않는다.
+- 상태 관리는 전송 직전에도 실행 가능 여부를 다시 검사한다. 막히면 `ExecutionResult.reason`으로 알린다.
 - 공용형 기기의 과거 참여자 목록은 복원 묶음에 넣지 않는다. 공용형 기기의 현재 기기 상태, 미완료 명령, 승인 사용분, 장애와 복구 기록은 복원 대상이다.
 - 참여자를 새로 구성하는 규칙은 대여형 점유 세션의 복원을 생략하지 않는다.
 - 서버 중단 시간을 예약 대기와 대여시간에 적용하는 기준은 #15를 따른다.
@@ -481,6 +510,19 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - 전송 시작과 반납 시작은 기기와 세션의 현재 상태를 원자적으로 검사한다. 반납을 시작해서 `CLOSING`이면 DB는 새 명령의 전송 시작을 막는다.
 - 공용형 조작에는 점유 세션이 없다. 공용형의 승인 사용분 확보 접점은 이 절의 범위가 아니다.
 
+### 서버 내부 요청
+
+[#86](https://github.com/capstone-itda/nearpilot-server/issues/86)의 A안을 따른다.
+공용 조명의 이탈 꺼짐처럼 방문자 요청 없이 서버가 시작하는 명령은 서버 내부 요청으로 식별하고 저장한다.
+
+- 상태 관리는 `InternalRequest`(내부 요청 ID, 기기, 동작, 원인, 적용 `Settings`, 생성 시각)를 만든다. 사용자 ID는 없다. 가짜 방문자 계정을 만들지 않는다.
+- 상태 관리는 `ExecutionStore.link_internal_request()`로 요청을 저장한 뒤 `link_command`, `begin_send`, `record_result`, `cancel_not_sent`를 그대로 쓴다. 결과 정산과 감사 기록은 방문자 요청과 같은 경로다.
+- `ExecutionContext`의 `execution_kind`는 `server_internal`이다. `request`, `use_id`, `usage_id`는 `None`이고 `internal_request`를 담는다.
+- 서버 내부 요청은 판정 ⓪~⑥을 거치지 않는다. 판정 기록(`DecisionRecord`)이 없다. 판정의 실행 직전 재검사도 적용하지 않는다. 상태 관리는 전송 직전에 유지 대상자, 현재 연결, 온라인, 장애, 미완료 명령과 복원 상태를 다시 확인한다.
+- 서버 내부 요청은 방문자의 `use_id` 조회(FR-21)와 호스트 응답에 나타나지 않는다.
+- DB는 요청 테이블에 요청 종류를 두고 서버 내부 요청의 사용자 ID를 비운다.
+- 재시작 복원에서 서버 내부 요청은 명령 기록(`CommandRecord`)으로만 나타난다. 예약과 사용분이 없다.
+
 ### 이탈 판단의 관측 계약
 
 [#18](https://github.com/capstone-itda/nearpilot-server/issues/18)의 B안을 따른다.
@@ -492,6 +534,7 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - 과거 관측의 재전송은 새 수신으로 인정하지 않는다. 다른 계정과 다른 장소의 관측은 타이머를 초기화하지 않는다.
 - 근접 추정은 확률 계산을 맡는다. 상태 관리는 유효 관측의 장소 범위로 이탈 시간을 잰다.
 - 이 계약은 새 조작의 허가·근접 검사를 면제하지 않는다. 대여형은 이탈만으로 점유를 해제하지 않는다.
+- 유지 대상자의 사용 권한은 `PolicyChecker.check()`로 확인한다. 결과가 `OK`이거나 사유가 `APPROVAL_EXHAUSTED`이면 유지 권한이 있다. 그 밖의 거부는 유지 대상자에서 뺀다 ([#87](https://github.com/capstone-itda/nearpilot-server/issues/87)). 유지 권한 확인은 새 조작을 허가하거나 승인 사용분을 예약하지 않는다.
 - 관측 전달 모델의 상세 타입과 비콘 매핑 접점은 공동 인터페이스와 관련 spec에서 맞춘다.
 
 ### 근접 사후확률의 범위
@@ -667,8 +710,17 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - 기기의 `release_policy`는 검사 기준을 `check_criteria`의 `id`와 `version`으로 담는다. DB는 점유 세션을 만들 때 `release_policy`를 그대로 보존한다.
 - CORE는 점유 세션의 `UseSession.check_criteria`(`CheckCriteria`)를 읽어 검사 요청에 담는다. 기기는 실제로 적용한 검사 기준을 결과에 담는다.
 - 검사 기준이 없는 점유 세션을 CORE는 검사 통과로 추정하지 않는다.
-- 미결: 검사 기준의 내용 정의와 버전 관리 방식. 실제 기기의 센서 검사 능력을 검증한 뒤 정한다.
-- 미결: 검사 근거 `evidence`의 필수 항목. 실제 기기의 센서 조합과 근거 제공 능력을 검증한 뒤 정한다.
+- 펌웨어 담당이 없는 동안 검사 기준과 `evidence`는 아래 개발 기준을 따른다 ([#90](https://github.com/capstone-itda/nearpilot-server/issues/90)). 시뮬레이터와 CORE가 이 기준을 쓴다. 실제 기기를 검증한 뒤 펌웨어 담당이 고칠 수 있다.
+
+| 기기 종류 | 기준 `id` | 검사 항목 |
+|---|---|---|
+| `locker` | `locker-return` | `door_closed`, `locked` |
+| `light` | `light-return` | `actuator_idle` |
+| `speaker` | `speaker-return` | `actuator_idle` |
+
+- 기준 `version`은 1부터 시작하는 정수다. 검사 항목이나 판정 조건을 바꾸면 1 올린다.
+- `evidence`는 기준의 검사 항목마다 `{"value": bool, "observed_at": ISO 8601}`을 담는다. 기준의 항목이 하나라도 없으면 유효하지 않은 결과다.
+- 기기는 모든 항목이 `true`일 때만 `passed`다. 하나라도 `false`이면 `not_ready`다. 측정에 실패하면 `unknown`이다.
 - 미결: 같은 `check_id`에 다른 내용이 온 충돌을 펌웨어가 보고하는 형식. 펌웨어 담당을 배정한 뒤 정한다. 그때까지 서버는 응답 기한 초과로 취급한다.
 
 ### 기기 발표와 관측의 저장
@@ -753,6 +805,15 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - 기기 재접속이나 새 장애로 기존 근거가 무효이면 상태 관리는 새 유효 근거를 먼저 확인한다.
 - 상태 관리는 같은 기기의 복구, 관측, 장애 반영을 직렬화한다. DB는 저장 직전의 상태 충돌 검사를 따로 유지한다.
 - 재검사를 통과하면 상태 관리는 `settle_recovery()`로 복구 정산을 요청한다.
+- 상태 관리는 조회와 승인마다 `Repository.is_place_owner(user_id, node_id)`로 장소 소유권을 확인한다 ([#84](https://github.com/capstone-itda/nearpilot-server/issues/84)). DB는 기기와 장소를 연결해서 소유 여부만 반환한다. 소유 계정 ID는 반환하지 않는다. 기기가 없거나 장소에 배치되지 않았으면 `False`다.
+
+복구의 안전 확인과 물리 상태 동기화는 아래 근거를 쓴다 ([#85](https://github.com/capstone-itda/nearpilot-server/issues/85)).
+
+- 검사 기준: 점유 세션이 있으면 세션 생성 당시의 `check_criteria`를 쓴다. 점유 세션이 없는 공용형과 세션이 끝난 기기는 기기의 현재 `release_policy.check_criteria`를 쓴다. 기준이 없으면 안전 미확인이다.
+- 안전 확인: 상태 관리가 기존 `SafetyCheckRequest`로 현재 기기 연결에 검사를 요청한다. 현재 연결의 유효한 `passed` 결과만 안전 근거다. 새 MQTT 계약을 두지 않는다.
+- 물리 상태 동기화: 안전 근거 뒤 같은 연결에서 받은 정상 `status` 보고다. 센서 이상과 구동 중 보고는 동기화 근거가 아니다.
+- 상태 관리는 채택한 검사 결과와 보고를 `RecoveryEvidence`로 복구 건에 연결해 `save_recovery`로 저장한다. DB는 근거 참조만 저장하고 물리 조건을 다시 판단하지 않는다.
+- 일반 `status`만으로 안전을 확정하지 않는다. 검사만으로 점유, 사용분, 기기 상태를 풀지 않는다.
 
 상태 관리는 승인 요청에 결과 객체를 반환한다. 결과 객체는 `recovery_id`, `outcome`, `reason_code`, 현재 준비 상태, 부족한 조건, 완료 시각을 담는다.
 
@@ -774,7 +835,8 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | DB | 원자적 저장, 중복 반영 방지 |
 
 - REST 경로는 §5에 있다.
-- 미결: 관리 API의 구현 담당과 화면. 관리 API 담당을 배정한 뒤 정한다.
+- 복구 준비 조회와 복구 승인의 두 REST 경로는 상태 관리가 `api/rest/`에 구현한다 ([#89](https://github.com/capstone-itda/nearpilot-server/issues/89)). 경로는 토큰으로 계정을 식별해 `RecoveryService`에 넘기고 결과를 바꾸지 않는다 (NFR-07).
+- 미결: 두 복구 경로를 뺀 관리 API의 구현 담당과 화면. 관리 API 담당을 배정한 뒤 정한다.
 
 ### 공동 인터페이스의 후속 반영
 
@@ -827,7 +889,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - `RecoveryReason`은 관리 응답의 사유다. `OK`, `STORE_NOT_APPLIED`, `STORE_OUTCOME_UNKNOWN`, `NOT_OWNER`, `RECOVERY_MISMATCH`, `NOT_READY`, `STATE_CONFLICT`다.
 - `RecoveryOutcome`은 `completed`, `rejected`, `pending`이다. 호스트 판정의 `ReasonCode`와 관리 응답의 사유를 구분한다.
 - 상태 관리는 논리 정산의 `settlement_digest`를 계산한다. DB는 값을 저장하고 대조한다.
-- 미결: 정산 요약값의 직렬화와 해시 방식. 상태 관리와 DB 구현 담당이 spec에서 같은 방식을 정한다.
+- 정산 요약값은 상태 관리의 `settlement_digest()`가 계산한다. 방식은 `specs/state-management/core-fault-recovery.md` 6절에 있다. DB는 값을 다시 계산하지 않고 저장·대조만 한다. DB spec도 같은 방식을 기록한다 ([#92](https://github.com/capstone-itda/nearpilot-server/issues/92)).
 
 ### 판정·관리 저장의 공동 시그니처
 
@@ -837,6 +899,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | `Repository.decide_approval` | `ApprovalDecisionRequest` | `ApprovalDecisionResult` |
 | `Repository.approvals_in_scope` | 요청자 ID, 기기 ID | `Sequence[ApprovalRecord]` |
 | `Repository.save_decision` | `Decision`, `DecisionRecord` | `StoreResult` |
+| `Repository.is_place_owner` | 계정 ID, 기기 ID | `bool` |
 | `AdminRepository.register_account` | `AccountRegistration` | `AdminWriteResult` |
 | `AdminRepository.register_beacon` | `BeaconRegistration` | `AdminWriteResult` |
 | `AdminRepository.set_node_trust` | 기기 ID, `TrustState` | `AdminWriteResult` |
@@ -1084,6 +1147,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 복구 준비 조회: `GET /admin/nodes/{node_id}/recovery`
 - 복구 승인: `POST /admin/nodes/{node_id}/recovery/{recovery_id}/approve`
 - 두 복구 경로에는 인증과 장소 소유권 검사를 적용한다. 약속은 §4 "복구 준비 조회와 복구 승인"에 있다.
+- 두 복구 경로는 상태 관리가 구현한다 (#89).
 - 미결: 두 복구 경로를 뺀 REST 경로
 
 ### WebSocket

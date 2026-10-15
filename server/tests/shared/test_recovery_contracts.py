@@ -1,5 +1,6 @@
 """FR-18·FR-19·NFR-04의 실행 종류, 복원과 복구 경계 검사."""
 
+import inspect
 from dataclasses import fields, replace
 from datetime import datetime
 
@@ -11,7 +12,7 @@ from nearpilot.shared.enums import (
     ExecutionKind, ExecutionStatus, Occupancy, RecoveryBlocker, RecoveryOutcome,
     RecoveryReason, RecoveryStatus, StoreOutcome, TargetKind, TrustState,
 )
-from nearpilot.shared.interfaces import RecoveryService
+from nearpilot.shared.interfaces import RecoveryService, Repository
 from nearpilot.shared.models import (
     ApprovalUsageSettlement, ExecutionContext, NodeInfo, RecoveryApprovalResult,
     RecoveryCompletion, RecoveryEvidence, RecoveryReadiness, RecoveryRecord,
@@ -111,3 +112,9 @@ def test_NFR04_fake_recovery_service_separates_query_and_approval():
     assert isinstance(service, RecoveryService)
     assert service.readiness('owner', 'locker-1').recovery_id is None
     assert service.approve('owner', 'locker-1', 'rec1').outcome == RecoveryOutcome.REJECTED
+
+
+def test_FR12A_place_owner_check_returns_only_bool():
+    signature = inspect.signature(Repository.is_place_owner)
+    assert list(signature.parameters) == ["self", "user_id", "node_id"]
+    assert signature.return_annotation in ("bool", bool)

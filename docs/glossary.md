@@ -90,14 +90,19 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 실행 직전 재검사 | 기기에 명령을 보내기 직전에 허가, 근접, 대상을 다시 검사하는 것 | `DecisionRechecker.recheck` | |
 | 실행 인계 | 판정이 허가와 예약을 마친 요청의 실행을 상태 관리에 넘기는 것 | `ExecutionContext`, `ExecutionService.execute` | |
 | 사건별 저장 | 예약 이후의 사건 하나에 딸린 기록을 한 트랜잭션으로 반영하는 것 | `ExecutionStore` | |
-| 실행 종류 | 실행 인계가 구분하는 조작의 종류. 최초 대여, 기존 대여의 재조작, 공용형 조작이다 | `ExecutionKind` | |
+| 실행 종류 | 실행 인계가 구분하는 조작의 종류. 최초 대여, 기존 대여의 재조작, 공용형 조작, 서버 내부 요청이다 | `ExecutionKind` | |
+| 서버 내부 요청 | 방문자 요청 없이 서버가 시작한 명령 요청. 사용자 ID와 판정 기록이 없다 | `InternalRequest`, `ExecutionKind.SERVER_INTERNAL` | |
 | 최초 대여 | 점유 세션을 새로 만드는 대여형 조작 | | |
 | 재조작 | 대여 중인 본인이 기존 점유 세션의 기기에 하는 새 조작. 새 요청과 새 명령을 기존 `use_id`에 연결한다 | | |
 | 구동 중 | 기기의 구동부가 물리 동작을 하는 상태. 기기 상태 `ACTIVE`(대여 중)와 다르다 | `actuator_state`의 `busy` | |
 | 접수·실행 전 거부 | 기기가 새 명령을 접수하기 전에 검증된 `DEVICE_BUSY`로 거부한 결과. 서버의 확실한 미전송(`NOT_SENT`)과 다르다 | `CommandOutcome.REJECTED` | |
 | 처리 중 사유 | 다른 구동 명령이 진행 중이어서 새 조작을 시작하지 못하는 사유. 기기 점유 충돌과 구분한다 | `ReasonCode.COMMAND_IN_PROGRESS` | |
+| 실행 중단 사유 | 재검사 밖의 이유로 상태 관리가 전송을 막은 사유. 재검사 판정과 구분한다 | `ExecutionResult.reason` | |
+| 예약 시각 | DB가 예약을 저장한 시각. 예약 대기 제한을 이 시각부터 잰다 | `ReserveResult.reserved_at`, `ExecutionContext.reserved_at` | |
 | 복원 조회 | 재시작한 서버가 끝나지 않은 요청, 명령, 점유 세션, 승인 사용분, 복구 건을 기기별로 읽는 조회 | `restore_pending` | |
 | 복원 묶음 | 복원 조회가 기기 하나에 반환하는 현재 기기 상태와 연결 기록의 목록 | `RestoreBundle` | |
+| 실행 가능 여부 | 재시작 복원과 현재 연결 확인을 마쳐 기기에 새 실행을 허가할 수 있는지 여부 | `ExecutionReadiness.can_execute` | |
+| 원래 실행 문맥 | 판정이 인계한 실행 문맥을 저장 기록으로 다시 만든 것. 판정 당시 적용한 설정을 쓴다 | `ExecutionStore.execution_context` | |
 | 복구 건 | 기기의 장애 격리 하나에 딸린 복구 업무의 기록. 근거와 복구 승인을 연결한다 | `RecoveryRecord`, `recovery_id` | `store_event_id` |
 | 복구 준비 조회 | 복구 건의 준비 상태와 부족한 조건을 읽는 조회. 복구를 승인하지 않는다 | | |
 | 복구 정산 | 복구 승인 기록, 승인 사용분 정산, 점유 종료, 기기 복구, 감사 기록, 완료 결과를 한 트랜잭션으로 반영하는 것 | `settle_recovery` | |
