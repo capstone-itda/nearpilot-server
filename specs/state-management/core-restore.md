@@ -103,6 +103,9 @@
 - `FaultRecoveryService.record_isolated`, `ReleaseService.resume_close`, `SharedLightService.resume`를 연결한다 — 기존 상태 관리 기능을 재사용한다.
 - 공용 조명에는 `resume()` 뒤 확인한 보고를 `on_status()`로 넘긴다 — 초기 참여 대기는 실제 인계 시각부터 잰다.
 - 재시작의 불명 근거와 확정 시각을 보존한다 — 저장 재시도에서 사건 내용을 바꾸지 않는다.
+- 같은 상태 보고를 다시 인계하면 실패한 작업을 재시도한다 — 중복 보고가 복원을 중단하지 않는다.
+- 복원 완료 뒤 새 요청이 만든 `RESERVED`는 실행 인계에 허용한다 — 재시작 당시의 미완료 예약과 구분한다.
+- 복구 정산의 완료 기록은 식별자로 다시 조회한다 — 완료한 건의 불명 명령을 계속 차단하지 않는다.
 - 조회·저장·인계가 실패하면 예외로 알리고 실행 차단을 유지한다 — 한 기기의 실패 뒤에도 다른 기기는 재시도한다.
 - 예약 만료 취소는 선행 계약이 정해질 때까지 보류한다 — 임시 사유와 가짜 명령을 만들지 않는다.
 
@@ -126,7 +129,16 @@
 |---|---|---|
 | FR-19 | `test_FR19_restore_blocks_new_execution_until_confirmed` | 복원과 확인 전에는 그 기기의 전송을 시작하지 않는다 |
 | FR-20 | `test_FR20_restore_does_not_restore_light_holders` | 공용 조명의 유지 대상자를 복원하지 않는다 |
-| NFR-04 | `test_NFR04_restore_reverifies_evidence` | 과거 안전 근거로 복구 준비를 `ready`로 만들지 않는다 |
+| NFR-04 | `test_NFR04_restore_keeps_recovery_id_and_evidence_without_trusting_it` | 기존 복구 건과 근거를 보존한다. 과거 근거로 실행을 열지 않는다 |
+| FR-19 | `test_FR19_unknown_store_without_commit_retries_same_event` | 저장 불명 재시도에 같은 시각과 근거를 쓴다 |
+| FR-19 | `test_FR19_restore_request_without_command_preserves_reservation` | 선행 계약 전에는 명령 미연결 예약과 사용분을 보존한다 |
+| FR-19 | `test_FR19_new_reservation_after_restore_can_reach_execution` | 복원 완료 뒤 정상 예약의 실행 인계를 허용한다 |
+| FR-19 | `test_FR19_same_status_redelivery_retries_failed_handover` | 같은 보고의 재인계에서 실패한 인계를 재시도한다 |
+| FR-20 | `test_FR20_restore_overdue_kept` | 점유와 기준 시각을 유지하고 서버 중단 시간을 초과시간에 포함한다 |
+| FR-20 | `test_FR20_restore_closing_new_check` | 현재 연결 확인 뒤 새 반납 검사를 요청한다 |
+| NFR-04 | `test_NFR04_completed_recovery_rechecks_current_status` | 복구 정산 완료 기록과 현재 보고를 확인한다 |
+| NFR-03 | `test_NFR03_concurrent_restore_settles_once` | 동시 복원에서도 불명 저장과 복구 건 생성을 중복하지 않는다 |
 
 - 예약 취소 테스트는 현재 실행 차단과 저장된 만료 시각의 보존을 검증한다. 취소 저장의 검증은 선행 계약 뒤 추가한다.
 - DB와 IOT는 `shared` 계약의 fake로 대신한다. 반납·복구·공용 조명 서비스 연결도 검증한다.
+- 5절의 예약 취소 저장과 늦은 결과 인계 테스트는 후속 작업이다. 이번 검증을 실제 서버 연결 완료로 보지 않는다.
