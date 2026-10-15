@@ -11,8 +11,9 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
+from nearpilot.core.allocation import AllocationRequest
 from nearpilot.core.decision.digest import input_digest
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
@@ -41,6 +42,7 @@ from nearpilot.shared.models import (
     DecisionRecord,
     ExecutionContext,
     NodeInfo,
+    PolicyCheckResult,
     ReserveRequest,
     UseRequest,
 )
@@ -104,6 +106,12 @@ class _SaveConflict(Exception):
     """같은 내부 요청에 다른 판정 기록이 이미 있다. 기존 기록을 덮어쓰지 않는다."""
 
 
+class BatchAllocator(Protocol):
+    """`any:` 요청을 대기 구간에 모아 배정한다 (`AllocationWindow`). 배정받은 기기 ID 또는 None."""
+
+    def submit(self, request: AllocationRequest) -> str | None: ...
+
+
 class _Stop(Exception):
     """단계가 실패해서 판정을 확정했다. 뒤 단계는 실행하지 않는다."""
 
@@ -123,6 +131,7 @@ class DecisionPipeline:
         settings: Settings,
         readiness: ExecutionReadiness,
         new_id: Callable[[], str] = lambda: uuid.uuid4().hex,
+        window: BatchAllocator | None = None,
     ) -> None:
         self._repo = repo
         self._proximity = proximity
@@ -130,6 +139,7 @@ class DecisionPipeline:
         self._audit = audit
         self._settings = settings
         self._readiness = readiness
+        self._window = window
         self._new_id = new_id
 
     # ── 진입점 ──────────────────────────────────────────────────────
@@ -206,7 +216,8 @@ class DecisionPipeline:
         place_id = places.pop()
 
         # ② 후보 — 비콘을 본 장소 안에서 고른다
-        if req.target.kind is TargetKind.ANY:
+        any_kind = req.target.kind is TargetKind.ANY
+        if any_kind and (self._window is None or req.target.capability is not Capability.LOCKER):
             raise _Stop(Step.CANDIDATE, self._decision(req, iid, Verdict.DENY, ReasonCode.INVALID_INPUT))
         explicit = req.target.kind is TargetKind.EXPLICIT
         threshold = threshold_for(s, req.target.capability, explicit)
@@ -233,6 +244,7 @@ class DecisionPipeline:
         applied.window_start, applied.window_end = result.window_start, result.window_end
         prox_detail = {"posteriors": posteriors, "threshold": threshold,
                        "model_version": result.model_version, "calib_version": result.calib_version}
+        check: PolicyCheckResult | None = None
         if explicit:
             node_id = req.target.node_id
             p = posteriors.get(node_id, 0.0)
@@ -240,6 +252,10 @@ class DecisionPipeline:
             if p < threshold:
                 raise _Stop(Step.PROXIMITY, self._decision(
                     req, iid, Verdict.ASK, ReasonCode.MOVE_CLOSER, node_id=node_id, p_max=p))
+        elif any_kind:
+            self._audit_step(Step.PROXIMITY, iid, {**prox_detail, "best": result.best})
+            node_id, p, check = self._assign_any(
+                req, iid, applied, by_id, posteriors, result.best, threshold, now)
         else:
             best = result.best
             self._audit_step(Step.PROXIMITY, iid, {**prox_detail, "best": best})
@@ -250,17 +266,9 @@ class DecisionPipeline:
             node_id, p = best
         node = by_id[node_id]
 
-        # ④ 정책 — 확정한 대상만 검사한다
-        check = self._policy.check(req.user_id, node_id, req.action, now)
-        applied.policy_version = check.policy_version
-        self._audit_step(Step.POLICY, iid, {"node_id": node_id, "verdict": check.verdict.value,
-                                           "reason": check.reason.value,
-                                           "policy_version": check.policy_version})
-        if check.verdict is not Verdict.OK:
-            if check.verdict not in (Verdict.NEED_APPROVAL, Verdict.DENY):
-                raise ValueError(f"정책 검사의 알 수 없는 판정: {check.verdict!r}")
-            raise _Stop(Step.POLICY, self._decision(
-                req, iid, check.verdict, check.reason, node_id=node_id, p_max=p))
+        # ④ 정책 — 확정한 대상만 검사한다. `any:` 요청은 배정 전에 후보마다 검사했다
+        if check is None:
+            check = self._check_policy(req, iid, applied, node_id, p, now)
 
         # ⑤⑥ — reserve_if_free() 한 번이 검사와 예약을 한다. 점유 방식별 분기는 DB 가 한다 (#27)
         reserved = self._repo.reserve_if_free(ReserveRequest(
@@ -280,6 +288,77 @@ class DecisionPipeline:
         return decision, (Step.USER_OCCUPANCY if reserved.use_id else Step.POLICY), {}
 
     # ── 보조 ────────────────────────────────────────────────────────
+
+    def _check_policy(
+        self, req: UseRequest, iid: str, applied: _Applied, node_id: str, p: float, now: datetime
+    ) -> PolicyCheckResult:
+        """④ 정책 검사 하나. OK 가 아니면 그 판정으로 멈춘다."""
+        check = self._policy.check(req.user_id, node_id, req.action, now)
+        applied.policy_version = check.policy_version
+        self._audit_step(Step.POLICY, iid, {"node_id": node_id, "verdict": check.verdict.value,
+                                           "reason": check.reason.value,
+                                           "policy_version": check.policy_version})
+        if check.verdict is not Verdict.OK:
+            if check.verdict not in (Verdict.NEED_APPROVAL, Verdict.DENY):
+                raise ValueError(f"정책 검사의 알 수 없는 판정: {check.verdict!r}")
+            raise _Stop(Step.POLICY, self._decision(
+                req, iid, check.verdict, check.reason, node_id=node_id, p_max=p))
+        return check
+
+    def _assign_any(
+        self, req: UseRequest, iid: str, applied: _Applied, by_id: Mapping[str, NodeInfo],
+        posteriors: Mapping[str, float], best: tuple[str, float] | None, threshold: float,
+        now: datetime,
+    ) -> tuple[str, float, PolicyCheckResult]:
+        """`any:locker` ③~④ 와 전역 할당 (FR-23). 배정받은 (기기, 확률, 정책 검사)를 반환한다.
+
+        허용쌍은 ③ 임계값, ④ 정책 OK, 점유(AVAILABLE)를 모두 만족한 쌍이다. 승인이 필요한 기기는 뺀다.
+        """
+        if self._window is None:
+            raise ValueError("대기 구간이 없다")
+        qualified = sorted(
+            (-posteriors.get(nid, 0.0), nid) for nid in by_id if posteriors.get(nid, 0.0) >= threshold)
+        if not qualified:
+            raise _Stop(Step.PROXIMITY, self._decision(
+                req, iid, Verdict.ASK, ReasonCode.LOW_CONFIDENCE, p_max=best[1] if best else None))
+
+        passed: list[tuple[str, float, PolicyCheckResult]] = []
+        first_failure: tuple[str, float, PolicyCheckResult] | None = None
+        for neg_p, nid in qualified:
+            p = -neg_p
+            check = self._policy.check(req.user_id, nid, req.action, now)
+            self._audit_step(Step.POLICY, iid, {"node_id": nid, "verdict": check.verdict.value,
+                                               "reason": check.reason.value,
+                                               "policy_version": check.policy_version})
+            if check.verdict is Verdict.OK:
+                passed.append((nid, p, check))
+            elif check.verdict in (Verdict.NEED_APPROVAL, Verdict.DENY):
+                first_failure = first_failure or (nid, p, check)
+            else:
+                raise ValueError(f"정책 검사의 알 수 없는 판정: {check.verdict!r}")
+        if not passed:
+            if first_failure is None:
+                raise ValueError("정책 검사 결과가 없다")
+            nid, p, check = first_failure  # 확률이 가장 큰 후보의 ④ 판정을 그대로 쓴다
+            applied.policy_version = check.policy_version
+            raise _Stop(Step.POLICY, self._decision(
+                req, iid, check.verdict, check.reason, node_id=nid, p_max=p))
+
+        allowed = [item for item in passed if by_id[item[0]].device_state is DeviceState.AVAILABLE]
+        if not allowed:
+            raise _Stop(Step.DEVICE_OCCUPANCY, self._decision(
+                req, iid, Verdict.BUSY, ReasonCode.DEVICE_BUSY, p_max=passed[0][1]))
+        assigned = self._window.submit(AllocationRequest(iid, {nid: p for nid, p, _ in allowed}))
+        self._audit_step(Step.DEVICE_OCCUPANCY, iid, {
+            "allocation": {"allowed": [nid for nid, _, _ in allowed], "assigned": assigned}})
+        if assigned is None:  # 다른 요청이 가져갔다
+            raise _Stop(Step.DEVICE_OCCUPANCY, self._decision(
+                req, iid, Verdict.BUSY, ReasonCode.DEVICE_BUSY, p_max=allowed[0][1]))
+        chosen = next((item for item in allowed if item[0] == assigned), None)
+        if chosen is None:
+            raise ValueError(f"허용쌍에 없는 기기를 배정했다: {assigned!r}")
+        applied.policy_version = chosen[2].policy_version
+        return chosen
 
     @staticmethod
     def _execution_kind(node: NodeInfo, outcome: ReserveOutcome, use_id: str | None) -> ExecutionKind:
