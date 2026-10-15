@@ -100,6 +100,23 @@ def test_FR03_승인_뒤_request_use는_OK이고_사용분을_예약한다():
         w.close()
 
 
+def test_FR14_거부된_승인은_재판정에서_APPROVAL_REJECTED():
+    w = World({"locker-2": 0.97})
+    try:
+        w.access.request_access(VISITOR_A, "locker-2", _open(), "a1")
+        approval_id = w.conn.execute("SELECT approval_id FROM approval").fetchone()[0]
+        decided = w.repo.decide_approval(ApprovalDecisionRequest(
+            approval_id, OWNER, ApprovalStatus.DENIED, NOW))
+        assert decided.succeeded
+
+        d = w.pipeline.decide(w.request(VISITOR_A, "locker-2", request_id="a2"))
+
+        assert (d.verdict, d.reason) == (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REJECTED)
+        assert w.count("SELECT COUNT(*) FROM use_session") == 0
+    finally:
+        w.close()
+
+
 def test_FR09_승인이_필요_없으면_신청하지_않는다(world):
     d = world.access.request_access(VISITOR_A, "locker-1", _open(), "a1")
     assert (d.verdict, d.reason, d.use_id) == (Verdict.OK, ReasonCode.OK, None)
