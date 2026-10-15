@@ -2,7 +2,7 @@
 
 - 담당: dnnals (근접 추정)
 - 요구사항: FR-16
-- 따르는 결정: #41, #131
+- 따르는 결정: #41, #131, #138
 
 ## 1. 왜
 
@@ -78,7 +78,7 @@
 | 회차 목록이 비었다 | 회차를 만들지 않는다. 종료 코드 2로 끝낸다 | `test_FR16_invalid_plan_rejected_before_any_write` |
 | 라벨이 빈 문자열이거나 앞뒤 공백이 있다 | 회차를 만들지 않는다. 종료 코드 2로 끝낸다 | `test_FR16_invalid_plan_rejected_before_any_write` |
 | `--start-at`이 회차 수 범위 밖이다 | 회차를 만들지 않는다. 종료 코드 2로 끝낸다 | `test_FR16_start_at_out_of_range_is_rejected` |
-| `start_collection`이 거부한다 (`BEACON_NOT_FOUND`, `NODE_NOT_FOUND`, `COLLECTION_OVERLAP`, `STATE_CONFLICT`) | 사유를 쓴다. 남은 회차를 실행하지 않는다. 종료 코드 1로 끝낸다 | `test_FR16_start_rejected_stops_session` |
+| `start_collection`이 거부한다 (`BEACON_NOT_FOUND`(등록되지 않았거나 비활성인 비콘, #138), `NODE_NOT_FOUND`, `COLLECTION_OVERLAP`, `STATE_CONFLICT`) | 사유를 쓴다. 남은 회차를 실행하지 않는다. 종료 코드 1로 끝낸다 | `test_FR16_start_rejected_stops_session` |
 | `start_collection`이 예외를 던진다 | 예외와 회차 ID, `close` 명령을 쓴다. 기록 파일에 쓰지 않는다. 남은 회차를 실행하지 않는다. 종료 코드 1로 끝낸다 | `test_FR16_start_error_stops_session` |
 | `end_collection`이 거부하거나 예외를 던진다 | 회차 ID와 사유를 쓴다. 기록 파일에 `end_failed`로 남긴다. `close` 명령을 안내한다. 종료 코드 1로 끝낸다 | `test_FR16_end_failure_keeps_collection_id` |
 | 회차 도중에 Ctrl+C를 누른다 | 그 시각으로 `end_collection`을 부른다. 기록 파일에 `aborted`로 남긴다. `end_collection`이 실패하면 `end_failed`로 남긴다. 남은 회차를 실행하지 않는다. 종료 코드 130으로 끝낸다 | `test_FR16_interrupt_during_run_ends_collection` |
@@ -145,7 +145,6 @@
 
 ## 7. 가정
 
-- 수집 비콘은 활성(`is_active`)이다 — DB의 `start_collection`은 비콘의 활성 여부를 보지 않지만 `save_rssi`는 비활성 비콘의 프레임을 버린다 (#136). 비활성 비콘으로 수집하면 회차는 만들어지지만 연결되는 관측이 없다. 이 도구는 `AdminRepository`만으로 활성 여부를 알 수 없다.
 - 기기 시계와 서버 시계의 차이는 `settle_sec`보다 작다 — 미결 (시각 동기화와 최대 오차, `architecture.md` §5). 회차 시각은 서버 시계로 정하고 구간 판정은 기기의 `frame_ts`로 한다. 차이가 크면 구간 앞뒤의 관측이 다른 위치의 관측일 수 있다.
 - 끝 시각을 기록하지 못한 회차와 중단한 회차를 평가에서 뺄지는 평가 도구가 정한다 — 미결 (수집 회차의 조회와 구간 변경, `architecture.md` §4). 이 도구는 기록 파일에 `status`를 남긴다.
 - 무드등 장소의 수집 라벨은 다른 장소와 같다 — 미결 (#61). 무드등 장소에는 기기가 하나라서 라벨은 그 기기 앞 또는 `none`이다. 결정이 달라도 계획 파일만 바뀐다.
