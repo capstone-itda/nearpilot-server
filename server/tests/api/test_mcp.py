@@ -6,7 +6,6 @@ import asyncio
 import json
 from datetime import datetime, timezone
 
-import httpx
 import pytest
 
 from nearpilot.api.auth.authenticator import Authenticator
@@ -50,6 +49,43 @@ def run(coro):
     return asyncio.run(coro)
 
 
+class Response:
+    def __init__(self, status_code: int, headers: dict[str, str], content: bytes):
+        self.status_code, self.headers, self.text = status_code, headers, content.decode()
+
+    def json(self):
+        return json.loads(self.text)
+
+
+async def asgi_post(app, path: str, headers: dict[str, str], body: bytes) -> Response:
+    """ASGI 앱에 HTTP POST 를 직접 보낸다. CI 의 dev 의존성에는 httpx 가 없다."""
+    host = {"host": "127.0.0.1:8000", "content-length": str(len(body)), **headers}
+    scope = {
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST",
+        "scheme": "http", "path": path, "raw_path": path.encode(), "query_string": b"",
+        "root_path": "", "client": ("127.0.0.1", 50000), "server": ("127.0.0.1", 8000),
+        "headers": [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in host.items()],
+    }
+    sent, start, chunks = False, {}, []
+
+    async def receive():
+        nonlocal sent
+        if sent:
+            return {"type": "http.disconnect"}
+        sent = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            start.update(status=message["status"], headers=message["headers"])
+        elif message["type"] == "http.response.body":
+            chunks.append(message.get("body", b""))
+
+    await app(scope, receive, send)
+    return Response(start["status"],
+                    {k.decode().lower(): v.decode() for k, v in start["headers"]}, b"".join(chunks))
+
+
 class Client:
     """ASGI 앱에 직접 JSON-RPC 요청을 보낸다. 서버는 stateless + JSON 응답이다."""
 
@@ -67,9 +103,7 @@ class Client:
         body = {"jsonrpc": "2.0", "id": id_, "method": method, "params": params or {}}
         app = self.new_app()
         async with app.router.lifespan_context(app):
-            transport = httpx.ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8000") as c:
-                return await c.post("/mcp", headers=h, json=body)
+            return await asgi_post(app, "/mcp", h, json.dumps(body).encode())
 
     def call(self, args, token=TOKEN_A):
         r = run(self.post("tools/call", {"name": "request_use", "arguments": args}, token=token))
