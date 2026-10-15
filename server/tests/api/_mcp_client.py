@@ -33,6 +33,10 @@ class FakeCore:
     def __init__(self):
         self.requests = []
         self.releases, self.statuses = [], []
+        self.accesses = []
+        self.access_decision = Decision(
+            "internal-2", "r1", Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_PENDING, node_id="locker-1",
+            message="소유자의 승인을 기다립니다.")
         self.release_decision = Decision("internal-1", "", Verdict.OK, ReasonCode.OK, node_id="locker-1",
                                          use_id="use-1", message="반납을 완료했다.")
         self.status = {"use_id": "use-1", "state": "ACTIVE", "rental_due_at": NOW,
@@ -52,6 +56,12 @@ class FakeCore:
         if self.error:
             raise self.error
         return self.decision
+
+    def request_access(self, user_id, node_id, action, request_id):
+        self.accesses.append((user_id, node_id, action, request_id))
+        if self.error:
+            raise self.error
+        return self.access_decision
 
     def find_available_devices(self, user_id):
         self.device_calls.append(user_id)

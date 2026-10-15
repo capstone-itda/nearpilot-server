@@ -30,6 +30,11 @@ _TOOL_DESCRIPTION = (
     "action 은 open, on, off 중 하나다. 같은 요청을 다시 보낼 때는 같은 request_id 를 쓴다."
 )
 
+_ACCESS_DESCRIPTION = (
+    "제한 기기의 접근 승인을 요청한다. node_id 는 locker-1 형식이고 action 은 open, on, off 중 하나다. "
+    "승인 요청은 실행 허가가 아니다. 소유자가 승인한 뒤 request_use 를 호출한다. "
+    "같은 요청을 다시 보낼 때는 같은 request_id 를 쓴다."
+)
 _RELEASE_DESCRIPTION = "본인의 사용(use_id)을 종료한다. 반납 검사를 거쳐 종료한다."
 _STATUS_DESCRIPTION = "본인의 사용(use_id) 상태와 종료 이력을 조회한다."
 _DEVICES_DESCRIPTION = (
@@ -69,6 +74,26 @@ def build_app(
             return host_response(await asyncio.to_thread(core.request_use, req))
         except Exception:  # noqa: BLE001 - 알 수 없는 오류는 거부한다. 예외 내용은 응답에 넣지 않는다
             log.exception("request_use 도구 처리 중 예외")
+            return denied_response(ReasonCode.INTERNAL_ERROR, request_id)
+
+    @mcp.tool(name="request_access", description=_ACCESS_DESCRIPTION)
+    async def request_access(node_id: str, action: str, request_id: str, ctx: Context) -> dict:
+        try:
+            account = _account_of(ctx)
+            if account is None:
+                return denied_response(ReasonCode.INTERNAL_ERROR, request_id)
+            try:
+                if not node_id or not request_id:
+                    raise ValueError("node_id 나 request_id 가 비었다")
+                act = Action(action)
+            except ValueError:
+                return denied_response(ReasonCode.INVALID_INPUT, request_id)
+            decision = await asyncio.to_thread(
+                core.request_access, account.user_id, node_id, act, request_id)
+            # 승인 요청은 실행 허가가 아니다. 서비스가 담아도 use_id 는 내보내지 않는다.
+            return {**host_response(decision), "use_id": None}
+        except Exception:  # noqa: BLE001 - 알 수 없는 오류는 거부한다. 예외 내용은 응답에 넣지 않는다
+            log.exception("request_access 도구 처리 중 예외")
             return denied_response(ReasonCode.INTERNAL_ERROR, request_id)
 
     @mcp.tool(name="release_use", description=_RELEASE_DESCRIPTION)
