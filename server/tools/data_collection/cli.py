@@ -1,7 +1,7 @@
 """수집 도구 CLI (specs/core-proximity-data-collection/spec.md 6절 "도구").
 
 `run`은 계획 파일을 검사한 뒤 `run_session`으로 회차를 실행하고, `close`는 끝 시각을 기록하지 못한 회차를 닫는다.
-`AdminRepository`를 만드는 함수는 `main`의 인자로 받는다. DB 구현체가 아직 없어서 `python -m` 진입점은 만들지 않는다 (#88).
+`AdminRepository`를 만드는 함수는 `main`의 인자로 받는다. DB 경로와 연결을 만드는 방법이 미결이라 `python -m` 진입점은 만들지 않는다 (#88).
 수집 회차는 `AdminRepository`로만 기록하고 SQL을 쓰지 않는다 (#131).
 """
 

@@ -61,8 +61,7 @@
 ### 만들지 않는 것
 | 후속 작업 | 내용 | 근거 |
 |---|---|---|
-| DB | `AdminRepository` 구현체. 구현체가 생기기 전에는 이 작업의 테스트가 fake를 쓴다 | `architecture.md` §4 관리 기능의 DB 쓰기 |
-| (DB 구현체 뒤) | `python -m tools.data_collection` 진입점에서 DB 경로로 `AdminRepository`를 만드는 배선 | #88 |
+| (서버 실행 진입점 뒤) | `python -m tools.data_collection` 진입점에서 DB 경로로 `SqliteAdminRepository`(#136)를 만드는 배선 | #88 |
 | `feat/core-proximity-calibration` | 수집한 관측으로 모델 적합, 운영 모델 파일의 `none_points` | FR-16, 지표 8 |
 | DB의 `tools/evaluation` | 회차 단위 분할, 평가, 중단된 회차를 평가에서 빼는 규칙 | FR-16, 지표 8 |
 
@@ -141,7 +140,7 @@
 - Ctrl+C로 중단한 회차의 `end_collection`이 실패하면 `status`는 `end_failed`, 종료 코드는 130이다.
 - `close --collection-id ID` 명령은 현재 시각으로 `end_collection`을 부른다 — 끝 시각을 기록하지 못한 회차가 남으면 같은 비콘의 다음 회차가 모두 겹침으로 거부된다.
 - CLI는 표준 라이브러리 `argparse`로 만든다 — 운영체제에 의존하지 않는다.
-- CLI 함수는 `AdminRepository`를 만드는 함수를 인자로 받는다 — DB 구현체가 아직 없다. `python -m` 진입점의 배선은 후속 작업이다.
+- CLI 함수는 `AdminRepository`를 만드는 함수를 인자로 받는다 — DB 파일 경로와 연결을 만드는 방법이 미결이다 (#88). `python -m` 진입점의 배선은 후속 작업이다. 테스트는 fake를 쓴다.
 - 테스트는 `server/tests/tools/conftest.py`에서 `server/`를 `sys.path`에 넣어 `tools` 패키지를 가져온다 — `pyproject.toml`의 `pythonpath`는 `src`뿐이고, 이 작업은 `pyproject.toml`을 고치지 않는다.
 
 ## 7. 가정
