@@ -141,6 +141,7 @@
 ## 7. 가정
 
 - `settle_recovery`를 실제로 부르는 상태 관리의 `RecoveryService`는 아직 없다(`specs/state-management/core-fault-recovery.md`가 장소 소유권 조회 접점을 미결로 남겼다). 이 작업은 `ExecutionStore` 호출만으로 `settle_recovery`를 검증하고, `core/lifecycle`과의 통합 테스트는 만들지 않는다 — 선행 계약이 없어서 막힌 경로이므로 이슈로 올리지 않는다.
+- 미결: `evidence`에 `datetime`이 있을 때 재조회 접점(`execution()`, `close_result()`, 재시작 뒤 `restore_pending()`)과 호출자가 들고 있는 원래 값의 비교 방식. 저장 함수(`cancel_not_sent`·`record_result`·`finish_close`)의 직접 반환값은 이번 호출의 `evidence`를 그대로 돌려주도록 고쳤지만, 재조회는 항상 DB에서 다시 읽으므로 `datetime`이 ISO 문자열로 바뀐 채로 돌아온다. `core/lifecycle/release.py`의 `_matches()`(355줄)와 상태 관리의 `StoreOutcomeUnknown` 뒤 재조회 비교가 영향받을 수 있다. SQLite로 재현했다 (`test_FR19_execution_evidence_with_datetime_mismatches_after_requery`, `test_FR20_close_result_evidence_with_datetime_mismatches_after_requery`). 팀 결정이 날 때까지는 지금 방식(저장 함수의 직접 반환값만 원래 `evidence`를 돌려주고, 재조회는 문자열화된 값을 돌려준다)을 유지한다. 이슈 초안을 담당자에게 넘긴다.
 
 ## 8. 테스트
 
