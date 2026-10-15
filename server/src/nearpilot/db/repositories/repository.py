@@ -10,7 +10,9 @@ import sqlite3
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 
-from nearpilot.db.repositories._common import from_json, immediate_transaction, iso, new_id, parse_iso, to_json
+from nearpilot.db.repositories._common import (
+    from_json, immediate_transaction, iso, new_id, parse_iso, settings_to_json, to_json,
+)
 from nearpilot.shared.enums import (
     AccessMode,
     Action,
@@ -34,11 +36,13 @@ from nearpilot.shared.enums import (
     Verdict,
     Visibility,
 )
+from nearpilot.shared.errors import StoreError
 from nearpilot.shared.models import (
     Account,
     Approval,
     ApprovalDecisionRequest,
     ApprovalDecisionResult,
+    ApprovalRecord,
     ApprovalRequest,
     ApprovalRequestResult,
     BeaconKey,
@@ -195,6 +199,35 @@ class SqliteRepository:
             remaining_uses=self._remaining_uses(row["approval_id"], row["max_uses"]),
         )
 
+    def approvals_in_scope(self, user_id: str, node_id: str) -> Sequence[ApprovalRecord]:
+        """요청자·기기의 승인 이력을 모두 반환한다 (#60, FR-03, FR-14).
+
+        시각·동작·정책 버전으로 거르지 않는다. `core/policy`가 승인 필요 사유를 고르는 데
+        쓴다. 저장소를 바꾸지 않는다.
+        """
+        rows = self._conn.execute(
+            "SELECT a.approval_id, a.action, a.policy_version, a.status, a.created_at, "
+            "a.pending_until, a.valid_until, pr.max_uses "
+            "FROM approval a "
+            "JOIN policy_revision pr ON pr.policy_id = a.policy_id AND pr.version = a.policy_version "
+            "WHERE a.requester_user_id = ? AND a.node_id = ? "
+            "ORDER BY a.created_at",
+            (user_id, node_id),
+        ).fetchall()
+        return [
+            ApprovalRecord(
+                approval_id=row["approval_id"],
+                action=Action(row["action"]),
+                policy_version=row["policy_version"],
+                status=ApprovalStatus(row["status"]),
+                created_at=parse_iso(row["created_at"]),
+                pending_until=parse_iso(row["pending_until"]),
+                valid_until=parse_iso(row["valid_until"]) if row["valid_until"] else None,
+                remaining_uses=self._remaining_uses(row["approval_id"], row["max_uses"]),
+            )
+            for row in rows
+        ]
+
     def _remaining_uses(self, approval_id: str, max_uses: int | None) -> int | None:
         if max_uses is None:
             return None
@@ -233,6 +266,21 @@ class SqliteRepository:
             "SELECT 1 FROM use_session WHERE use_id = ? AND user_id = ?", (use_id, user_id)
         ).fetchone()
         return row is not None
+
+    def is_place_owner(self, user_id: str, node_id: str) -> bool:
+        """기기가 속한 장소의 소유 계정인지만 본다. 소유 계정 ID는 반환하지 않는다 (#84, FR-11).
+
+        기기가 없거나 장소에 배치되지 않았으면 `False`다 — `JOIN`이 그 경우 행을 못 찾는다.
+        """
+        try:
+            row = self._conn.execute(
+                "SELECT p.owner_user_id FROM node n JOIN place p ON p.place_id = n.place_id "
+                "WHERE n.node_id = ?",
+                (node_id,),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise StoreError(str(error)) from error
+        return row is not None and row["owner_user_id"] == user_id
 
     # ── ⓪ 중복 (FR-22) ──────────────────────────────────────────────
 
@@ -308,12 +356,12 @@ class SqliteRepository:
         )
         updated = self._conn.execute(
             "UPDATE request SET verdict = ?, reason_code = ?, node_id = ?, p_max = ?, model = ?, "
-            "calib = ?, policy_ver = ?, config_ver = ?, decision_context = ? "
+            "calib = ?, policy_ver = ?, config_ver = ?, decision_context = ?, settings_json = ? "
             "WHERE internal_request_id = ? AND verdict IS NULL",
             (
                 decision.verdict.value, decision.reason.value, decision.node_id, decision.p_max,
                 record.model_version, record.calib_version, record.policy_version, record.settings.version,
-                decision_context, decision.internal_request_id,
+                decision_context, settings_to_json(record.settings), decision.internal_request_id,
             ),
         )
         if updated.rowcount == 0:
@@ -534,17 +582,25 @@ class SqliteRepository:
             ).fetchone()
             if node is None:
                 raise LookupError(f"기기 {req.node_id} 가 없다")
+            request_row = self._conn.execute(
+                "SELECT received_at FROM request WHERE internal_request_id = ?",
+                (req.internal_request_id,),
+            ).fetchone()
+            if request_row is None:
+                raise LookupError(f"요청 {req.internal_request_id} 가 없다")
+            reserved_at_iso = request_row["received_at"]
 
             # 같은 internal_request_id의 기존 예약은 재조작 검사보다 먼저 본다. 최초 대여 요청이
             # 이미 ACTIVE가 된 뒤 재전송되어도 REOPERATING이 아니라 기존 예약을 그대로 반환한다.
             existing_session = self._conn.execute(
-                "SELECT use_id FROM use_session WHERE internal_request_id = ?",
+                "SELECT use_id, reserved_at FROM use_session WHERE internal_request_id = ?",
                 (req.internal_request_id,),
             ).fetchone()
             if existing_session is not None:
                 usage_id = self._lookup_usage(req.approval_id, req.internal_request_id)
                 return ReserveResult(
-                    outcome=ReserveOutcome.RESERVED, use_id=existing_session["use_id"], usage_id=usage_id
+                    outcome=ReserveOutcome.RESERVED, use_id=existing_session["use_id"], usage_id=usage_id,
+                    reserved_at=parse_iso(existing_session["reserved_at"]),
                 )
 
             own_active = self._conn.execute(
@@ -556,20 +612,23 @@ class SqliteRepository:
                 # 통과시키지 않는다. RESERVED·CLOSING·FAULT는 DEVICE_BUSY다 (interfaces.py).
                 if node["device_state"] != DeviceState.ACTIVE.value:
                     return ReserveResult(outcome=ReserveOutcome.DEVICE_BUSY)
-                usage_id = self._reserve_usage(req.approval_id, req.internal_request_id)
+                usage_id = self._reserve_usage(req.approval_id, req.internal_request_id, reserved_at_iso)
                 if usage_id is _EXHAUSTED:
                     return ReserveResult(outcome=ReserveOutcome.APPROVAL_EXHAUSTED)
                 return ReserveResult(
-                    outcome=ReserveOutcome.REOPERATING, use_id=own_active["use_id"], usage_id=usage_id
+                    outcome=ReserveOutcome.REOPERATING, use_id=own_active["use_id"], usage_id=usage_id,
+                    reserved_at=parse_iso(reserved_at_iso) if usage_id is not None else None,
                 )
 
             if node["occupancy"] == Occupancy.SHARED.value:
                 if req.approval_id is None:
                     return ReserveResult(outcome=ReserveOutcome.RESERVED)
-                usage_id = self._reserve_usage(req.approval_id, req.internal_request_id)
+                usage_id = self._reserve_usage(req.approval_id, req.internal_request_id, reserved_at_iso)
                 if usage_id is _EXHAUSTED:
                     return ReserveResult(outcome=ReserveOutcome.APPROVAL_EXHAUSTED)
-                return ReserveResult(outcome=ReserveOutcome.RESERVED, usage_id=usage_id)
+                return ReserveResult(
+                    outcome=ReserveOutcome.RESERVED, usage_id=usage_id, reserved_at=parse_iso(reserved_at_iso)
+                )
 
             if node["device_state"] != DeviceState.AVAILABLE.value:
                 return ReserveResult(outcome=ReserveOutcome.DEVICE_BUSY)
@@ -587,24 +646,27 @@ class SqliteRepository:
                 if busy is not None:
                     return ReserveResult(outcome=ReserveOutcome.USER_BUSY)
 
-            usage_id = self._reserve_usage(req.approval_id, req.internal_request_id)
+            usage_id = self._reserve_usage(req.approval_id, req.internal_request_id, reserved_at_iso)
             if usage_id is _EXHAUSTED:
                 return ReserveResult(outcome=ReserveOutcome.APPROVAL_EXHAUSTED)
 
             use_id = new_id()
             self._conn.execute(
                 "INSERT INTO use_session (use_id, internal_request_id, user_id, node_id, state, "
-                "release_policy) VALUES (?, ?, ?, ?, ?, ?)",
+                "release_policy, reserved_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     use_id, req.internal_request_id, req.user_id, req.node_id, SessionState.RESERVED.value,
-                    to_json(req.release_policy),
+                    to_json(req.release_policy), reserved_at_iso,
                 ),
             )
             self._conn.execute(
                 "UPDATE node SET device_state = ? WHERE node_id = ?",
                 (DeviceState.RESERVED.value, req.node_id),
             )
-            return ReserveResult(outcome=ReserveOutcome.RESERVED, use_id=use_id, usage_id=usage_id)
+            return ReserveResult(
+                outcome=ReserveOutcome.RESERVED, use_id=use_id, usage_id=usage_id,
+                reserved_at=parse_iso(reserved_at_iso),
+            )
 
     def _lookup_usage(self, approval_id: str | None, internal_request_id: str) -> str | None:
         if approval_id is None:
@@ -615,7 +677,9 @@ class SqliteRepository:
         ).fetchone()
         return row["usage_id"] if row else None
 
-    def _reserve_usage(self, approval_id: str | None, internal_request_id: str) -> str | None:
+    def _reserve_usage(
+        self, approval_id: str | None, internal_request_id: str, reserved_at_iso: str
+    ) -> str | None:
         """승인 사용분을 예약한다. 이미 예약했으면 기존 사용분을 그대로 반환한다(멱등).
 
         남은 횟수가 0이면 `_EXHAUSTED`를 반환한다. `approval_id` 가 `None` 이면 예약하지 않는다.
@@ -648,8 +712,8 @@ class SqliteRepository:
                 return _EXHAUSTED
         usage_id = new_id()
         self._conn.execute(
-            "INSERT INTO approval_usage (usage_id, approval_id, internal_request_id, command_id, state) "
-            "VALUES (?, ?, ?, NULL, ?)",
-            (usage_id, approval_id, internal_request_id, ApprovalUsageState.RESERVED.value),
+            "INSERT INTO approval_usage (usage_id, approval_id, internal_request_id, command_id, state, "
+            "reserved_at) VALUES (?, ?, ?, NULL, ?, ?)",
+            (usage_id, approval_id, internal_request_id, ApprovalUsageState.RESERVED.value, reserved_at_iso),
         )
         return usage_id

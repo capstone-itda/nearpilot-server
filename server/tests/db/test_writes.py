@@ -3,6 +3,7 @@ touch_node, set_node_session."""
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from nearpilot.shared.config import Settings
@@ -124,6 +125,29 @@ def test_FR22_save_decision_already_applied(conn, repo):
 
     assert first.outcome == StoreOutcome.APPLIED
     assert second.outcome == StoreOutcome.ALREADY_APPLIED
+
+
+def test_FR22_save_decision_stores_settings_snapshot(conn, repo):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn)
+    link = repo.link_request(_use_request(), "digest-1")
+    decision = Decision(
+        internal_request_id=link.internal_request_id, request_id="ext-1",
+        verdict=Verdict.OK, reason=ReasonCode.OK, node_id="node1",
+    )
+    settings = Settings(version="42", threshold_locker=0.8)
+    record = DecisionRecord(settings=settings)
+
+    repo.save_decision(decision, record)
+
+    row = conn.execute(
+        "SELECT settings_json FROM request WHERE internal_request_id = ?", (link.internal_request_id,)
+    ).fetchone()
+    assert row["settings_json"] is not None
+    stored = json.loads(row["settings_json"])
+    assert stored["version"] == "42"
+    assert stored["threshold_locker"] == 0.8
 
 
 def test_FR22_save_decision_conflict(conn, repo):

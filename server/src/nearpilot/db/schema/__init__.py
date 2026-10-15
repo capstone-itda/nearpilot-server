@@ -24,6 +24,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         if index <= current:
             continue
         conn.executescript(path.read_text(encoding="utf-8"))
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(f"{path.name} 적용 뒤 외래키 위반: {violations}")
         conn.execute(f"PRAGMA user_version = {index}")
 
 
