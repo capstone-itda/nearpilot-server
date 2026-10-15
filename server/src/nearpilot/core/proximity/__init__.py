@@ -1,3 +1,4 @@
+from nearpilot.core.proximity.estimator import HmmProximityEstimator
 from nearpilot.core.proximity.filter import (
     NONE_STATE,
     ProximityInputError,
@@ -13,6 +14,7 @@ from nearpilot.core.proximity.model import (
 )
 
 __all__ = [
+    "HmmProximityEstimator",
     "ModelFileError",
     "ModelMismatchError",
     "NONE_STATE",
