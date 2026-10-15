@@ -106,6 +106,7 @@
   - `window_sec`: 관측 구간 길이
   - `transition.stay`: 한 시간 칸에서 같은 상태에 머무를 확률. 나머지는 다른 상태에 똑같이 나눈다.
   - `nodes`: `node_id`마다 앵커 위치 `x`, `y`, 기기 앞 위치 `front_x`, `front_y`, 경로손실 값 `A`, `n`, `sigma`, "어느 기기 앞도 아님" 상태의 RSSI 평균 `none_rssi`와 표준편차 `none_sigma`
+  - `none_points`: "어느 기기 앞도 아님" 상태의 대표 위치 `x`, `y`의 배열. 기기 앞이 아닌 장소 안의 위치들이다. 빈 배열이면 먼 위치 성분만 쓴다.
   - `min_distance_m`: 거리 계산의 최솟값
   - `calibration.method`: 보정 방법
   - `validation`: 검증에 쓴 임계값과 결과. 없어도 된다. 근접 추정은 이 값을 계산에 쓰지 않는다 (#40).
@@ -128,7 +129,7 @@
 FR-16의 미결(관측 특징, 결측값 처리, HMM 상태와 전이, 보정 방법)은 이슈가 없다. 결정이 어떻게 나도 `core/proximity/`와 모델 파일만 바뀌므로 가정을 세우고 진행한다.
 
 - 관측 특징은 앵커별 RSSI 값 하나다. 기기 앞 상태의 RSSI는 `A − 10·n·log10(거리)`를 평균으로, `sigma`를 표준편차로 하는 정규분포를 따른다. 거리는 앵커와 기기 앞 위치 사이의 거리다 — 미결 (FR-16)
-- "어느 기기 앞도 아님" 상태의 RSSI는 앵커마다 `none_rssi`, `none_sigma`의 정규분포를 따른다 — 미결 (FR-16)
+- "어느 기기 앞도 아님" 상태는 같은 비중의 혼합이다. 성분은 먼 위치 하나와 `none_points`의 위치마다 하나다. 먼 위치 성분에서 RSSI는 앵커마다 `none_rssi`, `none_sigma`의 정규분포를 따른다. `none_points` 성분은 그 위치에서 기기 앞 상태와 같은 경로손실 식과 `sigma`를 쓴다. 혼합은 시간 칸마다 앵커들의 우도를 성분별로 곱한 뒤 평균한다. 먼 위치 성분 하나만 쓰면 기기 뒤 1~3 m에 선 방문자에게 엉뚱한 기기를 0.99로 고른다 (예: locker-3 2.5 m 뒤 → locker-1 0.99). 앞 상태와 none 상태의 경계는 `none_points`의 위치로 정해진다. 합성 파일은 기기 앞 위치보다 1 m 이상 뒤에 점을 둔다. 운영 파일의 위치는 "앞"의 거리 기준(`feat/core-proximity-data-collection`)에 맞춰 `feat/core-proximity-calibration`에서 정한다 — 미결 (FR-16)
 - 한 시간 칸에 프레임이 없는 앵커는 증거로 쓰지 않는다. 그 앵커의 우도는 모든 상태에서 같다 — 미결 (FR-16 결측값 처리)
 - HMM 상태는 전체 상태와 같다. 처음 분포는 균등이다. 전이는 머무를 확률 하나로 정한다 — 미결 (FR-16 HMM 상태와 전이)
 - 보정은 하지 않는다. `calibration.method`는 `none`이다 — 미결 (FR-16 보정 방법)
@@ -141,6 +142,8 @@ FR-16의 미결(관측 특징, 결측값 처리, HMM 상태와 전이, 보정 �
 | FR-16 | `test_FR16_front_position_selects_device` | 합성 배치에서 기기 앞에 선 방문자의 사후확률 최대 기기가 그 기기다 |
 | FR-16 | `test_FR16_candidate_sum_at_most_one` | 후보 확률을 다시 정규화하지 않는다. 합은 1 이하다 |
 | FR-16 | `test_FR16_outside_state_does_not_raise_candidates` | 후보 밖 기기 앞에 서면 후보 확률이 모두 낮다 |
+| FR-16 | `test_FR16_standing_away_from_fronts_keeps_candidates_low` | 기기 뒤, 기기 사이 뒤쪽, 장소 밖에 서면 후보 확률의 합이 0.05 미만이다 |
+| FR-16 | `test_FR16_none_state_is_mixture_of_far_and_none_points`, `test_FR16_none_points_are_read_as_float_pairs` | "어느 기기 앞도 아님"의 혼합 식과 모델 파일의 `none_points` |
 | FR-16 | 5절 표의 `test_FR16_*` | 예외 상황 |
 | FR-22 | `test_FR22_same_input_same_output`, `test_FR22_late_frame_is_excluded`, `test_FR22_replay_matches_posterior` | 같은 입력에 같은 결과. 재현 함수와 `posterior`의 결과가 같다 |
 | FR-16 | `test_FR16_restore_matches_observe` | 복원 접점으로 넣은 프레임과 `observe`로 넣은 프레임의 결과가 같다 |
@@ -149,6 +152,6 @@ FR-16의 미결(관측 특징, 결측값 처리, HMM 상태와 전이, 보정 �
 - 합성 데이터는 시드를 고정한 생성기로 만든다.
 - NFR-02의 인수는 지표 8의 실데이터로 한다. 이 작업의 NFR-02 테스트는 합성 데이터의 회귀 테스트다.
 - 합성 조건: 잡음은 모델의 `sigma`와 같은 4 dB, 프레임 탈락 30%, 시드 20개. 측정 순서는 실제 서버처럼 초마다 `observe`한 뒤 `posterior`를 부른다.
-- 깜빡임은 기준선 757회에서 HMM 47회로 94% 줄었다 (통과).
-- 전환은 20개 시드 중 15개가 2초 이내다 (시드별 지연 2, 3, 1, 28, 2, 1, 1, 1, 1, 2, 22, 1, 2, 1, 1, 2, 1, 1, 1, 3초). `test_NFR02_switch_within_two_seconds`는 `xfail(strict=True)`로 둔다. 머무를 확률과 관측 구간은 `feat/core-proximity-calibration`에서 검증셋으로 고른다. 그 작업에서 통과하면 strict 때문에 실패로 드러나므로 표시를 뺀다.
+- 깜빡임은 기준선 794회에서 HMM 47회로 94% 줄었다 (통과).
+- 전환은 20개 시드 중 16개가 2초 이내다 (시드별 지연 2, 3, 1, 28, 2, 1, 1, 1, 1, 2, 22, 1, 2, 1, 1, 1, 1, 1, 1, 3초). `test_NFR02_switch_within_two_seconds`는 `xfail(strict=True)`로 둔다. 머무를 확률과 관측 구간은 `feat/core-proximity-calibration`에서 검증셋으로 고른다. 그 작업에서 통과하면 strict 때문에 실패로 드러나므로 표시를 뺀다.
 - 잡음이 모델 `sigma`의 두 배(8 dB)이면 깜빡임은 41%만 줄고 전환은 0/20이다. 실데이터로 `sigma`를 적합하는 일이 반응 품질에 크다.

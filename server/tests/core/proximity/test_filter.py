@@ -112,6 +112,25 @@ def normal_pdf(x: float, mean: float, sigma: float) -> float:
     return math.exp(-0.5 * ((x - mean) / sigma) ** 2) / (sigma * math.sqrt(2.0 * math.pi))
 
 
+def point_rssi(model: ProximityModel, anchor_id: str, x: float, y: float) -> float:
+    """(x, y)에 선 방문자를 anchor_id가 받는 평균 RSSI (잡음 없음)."""
+    anchor = model.nodes[anchor_id]
+    distance = max(math.hypot(anchor.x - x, anchor.y - y), model.min_distance_m)
+    return anchor.A - 10.0 * anchor.n * math.log10(distance)
+
+
+def none_density(model: ProximityModel, readings: dict[str, float]) -> float:
+    """한 칸의 {앵커: RSSI}가 "어느 기기 앞도 아님"에서 나올 밀도. 먼 위치와 none_points의 같은 비중 혼합이다."""
+    far = math.prod(
+        normal_pdf(rssi, model.nodes[a].none_rssi, model.nodes[a].none_sigma) for a, rssi in readings.items()
+    )
+    points = [
+        math.prod(normal_pdf(rssi, point_rssi(model, a, x, y), model.nodes[a].sigma) for a, rssi in readings.items())
+        for x, y in model.none_points
+    ]
+    return (far + sum(points)) / (1 + len(points))
+
+
 def reference_posteriors(
     model: ProximityModel, trusted_ids: list[str], observed: dict[int, dict[str, float]], n_bins: int,
 ) -> dict[str, float]:
@@ -128,11 +147,12 @@ def reference_posteriors(
         belief = [
             sum(belief[i] * (model.stay if i == j else move) for i in range(k_states)) for j in range(k_states)
         ]
-        for anchor_id, rssi in observed.get(k, {}).items():
-            anchor = model.nodes[anchor_id]
-            for j, state in enumerate(states):
-                sigma = anchor.none_sigma if state is None else anchor.sigma
-                belief[j] *= normal_pdf(rssi, front_rssi(model, anchor_id, state), sigma)
+        readings = observed.get(k, {})
+        if readings:
+            for j, state in enumerate(states[:-1]):
+                for anchor_id, rssi in readings.items():
+                    belief[j] *= normal_pdf(rssi, front_rssi(model, anchor_id, state), model.nodes[anchor_id].sigma)
+            belief[-1] *= none_density(model, readings)
         total = sum(belief)
         belief = [b / total for b in belief]
     return dict(zip(trusted_ids, belief))
@@ -423,7 +443,8 @@ def test_FR16_duplicate_frame_is_used_once():
 )
 def test_FR16_front_state_mean_follows_path_loss_formula(front_y, mean):
     """기기 앞 상태의 평균은 A − 10·n·log10(max(거리, min_distance_m))다. 평균을 직접 적어 구현과 따로 정한다."""
-    model = replace(MODEL_B, nodes={"mood-1": replace(MODEL_B.nodes["mood-1"], front_y=front_y)})
+    # none_points를 비워서 "어느 기기 앞도 아님"을 먼 위치 성분 하나로 둔다. 기기 앞 상태의 평균만 확인한다.
+    model = replace(MODEL_B, nodes={"mood-1": replace(MODEL_B.nodes["mood-1"], front_y=front_y)}, none_points=())
     rssi = -50.0
 
     # 프레임 하나가 마지막 칸에 있고 처음 분포가 균등하다. 사후확률은 두 상태의 밀도 비다.
@@ -589,3 +610,43 @@ def test_FR16_non_finite_rssi_is_treated_as_missing(bad_rssi):
     bad = [*good, frame_at(9.5, bad_rssi, seq=2)]
 
     assert compute(bad, model=MODEL_B, place_nodes=NODES_B) == compute(good, model=MODEL_B, place_nodes=NODES_B)
+
+
+def test_FR16_none_state_is_mixture_of_far_and_none_points():
+    """"어느 기기 앞도 아님"의 밀도는 먼 위치 성분과 none_points 성분들의 같은 비중 평균이다. 값을 직접 적는다."""
+    model = replace(MODEL_B, none_points=((0.0, 2.5),))
+    rssi = -67.0
+    point_mean = -59.0 - 20.0 * math.log10(2.5)  # 앵커 (0, 0)에서 (0, 2.5)까지
+    front = normal_pdf(rssi, -59.0 - 20.0 * math.log10(0.5), 4.0)
+    none = (normal_pdf(rssi, -90.0, 6.0) + normal_pdf(rssi, point_mean, 4.0)) / 2
+
+    result = compute([frame_at(10.0, rssi)], model=model, place_nodes=NODES_B)
+
+    assert result.posteriors["mood-1"] == close(front / (front + none))
+
+
+@pytest.mark.parametrize(
+    ("x", "y"),
+    [
+        pytest.param(2.0, 1.5, id="1m_behind_front"),
+        pytest.param(2.0, 3.0, id="2_5m_behind_front"),
+        pytest.param(2.3, 2.7, id="between_none_points"),
+        pytest.param(4.4, 2.0, id="behind_light_2"),
+        pytest.param(2.0, 6.0, id="far_behind"),
+        pytest.param(10.0, 0.5, id="outside_place"),
+    ],
+)
+def test_FR16_standing_away_from_fronts_keeps_candidates_low(x, y):
+    """기기 앞이 아닌 위치에 10초 서 있으면 후보 확률의 합이 0.05 미만이다 (NFR-04, FR-16).
+
+    none_points가 없던 모델은 (2, 3)에서 locker-1을 0.99로 골랐다.
+    """
+    frames = [
+        make_frame(anchor_id, point_rssi(MODEL_A, anchor_id, x, y), AT - timedelta(seconds=9 - t, milliseconds=500), seq=t + 1)
+        for t in range(10)
+        for anchor_id in PLACE_A_NODES
+    ]
+
+    result = compute(frames)
+
+    assert sum(result.posteriors.values()) < 0.05, dict(result.posteriors)

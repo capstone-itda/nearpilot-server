@@ -84,15 +84,18 @@ class ProximityModel:
     calibration_method: str
     nodes: Mapping[str, NodeModel]  # node_id → NodeModel
     validation: Mapping[str, Any]  # 검증에 쓴 임계값과 결과. 계산에 쓰지 않는다 (#40)
+    # "어느 기기 앞도 아님" 상태의 대표 위치 (x, y), 미터. 기기 앞이 아닌 장소 안의 위치들이다
+    none_points: tuple[tuple[float, float], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "nodes", _freeze(self.nodes))
         object.__setattr__(self, "validation", _freeze(self.validation))
+        object.__setattr__(self, "none_points", tuple((float(x), float(y)) for x, y in self.none_points))
 
 
 _TOP_KEYS = (
     "place_id", "model_version", "calib_version", "window_sec", "transition",
-    "min_distance_m", "calibration", "nodes",
+    "min_distance_m", "calibration", "nodes", "none_points",
 )
 _OPTIONAL_TOP_KEYS = ("validation",)
 _NODE_KEYS = ("x", "y", "front_x", "front_y", "A", "n", "sigma", "none_rssi", "none_sigma")
@@ -192,6 +195,16 @@ def load_model(path: Path) -> ProximityModel:
         for node_id, entry in raw_nodes.items()
     }
 
+    raw_points = top["none_points"]
+    if not isinstance(raw_points, list):
+        raise ModelFileError(f"{path}: none_points: JSON 배열이어야 한다")
+    none_points = []
+    for i, raw_point in enumerate(raw_points):
+        point = _fixed_object(raw_point, f"{path}: none_points[{i}]", ("x", "y"))
+        none_points.append(
+            (_number(point["x"], f"{path}: none_points[{i}].x"), _number(point["y"], f"{path}: none_points[{i}].y"))
+        )
+
     return ProximityModel(
         place_id=place_id,
         model_version=model_version,
@@ -202,6 +215,7 @@ def load_model(path: Path) -> ProximityModel:
         calibration_method=method,
         nodes=nodes,
         validation=_object(top.get("validation", {}), f"{path}: validation"),
+        none_points=tuple(none_points),
     )
 
 
