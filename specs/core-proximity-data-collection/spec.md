@@ -85,6 +85,8 @@
 | 회차 도중에 Ctrl+C를 누른다 | 그 시각으로 `end_collection`을 부른다. 기록 파일에 `aborted`로 남긴다. `end_collection`이 실패하면 `end_failed`로 남긴다. 남은 회차를 실행하지 않는다. 종료 코드 130으로 끝낸다 | `test_FR16_interrupt_during_run_ends_collection` |
 | 자리 잡기 전이나 자리 잡는 시간에 Ctrl+C를 누르거나 `q`를 입력하거나 입력이 끝난다(EOF) | 회차를 만들지 않는다. Ctrl+C는 종료 코드 130, `q`와 EOF는 0으로 끝낸다 | `test_FR16_quit_before_start_writes_nothing` |
 | 기록 파일에 쓰지 못한다 | 회차를 시작하기 전에 확인한다. 쓰지 못하면 회차를 만들지 않고 종료 코드 2로 끝낸다 | `test_FR16_unwritable_record_is_rejected_before_any_write` |
+| 회차를 마친 뒤 기록 파일에 쓰지 못한다 | 회차 ID와 오류를 쓴다. 남은 회차를 실행하지 않는다. 종료 코드 1로 끝낸다 | `test_FR16_record_write_failure_stops_session` |
+| 세션이 잡지 않은 시점(예: `start_collection` 반환 직후)에 Ctrl+C를 누른다 | 멈췄다고 쓰고 종료 코드 130으로 끝낸다. 회차 ID는 `start_collection`을 부르기 전에 화면에 있다 | `test_FR16_cli_interrupt_returns_130`, `test_FR16_cli_interrupt_leaking_from_session_returns_130` |
 | 같은 비콘으로 도구 두 개를 함께 실행한다 | 뒤에 시작한 회차를 DB가 `COLLECTION_OVERLAP`으로 거부한다. 도구는 거부와 같이 처리한다 | `test_FR16_start_rejected_stops_session` |
 | `AdminRepository`를 만드는 함수가 예외를 던진다 | 예외를 쓰고 종료 코드 1로 끝낸다 | `test_FR16_cli_repository_factory_error` |
 | `close`로 이미 끝난 회차를 다시 닫는다 | DB의 `STATE_CONFLICT`를 쓰고 종료 코드 1로 끝낸다 | `test_FR16_close_reports_rejection` |
@@ -124,7 +126,7 @@
   1. 회차 번호, 라벨, 서는 위치 안내를 화면에 쓴다.
   2. Enter를 기다린다. `q`를 입력하거나 입력이 끝나면(EOF) 세션을 끝낸다.
   3. `settle_sec`를 기다린다.
-  4. 회차 ID를 만들고 현재 시각을 `started_at`으로 `start_collection`을 부른다.
+  4. 회차 ID를 만들어 화면에 쓰고, 현재 시각을 `started_at`으로 `start_collection`을 부른다 — 부른 직후에 프로세스가 멈춰도 화면의 ID로 `close`할 수 있다.
   5. `run_sec`를 기다린다.
   6. 현재 시각을 `ended_at`으로 `end_collection`을 부른다.
   7. 기록 파일에 한 줄을 덧붙인다.
