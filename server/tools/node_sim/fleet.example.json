@@ -1,0 +1,43 @@
+{
+  "broker": {"host": "127.0.0.1", "port": 1883, "keepalive_sec": 30,
+             "reconnect_min_sec": 1, "reconnect_max_sec": 8},
+  "settings": {},
+  "devices": [
+    {"node_id": "locker-1", "place": "place-a", "capability": "locker", "occupancy": "rental",
+     "username": "locker-1", "password_file": "config/.env.node-locker-1",
+     "store": "var/node_sim/locker-1.sqlite3",
+     "scenario": {"actuation_sec": 1.0, "beacons": [
+       {"uuid": "11111111-2222-3333-4444-555555555555", "major": 1, "minor": 1, "rssi": -58}]}},
+    {"node_id": "locker-2", "place": "place-a", "capability": "locker", "occupancy": "rental",
+     "username": "locker-2", "password_file": "config/.env.node-locker-2",
+     "store": "var/node_sim/locker-2.sqlite3",
+     "scenario": {"actuation_sec": 1.0, "beacons": [
+       {"uuid": "11111111-2222-3333-4444-555555555555", "major": 1, "minor": 1, "rssi": -71}]}},
+    {"node_id": "locker-3", "place": "place-a", "capability": "locker", "occupancy": "rental",
+     "username": "locker-3", "password_file": "config/.env.node-locker-3",
+     "store": "var/node_sim/locker-3.sqlite3",
+     "scenario": {"actuation_sec": 1.0, "beacons": []}},
+    {"node_id": "light-1", "place": "place-a", "capability": "light", "occupancy": "shared",
+     "username": "light-1", "password_file": "config/.env.node-light-1",
+     "store": "var/node_sim/light-1.sqlite3",
+     "scenario": {"actuation_sec": 0.5, "beacons": [
+       {"uuid": "11111111-2222-3333-4444-555555555555", "major": 1, "minor": 1, "rssi": -64}]}},
+    {"node_id": "light-2", "place": "place-a", "capability": "light", "occupancy": "shared",
+     "username": "light-2", "password_file": "config/.env.node-light-2",
+     "store": "var/node_sim/light-2.sqlite3",
+     "scenario": {"actuation_sec": 0.5, "beacons": []}},
+    {"node_id": "light-3", "place": "place-a", "capability": "light", "occupancy": "shared",
+     "username": "light-3", "password_file": "config/.env.node-light-3",
+     "store": "var/node_sim/light-3.sqlite3",
+     "scenario": {"actuation_sec": 0.5, "beacons": []}},
+    {"node_id": "speaker-1", "place": "place-a", "capability": "speaker", "occupancy": "shared",
+     "username": "speaker-1", "password_file": "config/.env.node-speaker-1",
+     "store": "var/node_sim/speaker-1.sqlite3",
+     "scenario": {"actuation_sec": 0.5, "beacons": []}},
+    {"node_id": "mood-1", "place": "place-b", "capability": "light", "occupancy": "shared",
+     "username": "mood-1", "password_file": "config/.env.node-mood-1",
+     "store": "var/node_sim/mood-1.sqlite3",
+     "scenario": {"actuation_sec": 0.5, "light_observable": false, "beacons": [
+       {"uuid": "11111111-2222-3333-4444-555555555555", "major": 2, "minor": 1, "rssi": -60}]}}
+  ]
+}
