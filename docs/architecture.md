@@ -714,7 +714,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - 기기의 `release_policy`는 검사 기준을 `check_criteria`의 `id`와 `version`으로 담는다. DB는 점유 세션을 만들 때 `release_policy`를 그대로 보존한다.
 - CORE는 점유 세션의 `UseSession.check_criteria`(`CheckCriteria`)를 읽어 검사 요청에 담는다. 기기는 실제로 적용한 검사 기준을 결과에 담는다.
 - 검사 기준이 없는 점유 세션을 CORE는 검사 통과로 추정하지 않는다.
-- 펌웨어 담당이 없는 동안 검사 기준과 `evidence`는 아래 개발 기준을 따른다 ([#90](https://github.com/capstone-itda/nearpilot-server/issues/90)). 시뮬레이터와 CORE가 이 기준을 쓴다. 실제 기기를 검증한 뒤 펌웨어 담당이 고칠 수 있다.
+- 반납 검사 v1은 아래 개발 기준을 따른다 ([#90](https://github.com/capstone-itda/nearpilot-server/issues/90), [#141](https://github.com/capstone-itda/nearpilot-server/issues/141)의 A안). 서버·시뮬레이터·펌웨어가 같은 기준 ID와 버전에 같은 항목을 쓴다. 실제 기기의 증명 능력은 따로 검증한다.
 
 | 기기 종류 | 기준 `id` | 검사 항목 |
 |---|---|---|
@@ -723,6 +723,8 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | `speaker` | `speaker-return` | `actuator_idle` |
 
 - 기준 `version`은 1부터 시작하는 정수다. 검사 항목이나 판정 조건을 바꾸면 1 올린다.
+- 구동부 정지·센서 정상·정책상 꺼짐을 새 필수 조건으로 추가하면 새 기준 버전을 만든다. 기존 v1의 뜻을 바꾸지 않는다 (#141).
+- 기존 점유 세션은 생성 당시 검사 기준을 유지한다. 새 기준을 기존 점유 세션에 소급하지 않는다 (#141).
 - `evidence`는 기준의 검사 항목마다 `{"value": bool, "observed_at": ISO 8601}`을 담는다. 기준의 항목이 하나라도 없으면 유효하지 않은 결과다.
 - 기기는 모든 항목이 `true`일 때만 `passed`다. 하나라도 `false`이면 `not_ready`다. 측정에 실패하면 `unknown`이다.
 - 근거(`evidence`)의 값은 JSON 기본 타입(`str`, `int`, `float`, `bool`, `None`, list, 문자열 키 mapping)만 쓴다. 시각은 UTC ISO 8601 문자열로 넣는다. DB는 저장한 값을 그대로 돌려준다 ([#113](https://github.com/capstone-itda/nearpilot-server/issues/113)).
@@ -1030,7 +1032,7 @@ RSSI의 `uuid`는 하이픈을 포함한 소문자 UUID 문자열이다. `major`
 - 펌웨어가 검사 기준을 모르거나 결과를 확인하지 못하면 펌웨어는 통과로 보고하지 않는다.
 - `safety_check`의 만료는 발행 시각에 반납 검사 응답 기한을 더해 산출한다. 기기는 `cmd`와 같게 대상 연결과 유효 시간을 검사한다.
 - 기기는 결과를 다시 보고할 때 `event_id`, `outcome`, `checked_at`을 유지한다. 기기는 발행 순번과 발행 시각을 새로 부여한다.
-- `evidence`는 기기 통신의 근거다. 필수 항목은 §4 "반납 검사와 종료"의 미결을 따른다.
+- `evidence`는 기기 통신의 근거다. 필수 항목과 v1의 통과 조건은 §4 "반납 검사와 종료"의 기준 표를 따른다 (#141).
 
 #### 4. 명령 접수와 중복 처리
 
@@ -1115,12 +1117,16 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 
 서버는 반납의 종료 안전을 `safety_check`와 `safety_check_result`로 확인한다. 책임 분담과 재검사 규칙은 §4 "반납 검사와 종료"에 있다.
 
-시뮬레이터는 반납 검사 요청을 받으면 다음 관측을 가상으로 검사한다. 이 기준은 실제 센서 검증을 완료했다는 뜻이 아니다.
+시뮬레이터는 §4 "반납 검사와 종료"의 v1 기준을 가상으로 검사한다 (#141 A안). 아래 표는 같은 기준의 통과 조건이다.
 
 | 대상 | 시뮬레이터가 `passed`로 보고하는 조건 |
 |---|---|
-| 사물함 | `door_closed=true`, `actuator_state=idle`, `sensor_fault=false`다. |
-| 조명 | 꺼짐을 요구하는 종료 정책이면 `light_on=false`, `actuator_state=idle`, `sensor_fault=false`다. |
+| 사물함 | `locker-return` v1의 `door_closed=true`, `locked=true`다. |
+| 조명 | `light-return` v1의 `actuator_idle=true`다. |
+| 스피커 | `speaker-return` v1의 `actuator_idle=true`다. |
+
+이 표는 실제 센서 검증을 완료했다는 뜻이 아니다. 기기가 필수 항목을 증명하지 못하면 `passed`를 보고하지 않는다.
+구동부 정지·센서 정상·정책상 꺼짐을 추가할 때는 새 기준 버전을 계약한다. v1에 다른 통과 조건을 겹쳐 쓰지 않는다.
 
 - 일반 `status` 보고와 물리 명령의 성공 보고는 반납 검사를 대신하지 못한다.
 - 필수 관측이 `null`이거나 `unknown`이면 기기는 `passed`를 보고하지 않는다.
