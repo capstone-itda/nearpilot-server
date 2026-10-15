@@ -46,13 +46,14 @@
 | `Repository.save_decision` | 사용 | DB |
 | `Repository.reserve_if_free` | 사용 (같은 내부 요청 ID의 기존 예약 반환) | DB |
 
-### DB 담당에게 요청하는 변경 (DB spec에서 구현)
+### DB 담당에게 요청하는 변경 (`specs/db-internal-error-retry/spec.md`로 구현됨, PR #144)
 - `link_request`의 `_link_existing`: 같은 입력이고 저장된 판정이 `DENY` / `INTERNAL_ERROR`이면 `verdict`, `reason_code`를 NULL로 되돌리는 조건부 `UPDATE`(`WHERE verdict = 'DENY' AND reason_code = 'INTERNAL_ERROR'`)를 하고, 갱신된 행이 있을 때만 `is_new=True`로 반환한다.
 - 이 변경은 스키마를 바꾸지 않는다. `save_decision`은 변경하지 않는다 (판정 기록이 NULL로 돌아간 행에 처음 저장하는 경우가 된다).
 
 ### 만들지 않는 것
 - 저장 실패로 `verdict`가 NULL인 채 남은 요청의 재판정. 동시에 처리 중인 요청과 구분할 수 없어서 `IN_PROGRESS`로 거부하는 지금 동작을 유지한다.
 - 재전송 횟수 제한, 지연 규칙.
+- 예약 뒤 재판정이 ⑤⑥ 전에 거부로 끝나면 이전 시도의 예약이 남는 문제. `architecture.md` §4 "실행 인계와 재검사"의 미결(#80)이라 팀 결정을 기다린다.
 - `shared` 모델 변경 (`RequestLink`에 재시도 표시 추가 등).
 
 ## 5. 예외 상황
@@ -75,8 +76,7 @@
 
 ## 7. 가정
 
-- DB 담당이 위 "요청하는 변경"을 DB spec에서 구현한다고 가정한다 — #76, `specs/db-admin-repository/spec.md`의 "#76 오류 거부 재판정"
-- 이 가정이 틀리면 이 spec의 테스트 중 실제 DB를 쓰는 것은 DB 변경이 들어온 뒤에 통과한다. fake 저장소 테스트는 먼저 쓴다.
+없음. DB 변경은 `specs/db-internal-error-retry/spec.md`(PR #144)로 main에 들어왔다.
 
 ## 8. 테스트
 

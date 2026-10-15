@@ -1,7 +1,6 @@
 """FR-18 오류로 거부한 요청의 재판정(#76)과 실제 DB(SqliteRepository)의 통합 시나리오.
 
-`link_request`가 `INTERNAL_ERROR`로 끝난 키를 새 시도로 넘기는 DB 변경이 들어오기 전에는 실패한다.
-DB 변경이 들어오면 `xfail`을 지운다 (strict 라서 통과하면 알려준다).
+DB 변경(`specs/db-internal-error-retry`, PR #144)이 들어온 뒤의 동작을 확인한다.
 """
 
 from __future__ import annotations
@@ -10,9 +9,6 @@ import pytest
 
 from _world import VISITOR_A, World
 from nearpilot.shared.enums import ReasonCode, Verdict
-
-DB_PENDING = pytest.mark.xfail(
-    strict=True, reason="DB 담당의 link_request 변경 전 (specs/core-internal-error-retry)")
 
 
 @pytest.fixture
@@ -33,7 +29,6 @@ def _fix_proximity(world):
     del world.prox.posterior  # 인스턴스 속성을 지우면 정상 메서드로 돌아간다
 
 
-@DB_PENDING
 def test_FR18_오류_거부_뒤_같은_입력_재전송은_같은_내부_요청으로_다시_판정한다(world):
     _break_proximity(world)
     failed = world.pipeline.decide(world.request(VISITOR_A))
@@ -47,7 +42,6 @@ def test_FR18_오류_거부_뒤_같은_입력_재전송은_같은_내부_요청�
     assert tuple(row) == ("OK", "OK")
 
 
-@DB_PENDING
 def test_FR19_오류_거부_뒤_재판정은_예약을_하나만_둔다(world):
     _break_proximity(world)
     world.pipeline.decide(world.request(VISITOR_A))
