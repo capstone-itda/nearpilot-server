@@ -34,6 +34,7 @@ from nearpilot.shared.enums import (
     Verdict,
     Visibility,
 )
+from nearpilot.shared.errors import StoreError
 from nearpilot.shared.models import (
     Account,
     Approval,
@@ -233,6 +234,21 @@ class SqliteRepository:
             "SELECT 1 FROM use_session WHERE use_id = ? AND user_id = ?", (use_id, user_id)
         ).fetchone()
         return row is not None
+
+    def is_place_owner(self, user_id: str, node_id: str) -> bool:
+        """기기가 속한 장소의 소유 계정인지만 본다. 소유 계정 ID는 반환하지 않는다 (#84, FR-11).
+
+        기기가 없거나 장소에 배치되지 않았으면 `False`다 — `JOIN`이 그 경우 행을 못 찾는다.
+        """
+        try:
+            row = self._conn.execute(
+                "SELECT p.owner_user_id FROM node n JOIN place p ON p.place_id = n.place_id "
+                "WHERE n.node_id = ?",
+                (node_id,),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise StoreError(str(error)) from error
+        return row is not None and row["owner_user_id"] == user_id
 
     # ── ⓪ 중복 (FR-22) ──────────────────────────────────────────────
 
