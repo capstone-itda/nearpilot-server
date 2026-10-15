@@ -4,7 +4,7 @@
 - 구현 브랜치: `feat/iot-mqtt-gateway`
 - 요구사항: FR-06, FR-07, FR-13, NFR-08, NFR-11, NFR-12
 - 따르는 결정: architecture.md에 반영한 #19, #38, #88, #140이다.
-- 상태: 구현 전 초안이다. 전체 분할과 순서는 [plan.md](plan.md)에 있다.
+- 상태: 연결 책임을 구현했다. 전체 분할과 순서는 [plan.md](plan.md)에 있다. CORE와 후속 IOT 모듈의 최종 조립은 후속 작업이다.
 
 ## 1. 왜
 
@@ -83,7 +83,7 @@ CORE가 기기와 통신하려면 MQTT 연결과 구독이 먼저 준비되어�
 | 브로커를 재접속한다 | 다시 구독한다. 현재 기기는 다시 확인한다 | `test_FR13_reconnect_resubscribes` |
 | retained 발표가 온다 | 보고 경로에 전달한다. 온라인으로 바꾸지 않는다 | `test_FR13_retained_announce_not_online` |
 | 익명 계정이 접속한다 | 브로커가 거부한다 | `test_NFR08_anonymous_connection_denied` |
-| 다른 기기의 보고를 발행하거나 명령을 읽는다 | 브로커가 차단한다 | `test_NFR08_cross_node_access_denied` |
+| 다른 기기의 보고를 발행하거나 명령을 읽는다 | 브로커가 차단한다 | `test_NFR08_cross_node_report_write_denied`, `test_NFR08_cross_node_command_read_denied` |
 | 기기 계정이 명령을 발행한다 | 브로커가 차단한다 | `test_FR06_only_server_publishes_commands` |
 | 발행 뒤 연결이 끊긴다 | 명령 대기 모듈에 알린다. 미전송으로 추정하지 않는다 | `test_FR07_disconnect_keeps_uncertainty` |
 | 서버가 종료한다 | S3의 접점을 따른다. 미해결 명령을 성공으로 만들지 않는다 | `test_FR07_shutdown_does_not_claim_success` |
@@ -121,3 +121,8 @@ CORE가 기기와 통신하려면 MQTT 연결과 구독이 먼저 준비되어�
 
 단위 테스트는 MQTT 전송과 CORE의 fake를 쓴다. 접근 제어는 임시 자격정보와 실제 Mosquitto로 검증한다.
 다른 계층을 합친 검증은 서버 조립 작업의 `server/tests/integration/`에 둔다.
+
+2026-10-16에 Paho 2.1.0과 실제 Mosquitto 2.1.2로 확인했다. 새 테스트는 연결 단위 43개와 실제 브로커 12개다.
+실제 브로커는 임시 계정·암호화 비밀번호 파일·localhost 임시 포트를 쓴다. 브로커 설정과 ACL은 `server/config/`의 파일을 사용한다.
+브로커 실행 파일이 없으면 실제 브로커 테스트만 건너뛴다. 이번 검증은 실행 파일 경로를 설정하여 건너뛰지 않고 실행했다.
+`server/`에서 전체 `pytest`: 1,899개 통과, 기존 예상 실패 1개다. 실행 설정과 검증 방법은 `server/config/README.md`에 있다.
