@@ -544,6 +544,29 @@ def test_FR20_shared_success_and_rssi_update_real_holder(env):
     assert not env.light.can_request_off("locker")
 
 
+def test_FR20_internal_off_result_routed(env):
+    from nearpilot.shared.enums import InternalRequestCause
+    from nearpilot.shared.models import InternalRequest
+
+    holder = command(env, shared=True)
+    env.sink.on_result(holder)
+    env.light.resume("locker")
+    env.sink.on_status(status(env, physical=PhysicalState(None, True, ActuatorState.IDLE, False)))
+    assert env.light._lights["locker"].holders
+    internal = InternalRequest("internal", "locker", Action.OFF, InternalRequestCause.LEAVE_OFF,
+                               env.settings, env.clock())
+    ctx = ExecutionContext("internal", None, "locker", None, None, env.settings,
+                           ExecutionKind.SERVER_INTERNAL, internal_request=internal)
+    env.store.commands["internal"] = CommandRecord("off-command", "internal", "locker", Action.OFF,
+        ExecutionStatus.IN_PROGRESS, ExecutionKind.SERVER_INTERNAL, None, None, None, env.clock(), True)
+    env.contexts["off-command"] = ctx
+    env.time[0] += timedelta(seconds=1)
+    env.sink.on_result(NodeResult("locker", "connection", 3, env.clock(), env.clock(), "off-command",
+        "off-event", NodeResultState.SUCCEEDED, env.clock()))
+    assert env.store.commands["internal"].status == ExecutionStatus.SUCCEEDED
+    assert env.light._lights["locker"].holders == {}
+
+
 def test_NFR04_node_events_serialized(env):
     entered, release = Event(), Event()
     original = env.store.isolate_device
