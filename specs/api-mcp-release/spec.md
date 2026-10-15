@@ -1,6 +1,5 @@
 # FR-09 release_use·get_use_status 도구
 
-- 상태: 완료
 - 담당: eunji719 (판정)
 - 요구사항: FR-09, FR-11, FR-21
 - 따르는 결정: #29
