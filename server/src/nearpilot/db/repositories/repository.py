@@ -40,6 +40,7 @@ from nearpilot.shared.models import (
     Approval,
     ApprovalDecisionRequest,
     ApprovalDecisionResult,
+    ApprovalRecord,
     ApprovalRequest,
     ApprovalRequestResult,
     BeaconKey,
@@ -195,6 +196,35 @@ class SqliteRepository:
             valid_until=parse_iso(row["valid_until"]),
             remaining_uses=self._remaining_uses(row["approval_id"], row["max_uses"]),
         )
+
+    def approvals_in_scope(self, user_id: str, node_id: str) -> Sequence[ApprovalRecord]:
+        """요청자·기기의 승인 이력을 모두 반환한다 (#60, FR-03, FR-14).
+
+        시각·동작·정책 버전으로 거르지 않는다. `core/policy`가 승인 필요 사유를 고르는 데
+        쓴다. 저장소를 바꾸지 않는다.
+        """
+        rows = self._conn.execute(
+            "SELECT a.approval_id, a.action, a.policy_version, a.status, a.created_at, "
+            "a.pending_until, a.valid_until, pr.max_uses "
+            "FROM approval a "
+            "JOIN policy_revision pr ON pr.policy_id = a.policy_id AND pr.version = a.policy_version "
+            "WHERE a.requester_user_id = ? AND a.node_id = ? "
+            "ORDER BY a.created_at",
+            (user_id, node_id),
+        ).fetchall()
+        return [
+            ApprovalRecord(
+                approval_id=row["approval_id"],
+                action=Action(row["action"]),
+                policy_version=row["policy_version"],
+                status=ApprovalStatus(row["status"]),
+                created_at=parse_iso(row["created_at"]),
+                pending_until=parse_iso(row["pending_until"]),
+                valid_until=parse_iso(row["valid_until"]) if row["valid_until"] else None,
+                remaining_uses=self._remaining_uses(row["approval_id"], row["max_uses"]),
+            )
+            for row in rows
+        ]
 
     def _remaining_uses(self, approval_id: str, max_uses: int | None) -> int | None:
         if max_uses is None:
