@@ -232,7 +232,7 @@ def frame(env, **changes):
 def occupied(env):
     session = UseSession("use", "request", "locker", SessionState.ACTIVE,
         env.clock() + timedelta(seconds=123),
-        release_policy={"check_criteria": {"id": "return", "version": 1}})
+        release_policy={"check_criteria": {"id": "locker-return", "version": 1}})
     env.repo.sessions[session.use_id] = session
     env.repo.items["locker"] = replace(env.repo.items["locker"], device_state=DeviceState.ACTIVE)
     return session
@@ -460,7 +460,7 @@ def test_FR07_routes_safety_check_to_real_release(env):
     request, = env.requests
     report = SafetyCheckResult("locker", "connection", 2, env.clock(), env.clock(),
         request.check_id, "safety-event", request.criteria, env.clock(), SafetyCheckOutcome.PASSED,
-        {"door_closed": True})
+        {name: {"value": True, "observed_at": env.clock().isoformat()} for name in ("door_closed", "locked")})
     before = env.repo.items["locker"].last_seen_at
     env.sink.on_safety_check_result(report)
     env.sink.on_safety_check_result(report)
