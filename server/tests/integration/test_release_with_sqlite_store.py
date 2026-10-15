@@ -143,11 +143,18 @@ def env(tmp_path):
 
 
 def _report(gateway, clock, outcome=SafetyCheckOutcome.PASSED, **changes):
+    """`check_criteria.CHECK_ITEMS["locker-return"]`가 요구하는 항목(`door_closed`, `locked`)을
+    `{"value": bool, "observed_at": ISO 8601}` 형식으로 담는다 (#90, FR-20)."""
     request = gateway.requests[-1]
+    passed = outcome == SafetyCheckOutcome.PASSED
+    observed_at = clock().isoformat()
     value = SafetyCheckResult(
         request.node_id, request.target_session_id, 1, clock(), clock(), request.check_id,
         "event-1", request.criteria, clock(), outcome,
-        {"door_closed": True, "actuator_state": "idle", "sensor_fault": False},
+        {
+            "door_closed": {"value": passed, "observed_at": observed_at},
+            "locked": {"value": passed, "observed_at": observed_at},
+        },
     )
     return replace(value, **changes)
 
