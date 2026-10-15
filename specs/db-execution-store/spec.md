@@ -1,9 +1,9 @@
 # 예약 이후 저장과 복원·복구 (`ExecutionStore`)
 
-- 상태: 작성 중
+- 상태: 완료
 - 담당: paiwhy (DB)
 - 요구사항: FR-06, FR-07, FR-19, FR-20, FR-21, FR-22, NFR-03, NFR-04
-- 따르는 결정: #17, #19, #20, #35, #37, #38, PR #50, PR #51
+- 따르는 결정: #17, #19, #20, #35, #37, #38, #78, #81, #84, #92, #113, PR #50, PR #51, PR #103, PR #104, PR #105
 
 ## 1. 왜
 
@@ -65,6 +65,9 @@
 |---|---|---|
 | `db-recovery-retention` | 보존기간 정리, 완료 20분 뒤 `request_id` 비우기, 중복 방지 10만 건 한도 | #15 |
 | `db-approval-admin` | `AdminRepository`, 수집 회차 쓰기, 활성 비콘 교체 | #30, #41, #42 |
+| `db-contract-followups` | `ExecutionStore.execution_context` 구현 | #83 |
+| `db-contract-followups` | `ExecutionStore.link_internal_request` 구현 | #86 |
+| `db-contract-followups` | `reserve_if_free()`가 `ReserveResult.reserved_at`에 실제 예약 시각을 저장·반환 | #80 |
 | 상태 관리 (`core-fault-recovery`) | `RecoveryService.readiness`·`approve`, `settlement_digest` 계산 | #20 |
 | — | 감사 로그 JSONL 내보내기 | #34 |
 
@@ -126,7 +129,7 @@
 
 ## 6. 결정
 
-- `cancel_not_sent`는 `node_command` 행이 없어도 허용한다 — `specs/state-management/core-restore.md`가 명령 연결 전에 멈춘 예약도 취소 대상이라고 명시했다. 이때 예약(`use_session`)·사용분(`approval_usage`) 정리와 감사 기록만 반영하고, `StoreResult.command`는 `None`이다. 담당자가 2026-10-15에 확정했다.
+- `cancel_not_sent`는 `node_command` 행이 없어도 허용한다 — `specs/state-management/core-restore.md`가 명령 연결 전에 멈춘 예약도 취소 대상이라고 명시했다. 이때 예약(`use_session`)·사용분(`approval_usage`) 정리와 감사 기록만 반영하고, `StoreResult.command`는 `None`이다. #81(PR #103)로 결정됐다.
 - 같은 `internal_request_id`가 취소된 뒤 `link_command`로 다시 오면 `CONFLICT`를 반환하고 명령 행을 만들지 않는다 — 취소된 요청에 새 명령이 뒤늦게 연결되면 미전송 확정이 무의미해진다. 담당자가 2026-10-15에 확정했다.
 - 같은 취소를 다시 호출하면 `ALREADY_APPLIED`다 — `ExecutionStore` 전체의 재호출 규칙과 같다. 담당자가 2026-10-15에 확정했다.
 - `recovery` 정산 내용은 컬럼을 늘리지 않고 JSON TEXT 컬럼 `settlement_json` 하나에 저장한다 — `RecoverySettlement`의 `expected_node_state`, `expected_recovery_status`, `expected_commands`, `expected_sessions`, `usage_settlements`, `use_id`, `closed_at`, `end_reason`을 한 번에 직렬화해서 보존한다. `settlement_digest`, `approved_by_user_id`, `approved_at`, `completed_at`은 `0001_initial.sql`의 기존 컬럼을 그대로 쓴다. 담당자 지시.
@@ -135,10 +138,10 @@
 - `settlement_digest`의 해시·직렬화 방식은 상태 관리가 계산해서 넘긴다. DB는 비어 있지 않은 임의의 문자열로 저장하고 문자열 비교만 한다 — `architecture.md` §4 "복구 건과 복구 정산"이 이미 계산 책임을 상태 관리에 두었다. 이 선택은 DB 구현을 막지 않는다.
   - 상태 관리가 정한 방식(#92): 정규 JSON(키 정렬, 공백 없음, UTF-8)으로 직렬화한 뒤 SHA-256을 적용한다. 값은 소문자 hex 64자다. `core/lifecycle/fault_recovery.settlement_digest()`가 계산한다. DB는 이 값을 계산하지 않고 `recovery.settlement_digest` 컬럼에 저장·대조만 한다.
 - `SqliteExecutionStore`를 `db/repositories/execution_store.py`에 둔다. `SqliteRepository`와 같은 `sqlite3.Connection`을 받는다 — DB 쓰기 경로는 하나다 (`AGENTS.md` 의존 규칙 5).
-- `CommandRecord.reserved_at`은 `request.received_at`을 그대로 쓴다. 새 컬럼을 두지 않는다 — ⓪~⑥ 판정과 `reserve_if_free()`는 같은 호출 안에서 동기적으로 끝나므로 "예약 시각"과 "요청 수신 시각"은 실질적으로 같다. `use_session`과 `request`에는 애초에 별도의 예약 시각 컬럼이 없다(`0001_initial.sql`). `link_command`는 `now`를 인자로 받지 않으므로(`interfaces.py`) 호출 시각을 대신 쓸 수도 없다.
+- `CommandRecord.reserved_at`은 `request.received_at`을 그대로 쓴다. 새 컬럼을 두지 않는다 — ⓪~⑥ 판정과 `reserve_if_free()`는 같은 호출 안에서 동기적으로 끝나므로 "예약 시각"과 "요청 수신 시각"은 실질적으로 같다. `use_session`과 `request`에는 애초에 별도의 예약 시각 컬럼이 없다(`0001_initial.sql`). `link_command`는 `now`를 인자로 받지 않으므로(`interfaces.py`) 호출 시각을 대신 쓸 수도 없다. #80으로 DB가 실제 예약 시각을 `ReserveResult.reserved_at`에 저장해 돌려주기로 했다. 이번 작업은 임시로 수신 시각을 쓰고, 반영은 `db-contract-followups`에서 한다.
 - `link_command`의 실행 종류 판단은 `node.occupancy`를 가장 먼저 보고, 대여형이면 이번 요청의 점유 세션 유무 → 기기의 `ACTIVE` 세션 유무 순서로만 본다. `approval_usage` 행의 존재는 보지 않는다 — `open` 정책의 재조작은 승인 사용분을 예약하지 않아 행이 없으므로(#27), 사용분로 판단하면 공용형과 구분하지 못한다.
 - `restore_pending`은 `BEGIN IMMEDIATE`가 아니라 새로 만든 `BEGIN DEFERRED`(`deferred_transaction`)로 여러 조회를 하나의 스냅숏으로 묶는다 — 읽기만 하므로 쓰기 잠금을 잡아 다른 트랜잭션을 기다리게 할 필요가 없다.
-- "명령 연결 전의 예약 요청"은 `request.verdict = 'OK'`이고 `node_command`에 연결이 없는 요청으로 찾는다 — 판정(`core/decision/pipeline.py`)이 실행 인계보다 먼저 `save_decision()`으로 `request.node_id`를 저장하므로, 명령이 생기기 전에도 대상 기기를 알 수 있다. 이미 `cancel_not_sent`로 취소된 요청(`_already_cancelled`)은 뺀다.
+- "명령 연결 전의 예약 요청"은 `request.verdict = 'OK'`이고 `node_command`에 연결이 없으며, **세션이 `RESERVED`이거나 승인 사용분이 `reserved`인, 예약이 남은 요청**으로 찾는다 — 판정(`core/decision/pipeline.py`)이 실행 인계보다 먼저 `save_decision()`으로 `request.node_id`를 저장하므로, 명령이 생기기 전에도 대상 기기를 알 수 있다. `verdict = 'OK'`만으로는 `open` 정책의 공용형 성공(#27, 쓰기 없음)까지 포함돼 복원할 예약이 없는 요청이 섞인다. 이미 `cancel_not_sent`로 취소된 요청도 세션·사용분 상태가 `RESERVED`·`reserved`가 아니게 되므로 이 조건에서 자연히 빠진다.
 - `RestoredSession.created_at`은 세션을 만든 `internal_request_id`의 `request.received_at`을 쓴다. `use_session`에는 생성 시각 컬럼이 없다 — `CommandRecord.reserved_at`과 같은 근거다.
 - `RestoredSession.evidence`는 채우지 않는다(기본값 `{}`) — "종료 사유와 관련 근거"는 `CLOSED`된 세션에만 의미가 있는데, `restore_pending`은 `RESERVED`·`ACTIVE`·`CLOSING`만 돌려준다.
 - `recovery.evidence` 컬럼은 `RecoveryEvidence`의 필드(`evidence_id`, `session_id`, `observed_at`, `execution_outcome`, `safety_confirmed`, `physical_state_synced`)를 그대로 담은 JSON 배열로 저장한다 — `save_recovery`(7단계)가 쓸 형식을 `restore_pending`의 읽기 쪽에서 먼저 정했다. `restore_pending`은 `completed_at IS NULL`인 행만 돌려주므로 그 호출에서는 `RecoveryRecord.completion`이 항상 `None`이다. `recovery()`는 `completed_at`이 있으면 `completion`을 채운다.
@@ -150,8 +153,8 @@
 
 ## 7. 가정
 
-- `settle_recovery`를 실제로 부르는 상태 관리의 `RecoveryService`는 아직 없다(`specs/state-management/core-fault-recovery.md`가 장소 소유권 조회 접점을 미결로 남겼다). 이 작업은 `ExecutionStore` 호출만으로 `settle_recovery`를 검증하고, `core/lifecycle`과의 통합 테스트는 만들지 않는다 — 선행 계약이 없어서 막힌 경로이므로 이슈로 올리지 않는다.
-- 가정 — #113: `evidence`에 `datetime`이 있을 때 재조회 접점(`execution()`, `close_result()`, 재시작 뒤 `restore_pending()`)과 호출자가 들고 있는 원래 값의 비교 방식은 팀 결정 대기다. 저장 함수(`cancel_not_sent`·`record_result`·`finish_close`)의 직접 반환값은 이번 호출의 `evidence`를 그대로 돌려주고, 재조회 비교는 양쪽을 정규화한 JSON으로 맞춰서 한다(`_evidence_matches()`). 재조회 함수 자체가 돌려주는 값은 여전히 문자열화돼 있다 — `core/lifecycle/release.py`의 `_matches()`(355줄)와 상태 관리의 `StoreOutcomeUnknown` 뒤 재조회 비교가 영향받을 수 있다. SQLite로 재현했다 (`test_FR19_execution_evidence_with_datetime_mismatches_after_requery`, `test_FR20_close_result_evidence_with_datetime_mismatches_after_requery`). 결정이 날 때까지 이 방식을 유지하고 `core/lifecycle`은 고치지 않는다.
+- #84는 PR #105로 결정됐다(`Repository.is_place_owner()`). 상태 관리의 `RecoveryService`가 아직 구현 전이라 `core/lifecycle` 통합 테스트는 하지 않는다 — `ExecutionStore` 호출만으로 `settle_recovery`를 검증한다.
+- 가정 — #113: A안(근거에는 JSON 기본 타입만 넣는다. 시각은 ISO 문자열로 넣는다)으로 정해졌다. 저장 함수(`cancel_not_sent`·`record_result`·`finish_close`)의 직접 반환값은 이번 호출의 `evidence`를 그대로 돌려주고, 재조회 비교는 양쪽을 정규화한 JSON으로 맞춰서 한다(`_evidence_matches()`). `execution()`·`close_result()` 같은 재조회 함수 자체가 돌려주는 값은 여전히 문자열화돼 있다 — `core/lifecycle/release.py`의 `_matches()`(355줄)와 상태 관리의 `StoreOutcomeUnknown` 뒤 재조회 비교가 영향받을 수 있다. SQLite로 재현했다 (`test_FR19_execution_evidence_with_datetime_mismatches_after_requery`, `test_FR20_close_result_evidence_with_datetime_mismatches_after_requery`). 상태 관리가 `evidence`에서 `datetime`을 빼도록 바꿀 때까지 지금 방식을 유지한다.
 
 ## 8. 테스트
 
