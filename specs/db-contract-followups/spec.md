@@ -126,6 +126,8 @@
   - 순서: `PRAGMA foreign_keys=OFF` → 새 테이블 생성 → 행 복사 → 이전 테이블 삭제 → 이름 변경 → 인덱스 재생성 → `PRAGMA foreign_key_check` → `PRAGMA foreign_keys=ON`.
   - `request_kind`가 `visitor`이면 `user_id`가 반드시 있다는 CHECK 제약을 둔다.
 - 적용 설정은 `request.settings_json`에 JSON으로 저장한다 — 방문자 요청은 `save_decision`이, 서버 내부 요청은 `link_internal_request`가 쓴다.
+- 서버 내부 요청의 원인(`InternalRequestCause`)은 `request.internal_cause`에 저장한다 — 방문자 요청에만 의미 있는 `reason_code`(판정 사유)에 덮어 쓰지 않는다. 방문자 요청은 `NULL`이다. `target_spec`·`input_digest`는 방문자 요청의 근접 대상 지정·중복 방지에만 쓰여 서버 내부 요청에는 의미가 없다. `target_spec`은 `node_id`를 그대로 담아 NOT NULL을 만족시키고, `input_digest`는 빈 문자열이다 — `execution_context`가 서버 내부 요청을 `UseRequest`로 복원하지 않으므로 다시 해석되지 않는다.
+- `link_command`는 `request.request_kind`를 먼저 본다 — `server_internal`이면 `node.occupancy`로 판단하지 않고 곧바로 `ExecutionKind.SERVER_INTERNAL`과 `use_id=None`·`usage_id=None`을 쓴다. 공용형 기기(점유 방식 `shared`)에서 시작한 서버 내부 요청을 `SHARED`로 잘못 분류하지 않기 위해서다.
 - 오류 거부의 재전송은 `link_request`가 처리한다. `save_decision`은 바꾸지 않는다 — `core/decision/pipeline.py`는 `is_new=True`면 바로 전체 판정(`_run`)으로 들어가고, `is_new=False`·`previous=None`이면 "처리 중"으로 보고 재판정 없이 `INTERNAL_ERROR`를 반환한다(161~165줄). `shared`의 `RequestLink` 모양을 바꾸지 않고 이 기존 분기만으로 재판정을 일으키려면, DB가 `is_new` 값 자체로 신호를 보내야 한다. `core/`는 고치지 않는 곳이라 pipeline.py의 분기를 바꿀 수 없다.
 - `link_request`는 같은 `(user_id, request_id)`·같은 `input_digest`이고 저장된 `reason_code`가 `INTERNAL_ERROR`면, `BEGIN IMMEDIATE` 안에서 이전 판정을 감사에 남기고 판정 칸을 `NULL`로 비운 뒤 `RequestLink(internal_request_id, is_new=True, conflict=False)`를 반환한다 — 새 요청처럼 다시 판정하게 한다.
 - 판정 칸을 비우는 `UPDATE`는 `WHERE reason_code = 'INTERNAL_ERROR'`로 조건부로 한다. 동시에 두 재전송이 오면 한쪽만 조건에 걸려 비우고 `is_new=True`를 받는다. 다른 쪽은 그사이 `verdict`가 `NULL`이 된 행을 보고 기존의 "처리 중" 분기(`is_new=False`, `previous=None`)를 그대로 탄다 — 새 분기를 추가하지 않는다.

@@ -16,7 +16,7 @@ from typing import Any
 
 from nearpilot.db.repositories._common import (
     deferred_transaction, from_json, immediate_transaction, iso, new_id, parse_iso,
-    settings_from_json, to_json,
+    settings_from_json, settings_to_json, to_json,
 )
 from nearpilot.shared.enums import (
     Action,
@@ -27,6 +27,7 @@ from nearpilot.shared.enums import (
     EndReason,
     ExecutionKind,
     ExecutionStatus,
+    InternalRequestCause,
     Occupancy,
     ReasonCode,
     RecoveryStatus,
@@ -45,6 +46,7 @@ from nearpilot.shared.models import (
     CommandRecord,
     Decision,
     ExecutionContext,
+    InternalRequest,
     NodeInfo,
     PendingRequestRecord,
     RecoveryCompletion,
@@ -91,7 +93,8 @@ class SqliteExecutionStore:
                 return StoreResult(outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.STATE_CONFLICT)
 
             request_row = self._conn.execute(
-                "SELECT received_at FROM request WHERE internal_request_id = ?", (internal_request_id,)
+                "SELECT received_at, request_kind FROM request WHERE internal_request_id = ?",
+                (internal_request_id,),
             ).fetchone()
             if request_row is None:
                 raise LookupError(f"요청 {internal_request_id} 가 없다")
@@ -101,13 +104,17 @@ class SqliteExecutionStore:
             if node_row is None:
                 raise LookupError(f"기기 {node_id} 가 없다")
 
-            execution_kind, use_id = self._resolve_execution_kind(
-                internal_request_id, node_id, node_row["occupancy"]
-            )
-            usage_row = self._conn.execute(
-                "SELECT usage_id FROM approval_usage WHERE internal_request_id = ?", (internal_request_id,)
-            ).fetchone()
-            usage_id = usage_row["usage_id"] if usage_row else None
+            if request_row["request_kind"] == "server_internal":
+                # 서버 내부 요청은 세션·사용분이 없다 (#86). occupancy로 판단하지 않는다.
+                execution_kind, use_id, usage_id = ExecutionKind.SERVER_INTERNAL, None, None
+            else:
+                execution_kind, use_id = self._resolve_execution_kind(
+                    internal_request_id, node_id, node_row["occupancy"]
+                )
+                usage_row = self._conn.execute(
+                    "SELECT usage_id FROM approval_usage WHERE internal_request_id = ?", (internal_request_id,)
+                ).fetchone()
+                usage_id = usage_row["usage_id"] if usage_row else None
 
             command_id = new_id()
             self._conn.execute(
@@ -128,6 +135,42 @@ class SqliteExecutionStore:
                     use_id=use_id, usage_id=usage_id, reserved_at=parse_iso(request_row["received_at"]),
                 ),
             )
+
+    def link_internal_request(self, req: InternalRequest) -> StoreResult:
+        """서버 내부 요청을 사용자 ID와 판정 기록 없이 저장한다 (#86).
+
+        `request_kind = 'server_internal'`, `user_id = NULL`로 저장한다. `input_digest`·`target_spec`은
+        방문자 요청의 중복 방지·근접 대상 지정에 쓰는 값이라 이 요청에는 의미가 없다. `target_spec`은
+        `node_id`를 그대로 담아 NOT NULL을 만족시키되, `execution_context`는 내부 요청을 `UseRequest`로
+        복원하지 않으므로 다시 해석되지 않는다. 적용 설정은 `settings_json`에 보존한다.
+        """
+        with immediate_transaction(self._conn):
+            existing = self._conn.execute(
+                "SELECT node_id, action, internal_cause, settings_json "
+                "FROM request WHERE internal_request_id = ?",
+                (req.internal_request_id,),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["node_id"] == req.node_id
+                    and existing["action"] == req.action.value
+                    and existing["internal_cause"] == req.cause.value
+                    and existing["settings_json"] == settings_to_json(req.settings)
+                ):
+                    return StoreResult(outcome=StoreOutcome.ALREADY_APPLIED)
+                return StoreResult(
+                    outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.CONTENT_CONFLICT
+                )
+            self._conn.execute(
+                "INSERT INTO request (internal_request_id, user_id, request_kind, request_id, "
+                "input_digest, node_id, target_spec, action, internal_cause, received_at, settings_json) "
+                "VALUES (?, NULL, 'server_internal', NULL, '', ?, ?, ?, ?, ?, ?)",
+                (
+                    req.internal_request_id, req.node_id, req.node_id, req.action.value,
+                    req.cause.value, iso(req.created_at), settings_to_json(req.settings),
+                ),
+            )
+            return StoreResult(outcome=StoreOutcome.APPLIED)
 
     def _resolve_execution_kind(
         self, internal_request_id: str, node_id: str, occupancy: str
@@ -698,15 +741,28 @@ class SqliteExecutionStore:
             raise StoreError(str(error)) from error
         if request_row is None:
             raise LookupError(f"요청 {command_row['internal_request_id']} 가 없다")
+        is_internal = request_row["request_kind"] == "server_internal"
         return ExecutionContext(
             internal_request_id=command_row["internal_request_id"],
-            request=self._use_request_from_row(request_row),
+            request=None if is_internal else self._use_request_from_row(request_row),
+            internal_request=(
+                self._internal_request_from_row(request_row, command_row["internal_request_id"])
+                if is_internal else None
+            ),
             node_id=command_row["node_id"],
             use_id=command_row["use_id"],
             usage_id=command_row["usage_id"],
             settings=settings_from_json(request_row["settings_json"]),
             execution_kind=ExecutionKind(command_row["execution_kind"]),
             reserved_at=parse_iso(command_row["reserved_at"]) if command_row["reserved_at"] else None,
+        )
+
+    @staticmethod
+    def _internal_request_from_row(row: sqlite3.Row, internal_request_id: str) -> InternalRequest:
+        return InternalRequest(
+            internal_request_id=internal_request_id, node_id=row["node_id"],
+            action=Action(row["action"]), cause=InternalRequestCause(row["internal_cause"]),
+            settings=settings_from_json(row["settings_json"]), created_at=parse_iso(row["received_at"]),
         )
 
     @staticmethod
