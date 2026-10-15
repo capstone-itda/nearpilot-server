@@ -73,3 +73,12 @@ def test_fake_satisfies_protocol():
             return ProximityResult({"locker-1": 0.97}, at, at, "fake", "fake")
 
     assert isinstance(FakeProximity(), ProximityEstimator)
+
+
+@pytest.mark.parametrize(
+    ("raw", "kind", "node_id"),
+    [("nearest:speaker", TargetKind.NEAREST, None), ("speaker-1", TargetKind.EXPLICIT, "speaker-1")],
+)
+def test_FR09_speaker_target_spec_parse(raw, kind, node_id):
+    spec = TargetSpec.parse(raw)
+    assert (spec.kind, spec.capability, spec.node_id) == (kind, Capability.SPEAKER, node_id)
