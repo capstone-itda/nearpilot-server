@@ -164,7 +164,7 @@ class FakeAudit:
         self.events.append(event)
 
 
-def build(posteriors=None, policy=None, settings=None, readiness=None):
+def build(posteriors=None, policy=None, settings=None, readiness=None, window=None):
     repo = FakeRepo()
     prox = FakeProximity({"locker-1": 0.99} if posteriors is None else posteriors)
     pol = policy or FakePolicy()
@@ -172,7 +172,7 @@ def build(posteriors=None, policy=None, settings=None, readiness=None):
     n = iter(range(10_000))
     pipe = DecisionPipeline(repo, prox, pol, audit, settings or Settings(
         version="v1", threshold_explicit_locker=0.5, threshold_explicit_light=0.5),
-                            readiness or FakeReadiness(), new_id=lambda: f"e{next(n)}")
+                            readiness or FakeReadiness(), new_id=lambda: f"e{next(n)}", window=window)
     return pipe, repo, prox, pol, audit
 
 
@@ -693,3 +693,210 @@ def test_FR19_예약_시각이_없으면_None이다():
     pipe, repo, *_ = build()
     _, ctx = pipe.decide_for_execution(request())
     assert ctx.reserved_at is None
+
+
+# ── 전역 할당: any:locker (FR-23) ─────────────────────────────────────
+
+
+class FakeWindow:
+    """대기 구간 대신 정해 둔 기기를 돌려준다. 기본은 확률이 가장 큰 허용 기기다."""
+
+    def __init__(self, assign="best"):
+        self.assign = assign
+        self.requests = []
+        self.error: Exception | None = None
+
+    def submit(self, request):
+        self.requests.append(request)
+        if self.error:
+            raise self.error
+        if self.assign == "best":
+            return max(request.candidates, key=lambda n: (request.candidates[n], n))
+        return self.assign
+
+
+class PerNodePolicy(FakePolicy):
+    def __init__(self, by_node=None):
+        super().__init__()
+        self.by_node = by_node or {}
+
+    def check(self, user_id, node_id, action, now):
+        self.calls.append(node_id)
+        return self.by_node.get(node_id, self.result)
+
+
+ANY_SETTINGS = Settings(version="v1", threshold_locker=0.4, threshold_explicit_locker=0.3,
+                        threshold_explicit_light=0.3)
+ANY = "any:locker"
+
+
+def any_build(posteriors=None, policy=None, window="default", repo_nodes=None):
+    window = FakeWindow() if window == "default" else window
+    pipe, repo, prox, pol, audit = build(
+        {"locker-1": 0.45, "locker-2": 0.5} if posteriors is None else posteriors,
+        policy, ANY_SETTINGS, window=window)
+    repo.nodes_list = repo_nodes or [node("locker-1"), node("locker-2")]
+    repo.frames = [frame("locker-1"), frame("locker-2")]
+    return pipe, repo, prox, pol, audit, window
+
+
+def test_FR23_any_요청_하나는_가장_가까운_허용_기기를_받는다():
+    pipe, repo, prox, pol, audit, window = any_build()
+    d, ctx = pipe.decide_for_execution(request(ANY))
+    assert (d.verdict, d.node_id, d.p_max) == (Verdict.OK, "locker-2", 0.5)
+    assert repo.reserved[0].node_id == "locker-2" and ctx.node_id == "locker-2"
+    assert prox.calls == [["locker-1", "locker-2"]]
+
+
+def test_FR23_임계값을_넘은_후보가_없으면_ASK():
+    pipe, repo, prox, pol, audit, window = any_build({"locker-1": 0.1, "locker-2": 0.2})
+    d = pipe.decide(request(ANY))
+    assert (d.verdict, d.reason, d.p_max, d.node_id) == (Verdict.ASK, ReasonCode.LOW_CONFIDENCE, 0.2, None)
+    assert window.requests == [] and repo.reserved == [] and pol.calls == []
+
+
+def test_FR23_임계값_미만_후보는_배정_입력에_없다():
+    pipe, repo, prox, pol, audit, window = any_build({"locker-1": 0.45, "locker-2": 0.3})
+    pipe.decide(request(ANY))
+    (sent,) = window.requests
+    assert dict(sent.candidates) == {"locker-1": 0.45} and sent.request_id == "i1"
+    assert pol.calls == ["locker-1"]  # 임계값 미만 기기는 정책도 검사하지 않는다
+
+
+def test_FR23_승인이_필요한_기기는_허용쌍이_아니다():
+    need = PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, 1)
+    pipe, repo, prox, pol, audit, window = any_build(policy=PerNodePolicy({"locker-2": need}))
+    d = pipe.decide(request(ANY))
+    assert dict(window.requests[0].candidates) == {"locker-1": 0.45}
+    assert (d.verdict, d.node_id) == (Verdict.OK, "locker-1")
+
+
+def test_FR23_정책이_모두_거부하면_그_판정을_유지한다():
+    need = PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, 1)
+    deny = PolicyCheckResult(Verdict.DENY, ReasonCode.POLICY_DENIED, 1)
+    pipe, repo, prox, pol, audit, window = any_build(
+        policy=PerNodePolicy({"locker-2": need, "locker-1": deny}))
+    d = pipe.decide(request(ANY))
+    # 확률이 가장 큰 locker-2 의 판정을 그대로 쓴다
+    assert (d.verdict, d.reason, d.node_id, d.p_max) == (
+        Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, "locker-2", 0.5)
+    assert window.requests == [] and repo.reserved == []
+
+
+def test_FR23_점유_중인_기기는_허용쌍이_아니다():
+    busy = node("locker-2", device_state=DeviceState.ACTIVE)
+    pipe, repo, prox, pol, audit, window = any_build(repo_nodes=[node("locker-1"), busy])
+    d = pipe.decide(request(ANY))
+    assert dict(window.requests[0].candidates) == {"locker-1": 0.45}
+    assert (d.verdict, d.node_id) == (Verdict.OK, "locker-1")
+
+    both = [node("locker-1", device_state=DeviceState.RESERVED), busy]
+    pipe, repo, prox, pol, audit, window = any_build(repo_nodes=both)
+    d = pipe.decide(request(ANY))
+    assert (d.verdict, d.reason, d.node_id) == (Verdict.BUSY, ReasonCode.DEVICE_BUSY, None)
+    assert window.requests == [] and repo.reserved == []
+
+
+def test_FR23_배정받지_못하면_BUSY():
+    pipe, repo, prox, pol, audit, window = any_build(window=FakeWindow(assign=None))
+    d = pipe.decide(request(ANY))
+    assert (d.verdict, d.reason, d.node_id, d.use_id) == (Verdict.BUSY, ReasonCode.DEVICE_BUSY, None, None)
+    assert repo.reserved == [] and repo.saved == [d]
+
+
+def test_FR23_배정받은_기기를_예약하고_인계한다():
+    pipe, repo, prox, pol, audit, window = any_build(window=FakeWindow(assign="locker-1"))
+    d, ctx = pipe.decide_for_execution(request(ANY))
+    assert (d.verdict, d.node_id, d.use_id, d.p_max) == (Verdict.OK, "locker-1", "use-1", 0.45)
+    assert repo.reserved[0].node_id == "locker-1"
+    assert (ctx.node_id, ctx.use_id, ctx.request.target.kind.value) == ("locker-1", "use-1", "any")
+    allocation = [e.payload["allocation"] for e in audit.events if "allocation" in e.payload]
+    assert allocation == [{"allowed": ("locker-2", "locker-1"), "assigned": "locker-1"}]
+
+
+def test_FR23_예약에_정책의_승인_ID를_넘긴다():
+    approved = PolicyCheckResult(Verdict.OK, ReasonCode.OK, 7, approval_id="a1")
+    pipe, repo, prox, pol, audit, window = any_build(policy=PerNodePolicy({"locker-2": approved}))
+    pipe.decide(request(ANY))
+    assert repo.reserved[0].node_id == "locker-2" and repo.reserved[0].approval_id == "a1"
+    assert repo.records[0].policy_version == 7
+
+
+def test_FR23_겹친_요청은_중복_예약되지_않는다():
+    import threading
+
+    from nearpilot.core.allocation import AllocationWindow
+
+    window = AllocationWindow(40)
+    out = {}
+
+    def run(iid, posteriors):
+        pipe, repo, *_ = any_build(posteriors, window=window)
+        repo.link = RequestLink(iid, True, False)
+        d = pipe.decide(request(ANY, request_id=f"r-{iid}"))
+        out[iid] = (d, repo.reserved)
+
+    threads = [threading.Thread(target=run, args=("i1", {"locker-1": 0.45, "locker-2": 0.5})),
+               threading.Thread(target=run, args=("i2", {"locker-1": 0.45, "locker-2": 0.5}))]
+    threads[0].start()
+    import time
+    deadline = time.monotonic() + 2
+    while window.pending() < 1:
+        assert time.monotonic() < deadline
+        time.sleep(0.002)
+    threads[1].start()
+    for t in threads:
+        t.join(5)
+    nodes = sorted(d.node_id for d, _ in out.values())
+    assert nodes == ["locker-1", "locker-2"]  # 서로 다른 기기를 받는다
+    assert all(d.verdict is Verdict.OK for d, _ in out.values())
+    assert sum(len(reserved) for _, reserved in out.values()) == 2
+
+    # 사물함 하나만 허용쌍이면 한쪽만 받고 한쪽은 BUSY 다
+    out.clear()
+    threads = [threading.Thread(target=run, args=("i1", {"locker-1": 0.45, "locker-2": 0.1})),
+               threading.Thread(target=run, args=("i2", {"locker-1": 0.45, "locker-2": 0.1}))]
+    threads[0].start()
+    deadline = time.monotonic() + 2
+    while window.pending() < 1:
+        assert time.monotonic() < deadline
+        time.sleep(0.002)
+    threads[1].start()
+    for t in threads:
+        t.join(5)
+    verdicts = sorted(d.verdict.value for d, _ in out.values())
+    assert verdicts == ["BUSY", "OK"]
+    assert sum(len(reserved) for _, reserved in out.values()) == 1
+
+
+def test_FR18_any_배정_예외는_내부_오류로_거부한다():
+    window = FakeWindow()
+    window.error = RuntimeError("secret internal detail")
+    pipe, repo, prox, pol, audit, _ = any_build(window=window)
+    d = pipe.decide(request(ANY))
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    assert "secret" not in repr(d) and repo.reserved == []
+
+
+def test_FR18_any_지정은_구간이_없으면_거부한다():
+    pipe, repo, prox, pol, audit, _ = any_build(window=None)
+    d = pipe.decide(request(ANY))
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INVALID_INPUT)
+    assert prox.calls == []
+
+
+def test_FR23_locker_외_any_지정은_거부한다():
+    pipe, repo, prox, pol, audit, window = any_build()
+    d = pipe.decide(request("any:light"))
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INVALID_INPUT)
+    assert window.requests == [] and prox.calls == []
+
+
+def test_FR11_배정_정보를_공개하지_않는다():
+    pipe, repo, prox, pol, audit, window = any_build(window=FakeWindow(assign=None))
+    busy = pipe.decide(request(ANY))
+    assert busy.node_id is None and busy.message is None
+    pipe, repo, prox, pol, audit, window = any_build()
+    ok = pipe.decide(request(ANY, request_id="r9"))
+    text = repr(ok)
+    assert "allocation" not in text and "locker-1" not in text and "u1" not in text
