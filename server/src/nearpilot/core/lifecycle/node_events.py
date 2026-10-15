@@ -174,6 +174,7 @@ class NodeEventService:
                 self._statuses[status.node_id] = status
             self._restore.on_status(status)
             self._shared_light.on_status(status)
+            self._recovery.on_status(status)
             self._status_done[status.node_id] = status
 
     def on_result(self, result: NodeResult) -> None:
@@ -203,7 +204,9 @@ class NodeEventService:
 
     def on_safety_check_result(self, result: SafetyCheckResult) -> None:
         with self._lock_for(result.node_id):
-            self._release.on_safety_check_result(result)
+            # 복구 검사의 결과는 복구 서비스가, 나머지는 반납 서비스가 처리한다 (#85).
+            if not self._recovery.on_check_result(result):
+                self._release.on_safety_check_result(result)
 
     def latest_status(self, node_id: str) -> NodeStatus | None:
         """내부 물리 관측 조회다. 반납 안전이나 재사용 허가가 아니다."""
