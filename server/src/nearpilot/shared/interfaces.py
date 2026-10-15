@@ -315,6 +315,15 @@ class ExecutionStore(Protocol):
         """반영 여부가 불명일 때 다시 조회한다."""
         ...
 
+    def execution_context(self, command_id: str) -> ExecutionContext | None:
+        """명령 ID 로 판정이 인계한 원래 실행 문맥을 조회한다 (#83). 키: command_id
+
+        원래 UseRequest, 확정 node_id, use_id·usage_id, execution_kind, reserved_at 과
+        save_decision 이 저장한 적용 Settings 의 전체 스냅샷으로 만든다. 현재 설정으로 채우지 않는다.
+        재시작 뒤 늦은 결과의 정산에 쓴다. 명령이 없으면 None 이다. 조회 오류는 StoreError 로 알린다.
+        """
+        ...
+
 
     def restore_pending(self) -> Sequence[RestoreBundle]:
         """미완료 요청·명령·세션·사용분·복구 건과 FAULT 기기를 일관된 읽기 시점에 조회한다.
@@ -381,6 +390,18 @@ class ExecutionService(Protocol):
     """
 
     def execute(self, ctx: ExecutionContext) -> ExecutionResult: ...
+
+
+@runtime_checkable
+class ExecutionReadiness(Protocol):
+    """상태 관리 제공, 판정 사용. 기기별 새 실행 가능 여부 (#82).
+
+    재시작 복원을 마치고 현재 연결의 정상 보고를 확인한 기기만 True 다.
+    최초 복원 조회가 실패했거나 현재 연결을 확인하지 못했으면 False 다.
+    판정은 ②에서 False 인 기기를 후보에서 뺀다. 상태 관리는 전송 직전에도 다시 검사한다.
+    """
+
+    def can_execute(self, node_id: str) -> bool: ...
 
 
 # ── CORE 내부 (decision ↔ proximity) ────────────────────────────────

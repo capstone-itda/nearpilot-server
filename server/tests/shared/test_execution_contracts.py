@@ -139,6 +139,9 @@ def test_fr19_fake_store_satisfies_protocol():
         def execution(self, internal_request_id):
             return record
 
+        def execution_context(self, command_id):
+            return CONTEXT
+
     assert isinstance(FakeStore(), ExecutionStore)
 
 
