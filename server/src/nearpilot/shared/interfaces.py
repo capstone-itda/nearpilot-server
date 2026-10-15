@@ -212,6 +212,14 @@ class Repository(Protocol):
 
     def session_owner_matches(self, use_id: str, user_id: str) -> bool: ...  # FR-21
 
+    def is_place_owner(self, user_id: str, node_id: str) -> bool:
+        """기기가 속한 장소의 소유 계정이 user_id 인지 반환한다 (FR-12A, #84).
+
+        복구 준비 조회와 복구 승인마다 CORE 가 부른다. 소유 계정 ID 는 반환하지 않는다.
+        기기가 없거나 장소에 배치되지 않았으면 False 다. 조회 오류는 StoreError 로 알린다.
+        """
+        ...
+
 
 @runtime_checkable
 class ExecutionStore(Protocol):
