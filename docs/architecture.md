@@ -670,8 +670,17 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - 기기의 `release_policy`는 검사 기준을 `check_criteria`의 `id`와 `version`으로 담는다. DB는 점유 세션을 만들 때 `release_policy`를 그대로 보존한다.
 - CORE는 점유 세션의 `UseSession.check_criteria`(`CheckCriteria`)를 읽어 검사 요청에 담는다. 기기는 실제로 적용한 검사 기준을 결과에 담는다.
 - 검사 기준이 없는 점유 세션을 CORE는 검사 통과로 추정하지 않는다.
-- 미결: 검사 기준의 내용 정의와 버전 관리 방식. 실제 기기의 센서 검사 능력을 검증한 뒤 정한다.
-- 미결: 검사 근거 `evidence`의 필수 항목. 실제 기기의 센서 조합과 근거 제공 능력을 검증한 뒤 정한다.
+- 펌웨어 담당이 없는 동안 검사 기준과 `evidence`는 아래 개발 기준을 따른다 ([#90](https://github.com/capstone-itda/nearpilot-server/issues/90)). 시뮬레이터와 CORE가 이 기준을 쓴다. 실제 기기를 검증한 뒤 펌웨어 담당이 고칠 수 있다.
+
+| 기기 종류 | 기준 `id` | 검사 항목 |
+|---|---|---|
+| `locker` | `locker-return` | `door_closed`, `locked` |
+| `light` | `light-return` | `actuator_idle` |
+| `speaker` | `speaker-return` | `actuator_idle` |
+
+- 기준 `version`은 1부터 시작하는 정수다. 검사 항목이나 판정 조건을 바꾸면 1 올린다.
+- `evidence`는 기준의 검사 항목마다 `{"value": bool, "observed_at": ISO 8601}`을 담는다. 기준의 항목이 하나라도 없으면 유효하지 않은 결과다.
+- 기기는 모든 항목이 `true`일 때만 `passed`다. 하나라도 `false`이면 `not_ready`다. 측정에 실패하면 `unknown`이다.
 - 미결: 같은 `check_id`에 다른 내용이 온 충돌을 펌웨어가 보고하는 형식. 펌웨어 담당을 배정한 뒤 정한다. 그때까지 서버는 응답 기한 초과로 취급한다.
 
 ### 기기 발표와 관측의 저장
@@ -777,7 +786,8 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | DB | 원자적 저장, 중복 반영 방지 |
 
 - REST 경로는 §5에 있다.
-- 미결: 관리 API의 구현 담당과 화면. 관리 API 담당을 배정한 뒤 정한다.
+- 복구 준비 조회와 복구 승인의 두 REST 경로는 상태 관리가 `api/rest/`에 구현한다 ([#89](https://github.com/capstone-itda/nearpilot-server/issues/89)). 경로는 토큰으로 계정을 식별해 `RecoveryService`에 넘기고 결과를 바꾸지 않는다 (NFR-07).
+- 미결: 두 복구 경로를 뺀 관리 API의 구현 담당과 화면. 관리 API 담당을 배정한 뒤 정한다.
 
 ### 공동 인터페이스의 후속 반영
 
@@ -1087,6 +1097,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 복구 준비 조회: `GET /admin/nodes/{node_id}/recovery`
 - 복구 승인: `POST /admin/nodes/{node_id}/recovery/{recovery_id}/approve`
 - 두 복구 경로에는 인증과 장소 소유권 검사를 적용한다. 약속은 §4 "복구 준비 조회와 복구 승인"에 있다.
+- 두 복구 경로는 상태 관리가 구현한다 (#89).
 - 미결: 두 복구 경로를 뺀 REST 경로
 
 ### WebSocket
