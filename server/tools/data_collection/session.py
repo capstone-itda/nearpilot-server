@@ -127,6 +127,8 @@ def _collect(
     """
     run = plan.runs[index - 1]
     cid = io.new_id()
+    # start_collection 을 부르기 전에 ID를 보인다. 반환 직후 Ctrl+C가 와도 화면의 ID로 close할 수 있다
+    io.write(f"회차 {index}를 시작한다. 회차 ID: {cid}")
     started_at = io.clock()
     try:
         result = repository.start_collection(cid, plan.beacon, run.label, started_at)

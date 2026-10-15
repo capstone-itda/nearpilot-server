@@ -173,10 +173,18 @@ def test_FR16_start_at_resumes_from_index(sample_plan_path, fake_repo, make_io, 
     assert "2/3" in io.text and "3/3" in io.text and "1/3" not in io.text
 
 
-def test_FR16_collection_id_is_shown_while_run_is_open(sample_plan_path, fake_repo, make_io, record_path):
+def test_FR16_collection_id_is_shown_before_run_starts(sample_plan_path, fake_repo, make_io, record_path):
     io = make_io(["", "", ""])
+    shown_when_starting = []
     shown_when_ending = []
+    start_collection = fake_repo.start_collection
     end_collection = fake_repo.end_collection
+
+    def start_spy(collection_id, beacon, label, started_at):
+        shown_when_starting.append(collection_id in io.text)  # 시작 직후 Ctrl+C가 와도 화면의 ID로 close할 수 있다
+        return start_collection(collection_id, beacon, label, started_at)
+
+    fake_repo.start_collection = start_spy
 
     def spy(collection_id, ended_at):
         shown_when_ending.append(collection_id in io.text)  # 프로세스가 갑자기 죽어도 화면의 ID로 close할 수 있다
@@ -187,6 +195,7 @@ def test_FR16_collection_id_is_shown_while_run_is_open(sample_plan_path, fake_re
     code = _run(sample_plan_path, fake_repo, io, record_path)
 
     assert code == EXIT_OK
+    assert shown_when_starting == [True, True, True]
     assert shown_when_ending == [True, True, True]
 
 
