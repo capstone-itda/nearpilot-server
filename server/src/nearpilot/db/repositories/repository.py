@@ -10,7 +10,9 @@ import sqlite3
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 
-from nearpilot.db.repositories._common import from_json, immediate_transaction, iso, new_id, parse_iso, to_json
+from nearpilot.db.repositories._common import (
+    from_json, immediate_transaction, iso, new_id, parse_iso, settings_to_json, to_json,
+)
 from nearpilot.shared.enums import (
     AccessMode,
     Action,
@@ -354,12 +356,12 @@ class SqliteRepository:
         )
         updated = self._conn.execute(
             "UPDATE request SET verdict = ?, reason_code = ?, node_id = ?, p_max = ?, model = ?, "
-            "calib = ?, policy_ver = ?, config_ver = ?, decision_context = ? "
+            "calib = ?, policy_ver = ?, config_ver = ?, decision_context = ?, settings_json = ? "
             "WHERE internal_request_id = ? AND verdict IS NULL",
             (
                 decision.verdict.value, decision.reason.value, decision.node_id, decision.p_max,
                 record.model_version, record.calib_version, record.policy_version, record.settings.version,
-                decision_context, decision.internal_request_id,
+                decision_context, settings_to_json(record.settings), decision.internal_request_id,
             ),
         )
         if updated.rowcount == 0:

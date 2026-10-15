@@ -15,7 +15,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from nearpilot.db.repositories._common import (
-    deferred_transaction, from_json, immediate_transaction, iso, new_id, parse_iso, to_json,
+    deferred_transaction, from_json, immediate_transaction, iso, new_id, parse_iso,
+    settings_from_json, to_json,
 )
 from nearpilot.shared.enums import (
     Action,
@@ -36,12 +37,14 @@ from nearpilot.shared.enums import (
     TrustState,
     Verdict,
 )
+from nearpilot.shared.errors import StoreError
 from nearpilot.shared.models import (
     ApprovalUsageRecord,
     ApprovalUsageSettlement,
     CloseResult,
     CommandRecord,
     Decision,
+    ExecutionContext,
     NodeInfo,
     PendingRequestRecord,
     RecoveryCompletion,
@@ -673,6 +676,38 @@ class SqliteExecutionStore:
             "SELECT * FROM node_command WHERE internal_request_id = ?", (internal_request_id,)
         ).fetchone()
         return None if row is None else self._command_from_row(row)
+
+    def execution_context(self, command_id: str) -> ExecutionContext | None:
+        """명령 ID로 판정이 인계한 원래 실행 문맥을 조회한다 (#83).
+
+        저장한 설정 스냅샷(`request.settings_json`)으로 문맥을 만든다. 현재 설정으로 채우지 않는다.
+        """
+        try:
+            command_row = self._conn.execute(
+                "SELECT internal_request_id, node_id, use_id, usage_id, execution_kind, reserved_at "
+                "FROM node_command WHERE command_id = ?",
+                (command_id,),
+            ).fetchone()
+            if command_row is None:
+                return None
+            request_row = self._conn.execute(
+                "SELECT * FROM request WHERE internal_request_id = ?",
+                (command_row["internal_request_id"],),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise StoreError(str(error)) from error
+        if request_row is None:
+            raise LookupError(f"요청 {command_row['internal_request_id']} 가 없다")
+        return ExecutionContext(
+            internal_request_id=command_row["internal_request_id"],
+            request=self._use_request_from_row(request_row),
+            node_id=command_row["node_id"],
+            use_id=command_row["use_id"],
+            usage_id=command_row["usage_id"],
+            settings=settings_from_json(request_row["settings_json"]),
+            execution_kind=ExecutionKind(command_row["execution_kind"]),
+            reserved_at=parse_iso(command_row["reserved_at"]) if command_row["reserved_at"] else None,
+        )
 
     @staticmethod
     def _command_from_row(row: sqlite3.Row) -> CommandRecord:

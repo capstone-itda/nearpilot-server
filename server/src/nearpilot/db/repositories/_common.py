@@ -9,10 +9,12 @@ import json
 import sqlite3
 from collections.abc import Mapping
 from contextlib import contextmanager
+from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from nearpilot.shared.config import Settings
 from nearpilot.shared.errors import StoreNotApplied, StoreOutcomeUnknown
 
 
@@ -47,6 +49,16 @@ def from_json(value: str | None) -> dict[str, Any]:
     if not value:
         return {}
     return json.loads(value)
+
+
+def settings_to_json(settings: Settings) -> str:
+    """판정에 적용한 설정 전체를 저장한다. 버전만 저장하지 않는다 (#83)."""
+    return json.dumps(asdict(settings), ensure_ascii=False)
+
+
+def settings_from_json(value: str) -> Settings:
+    """저장한 설정 스냅샷을 그대로 복원한다. 현재 설정으로 채우지 않는다 (#83)."""
+    return Settings(**json.loads(value))
 
 
 @contextmanager
