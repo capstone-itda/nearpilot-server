@@ -80,6 +80,11 @@ class ReasonCode(StrEnum):
     COMMAND_IN_PROGRESS = "COMMAND_IN_PROGRESS"  # BUSY: 다른 구동 명령이 진행 중이다. 점유 충돌과 구분한다.
     EXEC_FAILED = "EXEC_FAILED"
     EXEC_UNKNOWN = "EXEC_UNKNOWN"  # 결과 불명 → FAULT 복구
+    # 확실한 미전송 취소와 재검사 밖 실행 중단의 내부 사유다 (#78, #79).
+    # 호스트에 보이는 사유는 판정이 정한다. 내부 판단 근거를 호스트에 공개하지 않는다.
+    RESERVATION_EXPIRED = "RESERVATION_EXPIRED"  # 예약 대기 제한 만료
+    NODE_NOT_CONNECTED = "NODE_NOT_CONNECTED"  # 기기의 현재 연결 ID 가 없다
+    COMMAND_NOT_SENT = "COMMAND_NOT_SENT"  # IOT 가 미전송을 증명했다
 
 
 # ── 요청 ────────────────────────────────────────────────────────────

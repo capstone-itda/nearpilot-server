@@ -13,6 +13,7 @@ from nearpilot.shared.enums import (
     EndReason,
     ExecutionStatus,
     ReasonCode,
+    ReserveOutcome,
     SessionState,
     StoreOutcome,
     TargetKind,
@@ -30,6 +31,7 @@ from nearpilot.shared.models import (
     Decision,
     ExecutionContext,
     ExecutionResult,
+    ReserveResult,
     StoreResult,
     TargetSpec,
     UseRequest,
@@ -153,3 +155,30 @@ def test_fr19_command_outcome_and_execution_status_share_final_values():
     finals = {CommandOutcome.SUCCEEDED, CommandOutcome.FAILED,
               CommandOutcome.UNKNOWN, CommandOutcome.NOT_SENT}
     assert {o.value for o in finals} <= {s.value for s in ExecutionStatus}
+
+
+def test_fr19_cancel_reason_codes_separate_causes():
+    causes = {ReasonCode.RESERVATION_EXPIRED, ReasonCode.NODE_NOT_CONNECTED, ReasonCode.COMMAND_NOT_SENT}
+    assert len(causes) == 3
+    assert not causes & {ReasonCode.RECHECK_FAILED, ReasonCode.INTERNAL_ERROR}
+
+
+def test_fr18_execution_result_reason_is_separate_from_recheck():
+    blocked = ExecutionResult("ir-1", ExecutionStatus.PENDING, reason=ReasonCode.COMMAND_IN_PROGRESS)
+    assert blocked.recheck is None
+    assert ExecutionResult("ir-1", ExecutionStatus.PENDING).reason is None
+    decision = Decision("ir-1", "req-1", Verdict.ASK, ReasonCode.LOW_CONFIDENCE)
+    with pytest.raises(ValueError):
+        ExecutionResult("ir-1", ExecutionStatus.NOT_SENT, recheck=decision,
+                        reason=ReasonCode.RESERVATION_EXPIRED)
+    with pytest.raises(ValueError):
+        ExecutionResult("ir-1", ExecutionStatus.SUCCEEDED, reason=ReasonCode.COMMAND_IN_PROGRESS)
+
+
+def test_fr19_reserved_at_passes_from_reserve_result_to_context():
+    reserved = ReserveResult(ReserveOutcome.RESERVED, use_id="use-1", reserved_at=NOW)
+    context = ExecutionContext("ir-1", REQUEST, "locker-1", reserved.use_id, None, Settings(),
+                               reserved_at=reserved.reserved_at)
+    assert context.reserved_at == NOW
+    assert ReserveResult(ReserveOutcome.DEVICE_BUSY).reserved_at is None
+    assert CONTEXT.reserved_at is None
