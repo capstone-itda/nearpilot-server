@@ -181,6 +181,10 @@ api  ──▶  core  ──▶  db
 | 진행 상태 | `ExecutionStatus` | `pending`, `in_progress`, `succeeded`, `failed`, `unknown`, `not_sent`, `rejected`다. |
 
 - 재검사의 검사 오류는 `DENY`와 `RECHECK_FAILED`로 반환한다. `RECHECK_FAILED`는 정상 거부에 쓰지 않는다.
+- 확실한 미전송으로 취소할 때 원인을 `ReasonCode`의 원인별 값으로 구분한다 ([#78](https://github.com/capstone-itda/nearpilot-server/issues/78)). 원인은 예약 대기 제한 만료, 현재 기기 연결 없음, IOT가 증명한 미전송이다. 값 이름은 계약 구현 때 `shared`에서 맞춘다.
+- 감사 기록과 판정 기록에서 원인을 구분한다. 호스트 응답에는 판정이 정한 사유만 전달하고 내부 원인 모델은 공개하지 않는다.
+- `RECHECK_FAILED`와 `INTERNAL_ERROR`는 정상 만료에 쓰지 않는다.
+- 이 값을 계약에 반영하기 전에는 CORE가 예약과 승인 사용분을 보존하고 전송을 막는다.
 - ⓪의 `input_digest`는 판정이 정규화 입력(대상 지정, 동작, 원 요청 연결 ID)으로 계산해서 `Repository.link_request`에 넘긴다. DB는 값을 저장하고 비교만 한다. 정규화 필드가 바뀌어도 DB 스키마는 바뀌지 않는다.
 - 판정 단계에서 예상하지 못한 예외가 나면 `DENY`와 `INTERNAL_ERROR`로 반환한다. 호스트 응답에는 일반 안내만 넣는다. 예외 내용과 오류 단계는 감사 기록에만 남긴다.
 - `recheck()`가 예외를 던지면 상태 관리는 검사 오류와 같게 처리한다.
