@@ -36,3 +36,10 @@ A를 서버·시뮬레이터의 개발 기준으로 제안한다.
 문서의 차이는 조용히 덮어쓰지 않고 별도 decision PR로 정리한다.
 실제 기기가 locked나 actuator_idle을 증명하지 못하면 passed로 추정하지 않는다.
 실제 센서 조합과 추가 조건은 검증한 뒤 새 버전으로 합의한다.
+
+## 결정
+
+2026-10-15 담당자가 대화에서 A안의 합의 완료와 문서 반영을 지시했다.
+A안을 채택한다. 반납 검사 v1은 architecture.md §4의 기준을 쓴다. 사물함은 `door_closed`·`locked`, 조명·스피커는 `actuator_idle`을 확인한다.
+문서 반영: [PR #147](https://github.com/capstone-itda/nearpilot-server/pull/147)다.
+실제 기기의 미측정 수치와 근거, 후속 보고 형식은 PR의 문서에 남긴 후속 검증 범위를 따른다.
