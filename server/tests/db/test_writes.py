@@ -4,15 +4,21 @@ touch_node, set_node_session."""
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 
+from nearpilot.db.repositories.repository import SqliteRepository
+from nearpilot.db.schema import connect
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import Action, Capability, Occupancy, ReasonCode, StoreOutcome, Verdict
+from nearpilot.shared.enums import (
+    Action, Capability, Occupancy, ReasonCode, ReserveOutcome, StoreOutcome, Verdict,
+)
 from nearpilot.shared.models import (
     BeaconKey,
     Decision,
     DecisionRecord,
     NodeAnnounce,
+    ReserveRequest,
     RssiFrame,
     TargetSpec,
     UseRequest,
@@ -107,6 +113,187 @@ def test_FR22_link_request_returns_previous_decision(conn, repo):
     assert again.previous is not None
     assert again.previous.verdict == Verdict.OK
     assert again.previous.node_id == "node1"
+
+
+def _fail_with_internal_error(repo, link, policy_version=7):
+    decision = Decision(
+        internal_request_id=link.internal_request_id, request_id="ext-1",
+        verdict=Verdict.DENY, reason=ReasonCode.INTERNAL_ERROR, node_id="node1", p_max=0.5,
+    )
+    repo.save_decision(decision, DecisionRecord(settings=Settings(), policy_version=policy_version))
+
+
+def test_FR18_link_request_retry_after_internal_error(conn, repo):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn)
+    link = repo.link_request(_use_request(), "digest-1")
+    _fail_with_internal_error(repo, link)
+
+    retry = repo.link_request(_use_request(), "digest-1")
+
+    assert retry.internal_request_id == link.internal_request_id
+    assert retry.is_new is True
+    assert retry.conflict is False
+    assert retry.previous is None
+    row = conn.execute(
+        "SELECT verdict, reason_code, node_id, p_max, policy_ver FROM request WHERE internal_request_id = ?",
+        (link.internal_request_id,),
+    ).fetchone()
+    assert tuple(row) == (None, None, None, None, None)
+
+
+def test_NFR03_link_request_retry_concurrent_once(tmp_path):
+    db_path = str(tmp_path / "retry.db")
+    setup_conn = connect(db_path)
+    insert_user(setup_conn)
+    insert_place(setup_conn)
+    insert_node(setup_conn)
+    setup_repo = SqliteRepository(setup_conn)
+    link = setup_repo.link_request(_use_request(), "digest-1")
+    _fail_with_internal_error(setup_repo, link)
+    setup_conn.close()
+
+    results = []
+    lock = threading.Lock()
+    barrier = threading.Barrier(2)
+
+    def attempt():
+        conn = connect(db_path)
+        try:
+            repo = SqliteRepository(conn)
+            barrier.wait()
+            result = repo.link_request(_use_request(), "digest-1")
+            with lock:
+                results.append(result)
+        finally:
+            conn.close()
+
+    threads = [threading.Thread(target=attempt) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert sum(1 for r in results if r.is_new) == 1
+    not_new = [r for r in results if not r.is_new]
+    assert len(not_new) == 1
+    assert not_new[0].conflict is False
+    assert not_new[0].previous is None  # "처리 중"
+    check_conn = connect(db_path)
+    row = check_conn.execute(
+        "SELECT verdict FROM request WHERE internal_request_id = ?", (link.internal_request_id,)
+    ).fetchone()
+    assert row["verdict"] is None
+    check_conn.close()
+
+
+def test_FR18_link_request_retry_different_input_conflicts(conn, repo):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn)
+    link = repo.link_request(_use_request(), "digest-1")
+    _fail_with_internal_error(repo, link)
+
+    result = repo.link_request(_use_request(), "digest-2")
+
+    assert result.conflict is True
+    assert result.is_new is False
+    row = conn.execute(
+        "SELECT verdict, reason_code FROM request WHERE internal_request_id = ?", (link.internal_request_id,)
+    ).fetchone()
+    assert tuple(row) == ("DENY", "INTERNAL_ERROR")  # 비우지 않았다
+
+
+def test_FR18_link_request_retry_confirmed_decision_unaffected(conn, repo):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn)
+    link = repo.link_request(_use_request(), "digest-1")
+    decision = Decision(
+        internal_request_id=link.internal_request_id, request_id="ext-1",
+        verdict=Verdict.DENY, reason=ReasonCode.POLICY_DENIED, node_id="node1",
+    )
+    repo.save_decision(decision, DecisionRecord(settings=Settings()))
+
+    retry = repo.link_request(_use_request(), "digest-1")
+
+    assert retry.is_new is False
+    assert retry.previous is not None
+    assert retry.previous.reason == ReasonCode.POLICY_DENIED
+    row = conn.execute(
+        "SELECT verdict FROM request WHERE internal_request_id = ?", (link.internal_request_id,)
+    ).fetchone()
+    assert row["verdict"] == "DENY"
+
+
+def test_FR18_link_request_retry_again_after_second_internal_error(conn, repo):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn)
+    link = repo.link_request(_use_request(), "digest-1")
+    _fail_with_internal_error(repo, link, policy_version=1)
+
+    first_retry = repo.link_request(_use_request(), "digest-1")
+    assert first_retry.is_new is True
+    _fail_with_internal_error(repo, first_retry, policy_version=2)
+
+    second_retry = repo.link_request(_use_request(), "digest-1")
+
+    assert second_retry.internal_request_id == link.internal_request_id
+    assert second_retry.is_new is True
+    row = conn.execute(
+        "SELECT verdict FROM request WHERE internal_request_id = ?", (link.internal_request_id,)
+    ).fetchone()
+    assert row["verdict"] is None
+
+
+def test_FR22_link_request_retry_audits_previous_decision(conn, repo):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn)
+    link = repo.link_request(_use_request(), "digest-1")
+    _fail_with_internal_error(repo, link, policy_version=7)
+
+    repo.link_request(_use_request(), "digest-1")
+
+    row = conn.execute(
+        "SELECT step, payload_json FROM audit_log WHERE internal_request_id = ?", (link.internal_request_id,)
+    ).fetchone()
+    assert row["step"] == "0"
+    payload = json.loads(row["payload_json"])
+    assert payload["previous_verdict"] == "DENY"
+    assert payload["previous_reason_code"] == "INTERNAL_ERROR"
+    assert payload["previous_node_id"] == "node1"
+    assert payload["previous_policy_ver"] == 7
+
+
+def test_FR19_link_request_retry_keeps_single_reservation(conn, repo):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="node1", occupancy="rental")
+    link = repo.link_request(_use_request(), "digest-1")
+    reserved = repo.reserve_if_free(
+        ReserveRequest(
+            internal_request_id=link.internal_request_id, user_id="u1", node_id="node1",
+            action=Action.OPEN, approval_id=None,
+        )
+    )
+    assert reserved.outcome == ReserveOutcome.RESERVED
+    _fail_with_internal_error(repo, link)
+
+    retry = repo.link_request(_use_request(), "digest-1")
+    assert retry.is_new is True
+    retry_reserved = repo.reserve_if_free(
+        ReserveRequest(
+            internal_request_id=retry.internal_request_id, user_id="u1", node_id="node1",
+            action=Action.OPEN, approval_id=None,
+        )
+    )
+
+    assert retry_reserved.outcome == ReserveOutcome.RESERVED
+    assert retry_reserved.use_id == reserved.use_id
+    assert conn.execute("SELECT COUNT(*) AS c FROM use_session").fetchone()["c"] == 1
 
 
 def test_FR22_save_decision_already_applied(conn, repo):
