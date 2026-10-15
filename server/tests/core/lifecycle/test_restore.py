@@ -65,6 +65,11 @@ class StoreFake:
         self.recovery_commit = False
         self.recovery_saves = []
         self.override = None
+        self.cancel_calls = []
+        self.cancel_error = None
+        self.cancel_commit = False
+        self.cancel_conflict = False
+        self.cancelled = {}
 
     def restore_pending(self):
         self.reads += 1
@@ -104,6 +109,40 @@ class StoreFake:
         for key, (node_id, usage) in self.usages.items():
             if usage.internal_request_id == current.internal_request_id:
                 self.usages[key] = node_id, replace(usage, state=ApprovalUsageState.HELD)
+        if error:
+            raise error
+        return StoreResult(StoreOutcome.APPLIED, command=current)
+
+    def cancel_not_sent(self, internal_request_id, expected, reason, evidence):
+        self.cancel_calls.append((internal_request_id, expected, reason, evidence))
+        if self.cancel_conflict:
+            return StoreResult(StoreOutcome.CONFLICT, command=self.commands.get(internal_request_id))
+        if internal_request_id in self.cancelled:
+            same = self.cancelled[internal_request_id] == evidence
+            return StoreResult(StoreOutcome.ALREADY_APPLIED if same else StoreOutcome.CONFLICT,
+                               command=self.commands.get(internal_request_id))
+        error, self.cancel_error = self.cancel_error, None
+        if error and not self.cancel_commit:
+            raise error
+        current = self.commands.get(internal_request_id)
+        if current is not None:
+            if current.status != expected:
+                return StoreResult(StoreOutcome.CONFLICT, command=current)
+            use_id = current.use_id
+            current = replace(current, status=ExecutionStatus.NOT_SENT, evidence=evidence)
+            self.commands[internal_request_id] = current
+        else:
+            _, request = self.requests.pop(internal_request_id)
+            use_id = request.use_id
+        self.cancelled[internal_request_id] = evidence
+        for key, (node_id, usage) in self.usages.items():
+            if usage.internal_request_id == internal_request_id:
+                self.usages[key] = node_id, replace(usage, state=ApprovalUsageState.RELEASED)
+        session = self.repository.sessions.get(use_id)
+        if session is not None and session.state == SessionState.RESERVED:
+            self.repository.sessions[use_id] = replace(session, state=SessionState.CLOSED)
+            node = self.repository.items[session.node_id]
+            self.repository.items[session.node_id] = replace(node, device_state=DeviceState.AVAILABLE)
         if error:
             raise error
         return StoreResult(StoreOutcome.APPLIED, command=current)
@@ -350,17 +389,37 @@ def test_FR19_command_target_mismatch_blocks(env):
     assert env.store.result_calls == []
 
 
-@pytest.mark.parametrize("age,blocker", [(1, "reservation_pending"), (10, "reservation_expired_contract"),
-                                         (100, "reservation_expired_contract")])
-def test_FR19_pending_kept_until_cancellation_contract(env, age, blocker):
+def test_FR19_pending_waits_then_expires_after_restart(env):
     session = rental(env, SessionState.RESERVED)
-    saved = command(env, ExecutionStatus.PENDING, age=age)
+    saved = command(env, ExecutionStatus.PENDING, age=1)
     env.service.restore()
     status(env)
-    assert env.service.blockers("locker-1") == (blocker,)
+    assert env.service.blockers("locker-1") == ("reservation_pending",)
     assert env.store.commands["request-1"] == saved
     assert env.repository.sessions["use-1"] == session
     assert not env.service.can_execute("locker-1")
+    advance(env, env.settings[0].reservation_wait_sec)
+    status(env)
+    assert env.store.cancel_calls[0][:3] == ("request-1", ExecutionStatus.PENDING,
+                                             ReasonCode.RESERVATION_EXPIRED)
+    assert env.store.commands["request-1"].status == ExecutionStatus.NOT_SENT
+    assert env.repository.sessions["use-1"].state == SessionState.CLOSED
+    assert env.service.can_execute("locker-1")
+
+
+@pytest.mark.parametrize("age", [10, 100])
+def test_FR19_pending_expired_during_downtime_cancelled(env, age):
+    rental(env, SessionState.RESERVED)
+    command(env, ExecutionStatus.PENDING, age=age)
+    env.service.restore()
+    assert [c[:3] for c in env.store.cancel_calls] == [
+        ("request-1", ExecutionStatus.PENDING, ReasonCode.RESERVATION_EXPIRED)]
+    assert env.store.usages == {} or all(
+        u.state == ApprovalUsageState.RELEASED for _, u in env.store.usages.values())
+    assert not env.service.can_execute("locker-1")
+    status(env)
+    assert env.service.can_execute("locker-1")
+    assert len(env.store.cancel_calls) == 1
 
 
 def test_FR20_pending_uses_stored_time_and_settings_snapshot(env):
@@ -369,24 +428,53 @@ def test_FR20_pending_uses_stored_time_and_settings_snapshot(env):
     env.settings[0] = replace(env.settings[0], reservation_wait_sec=1000)
     advance(env, 6)
     env.service.tick()
-    assert env.service.blockers("locker-1") == ("reservation_expired_contract",)
+    assert env.store.cancel_calls[0][3]["reserved_at"] == saved.reserved_at.isoformat()
     assert env.store.commands["request-1"].reserved_at == saved.reserved_at
 
 
 @pytest.mark.parametrize("shared", [False, True])
-def test_FR19_restore_request_without_command_preserves_reservation(env, shared):
+def test_FR19_restore_request_without_command_cancelled(env, shared):
     if shared:
         light(env)
     else:
         rental(env, SessionState.RESERVED)
-    saved = pending_request(env, shared=shared)
+    pending_request(env, shared=shared)
     env.service.restore()
     node_id = "light-1" if shared else "locker-1"
     status(env, node_id)
-    assert env.service.blockers(node_id) == ("reservation_expired_contract",)
-    assert env.store.requests["request-1"][1] == saved
-    assert env.store.usages["usage-1"][1].state == ApprovalUsageState.RESERVED
+    assert [c[:3] for c in env.store.cancel_calls] == [
+        ("request-1", ExecutionStatus.PENDING, ReasonCode.RESERVATION_EXPIRED)]
+    assert env.store.usages["usage-1"][1].state == ApprovalUsageState.RELEASED
     assert env.store.commands == {}
+    assert env.service.can_execute(node_id)
+
+
+@pytest.mark.parametrize("commit", [False, True])
+def test_FR19_expiry_cancel_unknown_retries_same_evidence(env, commit):
+    rental(env, SessionState.RESERVED)
+    command(env, ExecutionStatus.PENDING, age=100)
+    env.store.cancel_error, env.store.cancel_commit = StoreOutcomeUnknown("cancel"), commit
+    if commit:
+        env.service.restore()
+    else:
+        with pytest.raises(StoreError):
+            env.service.restore()
+        env.service.tick()
+    assert env.store.cancel_calls[0][3] == env.store.cancel_calls[-1][3]
+    assert env.store.commands["request-1"].status == ExecutionStatus.NOT_SENT
+    status(env)
+    assert env.service.can_execute("locker-1")
+
+
+def test_FR19_expiry_cancel_conflict_stays_blocked(env):
+    rental(env, SessionState.RESERVED)
+    command(env, ExecutionStatus.PENDING, age=100)
+    env.store.cancel_conflict = True
+    with pytest.raises(StoreError):
+        env.service.restore()
+    with pytest.raises(StoreError):
+        status(env)
+    assert not env.service.can_execute("locker-1")
 
 
 def test_FR19_orphan_approval_usage_kept_blocked(env):
@@ -780,3 +868,33 @@ def test_FR19_repository_duplicates_block_initial_restore(env):
     with pytest.raises(StoreError):
         env.service.restore()
     assert env.service.blockers("locker-1") == ("restore_not_loaded",)
+
+
+def test_FR19_restore_service_is_execution_readiness(env):
+    from nearpilot.shared.interfaces import ExecutionReadiness
+    assert isinstance(env.service, ExecutionReadiness)
+    assert env.service.can_execute("locker-1") is False
+
+
+def test_FR07_restore_late_success_keeps_fault(env):
+    from nearpilot.core.lifecycle.execution import ExecutionService
+    from nearpilot.shared.enums import NodeResultState
+    from nearpilot.shared.models import ExecutionContext, NodeResult
+
+    rental(env, SessionState.RESERVED)
+    saved = command(env)
+    env.service.restore()
+    assert env.repository.items["locker-1"].device_state == DeviceState.FAULT
+    ctx = ExecutionContext("request-1", UseRequest("visitor-1", "external-1", TargetSpec.parse("locker-1"),
+        Action.OPEN, "test", saved.reserved_at), "locker-1", "use-1", "usage-1", Settings(),
+        reserved_at=saved.reserved_at)
+    execution = ExecutionService(repository=env.repository, store=env.store, rechecker=None, gateway=None,
+        clock=env.clock, lock_for=lambda node_id: RLock(), can_execute=env.service.can_execute,
+        record_isolated=env.recovery.record_isolated)
+    env.store.result_conflict = True
+    now = env.clock()
+    execution.on_result(ctx, NodeResult("locker-1", "connection-1", 9, now, now, saved.command_id,
+                                         "late-event", NodeResultState.SUCCEEDED, now))
+    assert env.store.result_calls[-1][1] == CommandOutcome.SUCCEEDED
+    assert env.repository.items["locker-1"].device_state == DeviceState.FAULT
+    assert len(env.store.recoveries) == 1

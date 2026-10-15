@@ -1,6 +1,7 @@
 """재시작 복원과 현재 연결 확인 (FR-19, FR-20, NFR-04).
 
-예약 만료 취소와 판정의 공동 접점은 선행 계약을 기다린다.
+can_execute는 판정과 실행 서비스에 ExecutionReadiness로 제공한다 (#82).
+예약 대기를 넘긴 미전송 예약은 RESERVATION_EXPIRED로 취소한다 (#78, #81).
 호출자는 기기별 공통 재진입 잠금과 검증된 현재 연결 보고를 제공한다.
 """
 
@@ -19,7 +20,7 @@ from nearpilot.core.lifecycle.shared_light import SharedLightService
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
     ActuatorState, Capability, CommandOutcome, DeviceState, ExecutionStatus,
-    Occupancy, SessionState, StoreOutcome,
+    Occupancy, ReasonCode, SessionState, StoreOutcome,
 )
 from nearpilot.shared.errors import StoreError, StoreOutcomeUnknown
 from nearpilot.shared.interfaces import ExecutionStore, Repository
@@ -34,12 +35,15 @@ class _Restoring:
     completed_connection: str | None = None
     blockers: tuple[str, ...] = ("current_status",)
     recoveries: dict[str, RecoveryRecord] = field(default_factory=dict)
+    # 만료 취소의 근거. 저장 재시도에서 같은 내용을 쓴다.
+    cancels: dict[str, dict[str, Any]] = field(default_factory=dict)
+    cancelled: set[str] = field(default_factory=set)
 
 
 class RestoreService:
     """서버 시작 때 restore(), 이후 tick()을 호출한다.
 
-    can_execute는 상태 관리 내부 접점이다. 실제 서버와 판정의 연결은 후속 작업이다.
+    can_execute는 ExecutionReadiness 구현이다. 판정의 ②와 실행 서비스의 전송 직전 검사가 쓴다.
     on_status는 Repository의 현재 연결과 마지막 수신을 저장한 뒤 호출한다.
     lock_for는 실행·반납·복구·관측에 쓰는 동일한 기기별 재진입 잠금이다.
     """
@@ -206,14 +210,25 @@ class RestoreService:
                               for request_id in r.internal_request_ids}
         pending = [c for c in commands if c.status == ExecutionStatus.PENDING and c.command_id not in completed_commands]
         linked = {c.internal_request_id for c in commands}
-        unlinked = [r for r in state.bundle.requests if r.internal_request_id not in linked | completed_requests]
+        unlinked = [r for r in state.bundle.requests
+                    if r.internal_request_id not in linked | completed_requests | state.cancelled]
         if pending or unlinked:
-            reservation_times = [c.reserved_at for c in pending] + [r.reserved_at for r in unlinked]
-            if any(at is None for at in reservation_times):
+            reservations = [(c.internal_request_id, c.reserved_at) for c in pending]
+            reservations += [(r.internal_request_id, r.reserved_at) for r in unlinked]
+            if any(at is None for _, at in reservations):
                 raise StoreError("예약 시각을 확인하지 못했다")
             deadline = timedelta(seconds=state.settings.reservation_wait_sec)
-            expired = any(self._clock() >= at + deadline for at in reservation_times)
-            state.blockers = ("reservation_expired_contract" if expired else "reservation_pending",)
+            waiting = False
+            for request_id, at in reservations:
+                if self._clock() >= at + deadline:
+                    self._cancel_expired(state, request_id, at, linked=request_id in linked)
+                else:
+                    waiting = True
+            if waiting:
+                state.blockers = ("reservation_pending",)
+                return
+            # 취소가 기기와 세션 상태를 바꿨으므로 다음 확인은 현재 기록으로 다시 한다.
+            self._process(state)
             return
         # 요청·명령이 없는 사용분도 자동 반환하지 않는다.
         request_ids = linked | {r.internal_request_id for r in state.bundle.requests}
@@ -246,6 +261,31 @@ class RestoreService:
             self._shared_light.on_status(report)
         state.completed_connection = node.session_id
         state.blockers = ()
+
+    def _cancel_expired(self, state: _Restoring, request_id: str, reserved_at: datetime, *,
+                        linked: bool) -> None:
+        """예약 대기를 넘긴 미전송 예약을 취소한다. 명령이 없는 요청도 같은 함수로 취소한다 (#81)."""
+        evidence = state.cancels.setdefault(request_id, {
+            "source": "restore_reservation_expired", "reason": ReasonCode.RESERVATION_EXPIRED.value,
+            "reserved_at": reserved_at.isoformat(), "confirmed_at": self._clock().isoformat(),
+        })
+        state.blockers = ("reservation_expired",)
+        try:
+            saved = self._store.cancel_not_sent(request_id, ExecutionStatus.PENDING,
+                                                ReasonCode.RESERVATION_EXPIRED, evidence)
+        except StoreOutcomeUnknown:
+            current = self._store.execution(request_id) if linked else None
+            if current is None or current.status != ExecutionStatus.NOT_SENT or current.evidence != evidence:
+                raise
+        else:
+            if saved.outcome == StoreOutcome.CONFLICT:
+                raise StoreError("예약 만료 취소가 충돌했다")
+            if linked:
+                current = saved.command or self._store.execution(request_id)
+                if current is None or current.status != ExecutionStatus.NOT_SENT:
+                    raise StoreError("예약 만료 취소를 확인하지 못했다")
+        if not linked:
+            state.cancelled.add(request_id)
 
     def _restore_command(self, saved: CommandRecord) -> CommandRecord:
         current = self._store.execution(saved.internal_request_id)
