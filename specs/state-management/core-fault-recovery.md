@@ -150,7 +150,7 @@
 
 ## 7. 가정
 
-- `settlement_digest`의 방식은 6절에 정했다. DB 담당은 이 값을 저장·대조만 한다고 가정한다. architecture.md §4가 요구하는 DB spec의 같은 기록은 DB 담당에게 알린다.
+- `settlement_digest`의 방식은 6절에 정했다. DB 담당은 이 값을 저장·대조만 한다고 가정한다. architecture.md §4가 요구하는 DB spec의 같은 기록은 #92로 DB 담당에게 알렸다.
 - 미결 — #84: 장소 소유권을 조회하는 접점. `NodeInfo`는 `place_id`를 담지만 장소 소유자를 담지 않는다. `Repository`에는 장소 조회 함수가 없다.
 - 미결 — #85: 복구의 안전 확인과 물리 상태 동기화의 근거. 반납 검사는 `UseSession.check_criteria`를 쓴다. 점유 세션이 없는 공용형과 세션이 끝난 기기의 검사 기준은 정하지 않았다.
 - 미결 — #89: 관리 API의 구현 담당 (architecture.md §4 "복구 준비 조회와 복구 승인"). 이 spec은 `RecoveryService`만 제공한다.
