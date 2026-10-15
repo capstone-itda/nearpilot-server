@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from nearpilot.db.repositories.execution_store import SqliteExecutionStore
 from nearpilot.db.repositories.repository import SqliteRepository
 from nearpilot.db.schema import connect
 
@@ -21,6 +22,11 @@ def conn():
 @pytest.fixture
 def repo(conn):
     return SqliteRepository(conn)
+
+
+@pytest.fixture
+def store(conn):
+    return SqliteExecutionStore(conn)
 
 
 def insert_user(conn, user_id="u1", token_hash="hash-u1", role="visitor", name="tester"):
