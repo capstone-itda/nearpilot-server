@@ -3,7 +3,7 @@
 - 상태: 구현 중. 반납 서비스의 단위 검증을 마쳤다. 후속 spec의 실제 연결이 남았다.
 - 담당: JM-220 (상태 관리)
 - 요구사항: FR-07, FR-19, FR-20, FR-21, NFR-04
-- 따르는 결정: #15, #17, #19, #37
+- 따르는 결정: #15, #17, #19, #37, #88, #90
 
 ## 1. 왜
 
@@ -59,6 +59,7 @@ stateDiagram-v2
   - 기기 연결 ID가 검사를 요청한 연결과 같다.
   - 검사 기준의 ID와 버전이 요청과 같다.
   - 검사 시각의 나이가 `safety_report_max_age_sec` 이하다.
+  - `passed`와 `not_ready`의 `evidence`가 기준의 검사 항목마다 `{"value": bool, "observed_at": ISO 8601}`을 담는다. `passed`는 모든 항목이 `true`, `not_ready`는 하나 이상 `false`다. 개발 기준에 없는 기준의 `passed`·`not_ready`는 유효하지 않다 (architecture.md §4 "반납 검사와 종료", #90).
 - 결과별 처리는 아래 표를 따른다 (FR-20).
 
 | 결과 | 처리 |
@@ -116,6 +117,7 @@ stateDiagram-v2
 | 검사 시각이 `safety_report_max_age_sec`보다 오래됐다 | 유효하지 않은 결과로 다룬다 | `test_FR07_old_safety_report_invalid` |
 | 다른 기기 연결 ID의 결과가 온다 | 유효하지 않은 결과로 다룬다 | `test_FR20_session_mismatch_invalid_and_criteria_mismatch_invalid` |
 | 검사 기준 버전이 다르다 | 유효하지 않은 결과로 다룬다 | `test_FR20_session_mismatch_invalid_and_criteria_mismatch_invalid` |
+| `evidence`에 기준의 검사 항목이 없거나 값이 결과와 맞지 않는다 | 유효하지 않은 결과로 다룬다. 확인 불능 타이머를 시작한다 | `test_FR20_invalid_evidence_not_passed` |
 | `not_ready`가 30분 동안 이어진다 | 격리하지 않는다. `CLOSING`을 유지한다 | `test_FR20_not_ready_no_timeout` |
 | 응답 기한 초과가 `safety_unconfirmed_limit_sec` 동안 이어진다 | `isolate_device`를 부른다. 점유를 보존한다 | `test_FR20_unconfirmed_limit_isolates` |
 | 확인 불능 중에 새 검사를 발급한다 | 확인 불능 타이머를 유지한다 | `test_FR20_new_check_keeps_timer` |
@@ -133,17 +135,18 @@ stateDiagram-v2
 - 반납 요청에는 외부 요청 ID가 없다. `Decision.request_id`는 빈 문자열로 둔다. 본인 세션의 내부 요청 ID는 기존 값을 사용한다.
 - 종료 저장 재시도는 채택한 검사, 근거와 최초 종료 시각을 유지한다. 저장이 불명이면 완료 기록을 먼저 조회한다.
 - 새 장애 격리 뒤 복구 건 생성 함수를 반드시 호출한다. 생성 함수는 생성 실패 재시도에 같은 복구 ID를 유지해야 한다.
+- 검사 항목의 검사는 `check_criteria.py`의 개발 기준 표를 `core-fault-recovery`와 함께 쓴다 — 복구 검사와 반납 검사가 같은 기준을 쓴다.
 - 기존 spec은 구현 전에 `main`에 커밋했다. 이 브랜치는 구현과 담당자 결정을 한 커밋으로 기록한다.
 
 ## 7. 가정
 
-- #90 A안으로 정했다: 검사 기준의 내용과 버전은 architecture.md §4 "반납 검사와 종료"의 개발 기준을 따른다 (FR-20). 이 spec은 `UseSession.check_criteria`의 ID와 버전만 비교한다.
-- #90 A안으로 정했다: `evidence`의 필수 항목은 개발 기준을 따른다. 필수 항목 검사는 시뮬레이터와 후속 작업에서 반영한다. 이 spec은 받은 `evidence`를 그대로 `finish_close`에 넘긴다.
+- #90 A안: 검사 기준의 내용과 버전, `evidence`의 필수 항목은 architecture.md §4 "반납 검사와 종료"의 개발 기준을 따른다 (FR-20). 실제 기기를 검증한 뒤 펌웨어 담당이 바꿀 수 있다.
+- 유효한 결과의 `evidence`는 그대로 `finish_close`에 넘긴다.
 - 미결: 같은 `check_id`에 다른 내용이 온 충돌을 펌웨어가 보고하는 형식. 그때까지 응답 기한 초과로 다룬다 (architecture.md §4 "반납 검사와 종료").
 - #88 A안으로 정했다: 상태 관리가 서버를 조립한다. 판정은 `CoreService`와 MCP 앱을 만드는 연결 함수를 제공한다. 이 spec은 `release_use(user_id, use_id) -> Decision`과 같은 시그니처의 함수를 제공한다.
-- 선행 연결: 복구 건 생성 함수는 `core-fault-recovery`가 제공한다. 이번 작업은 필수 주입 접점을 fake로 검증한다. 복구 건 저장의 실제 연결 완료로 보지 않는다.
+- 복구 건 생성 함수는 `core-fault-recovery`가 제공한다. 실제 서비스 연결은 `test_NFR04_release_fault_connected_to_recovery_creation`이 검증한다.
 - 선행 연결: `core-node-events`는 검사 결과를 전달한다. `core-restore`는 기기 확인 뒤 `resume_close()`를 호출한다. 서버 조립은 `tick()`을 반복 호출한다.
-- 검사 기준 내용과 필수 근거가 정해져도 반납 서비스는 기준 ID·버전을 비교하고 받은 근거를 보존한다. 검사 기준의 물리 판정은 기기가 맡는다.
+- 검사 기준의 물리 판정은 기기가 맡는다. 반납 서비스는 근거의 형식과 결과의 일치만 검사한다.
 
 ## 8. 테스트
 
@@ -155,5 +158,6 @@ stateDiagram-v2
 | FR-20 | `test_FR20_not_ready_retries_with_new_check_id` | `not_ready` 뒤 재검사 간격을 기다리고 새 `check_id`로 요청한다 |
 | FR-21 | `test_FR21_release_checks_owner` | 반납마다 소유권을 대조한다 |
 | NFR-04 | `test_NFR04_fault_keeps_session` | 격리해도 점유 세션을 보존한다 |
+| FR-20 | `test_FR20_invalid_evidence_not_passed` | 필수 항목이 없거나 결과와 맞지 않는 근거로 종료하지 않는다 |
 
 - 시간은 주입한 시계로 제어한다. `ExecutionStore`, `Repository`, `SafetyCheckGateway`는 fake로 대신한다.

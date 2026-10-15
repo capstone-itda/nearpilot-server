@@ -23,7 +23,7 @@ from nearpilot.shared.enums import (
 from nearpilot.shared.errors import StoreError, StoreNotApplied, StoreOutcomeUnknown
 from nearpilot.shared.interfaces import NodeEventSink
 from nearpilot.shared.models import (
-    BeaconKey, CloseResult, CommandRecord, CommandResult, Decision, ExecutionContext,
+    BeaconKey, CheckCriteria, CloseResult, CommandRecord, CommandResult, Decision, ExecutionContext,
     NodeAnnounce, NodeInfo, NodeResult, NodeStatus, PhysicalState, PolicyCheckResult,
     RestoredSession, RestoreBundle, RssiFrame, SafetyCheckResult, StoreResult,
     TargetSpec, UseRequest, UseSession,
@@ -232,7 +232,7 @@ def frame(env, **changes):
 def occupied(env):
     session = UseSession("use", "request", "locker", SessionState.ACTIVE,
         env.clock() + timedelta(seconds=123),
-        release_policy={"check_criteria": {"id": "return", "version": 1}})
+        release_policy={"check_criteria": {"id": "locker-return", "version": 1}})
     env.repo.sessions[session.use_id] = session
     env.repo.items["locker"] = replace(env.repo.items["locker"], device_state=DeviceState.ACTIVE)
     return session
@@ -460,7 +460,7 @@ def test_FR07_routes_safety_check_to_real_release(env):
     request, = env.requests
     report = SafetyCheckResult("locker", "connection", 2, env.clock(), env.clock(),
         request.check_id, "safety-event", request.criteria, env.clock(), SafetyCheckOutcome.PASSED,
-        {"door_closed": True})
+        {name: {"value": True, "observed_at": env.clock().isoformat()} for name in ("door_closed", "locked")})
     before = env.repo.items["locker"].last_seen_at
     env.sink.on_safety_check_result(report)
     env.sink.on_safety_check_result(report)
@@ -728,3 +728,24 @@ def test_FR07_reports_during_gateway_wait_do_not_deadlock(env):
         result = env.execution.execute(ctx)
     assert result.status == ExecutionStatus.SUCCEEDED
     assert len([c for c in env.store.calls if c[0] == "result"]) == 1
+
+
+def test_NFR04_recovery_check_and_status_routed_to_recovery(env):
+    handled, statuses, released = [], [], []
+    recovery = SimpleNamespace(
+        on_check_result=lambda result: handled.append(result) or result.check_id == "recovery-check",
+        on_status=statuses.append, record_isolated=env.recovery.record_isolated)
+    release = SimpleNamespace(on_safety_check_result=released.append)
+    sink = NodeEventService(repository=env.repo, store=env.store, proximity=env.proximity,
+        execution=env.execution, release=release, restore=env.restore, recovery=recovery,
+        shared_light=env.light, context_for=env.contexts.get, lock_for=env.lock_for)
+    at = env.clock()
+    report = SafetyCheckResult("locker", "connection", 2, at, at, "recovery-check", "event",
+        CheckCriteria("locker-return", 1), at, SafetyCheckOutcome.PASSED, {})
+    sink.on_safety_check_result(report)
+    assert (handled, released) == ([report], [])
+    other = replace(report, check_id="release-check")
+    sink.on_safety_check_result(other)
+    assert released == [other]
+    sink.on_status(status(env))
+    assert len(statuses) == 1

@@ -50,17 +50,32 @@ def beacon_of(user_id: str) -> BeaconKey:
 
 
 class World:
-    def __init__(self, posteriors=None):
-        self.conn = connect(":memory:")
+    def __init__(self, posteriors=None, *, db_path=":memory:", settings=SETTINGS, window=None):
+        self.db_path = db_path
+        self.settings = settings
+        self.window = window
+        self.conn = connect(db_path)
         self.repo = SqliteRepository(self.conn)
         self.policy = RepositoryPolicyChecker(self.repo)
         self.audit = FakeAudit()
         self.prox = FakeProximity(posteriors or {"locker-1": 0.97})
         self._seed()
         self.pipeline = DecisionPipeline(
-            self.repo, self.prox, self.policy, self.audit, SETTINGS, FakeReadiness())
+            self.repo, self.prox, self.policy, self.audit, settings, FakeReadiness(), window=window)
         self.access = AccessRequestService(
-            self.repo, self.policy, self.audit, SETTINGS, lambda: NOW)
+            self.repo, self.policy, self.audit, settings, lambda: NOW)
+
+    def fork(self):
+        """같은 DB 파일에 연결을 하나 더 열고 그 위의 파이프라인을 만든다. 스레드마다 하나씩 쓴다.
+
+        대기 구간, 근접 추정, 감사는 공유한다. 반환한 연결은 쓴 스레드가 닫는다. 파일 DB 에서만 쓴다.
+        """
+        conn = connect(self.db_path)
+        repo = SqliteRepository(conn)
+        pipeline = DecisionPipeline(
+            repo, self.prox, RepositoryPolicyChecker(repo), self.audit, self.settings,
+            FakeReadiness(), window=self.window)
+        return conn, pipeline
 
     def close(self):
         self.conn.close()
@@ -81,6 +96,7 @@ class World:
             ("locker-1", "public", "open"),         # 공개, 승인 불필요
             ("locker-2", "public", "restricted"),   # 공개, 승인 필요
             ("locker-3", "private", "open"),        # 비공개 (소유자만)
+            ("locker-4", "public", "open"),         # 공개, 승인 불필요 (any:locker 의 두 번째 후보)
         ):
             c.execute(
                 "INSERT INTO node (node_id, place_id, capability, occupancy, trust_state, device_state, "
@@ -94,9 +110,9 @@ class World:
                 "INSERT INTO policy_revision (policy_id, version, visibility, mode, approver_user_id, "
                 "approval_ttl_sec, approval_mode, max_uses) VALUES (?, 1, ?, ?, ?, 3600, 'one_time', 1)",
                 (policy_id, visibility, mode, OWNER))
-        # 모든 방문자가 세 기기를 최근에 봤다
+        # 모든 방문자가 네 기기를 최근에 봤다
         for user_id in (OWNER, VISITOR_A, VISITOR_B):
-            for seq, node_id in enumerate(("locker-1", "locker-2", "locker-3"), start=1):
+            for seq, node_id in enumerate(("locker-1", "locker-2", "locker-3", "locker-4"), start=1):
                 self.repo.save_rssi(RssiFrame(
                     node_id, beacon_of(user_id), -60.0, NOW, f"s-{node_id}", seq, NOW, NOW))
 
