@@ -116,18 +116,31 @@ def _mean_rssi_by_bin(
     }
 
 
-def _emission_params(
-    model: ProximityModel, anchor_id: str, trusted_ids: Sequence[str],
-) -> list[tuple[float, float]]:
-    """앵커 하나가 상태마다 기대하는 RSSI의 (평균, 표준편차). 순서는 상태 목록과 같다."""
+def _path_loss_mean(model: ProximityModel, anchor_id: str, x: float, y: float) -> float:
+    """(x, y)에 선 방문자를 앵커가 받을 평균 RSSI. 경로손실 식이다."""
     anchor = model.nodes[anchor_id]
-    params = []
-    for device_id in trusted_ids:
-        front = model.nodes[device_id]
-        distance = max(math.dist((anchor.x, anchor.y), (front.front_x, front.front_y)), model.min_distance_m)
-        params.append((anchor.A - 10.0 * anchor.n * math.log10(distance), anchor.sigma))
-    params.append((anchor.none_rssi, anchor.none_sigma))
-    return params
+    distance = max(math.dist((anchor.x, anchor.y), (x, y)), model.min_distance_m)
+    return anchor.A - 10.0 * anchor.n * math.log10(distance)
+
+
+def _front_params(model: ProximityModel, anchor_id: str, trusted_ids: Sequence[str]) -> list[tuple[float, float]]:
+    """앵커 하나가 기기 앞 상태마다 기대하는 RSSI의 (평균, 표준편차). 순서는 trusted_ids와 같다."""
+    sigma = model.nodes[anchor_id].sigma
+    return [
+        (_path_loss_mean(model, anchor_id, model.nodes[device_id].front_x, model.nodes[device_id].front_y), sigma)
+        for device_id in trusted_ids
+    ]
+
+
+def _none_params(model: ProximityModel, anchor_id: str) -> list[tuple[float, float]]:
+    """앵커 하나가 "어느 기기 앞도 아님"의 성분마다 기대하는 RSSI의 (평균, 표준편차).
+
+    첫 성분은 장소에서 먼 위치(`none_rssi`, `none_sigma`)이고, 나머지는 `none_points`의 위치마다 경로손실 식이다.
+    """
+    anchor = model.nodes[anchor_id]
+    return [(anchor.none_rssi, anchor.none_sigma)] + [
+        (_path_loss_mean(model, anchor_id, x, y), anchor.sigma) for x, y in model.none_points
+    ]
 
 
 def _log_normal(x: float, mean: float, sigma: float) -> float:
@@ -178,19 +191,27 @@ def compute_posteriors(
     selected = _select_frames(frames, beacon, frozenset(trusted_ids), window_start, at)
     n_bins = max(1, round(model.window_sec / bin_sec))
     observed = _mean_rssi_by_bin(selected, window_start, bin_sec, n_bins)
-    emissions = {anchor_id: _emission_params(model, anchor_id, trusted_ids) for anchor_id in trusted_ids}
+    fronts = {anchor_id: _front_params(model, anchor_id, trusted_ids) for anchor_id in trusted_ids}
+    nones = {anchor_id: _none_params(model, anchor_id) for anchor_id in trusted_ids}
+    log_n_components = math.log(1 + len(model.none_points))
     log_transition = _log_transition(model.stay, k_states)
 
     belief = [math.log(1.0 / k_states)] * k_states  # 처음 분포: 균등
     for k in range(n_bins):
         belief = [_logsumexp([b + row[j] for b, row in zip(belief, log_transition)]) for j in range(k_states)]
         # 값이 없는 앵커는 증거로 쓰지 않는다. 프레임이 없는 칸은 예측만 한다.
-        evidence = [(emissions[anchor_id], rssi) for anchor_id, rssi in sorted(observed.get(k, {}).items())]
+        evidence = sorted(observed.get(k, {}).items())
         if evidence:
-            belief = [
-                b + math.fsum(_log_normal(rssi, *emission[s]) for emission, rssi in evidence)
-                for s, b in enumerate(belief)
+            front_log = [
+                math.fsum(_log_normal(rssi, *fronts[anchor_id][s]) for anchor_id, rssi in evidence)
+                for s in range(len(trusted_ids))
             ]
+            # "어느 기기 앞도 아님"은 성분들의 같은 비중 혼합이다. 칸마다 앵커들의 우도를 성분별로 곱한 뒤 평균한다.
+            none_log = _logsumexp([
+                math.fsum(_log_normal(rssi, *nones[anchor_id][c]) for anchor_id, rssi in evidence)
+                for c in range(len(model.none_points) + 1)
+            ]) - log_n_components
+            belief = [b + e for b, e in zip(belief, [*front_log, none_log])]
         total = _logsumexp(belief)
         belief = [b - total for b in belief]
 

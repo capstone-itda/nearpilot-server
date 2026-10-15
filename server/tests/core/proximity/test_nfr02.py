@@ -49,15 +49,35 @@ class Trace:
     baseline: list[str | None]
 
 
-def log_likelihood(frame: RssiFrame, state: str) -> float:
-    """state(기기 앞 또는 NONE_STATE)일 때 frame의 앵커가 이 RSSI를 볼 로그 우도다."""
-    anchor = MODEL.nodes[frame.node_id]
-    if state == NONE_STATE:
-        mean, sigma = anchor.none_rssi, anchor.none_sigma
-    else:
-        mean, sigma = front_rssi(MODEL, frame.node_id, state), anchor.sigma
-    z = (frame.rssi - mean) / sigma
+def _log_normal(x: float, mean: float, sigma: float) -> float:
+    z = (x - mean) / sigma
     return -0.5 * z * z - math.log(sigma) - 0.5 * math.log(2.0 * math.pi)
+
+
+def log_likelihood(frame: RssiFrame, state: str) -> float:
+    """기기 앞 상태 state일 때 frame의 앵커가 이 RSSI를 볼 로그 우도다."""
+    anchor = MODEL.nodes[frame.node_id]
+    return _log_normal(frame.rssi, front_rssi(MODEL, frame.node_id, state), anchor.sigma)
+
+
+def none_log_likelihood(frames: Sequence[RssiFrame]) -> float:
+    """한 칸의 프레임들이 NONE_STATE에서 나올 로그 우도다. 먼 위치와 none_points의 같은 비중 혼합이다."""
+    components = [
+        math.fsum(
+            _log_normal(f.rssi, MODEL.nodes[f.node_id].none_rssi, MODEL.nodes[f.node_id].none_sigma) for f in frames
+        )
+    ]
+    for x, y in MODEL.none_points:
+        components.append(math.fsum(log_likelihood_at(f, x, y) for f in frames))
+    peak = max(components)
+    return peak + math.log(math.fsum(math.exp(c - peak) for c in components)) - math.log(len(components))
+
+
+def log_likelihood_at(frame: RssiFrame, x: float, y: float) -> float:
+    """(x, y)에 선 방문자를 frame의 앵커가 이 RSSI로 볼 로그 우도다."""
+    anchor = MODEL.nodes[frame.node_id]
+    distance = max(math.hypot(anchor.x - x, anchor.y - y), MODEL.min_distance_m)
+    return _log_normal(frame.rssi, anchor.A - 10.0 * anchor.n * math.log10(distance), anchor.sigma)
 
 
 def baseline_target(frames: Sequence[RssiFrame], previous: str | None) -> str | None:
@@ -68,8 +88,9 @@ def baseline_target(frames: Sequence[RssiFrame], previous: str | None) -> str | 
     """
     if not frames:
         return previous
-    states = [*sorted(MODEL.nodes), NONE_STATE]
-    return max(states, key=lambda state: math.fsum(log_likelihood(frame, state) for frame in frames))
+    scores = {state: math.fsum(log_likelihood(frame, state) for frame in frames) for state in sorted(MODEL.nodes)}
+    scores[NONE_STATE] = none_log_likelihood(frames)
+    return max(scores, key=scores.__getitem__)
 
 
 def run_path(path: Sequence[Segment], seed: int) -> Trace:
@@ -214,12 +235,17 @@ def test_NFR02_baseline_picks_maximum_likelihood_state():
     only_locker_3 = [make_frame("locker-3", front_rssi(MODEL, "locker-3", "locker-3"), T0 + SECOND)]
     assert baseline_target(only_locker_3, None) == "locker-3"
 
-    # 로그 우도는 정규분포의 로그 밀도다. 기기 앞 상태는 앵커의 sigma를, NONE_STATE는 none_sigma를 쓴다.
+    # 로그 우도는 정규분포의 로그 밀도다. 기기 앞 상태는 앵커의 sigma를 쓴다.
+    # NONE_STATE는 먼 위치(none_rssi, none_sigma)와 none_points(경로손실 식, sigma)의 같은 비중 혼합이다.
     frame = make_frame("locker-2", -61.5, T0 + SECOND)
     anchor = MODEL.nodes["locker-2"]
     front_mean = front_rssi(MODEL, "locker-2", "locker-1")
     assert log_likelihood(frame, "locker-1") == pytest.approx(norm.logpdf(-61.5, front_mean, anchor.sigma))
-    assert log_likelihood(frame, NONE_STATE) == pytest.approx(norm.logpdf(-61.5, anchor.none_rssi, anchor.none_sigma))
+    densities = [norm.pdf(-61.5, anchor.none_rssi, anchor.none_sigma)] + [
+        norm.pdf(-61.5, -59.0 - 20.0 * math.log10(max(math.hypot(anchor.x - x, anchor.y - y), 0.3)), anchor.sigma)
+        for x, y in MODEL.none_points
+    ]
+    assert none_log_likelihood([frame]) == pytest.approx(math.log(sum(densities) / len(densities)))
 
 
 def test_NFR02_measures_follow_definitions():

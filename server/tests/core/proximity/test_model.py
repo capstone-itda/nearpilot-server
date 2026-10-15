@@ -147,6 +147,13 @@ INVALID_FILES = [
     pytest.param(_edit("nodes", []), "nodes", id="nodes_not_object"),
     pytest.param(_edit("nodes.locker-1", 1), "locker-1", id="node_entry_not_object"),
     pytest.param(_edit("validation", []), "validation", id="validation_not_object"),
+    pytest.param(_edit("none_points", _DROP), "none_points", id="missing_none_points"),
+    pytest.param(_edit("none_points", {}), "none_points", id="none_points_not_array"),
+    pytest.param(_edit("none_points", [1]), "none_points[0]", id="none_point_not_object"),
+    pytest.param(_edit("none_points", [{"x": 1.0}]), "none_points[0]", id="none_point_missing_y"),
+    pytest.param(_edit("none_points", [{"x": 1.0, "y": 2.0, "z": 0.0}]), "none_points[0]", id="none_point_unknown_key"),
+    pytest.param(_edit("none_points", [{"x": float("nan"), "y": 2.0}]), "none_points[0].x", id="none_point_nan"),
+    pytest.param(_edit("none_points", [{"x": 1.0, "y": True}]), "none_points[0].y", id="none_point_bool"),
     # 경로
     pytest.param(partial(_write, content=PLACE_A_TEXT, version="syn-a-2"), "model_version", id="path_version_mismatch"),
     pytest.param(partial(_write, content=PLACE_A_TEXT, place="place-b"), "place_id", id="path_place_mismatch"),
@@ -302,3 +309,15 @@ def test_FR16_helpers_match_fixture_models():
     custom_frame = make_frame("light-1", -70.0, T0, beacon=OTHER_BEACON, seq=7, session_id="sess", received_at=late)
     assert (custom_frame.beacon, custom_frame.seq, custom_frame.session_id) == (OTHER_BEACON, 7, "sess")
     assert (custom_frame.sent_at, custom_frame.received_at) == (T0, late)
+
+
+def test_FR16_none_points_are_read_as_float_pairs(tmp_path):
+    model_a = load_model(PLACE_A_FILE)
+    assert len(model_a.none_points) == 20
+    assert (2.0, 2.5) in model_a.none_points
+    assert all(isinstance(v, float) for point in model_a.none_points for v in point)
+    raw = json.loads(PLACE_A_TEXT)
+    raw["none_points"] = [{"x": 1, "y": 2}]
+    assert load_model(_write(tmp_path, content=json.dumps(raw))).none_points == ((1.0, 2.0),)
+    raw["none_points"] = []
+    assert load_model(_write(tmp_path, content=json.dumps(raw))).none_points == ()
