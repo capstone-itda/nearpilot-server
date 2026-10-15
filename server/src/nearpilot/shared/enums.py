@@ -108,6 +108,7 @@ class Role(StrEnum):
 class Capability(StrEnum):
     LOCKER = "locker"
     LIGHT = "light"
+    SPEAKER = "speaker"  # on 은 재생, off 는 정지 (#61)
     # gate/pass 는 향후 확장 예약값 (architecture.md §6)
 
 

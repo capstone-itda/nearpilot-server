@@ -61,3 +61,25 @@ def test_FR16_FR18_proximity_boundary_requires_place_and_trust_information():
     assert not {'target', 'explicit', 'target_node_id'} & posterior.parameters.keys()
     observe = signature(ProximityEstimator.observe)
     assert observe.parameters['node'].kind.name == 'KEYWORD_ONLY'
+
+
+def test_FR17_speaker_threshold_is_unconfigured_until_decided():
+    settings = Settings()
+    assert settings.threshold_speaker is None
+    assert settings.threshold_explicit_speaker is None
+    assert Settings(threshold_speaker=0.8).threshold_speaker == 0.8
+
+
+@pytest.mark.parametrize('value', [True, '0.5', float('nan'), float('inf'), -1, 0, 1.1])
+def test_FR17_speaker_threshold_rejects_invalid_values(value):
+    with pytest.raises(ValueError):
+        Settings(threshold_speaker=value)
+
+
+def test_FR17_explicit_speaker_threshold_requires_general_speaker_threshold():
+    with pytest.raises(ValueError):
+        Settings(threshold_explicit_speaker=0.5)
+    with pytest.raises(ValueError):
+        Settings(threshold_speaker=0.8, threshold_explicit_speaker=0.8)
+    configured = Settings(threshold_speaker=0.8, threshold_explicit_speaker=0.5)
+    assert configured.threshold_explicit_speaker == 0.5

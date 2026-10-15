@@ -28,7 +28,7 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 
 | 용어 | 뜻 | 코드 이름 | 쓰지 않는 말 |
 |---|---|---|---|
-| 기기 | ESP32 보드 하나와 그 보드가 제어하는 사물함 또는 조명. 앵커 역할도 한다 | `node`, `NodeInfo` | 장치, 노드 |
+| 기기 | ESP32 보드 하나와 그 보드가 제어하는 사물함, 조명 또는 스피커. 앵커 역할도 한다 | `node`, `NodeInfo` | 장치, 노드 |
 | 앵커 | 비콘의 RSSI를 측정해서 보고하는 기기의 역할 | | |
 | 비콘 | 방문자 폰이 송출하는 iBeacon 식별자 `(uuid, major, minor)` | `beacon`, `BeaconKey` | |
 | 계정 | 토큰으로 식별하는 사용자. 역할은 방문자 또는 소유자다 | `user`, `Account` | |
@@ -56,7 +56,7 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 대여시간 기준 시각 | 대여시간 초과를 계산하는 기준이다. 접근 승인 만료와 구분한다 | `rental_due_at` | 대여 권한 만료 시각 |
 | 초과시간 | 대여시간 기준 시각을 넘긴 시간이다. 종료 전에는 현재 시각, 종료 뒤에는 종료 시각으로 계산한다 | | |
 | 대여 기본 시간 | 대여시간 기준 시각을 정하는 시간이다. 자동 반납의 기준이 아니다 | `rental_duration_sec` | |
-| 유지 대상자 | 공용 조명을 켜 두는 근거가 되는 계정. 켜기 요청에 성공했고 사용 권한이 유효한 계정이다. 서버는 유지 대상자를 저장하지 않는다 | | 유지 참여자 |
+| 유지 대상자 | 공용형 기기를 켜 두는 근거가 되는 계정. 켜기 요청에 성공했고 사용 권한이 유효한 계정이다. 서버는 유지 대상자를 저장하지 않는다 | | 유지 참여자 |
 | 초기 참여 대기 | 서버가 재시작 뒤 관측을 재개한 시점부터 새 유지 대상자를 기다리는 시간. 이탈 판단의 미수신 시간과 유예 시간의 합이다 | `leave_absent_sec`, `leave_grace_sec` | |
 | 기기 연결 ID | 기기가 MQTT에 접속할 때 새로 만드는 UUID다. 재접속과 재시작마다 바뀐다. 명령과 검사 요청의 대상으로 쓸 때는 `target_session_id`다 | `session_id` | 점유 세션 ID, 노드 세션 ID, `node_session_id` |
 | 결과 사건 ID | 기기가 결과 보고 하나에 붙이는 UUID다. 같은 보고를 다시 보내도 유지한다. 서버가 만든 결과에는 없다 | `NodeResult.event_id`, `SafetyCheckResult.event_id` | |
@@ -81,9 +81,9 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 전체 상태 | 근접 추정이 사후확률을 계산하는 상태의 집합. 장소의 `trusted` 기기 앞 상태들과 "어느 기기 앞도 아님" 상태다 | | |
 | 모델 파일 | 장소별 근접 파라미터, 기기 배치, HMM 전이와 보정 값을 버전으로 묶은 파일 | `model_version`, `calib_version` | |
 | 수집 회차 | 같은 비콘의 관측을 한 라벨과 수집 구간으로 묶은 기록. 학습·검증·시험 분할의 단위다 | `collection_run`, `collection_id` | |
-| 수집 라벨 | 수집 회차에서 관측한 위치. 기기 1~6 앞 또는 `none`이다 | `collection_run.label` | |
+| 수집 라벨 | 수집 회차에서 관측한 위치. 기기 1~7 앞 또는 `none`이다 | `collection_run.label` | |
 | 후보 밖 상태 | 전체 상태 중 ②의 후보 기기 앞이 아닌 상태 | | |
-| 근접 임계값 | 판정이 ③에서 사후확률과 비교하는 설정 값. 명시적 지정 요청에는 별도 값을 쓴다 | `threshold_locker`, `threshold_light`, `threshold_explicit_locker`, `threshold_explicit_light` | |
+| 근접 임계값 | 판정이 ③에서 사후확률과 비교하는 설정 값. 명시적 지정 요청에는 별도 값을 쓴다 | `threshold_locker`, `threshold_light`, `threshold_speaker`, `threshold_explicit_locker`, `threshold_explicit_light`, `threshold_explicit_speaker` | |
 | 내부 요청 ID | 서버가 외부 요청 ID에 연결하는 전역 고유 ID | `internal_request_id` | |
 | 명령 ID | 서버가 물리 명령마다 발급하는 고유 ID | `command_id` | |
 | 정규화 입력 | ⓪이 같은 요청인지 대조하는 입력. 대상 지정, 동작, 원 요청 연결 ID로 구성한다 | `input_digest` | |

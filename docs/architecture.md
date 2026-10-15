@@ -142,7 +142,7 @@ api  ──▶  core  ──▶  db
 - 예외는 기기가 검증된 `DEVICE_BUSY`로 접수·실행 전에 거부한 명령 하나뿐이다. 약속은 "구동 중 추가 명령 제한의 저장"에 있다.
 - IOT는 새 명령 ID로 자동 재시도하지 않는다.
 - 실행 직전 재검사는 자기 요청의 예약을 경합으로 판정하지 않는다.
-- 공용 조명에는 시간에 따른 자동 꺼짐 타이머를 두지 않는다. 유지 대상자가 모두 이탈하면 CORE가 꺼짐을 요청한다 (FR-20).
+- 공용형 기기에는 시간에 따른 자동 꺼짐 타이머를 두지 않는다. 유지 대상자가 모두 이탈하면 CORE가 꺼짐을 요청한다 (FR-20).
 
 ### 실행 인계와 재검사
 
@@ -396,7 +396,7 @@ DB는 기기별 복원 묶음을 반환한다. 복원 묶음 하나는 현재 �
 - 전송 시작 기록만으로 상태 관리는 실제 실행과 확실한 미전송을 판단하지 않는다. 결과가 불명이면 상태 관리는 새 명령을 자동으로 보내지 않는다.
 - 과거의 안전 근거는 복원 자료다. 과거의 안전 근거는 현재 안전 확인을 대신하지 않는다.
 - 상태 관리는 기기의 복원과 확인을 끝내기 전에 그 기기의 새 실행과 재사용을 허가하지 않는다.
-- 공용 조명의 과거 참여자 목록은 복원 묶음에 넣지 않는다. 공용 조명의 현재 기기 상태, 미완료 명령, 승인 사용분, 장애와 복구 기록은 복원 대상이다.
+- 공용형 기기의 과거 참여자 목록은 복원 묶음에 넣지 않는다. 공용형 기기의 현재 기기 상태, 미완료 명령, 승인 사용분, 장애와 복구 기록은 복원 대상이다.
 - 참여자를 새로 구성하는 규칙은 대여형 점유 세션의 복원을 생략하지 않는다.
 - 서버 중단 시간을 예약 대기와 대여시간에 적용하는 기준은 #15를 따른다.
 
@@ -513,7 +513,8 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - 판정은 명시 지정 요청에 별도 임계값을 적용한다. 별도 임계값은 그 외 요청의 임계값보다 낮다. 판정은 별도 임계값을 설정에서 받는다.
 - 명시 지정 요청의 임계값은 전역 할당에 적용하지 않는다. 전역 할당은 `any:locker` 요청만 묶는다.
 - 감사 기록의 후보 확률은 다시 정규화하지 않은 값이다.
-- 미결: 명시 지정 임계값의 수치. 근접 추정 담당이 검증셋으로 실험한 뒤 정한다. 설정 이름은 `threshold_explicit_locker`, `threshold_explicit_light`다. 기본값 `None`이면 명시 지정 실행을 허가하지 않는다.
+- 미결: 명시 지정 임계값의 수치. 근접 추정 담당이 검증셋으로 실험한 뒤 정한다. 설정 이름은 `threshold_explicit_locker`, `threshold_explicit_light`, `threshold_explicit_speaker`다. 기본값 `None`이면 명시 지정 실행을 허가하지 않는다.
+- 미결: 스피커의 근접 임계값. 설정 이름은 `threshold_speaker`다. 기본값 `None`이면 스피커 실행을 허가하지 않는다 (#61).
 
 
 ### 운영 기준의 영역별 분담
@@ -524,7 +525,7 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 | 기준 | 맡는 영역 | 약속 |
 |---|---|---|
 | 승인 시간 | DB, CORE | DB는 승인 시각에 생성 당시 정책 리비전의 `approval_ttl_sec`를 더해 `valid_until`을 저장한다. DB는 대기 신청의 만료를 신청 시점부터 잰다. 같은 대기 신청의 중복 호출은 만료를 연장하지 않는다. 만료한 신청에 대한 결정은 반영하지 않는다. |
-| 공용 조명 유지 대상자 | 상태 관리 | 상태 관리는 켜기에 성공했고 사용 권한이 유효한 계정을 유지 대상자로 둔다. 상태 관리는 유지 대상자를 메모리에 두고 DB에 저장하지 않는다. `shared`에 유지 대상자의 접점을 두지 않는다. 상태 관리는 유지 대상자마다 이탈을 판단한다. 마지막 유지 대상자가 이탈하면 꺼짐을 요청하고 전송 직전에 유지 대상자를 다시 확인한다. |
+| 공용형 기기 유지 대상자 | 상태 관리 | 상태 관리는 켜기에 성공했고 사용 권한이 유효한 계정을 유지 대상자로 둔다. 상태 관리는 유지 대상자를 메모리에 두고 DB에 저장하지 않는다. `shared`에 유지 대상자의 접점을 두지 않는다. 상태 관리는 유지 대상자마다 이탈을 판단한다. 마지막 유지 대상자가 이탈하면 꺼짐을 요청하고 전송 직전에 유지 대상자를 다시 확인한다. |
 | 재시작 | 상태 관리, DB | 서버 중단 시간을 예약 대기와 대여시간·초과시간 계산에 포함한다. 상태 관리는 유지 대상자를 복원하지 않는다. 상태 관리는 관측을 재개한 시점부터 초기 참여 대기를 둔다. 초기 참여 대기는 `leave_absent_sec`와 `leave_grace_sec`의 합이다. |
 | 이력·감사 보존 | DB | DB는 종료 이력과 상세 실행·감사 기록을 보존기간에 따라 정리한다. DB는 진행 중이거나 미해결인 기록을 기간만으로 지우지 않는다. |
 | 외부 요청의 중복 방지 | DB, 판정 | DB는 요청의 최종 처리 완료 뒤 보장기간 동안 외부 `(user_id, request_id)`로 중복을 검사한다. 보장기간이 지나면 DB는 요청 행의 외부 `request_id`만 비운다. 판정은 다시 온 외부 요청을 새 내부 요청 ID로 검사한다. |
@@ -702,7 +703,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | DB의 `tools/evaluation` | 수집 회차 ID 단위로 학습·검증·시험 분할과 평가를 수행한다. |
 
 - 회차는 `collection_id`, `beacon_id`, `label`, `started_at`, `ended_at`을 담는다.
-- 라벨은 기기 1~6 앞 또는 `none`이다. "앞"의 거리 기준은 근접 추정 구현 담당이 spec에서 정한다.
+- 라벨은 기기 1~7 앞 또는 `none`이다. "앞"의 거리 기준은 근접 추정 구현 담당이 spec에서 정한다.
 - 수집 구간은 `started_at <= frame_ts < ended_at`이다. 구간의 시작은 포함하고 끝은 제외한다.
 - 진행 중인 회차의 `ended_at`은 `NULL`이다. 같은 비콘의 다른 진행 중 회차와 겹치는 회차는 거부한다.
 - 끝 시각은 시작 시각보다 뒤여야 한다. 유효하지 않은 구간은 DB가 거부한다.
@@ -924,11 +925,11 @@ MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_sess
 
 | 종류 | 추가 필드와 타입 | 약속 |
 |---|---|---|
-| `announce` | `capability`: `locker` 또는 `light`, `occupancy`: `rental` 또는 `shared` | 기기는 연결마다 발표한다. 서버는 retained 발표만으로 온라인·안전·현재 연결을 확정하지 않는다. |
+| `announce` | `capability`: `locker`, `light`, `speaker` 중 하나, `occupancy`: `rental` 또는 `shared` | 기기는 연결마다 발표한다. 서버는 retained 발표만으로 온라인·안전·현재 연결을 확정하지 않는다. |
 | `rssi` | `frame_ts`: UTC 시각, `observations`: 배열 | `frame_ts`는 스캔 관측 시각이다. 각 원소는 `uuid`, `major`, `minor`, `rssi`를 담는다. 빈 배열도 허용한다. |
 | `status` | `observed_at`: UTC 시각, `physical_state`: 객체 | 기기는 현재 물리 관측을 보고한다. 서버의 점유 상태나 `AVAILABLE`을 기기가 정하지 않는다. |
 | `result` | `command_id`: 문자열, `event_id`: UUID 문자열, `state`: 아래 상태 값, `occurred_at`: UTC 시각, `error_code?`: 문자열 | 결과 사건을 다시 보고할 때 `event_id`, 상태 값, 발생 시각을 유지한다. 발행 순번과 발행 시각은 새로 부여한다. |
-| `cmd` | `command_id`: 문자열, `action`: `open`·`on`·`off`, `target_session_id`: 문자열, `issued_at`: UTC 시각, `expires_at`: UTC 시각 | 서버는 현재 확인한 기기 연결을 지정한다. `open`은 사물함, `on`·`off`는 조명에만 보낸다. |
+| `cmd` | `command_id`: 문자열, `action`: `open`·`on`·`off`, `target_session_id`: 문자열, `issued_at`: UTC 시각, `expires_at`: UTC 시각 | 서버는 현재 확인한 기기 연결을 지정한다. `open`은 사물함, `on`·`off`는 조명과 스피커에만 보낸다. 스피커의 `on`은 재생이고 `off`는 정지다. |
 | `safety_check` | `check_id`: 문자열, `target_session_id`: 문자열, `criteria_id`: 문자열, `criteria_version`: 정수, `issued_at`: UTC 시각, `expires_at`: UTC 시각 | 서버는 검사 시도마다 새 `check_id`를 쓴다. 서버는 현재 확인한 기기 연결을 지정한다. 검사 요청은 물리 구동 명령이 아니다. |
 | `safety_check_result` | `check_id`: 문자열, `event_id`: UUID 문자열, `criteria_id`: 문자열, `criteria_version`: 정수, `checked_at`: UTC 시각, `outcome`: 아래 검사 결과 값, `evidence`: 객체 | 기기는 요청을 받은 뒤 새로 검사한다. 기기는 요청과 같은 `check_id`를 담는다. 기기는 실제로 적용한 검사 기준을 담는다. 기기 연결 ID는 공통 필드 `session_id`로 담는다. |
 
@@ -1059,12 +1060,14 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 실제 기기의 시각 오차를 검증하기 전에는 서버가 임의의 허용 오차로 안전을 확정하지 않는다.
 - 기기 상태 보고 주기, 온라인 유지 시간, 실행 응답 제한의 초기 기준은 requirements.md §1.2를 따른다.
 
-명령 실행 성공과 종료 안전은 별개다. 사물함 `open`의 성공 보고만으로 점유 세션을 종료하지 않는다. 새 `close` 동작은 추가하지 않는다. 공용 조명의 꺼짐은 FR-20의 유지 대상자 이탈 기준을 따른다. 시간에 따른 자동 꺼짐 타이머는 두지 않는다.
+명령 실행 성공과 종료 안전은 별개다. 사물함 `open`의 성공 보고만으로 점유 세션을 종료하지 않는다. 새 `close` 동작은 추가하지 않는다. 공용형 기기의 꺼짐은 FR-20의 유지 대상자 이탈 기준을 따른다. 시간에 따른 자동 꺼짐 타이머는 두지 않는다.
 
 미결: 실제 기기 검증. 팀이 펌웨어 담당을 배정한 뒤 실제 기기에서 다음 항목을 검증한다. 그때까지 이 계약은 서버와 시뮬레이터의 개발 기준이다.
 
 - 리드 스위치의 문 닫힘 관측과 이상 검출 범위다.
 - 사물함 서보의 완료 근거와 조명의 실제 켜짐·꺼짐 확인 근거다. 제어 신호를 보낸 사실만으로 성공을 보고하지 않는다.
+- IR 무드등의 `light_on` 보고 근거다. IR 무드등은 켜짐을 관측할 수단이 없다 (#61).
+- 스피커의 재생 관측 필드와 `on`·`off`의 완료 근거다 (#61).
 - 명령 기록을 저장하는 방식과 물리 동작 도중 전원 차단 뒤의 복원과 불명 처리다.
 - 시각 동기화 방식, 최대 시각 오차, 재접속 시 기기 연결 ID 변경이다.
 - 반납 검사의 실제 센서 검사와 근거 제공 능력이다.
@@ -1108,7 +1111,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `policy_revision` | 복합 PK `(policy_id, version)`, `visibility` (`public`, `private`), `mode` (`open`, `restricted`), FK `approver_user_id`, `approval_ttl_sec`, `approval_mode` (`one_time`, `time_window`), `max_uses` (기간형이 무제한이면 NULL). 과거 리비전은 바꾸지 않는다. |
 | `approval` | PK `approval_id`, FK `node_id`, `requester_user_id`, `internal_request_id`, `approved_by_user_id`, `action`, 정책 리비전 참조, `status` (`pending`, `approved`, `denied`), `created_at`, `pending_until`, `valid_until`, `used_count`. 요청 참조는 승인 신청의 출처다. 허용 범위는 요청자, 기기, 동작, 정책 버전으로 검사한다. |
 | `approval_usage` | PK `usage_id`, FK `approval_id`, `internal_request_id`, 명령 연결, `state` (`reserved`, `held`, `consumed`, `released`). 요청별로 중복 예약을 막는다. 허용 횟수는 예약, 보류, 소진을 합쳐서 검사한다. `used_count`는 소진 집계값이며 중복으로 계산하지 않는다. 미전송이 확정되면 자동으로 반환한다. 결과가 실패하거나 불명이면 보류하고 복구 뒤 정산한다. 검증된 `DEVICE_BUSY`의 접수·실행 전 거부이면 이번 요청의 사용분을 반환한다. 공용형 제한 기기의 요청에도 행을 만든다. 무제한이면 횟수 검사만 생략한다. |
-| `collection_run` | PK `collection_id`, FK `beacon_id`, `label` (기기 1~6 앞 또는 none), `started_at`, nullable `ended_at`. 같은 비콘의 수집 구간은 겹치지 않는다. |
+| `collection_run` | PK `collection_id`, FK `beacon_id`, `label` (기기 1~7 앞 또는 none), `started_at`, nullable `ended_at`. 같은 비콘의 수집 구간은 겹치지 않는다. |
 | `rssi_observation` | PK `obs_id`, FK `node_id`, `beacon_id`, `rssi` (dBm), `frame_ts` (약 1초 프레임), 서버 수신 시각 `received_at`, 발행 시각 `sent_at`, 기기 연결 ID `session_id`, 순번 `seq`, `(node_id, session_id, seq, beacon_id)` UNIQUE, nullable FK `collection_id`. 등록된 활성 비콘의 관측만 저장한다. 라벨은 연결한 수집 회차에서 읽는다. |
 | `request` | TEXT PK `internal_request_id`, FK `user_id`, 외부 `request_id`, UNIQUE `(user_id, request_id)`, 정규화 입력 요약 `input_digest`, nullable FK `parent_internal_request_id`, nullable FK `node_id`, `target_spec`, `action`, `verdict`, `reason_code`, `p_max`, 버전 `model`, `calib`, `policy_ver`, `config_ver`, 실제 설정을 포함한 JSON `decision_context`, `host_kind` |
 | `node_command` | TEXT PK `command_id`, FK `internal_request_id`, `node_id`, 대상 동작과 입력 요약, 전송 시도, 실행 상태, 결과, 시각. 승인 사용분과 연결한다. 결과 불명은 실패, 미전송과 구분한다. 접수·실행 전 거부는 미전송, 실패와 구분한다. 기록은 재시작 뒤에도 보존한다. |
@@ -1126,7 +1129,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 같은 요청자, 기기, 동작, 정책 리비전에는 만료되지 않은 `pending` 승인을 하나만 둔다.
 - 관리 쓰기의 신뢰 변경은 `node.trust_state`만 바꾼다. `device_state`와 점유 세션은 바꾸지 않는다.
 - `audit_log` 테이블이 감사 로그의 원본이다. JSONL은 커밋한 행을 커밋 순서대로 내보낸 사본이다.
-- 기기 기능은 `locker` 또는 `light`다. 점유 방식은 `rental` 또는 `shared`다. 신뢰 상태는 `discovered`, `trusted`, `revoked` 중 하나다.
+- 기기 기능은 `locker`, `light`, `speaker` 중 하나다. 점유 방식은 `rental` 또는 `shared`다. 신뢰 상태는 `discovered`, `trusted`, `revoked` 중 하나다.
 - `ONLINE`과 `OFFLINE`은 `last_seen_at`과 TTL로 계산한다. 온라인 여부는 신뢰 상태와 따로 둔다.
 - `last_seen_at`은 더 새로운 시각으로만 바뀐다. 발표한 기능이나 점유 방식이 바뀌면 신뢰 상태는 `discovered`로 돌아간다 (§4 "기기 발표와 관측의 저장").
 - DB는 반납(`use_id`)에 현재 유효한 `check_id`를 연결한다. DB는 종료 저장 때 채택한 `check_id`와 검사 근거를 종료 기록과 함께 보존한다. 저장 엔터티와 필드는 DB 계층이 정한다.
@@ -1137,8 +1140,8 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 대여형은 이탈과 대여시간 초과로 점유를 해제하지 않는다. 초과시간은 `rental_due_at`과 현재 시각 또는 `closed_at`으로 계산한다.
 - 공용형에는 점유 세션이 없다. 그래서 `end_reason`의 `leave`와 `timeout`은 현재 계약에서 쓰지 않는 예약값이다.
 - 확실한 미전송 취소 뒤에는 기기가 `AVAILABLE`, 점유 세션이 `CLOSED`, 종료 사유가 `cancelled`다.
-- 공용 조명의 이탈 판단에서 유효 재수신은 유예 타이머를 초기화한다. 대여형의 `CLOSING` 뒤에는 종료를 계속한다.
-- 공용 조명의 유지 대상자는 재시작 뒤 복원하지 않는다 (FR-20).
+- 공용형 기기의 이탈 판단에서 유효 재수신은 유예 타이머를 초기화한다. 대여형의 `CLOSING` 뒤에는 종료를 계속한다.
+- 공용형 기기의 유지 대상자는 재시작 뒤 복원하지 않는다 (FR-20).
 - 승인의 `valid_until`은 승인 시각에 생성 당시 `approval_ttl_sec`를 더한 값이다. 대기 신청의 만료는 신청 시점부터 잰다 (FR-03, FR-14).
 - 기존 `expires_at`은 `rental_due_at`으로 바꾼다. 배포한 DB 스키마가 없어서 데이터 이전은 필요 없다.
 - 복구할 때는 실행 여부, 승인 사용분, 점유 세션 상태를 함께 정산한 뒤 재사용을 허가한다.

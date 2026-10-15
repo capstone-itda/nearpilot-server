@@ -18,15 +18,18 @@ class Settings:
     # 근접 임계값 (FR-17)
     threshold_locker: float = 0.95
     threshold_light: float = 0.75
+    # 스피커 수치는 미결이다. None 은 미설정이며 실행을 허가하지 않는다 (#61).
+    threshold_speaker: float | None = None
     # 명시 지정 수치는 미결이다. None 은 미설정이며 실행을 허가하지 않는다 (FR-17)。
     threshold_explicit_locker: float | None = None
     threshold_explicit_light: float | None = None
+    threshold_explicit_speaker: float | None = None
 
     # 관측 (FR-05)
     rssi_frame_sec: float = 1.0
 
     # 이탈 판단 (FR-20): 연속 미수신 후 유예. 초기 기본값이며 설정으로 바꿀 수 있다.
-    # 공용 조명의 유지 대상자 이탈 판단에 쓴다. 대여형의 점유 해제에는 쓰지 않는다.
+    # 공용형 기기의 유지 대상자 이탈 판단에 쓴다. 대여형의 점유 해제에는 쓰지 않는다.
     # 재시작 뒤 초기 참여 대기는 두 값의 합이다. 별도 설정을 두지 않는다.
     leave_absent_sec: float = 10.0
     leave_grace_sec: float = 5.0
@@ -79,15 +82,24 @@ class Settings:
                 "request_dedup_ttl_sec", "dedup_entry_limit",
             ) and not isinstance(v, int):
                 raise ValueError(f"{name} 는 정수여야 한다: {v}")
+        v = self.threshold_speaker
+        if v is not None:
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not isfinite(v):
+                raise ValueError("threshold_speaker 는 유한한 숫자 또는 None 이어야 한다")
+            if not 0.0 < v <= 1.0:
+                raise ValueError(f"threshold_speaker 는 (0, 1] 범위여야 한다: {v}")
         for name, general in (
             ("threshold_explicit_locker", "threshold_locker"),
             ("threshold_explicit_light", "threshold_light"),
+            ("threshold_explicit_speaker", "threshold_speaker"),
         ):
             v = getattr(self, name)
             if v is None:
                 continue
             if isinstance(v, bool) or not isinstance(v, (int, float)) or not isfinite(v):
                 raise ValueError(f"{name} 는 유한한 숫자 또는 None 이어야 한다")
+            if getattr(self, general) is None:
+                raise ValueError(f"{general} 를 설정하기 전에는 {name} 를 설정할 수 없다")
             if not 0.0 < v < getattr(self, general):
                 raise ValueError(f"{name} 는 0 보다 크고 {general} 보다 작아야 한다")
         for name in ("threshold_locker", "threshold_light"):
