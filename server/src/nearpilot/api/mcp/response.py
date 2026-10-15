@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from nearpilot.shared.enums import ReasonCode, Verdict
@@ -20,7 +22,7 @@ def host_response(decision: Decision) -> dict[str, Any]:
         "reason": decision.reason.value,
         "node_id": decision.node_id,
         "use_id": decision.use_id,
-        "request_id": decision.request_id,
+        "request_id": decision.request_id or None,  # 반납 판정에는 요청 ID가 없다
         "message": decision.message,
     }
 
@@ -31,3 +33,26 @@ def denied_response(reason: ReasonCode, request_id: str = "") -> dict[str, Any]:
     return host_response(Decision(
         internal_request_id="", request_id=request_id, verdict=Verdict.DENY, reason=reason,
         message=message))
+
+
+_STATUS_TIMES = ("rental_due_at", "closed_at")
+
+
+def status_response(status: Mapping[str, Any]) -> dict[str, Any]:
+    """사용 상태 조회 결과. 성공과 실패의 모양이 같다 (FR-21). 허용 목록 밖의 키는 버린다."""
+    out: dict[str, Any] = {
+        "use_id": status.get("use_id"),
+        "state": status.get("state"),
+        "rental_due_at": status.get("rental_due_at"),
+        "overtime_sec": status.get("overtime_sec"),
+        "closed_at": status.get("closed_at"),
+        "reason": status.get("reason_code"),
+    }
+    for key in _STATUS_TIMES:
+        if isinstance(out[key], datetime):
+            out[key] = out[key].isoformat()
+    return out
+
+
+def status_denied(reason: ReasonCode) -> dict[str, Any]:
+    return status_response({"reason_code": reason.value})
