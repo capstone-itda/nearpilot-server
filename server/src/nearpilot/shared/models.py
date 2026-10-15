@@ -152,6 +152,23 @@ class Approval:
 
 
 @dataclass(frozen=True, slots=True)
+class ApprovalRecord:
+    """요청자·기기의 승인 이력 한 건 (#60). core/policy 가 승인 필요 사유를 고르는 데 쓴다.
+
+    사용자 ID 필드를 두지 않는다. 만료된 pending 도 status 는 PENDING 이다.
+    """
+
+    approval_id: str
+    action: Action
+    policy_version: int
+    status: ApprovalStatus
+    created_at: datetime
+    pending_until: datetime  # 대기 신청 만료 시각
+    valid_until: datetime | None  # 승인 전이면 None
+    remaining_uses: int | None  # 예약·보류·소진을 뺀 잔여. 무제한이면 None
+
+
+@dataclass(frozen=True, slots=True)
 class PolicyCheckResult:
     """④ 정책 검사 결과 (#23). 사용자 ID·점유 주체 필드를 두지 않는다.
 

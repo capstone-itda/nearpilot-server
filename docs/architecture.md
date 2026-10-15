@@ -121,14 +121,14 @@ api  ──▶  core  ──▶  db
 | 계약 | 제공 | 사용 | 약속 |
 |---|---|---|---|
 | 저장소 인터페이스 | DB | CORE (API는 계정 식별만) | 계정과 비콘, 기기, 정책 이력과 승인 사용분, 외부 키와 내부 요청 ID와 명령 ID의 연결, 점유 세션, RSSI 관측, 원자적 점유와 승인 예약 (`reserve_if_free`). 판정은 대여형과 공용형 모두 `reserve_if_free` 하나로 예약한다. |
-| 승인 저장 인터페이스 | DB | CORE | 접근 승인 요청을 저장한다 (`Repository.create_approval_request`). 소유자의 결정을 조건부로 반영한다 (`Repository.decide_approval`). `FAULT` 복구의 소유자 승인에는 쓰지 않는다. |
+| 승인 저장 인터페이스 | DB | CORE | 접근 승인 요청을 저장한다 (`Repository.create_approval_request`). 소유자의 결정을 조건부로 반영한다 (`Repository.decide_approval`). 요청자·기기의 승인 이력을 조회한다 (`Repository.approvals_in_scope`). `FAULT` 복구의 소유자 승인에는 쓰지 않는다. |
 | 판정 기록 인터페이스 | DB | CORE (판정) | 판정 한 건마다 판정과 `DecisionRecord`를 한 번 저장한다 (`Repository.save_decision`). |
 | 계정 조회 인터페이스 | DB | API (`api/auth`) | `api/auth`가 토큰의 SHA-256 해시를 계산해서 넘긴다. DB는 저장한 해시와 비교해서 계정을 반환한다 (`AccountLookup.account_by_token_hash`). |
 | 관리 쓰기 인터페이스 | DB | 관리 기능 (`AdminService`), 시드 스크립트 | 계정과 비콘 등록, 기기 신뢰 변경, 장소 배치, 정책 변경을 저장한다 (`AdminRepository`). 관리 API와 `AdminService`는 담당을 배정한 뒤 이 접점 위에 만든다. |
 | 사건별 저장 인터페이스 | DB | CORE | 예약 이후의 명령 연결, 전송 시작, 미전송 취소, 실행 결과, 이상 격리, 종료를 사건마다 원자적으로 반영한다 (`ExecutionStore`). |
 | 복원·복구 저장 인터페이스 | DB | CORE (상태 관리) | 재시작 복원 조회, 복구 건 저장과 조회, 복구 정산을 제공한다 (`restore_pending`, `save_recovery`, `recovery`, `settle_recovery`). |
 | 복구 인터페이스 | CORE (상태 관리) | API | 복구 준비 조회와 복구 승인 요청을 따로 제공한다. 준비 판단, 재검사, 불명 결과 확인은 상태 관리가 맡는다. |
-| 정책 검사 인터페이스 | DB (`core/policy`) | CORE (판정) | ④에서 계정, 확정한 기기, 동작, 현재 시각으로 정책과 승인을 검사한다 (`PolicyChecker.check`). 허용, 승인 필요, 거부와 사유, 적용한 정책 버전(정책이 없으면 없음), 승인 ID를 `PolicyCheckResult`로 반환한다. 정책 모드, 승인 범위, 정책 버전 비교 규칙은 이 접점 안에 둔다. 승인 사용분 예약은 하지 않는다 (`reserve_if_free`). |
+| 정책 검사 인터페이스 | DB (`core/policy`) | CORE (판정) | ④에서 계정, 확정한 기기, 동작, 현재 시각으로 정책과 승인을 검사한다 (`PolicyChecker.check`). 허용, 승인 필요, 거부와 사유, 적용한 정책 버전(정책이 없으면 없음), 승인 ID를 `PolicyCheckResult`로 반환한다. 정책 모드, 승인 범위, 정책 버전 비교 규칙은 이 접점 안에 둔다. 승인 필요 사유는 승인 이력으로 고른다. 상세는 아래 "승인 이력과 승인 필요 사유"에 있다. 승인 사용분 예약은 하지 않는다 (`reserve_if_free`). |
 | 근접 추정 인터페이스 | 근접 추정 (`core/proximity`) | CORE (판정) | ③에서 비콘, 후보 기기, 시각으로 후보별 사후확률을 계산한다 (`ProximityEstimator.posterior`). 근접 추정은 장소의 전체 상태로 계산한 후보의 확률을 다시 정규화하지 않고 반환한다. `ProximityResult.posteriors`의 합은 1 이하다. 판정은 명시 지정 요청에도 ②의 전체 후보를 넘기고, 지정 대상을 인자로 넘기지 않는다. 판정이 `posteriors[지정 대상]`을 읽어 임계값과 비교한다. 임계값은 판정이 요청 종류에 따라 설정에서 고른다. 상세는 아래 "근접 사후확률의 범위"에 있다. |
 | 감사 로그 인터페이스 | DB | CORE | 단계별 입력, 결과, 버전, 임계값, 후보 확률의 기록 (`AuditLog.append`). 감사 테이블이 원본이다. JSONL은 커밋한 행을 내보낸 사본이다. |
 | 기기 명령 인터페이스 | IOT | CORE | `command_id`별로 전송과 결과를 추적한다. 확실한 미전송, 전송 뒤 성공, 전송 뒤 실패, 결과 불명을 구분한다. 시간 초과와 연결 끊김을 미실행으로 보지 않는다. 기기가 구동 전에 `DEVICE_BUSY`로 거부한 결과는 거부 상태와 사유를 그대로 전달한다 (§5 MQTT 5절). 접점은 `NodeCommandGateway.send`다. IOT는 CORE가 요청한 반납 검사를 `check_id`별로 기기에 보낸다. 접점은 `SafetyCheckGateway.request_check`다. |
@@ -225,6 +225,29 @@ api  ──▶  core  ──▶  db
 - 승인할 때 DB가 `valid_until`을 계산해서 저장한다. `valid_until`은 승인 시각에 `approval_ttl_sec`를 더한 값이다. `approval_ttl_sec`는 승인을 만든 당시 정책 리비전의 값이다.
 - 승인 권한, 대기 상태, 정책 버전은 CORE가 검증한다. DB의 조건부 갱신은 경합한 결정 가운데 하나만 반영한다.
 - 대기 승인의 만료 시간과 승인 유효시간의 값은 `requirements.md` FR-03, FR-14를 따른다 (#15).
+
+### 승인 이력과 승인 필요 사유
+
+[#60](https://github.com/capstone-itda/nearpilot-server/issues/60)의 A안을 따른다.
+DB는 승인 이력을 거르지 않고 반환한다. `core/policy`가 승인 필요 사유를 고른다.
+
+| 함수 | 입력 | 반환하거나 반영할 내용 |
+|---|---|---|
+| `Repository.approvals_in_scope` | 요청자, 기기 | 요청자·기기의 승인 이력 전체를 `ApprovalRecord`의 시퀀스로 반환한다. 저장소를 바꾸지 않는다. |
+
+- DB는 시각, 동작, 정책 버전으로 승인 이력을 거르지 않는다.
+- DB는 이 조회에서 승인 사용분을 예약하지 않는다. 승인 사용분 예약은 `reserve_if_free`가 한다.
+- `ApprovalRecord`는 승인 ID, 동작, 정책 버전, 승인 상태, 생성 시각, 대기 만료 시각, 유효 만료 시각, 남은 횟수를 담는다. 사용자 ID를 담지 않는다.
+- `core/policy`는 유효한 승인이 없을 때 아래 순서로 승인 필요 사유를 고른다.
+  1. 현재 정책 버전의 승인만 본다. 승인이 없으면 `APPROVAL_REQUIRED`다.
+  2. 그중 요청 동작과 같은 승인만 본다. 승인이 없으면 `ACTION_NOT_ALLOWED`다.
+  3. 만료되지 않은 `pending` 승인이 있으면 `APPROVAL_PENDING`이다.
+  4. 없으면 생성 시각이 가장 늦은 승인으로 사유를 정한다. 만료된 `pending` 승인도 포함한다.
+     - `pending`: `APPROVAL_REQUEST_EXPIRED`
+     - `denied`: `APPROVAL_REJECTED`
+     - `approved`이고 유효시간이 지났다: `APPROVAL_EXPIRED`
+     - `approved`이고 남은 횟수가 0이다: `APPROVAL_EXHAUSTED`
+- 판정은 `PolicyCheckResult`를 그대로 쓴다. 판정의 사용 방식은 바뀌지 않는다.
 
 ### 토큰과 계정 조회
 
@@ -811,6 +834,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 |---|---|---|
 | `Repository.create_approval_request` | `ApprovalRequest` | `ApprovalRequestResult` |
 | `Repository.decide_approval` | `ApprovalDecisionRequest` | `ApprovalDecisionResult` |
+| `Repository.approvals_in_scope` | 요청자 ID, 기기 ID | `Sequence[ApprovalRecord]` |
 | `Repository.save_decision` | `Decision`, `DecisionRecord` | `StoreResult` |
 | `AdminRepository.register_account` | `AccountRegistration` | `AdminWriteResult` |
 | `AdminRepository.register_beacon` | `BeaconRegistration` | `AdminWriteResult` |
@@ -824,6 +848,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - `ApprovalDecisionResult`는 반영 여부, `ApprovalDecisionReason`, 승인 상태와 `valid_until`을 담는다.
 - `applied`는 이번 호출의 갱신 여부다. `succeeded`는 새 결정 반영과 같은 결정 재호출의 성공 여부다.
 - 새 결정은 `applied=True`와 `OK`다. 같은 결정 재호출은 `applied=False`와 `ALREADY_APPLIED`다. 둘 다 `succeeded=True`다.
+- `ApprovalRecord`는 승인 ID, 동작, 정책 버전, 승인 상태, 생성 시각, 대기 만료 시각, 유효 만료 시각, 남은 횟수를 담는다. 유효 만료 시각은 승인 전에 없음이다. 남은 횟수는 무제한이면 없음이다.
 - `ApprovalDecisionReason`은 `OK`, `ALREADY_APPLIED`, `NOT_FOUND`, `ALREADY_DECIDED`, `POLICY_VERSION_MISMATCH`, `REQUEST_EXPIRED`, `NOT_AUTHORIZED`다.
 - `DecisionRecord`는 설정, 모델·보정·정책 버전, 후보 확률과 관측 시작·끝 시각을 담는다.
 - 판정 저장은 같은 내부 요청·같은 내용이면 `already_applied`, 다른 내용이면 `conflict`와 `CONTENT_CONFLICT`다.
@@ -1081,7 +1106,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `node` | TEXT PK `node_id`, FK `place_id`, `capability`, `occupancy`, `trust_state`, `device_state`, `exclusive_group`, JSON `release_policy`, `last_seen_at`, 현재 기기 연결 ID `session_id`, 그 연결의 첫 수신 시각 `session_first_seen_at` |
 | `access_policy` | PK `policy_id`, UNIQUE FK `node_id` (기기당 하나), `current_version`. 현재 접근 정책 리비전을 참조한다. 정책 변경은 새 리비전 추가와 `current_version` 갱신을 한 트랜잭션에서 한다. |
 | `policy_revision` | 복합 PK `(policy_id, version)`, `visibility` (`public`, `private`), `mode` (`open`, `restricted`), FK `approver_user_id`, `approval_ttl_sec`, `approval_mode` (`one_time`, `time_window`), `max_uses` (기간형이 무제한이면 NULL). 과거 리비전은 바꾸지 않는다. |
-| `approval` | PK `approval_id`, FK `node_id`, `requester_user_id`, `internal_request_id`, `approved_by_user_id`, `action`, 정책 리비전 참조, `status` (`pending`, `approved`, `denied`), `valid_until`, `used_count`. 요청 참조는 승인 신청의 출처다. 허용 범위는 요청자, 기기, 동작, 정책 버전으로 검사한다. |
+| `approval` | PK `approval_id`, FK `node_id`, `requester_user_id`, `internal_request_id`, `approved_by_user_id`, `action`, 정책 리비전 참조, `status` (`pending`, `approved`, `denied`), `created_at`, `pending_until`, `valid_until`, `used_count`. 요청 참조는 승인 신청의 출처다. 허용 범위는 요청자, 기기, 동작, 정책 버전으로 검사한다. |
 | `approval_usage` | PK `usage_id`, FK `approval_id`, `internal_request_id`, 명령 연결, `state` (`reserved`, `held`, `consumed`, `released`). 요청별로 중복 예약을 막는다. 허용 횟수는 예약, 보류, 소진을 합쳐서 검사한다. `used_count`는 소진 집계값이며 중복으로 계산하지 않는다. 미전송이 확정되면 자동으로 반환한다. 결과가 실패하거나 불명이면 보류하고 복구 뒤 정산한다. 검증된 `DEVICE_BUSY`의 접수·실행 전 거부이면 이번 요청의 사용분을 반환한다. 공용형 제한 기기의 요청에도 행을 만든다. 무제한이면 횟수 검사만 생략한다. |
 | `collection_run` | PK `collection_id`, FK `beacon_id`, `label` (기기 1~6 앞 또는 none), `started_at`, nullable `ended_at`. 같은 비콘의 수집 구간은 겹치지 않는다. |
 | `rssi_observation` | PK `obs_id`, FK `node_id`, `beacon_id`, `rssi` (dBm), `frame_ts` (약 1초 프레임), 서버 수신 시각 `received_at`, 발행 시각 `sent_at`, 기기 연결 ID `session_id`, 순번 `seq`, `(node_id, session_id, seq, beacon_id)` UNIQUE, nullable FK `collection_id`. 등록된 활성 비콘의 관측만 저장한다. 라벨은 연결한 수집 회차에서 읽는다. |
