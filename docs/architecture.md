@@ -775,6 +775,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
   - 회차 ID는 수집 도구가 만든다. 라벨은 기기 앞(`node_id`) 또는 `none`이다.
   - DB는 구간이 겹치는 회차를 `COLLECTION_OVERLAP`으로, 유효하지 않은 구간을 `INVALID_INTERVAL`로 거부한다.
   - DB는 등록되지 않은 비콘을 `BEACON_NOT_FOUND`로, 없는 회차를 `COLLECTION_NOT_FOUND`로 거부한다.
+  - 비활성 비콘으로 회차를 시작하면 `BEACON_NOT_FOUND`로 거부한다 ([#138](https://github.com/capstone-itda/nearpilot-server/issues/138)). `save_rssi`는 비활성 비콘의 프레임을 저장하지 않아 관측이 연결될 수 없는 회차를 만들지 않는다.
   - 회차 쓰기는 다른 관리 쓰기처럼 감사와 한 트랜잭션으로 반영한다.
 - 미결: 수집 회차의 조회 접점과 구간 변경의 처리. 평가 도구 spec에서 맞춘다.
 - 미결: 지표 8의 세부 측정 정의. 별도 이슈에서 정한다.
