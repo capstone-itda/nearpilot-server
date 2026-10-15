@@ -96,6 +96,25 @@ def test_FR19_link_command_reoperation(store, conn):
     assert result.command.internal_request_id == "req-reop"
 
 
+def test_FR19_link_command_open_reoperation(store, conn):
+    """`open` 정책의 재조작은 승인 사용분을 예약하지 않는다 (#27). 실행 종류 판단이
+    `approval_usage` 행의 존재가 아니라 `node.occupancy`와 점유 세션만으로 이뤄지는지 확인한다."""
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="node1", occupancy="rental", device_state="ACTIVE")
+    insert_policy(conn, policy_id="policy-open", node_id="node1", mode="open")
+    insert_request(conn, internal_request_id="req-initial")
+    insert_use_session(conn, use_id="use1", internal_request_id="req-initial", state="ACTIVE")
+    insert_request(conn, internal_request_id="req-reop", request_id="ext-2")
+
+    result = store.link_command("req-reop", "node1", Action.OPEN)
+
+    assert result.outcome == StoreOutcome.APPLIED
+    assert result.command.execution_kind == ExecutionKind.RENTAL_REOPERATION
+    assert result.command.use_id == "use1"
+    assert result.command.usage_id is None
+
+
 def test_FR19_execution_lookup(store, conn):
     insert_user(conn)
     insert_place(conn)

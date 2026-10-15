@@ -80,9 +80,13 @@ class SqliteExecutionStore:
     ) -> tuple[ExecutionKind, str | None]:
         """점유 방식과 기존 점유 세션으로 실행 종류와 연결할 `use_id`를 정한다.
 
-        link_command는 execution_kind·use_id를 인자로 받지 않는다 (`interfaces.py`). 공용형은
-        점유 세션이 없다. 대여형은 이번 요청이 만든 세션이 있으면 최초 대여, 없으면 이미
-        ACTIVE인 세션에 붙는 재조작이다 (FR-19, #35).
+        link_command는 execution_kind·use_id를 인자로 받지 않는다 (`interfaces.py`). `node.occupancy`를
+        가장 먼저 본다. 승인 사용분(`approval_usage`) 행의 존재 여부로 판단하지 않는다 — `open`
+        정책의 재조작은 사용분을 예약하지 않아 행이 없기 때문이다 (#27).
+
+        1. `SHARED`면 공용형이다. 점유 세션이 없다.
+        2. 대여형이고 이 `internal_request_id`로 만든 세션이 있으면 최초 대여다.
+        3. 대여형이고 그 세션이 없는데 기기에 `ACTIVE` 세션이 있으면 재조작이다 (FR-19, #35).
         """
         if occupancy == Occupancy.SHARED.value:
             return ExecutionKind.SHARED, None
