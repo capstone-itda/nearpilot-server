@@ -59,13 +59,13 @@
 
 | 상황 | 기대 동작 | 테스트 |
 |---|---|---|
-| `INTERNAL_ERROR`로 거부한 요청을 같은 입력으로 재전송한다 | 다시 판정한다. 새 판정을 저장한다 | `test_FR18_retry_after_internal_error_decides_again` |
+| `INTERNAL_ERROR`로 거부한 요청을 같은 입력으로 재전송한다 | 다시 판정한다. 새 판정을 저장한다 | `test_FR18_오류로_거부한_요청을_같은_입력으로_다시_보내면_다시_판정한다` |
 | 재전송이 `OK`를 받는다 | 같은 내부 요청 ID로 `OK`가 저장된다 | `test_FR18_retry_after_internal_error_saves_ok` |
 | 첫 시도가 예약 뒤에 실패했다 | 재판정이 기존 예약을 쓴다. 예약이 둘이 되지 않는다 | `test_FR19_retry_after_internal_error_reuses_reservation` |
 | 같은 키, 다른 입력으로 재전송한다 | `REQUEST_ID_CONFLICT`. 거부 기록을 바꾸지 않는다 | `test_FR18_retry_with_different_input_conflicts` |
-| `OK`나 `BUSY` 같은 확정 판정을 재전송한다 | 저장된 판정을 그대로 반환한다 | `test_FR18_retry_of_final_decision_returns_previous` |
-| 같은 거부에 대한 재전송이 동시에 둘 온다 | 하나만 판정한다. 나머지는 `INTERNAL_ERROR` (`IN_PROGRESS`) | `test_FR18_concurrent_retry_decides_once` |
-| 재판정도 예외로 끝난다 | 다시 `INTERNAL_ERROR`. 다음 재전송이 또 재판정한다 | `test_FR18_retry_fails_again_stays_retryable` |
+| `OK`나 `BUSY` 같은 확정 판정을 재전송한다 | 저장된 판정을 그대로 반환한다 | `test_FR18_확정한_판정은_재전송해도_다시_판정하지_않는다` |
+| 같은 거부에 대한 재전송이 동시에 둘 온다 | 하나만 판정한다. 나머지는 `INTERNAL_ERROR` (`IN_PROGRESS`) | `test_FR18_재판정이_진행_중이면_같은_키는_다시_판정하지_않고_거부한다` |
+| 재판정도 예외로 끝난다 | 다시 `INTERNAL_ERROR`. 다음 재전송이 또 재판정한다 | `test_FR18_재판정도_실패하면_다음_재전송이_다시_판정한다` |
 | 저장 실패로 `verdict`가 NULL이다 | `IN_PROGRESS`로 거부한다 (바뀌지 않음) | `test_FR18_null_verdict_stays_in_progress` |
 
 ## 6. 결정
@@ -82,11 +82,11 @@
 
 | 요구사항 | 테스트 | 확인하는 것 |
 |---|---|---|
-| FR-18 | `test_FR18_retry_after_internal_error_decides_again` | `is_new=True`인 재전송이 ①~⑥을 다시 진행한다 |
+| FR-18 | `test_FR18_오류로_거부한_요청을_같은_입력으로_다시_보내면_다시_판정한다` | `is_new=True`인 재전송이 ①~⑥을 다시 진행한다 |
 | FR-18 | `test_FR18_retry_after_internal_error_saves_ok` | 재판정 결과가 같은 내부 요청 ID로 저장된다 |
 | FR-19 | `test_FR19_retry_after_internal_error_reuses_reservation` | 예약이 하나다 |
 | FR-18 | `test_FR18_retry_with_different_input_conflicts` | 입력이 다르면 충돌이다 |
-| FR-18 | `test_FR18_retry_of_final_decision_returns_previous` | 확정 판정은 재판정하지 않는다 |
-| FR-18 | `test_FR18_concurrent_retry_decides_once` | 동시 재전송 중 하나만 판정한다 |
-| FR-18 | `test_FR18_retry_fails_again_stays_retryable` | 다시 실패해도 재시도할 수 있다 |
+| FR-18 | `test_FR18_확정한_판정은_재전송해도_다시_판정하지_않는다` | 확정 판정은 재판정하지 않는다 |
+| FR-18 | `test_FR18_재판정이_진행_중이면_같은_키는_다시_판정하지_않고_거부한다` | 동시 재전송 중 하나만 판정한다 |
+| FR-18 | `test_FR18_재판정도_실패하면_다음_재전송이_다시_판정한다` | 다시 실패해도 재시도할 수 있다 |
 | FR-18 | `test_FR18_null_verdict_stays_in_progress` | 저장 실패 행은 지금 동작을 유지한다 |
