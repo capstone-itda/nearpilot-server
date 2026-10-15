@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from nearpilot.db.repositories._common import immediate_transaction, iso, new_id, to_json
-from nearpilot.shared.enums import AdminWriteOutcome, AdminWriteReason, Step
+from nearpilot.shared.enums import AdminWriteOutcome, AdminWriteReason, Step, TrustState
 from nearpilot.shared.models import AccountRegistration, AdminWriteResult, BeaconRegistration
 
 
@@ -100,6 +100,18 @@ class SqliteAdminRepository:
                     "is_active": req.is_active,
                 }
             )
+            return AdminWriteResult(outcome=AdminWriteOutcome.APPLIED, reason=AdminWriteReason.OK)
+
+    def set_node_trust(self, node_id: str, trust_state: TrustState) -> AdminWriteResult:
+        with immediate_transaction(self._conn):
+            updated = self._conn.execute(
+                "UPDATE node SET trust_state = ? WHERE node_id = ?", (trust_state.value, node_id)
+            )
+            if updated.rowcount == 0:
+                return AdminWriteResult(
+                    outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.NODE_NOT_FOUND
+                )
+            self._append_audit({"event": "set_node_trust", "node_id": node_id, "trust_state": trust_state.value})
             return AdminWriteResult(outcome=AdminWriteOutcome.APPLIED, reason=AdminWriteReason.OK)
 
     def _activate_beacon(self, req: BeaconRegistration) -> None:
