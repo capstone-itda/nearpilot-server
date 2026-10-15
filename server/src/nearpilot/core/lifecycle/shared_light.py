@@ -1,6 +1,6 @@
-"""공용 조명의 유지 대상자와 꺼짐 후보 (FR-20, NFR-12).
+"""공용 조명의 유지 대상자와 이탈 꺼짐 (FR-20, NFR-12).
 
-실제 꺼짐 명령의 저장·전송과 활성화는 선행 계약을 기다린다.
+유지 대상자가 모두 이탈하면 서버 내부 요청으로 꺼짐을 실행 서비스에 넘긴다 (#86).
 호출자는 검증된 관측과 저장을 확인한 실행 결과만 인계한다.
 """
 
@@ -12,16 +12,20 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from threading import Lock
 from typing import Any
+from uuid import uuid4
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, Capability, DeviceState, ExecutionKind, ExecutionStatus, Occupancy,
-    TrustState, Verdict,
+    Action, Capability, DeviceState, ExecutionKind, ExecutionStatus, InternalRequestCause,
+    Occupancy, ReasonCode, TrustState, Verdict,
 )
 from nearpilot.shared.interfaces import PolicyChecker, Repository
 from nearpilot.shared.models import (
-    ExecutionContext, ExecutionResult, NodeInfo, NodeStatus, RssiFrame,
+    ExecutionContext, ExecutionResult, InternalRequest, NodeInfo, NodeStatus, RssiFrame,
 )
+
+# 끝나지 않은 꺼짐 요청의 진행 상태
+_UNFINISHED = (ExecutionStatus.PENDING, ExecutionStatus.IN_PROGRESS)
 
 
 @dataclass
@@ -40,25 +44,32 @@ class _Light:
     resumed_session_id: str | None = None
     status: NodeStatus | None = None
     status_after: datetime | None = None
+    off_request: ExecutionContext | None = None
 
 
 class SharedLightService:
-    """메모리 상태만 관리한다. tick 반환은 실행 허가나 명령이 아니다.
+    """유지 대상자는 메모리에만 둔다.
 
     lock_for는 실행·관측·복구와 같은 기기별 재진입 잠금이다.
-    can_request_off도 후보 조회다. 실제 전송과의 원자성은 후속 계약이 정한다.
+    execute는 ExecutionService.execute다. 주입하지 않으면 tick은 후보만 반환한다 (#88 활성화).
+    can_request_off는 ExecutionService의 confirm_internal로 연결한다. 실행 서비스가 같은 잠금 안에서
+    확인하고 전송을 시작하므로 확인과 전송 사이에 유지 대상자가 바뀌지 않는다.
     """
 
     def __init__(
         self, *, repository: Repository, policy: PolicyChecker,
         settings: Callable[[], Settings], clock: Callable[[], datetime],
         lock_for: Callable[[str], AbstractContextManager[Any]],
+        execute: Callable[[ExecutionContext], ExecutionResult] | None = None,
+        new_id: Callable[[], str] = lambda: str(uuid4()),
     ) -> None:
         self._repository = repository
         self._policy = policy
         self._settings = settings
         self._clock = clock
         self._lock_for = lock_for
+        self._execute = execute
+        self._new_id = new_id
         self._lights: dict[str, _Light] = {}
         self._index_lock = Lock()
 
@@ -67,11 +78,14 @@ class SharedLightService:
         if context.internal_request_id != result.internal_request_id or context.use_id != result.use_id:
             raise ValueError("실행 결과의 요청 또는 점유 연결이 다르다")
         if (
-            context.execution_kind != ExecutionKind.SHARED
+            context.execution_kind not in (ExecutionKind.SHARED, ExecutionKind.SERVER_INTERNAL)
             or result.status != ExecutionStatus.SUCCEEDED
         ):
             return
-        if context.request.action not in (Action.ON, Action.OFF):
+        action = context.request.action if context.request is not None else context.internal_request.action
+        if action not in (Action.ON, Action.OFF) or (
+            context.request is None and action != Action.OFF
+        ):
             raise ValueError("공용 조명의 동작이 아니다")
         if not result.command_id:
             raise ValueError("성공한 실행의 명령 ID가 필요하다")
@@ -86,13 +100,11 @@ class SharedLightService:
                     raise ValueError("같은 성공 인계의 내용이 다르다")
                 return
             now = self._clock()
-            if context.request.action == Action.OFF:
+            if action == Action.OFF:
                 light.holders.clear()
                 # 뒤늦은 켜짐 status로 같은 꺼짐을 다시 요청하지 않는다.
                 light.status_after = now
-            elif self._policy.check(
-                context.request.user_id, context.node_id, Action.ON, now,
-            ).verdict == Verdict.OK:
+            elif self._permitted(context.request.user_id, context.node_id, now):
                 old = light.holders.get(context.request.user_id)
                 light.holders[context.request.user_id] = _Holder(
                     context.settings, now, None if old is None else old.last_observed_at,
@@ -164,8 +176,50 @@ class SharedLightService:
                     holder.last_received_at = max(holder.last_received_at, frame.received_at)
 
     def tick(self) -> tuple[str, ...]:
-        """이탈을 검사하고 꺼짐 후보를 반환한다. 명령을 만들거나 보내지 않는다."""
-        return tuple(node_id for node_id in self._node_ids() if self.can_request_off(node_id))
+        """이탈을 검사하고 꺼짐을 요청한 후보를 반환한다. 실행 함수가 없으면 후보만 반환한다.
+
+        한 조명의 실행 오류 뒤에도 다른 조명을 처리하고 첫 오류를 다시 알린다.
+        """
+        requested = []
+        first_error: Exception | None = None
+        for node_id in self._node_ids():
+            try:
+                if self._execute is None:
+                    if self.can_request_off(node_id):
+                        requested.append(node_id)
+                elif self._request_off(node_id):
+                    requested.append(node_id)
+            except Exception as error:
+                if first_error is None:
+                    first_error = error
+        if first_error is not None:
+            raise first_error
+        return tuple(requested)
+
+    def _request_off(self, node_id: str) -> bool:
+        with self._index_lock:
+            light = self._lights.get(node_id)
+        if light is None:
+            return False
+        ctx = light.off_request
+        if ctx is None:
+            if not self.can_request_off(node_id):
+                return False
+            settings, now = self._settings(), self._clock()
+            internal = InternalRequest(self._new_id(), node_id, Action.OFF,
+                                       InternalRequestCause.LEAVE_OFF, settings, now)
+            ctx = ExecutionContext(internal.internal_request_id, None, node_id, None, None, settings,
+                                   ExecutionKind.SERVER_INTERNAL, internal_request=internal)
+            light.off_request = ctx
+        # 실행 서비스가 전송 직전에 can_request_off를 같은 잠금 안에서 다시 확인한다.
+        result = self._execute(ctx)
+        if result.status not in _UNFINISHED:
+            with self._lock_for(node_id):
+                if light.off_request == ctx:
+                    light.off_request = None
+            if result.status == ExecutionStatus.SUCCEEDED:
+                self.on_execution_result(ctx, result)
+        return result.status != ExecutionStatus.NOT_SENT
 
     def can_request_off(self, node_id: str) -> bool:
         """현재 유지 대상자·연결·온라인·보고를 다시 검사한다. 실행 허가가 아니다."""
@@ -203,7 +257,7 @@ class SharedLightService:
     def _expire_holders(self, node_id: str, light: _Light, now: datetime) -> None:
         expired = []
         for user_id, holder in light.holders.items():
-            allowed = self._policy.check(user_id, node_id, Action.ON, now).verdict == Verdict.OK
+            allowed = self._permitted(user_id, node_id, now)
             deadline = holder.last_received_at + timedelta(
                 seconds=holder.settings.leave_absent_sec + holder.settings.leave_grace_sec,
             )
@@ -212,6 +266,11 @@ class SharedLightService:
         # 조회 오류를 권한 만료로 바꾸지 않는다. 모든 검사를 마친 뒤 목록을 바꾼다.
         for user_id in expired:
             del light.holders[user_id]
+
+    def _permitted(self, user_id: str, node_id: str, now: datetime) -> bool:
+        """유지 권한이다. 횟수형 승인을 다 쓴 계정도 유지 권한이 있다 (#87)."""
+        checked = self._policy.check(user_id, node_id, Action.ON, now)
+        return checked.verdict == Verdict.OK or checked.reason == ReasonCode.APPROVAL_EXHAUSTED
 
     def _light(self, node_id: str) -> _Light:
         with self._index_lock:

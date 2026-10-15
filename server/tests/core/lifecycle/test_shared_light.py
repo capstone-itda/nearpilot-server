@@ -1,4 +1,4 @@
-"""공용 조명의 이탈 시나리오. 실제 명령 전송은 검증 범위 밖이다."""
+"""공용 조명의 이탈 시나리오. 실제 MQTT 전송은 검증 범위 밖이다."""
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -12,7 +12,7 @@ from nearpilot.core.lifecycle.shared_light import SharedLightService
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
     Action, ActuatorState, Capability, DeviceState, ExecutionKind, ExecutionStatus,
-    Occupancy, ReasonCode, TrustState, Verdict,
+    InternalRequestCause, Occupancy, ReasonCode, TrustState, Verdict,
 )
 from nearpilot.shared.errors import StoreError
 from nearpilot.shared.models import (
@@ -500,3 +500,142 @@ def test_FR20_existing_holder_keeps_settings_snapshot(env):
     env.settings[0] = replace(env.settings[0], leave_absent_sec=30, leave_grace_sec=10)
     advance(env, 15)
     assert candidates(env) == ("light-1",)
+
+
+def active(env, outcome=ExecutionStatus.SUCCEEDED):
+    """실행 함수를 주입한 서비스다. 실행 서비스처럼 전송 직전에 can_request_off를 확인한다."""
+    calls = []
+    def execute(ctx):
+        calls.append(ctx)
+        if not service.can_request_off(ctx.node_id):
+            return ExecutionResult(ctx.internal_request_id, ExecutionStatus.NOT_SENT)
+        return ExecutionResult(ctx.internal_request_id, outcome[0] if isinstance(outcome, list) else outcome,
+                               "command-" + ctx.internal_request_id)
+    ids = iter(f"internal-{n}" for n in range(1, 100))
+    service = SharedLightService(repository=env.repository, policy=env.policy,
+        settings=lambda: env.settings[0], clock=lambda: env.time[0], lock_for=env.lock_for,
+        execute=execute, new_id=lambda: next(ids))
+    service.resume("light-1")
+    env.service = service
+    return calls
+
+
+def test_FR20_last_holder_leave_requests_off(env):
+    calls = active(env)
+    execution(env)
+    advance(env, 14)
+    assert candidates(env) == ()
+    assert calls == []
+    advance(env, 1)
+    assert candidates(env) == ("light-1",)
+    ctx = calls[0]
+    assert ctx.execution_kind == ExecutionKind.SERVER_INTERNAL
+    assert ctx.request is None and ctx.use_id is None and ctx.usage_id is None
+    assert (ctx.internal_request.node_id, ctx.internal_request.action) == ("light-1", Action.OFF)
+    assert ctx.internal_request.cause == InternalRequestCause.LEAVE_OFF
+    assert ctx.internal_request.internal_request_id == ctx.internal_request_id == "internal-1"
+
+
+def test_FR20_pending_off_not_duplicated(env):
+    outcome = [ExecutionStatus.IN_PROGRESS]
+    calls = active(env, outcome)
+    execution(env)
+    advance(env, 15)
+    assert candidates(env) == ("light-1",)
+    advance(env, 1)
+    assert candidates(env) == ("light-1",)
+    assert [c.internal_request_id for c in calls] == ["internal-1", "internal-1"]
+    outcome[0] = ExecutionStatus.UNKNOWN
+    env.service.tick()
+    outcome[0] = ExecutionStatus.SUCCEEDED
+    advance(env, 1)
+    candidates(env)
+    assert [c.internal_request_id for c in calls] == ["internal-1"] * 3 + ["internal-2"]
+
+
+def test_FR20_internal_off_success_clears_light(env):
+    calls = active(env)
+    execution(env)
+    advance(env, 15)
+    assert candidates(env) == ("light-1",)
+    assert env.service.tick() == ()
+    assert len(calls) == 1
+    execution(env, user="visitor-b", request_id="request-2")
+    advance(env, 1)
+    assert env.service.tick() == ()
+
+
+def test_FR20_exhausted_approval_keeps_holder(env):
+    original = env.policy.check
+    def check(user_id, node_id, action, now):
+        if user_id == "visitor-a":
+            return PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED, 1)
+        return original(user_id, node_id, action, now)
+    env.policy.check = check
+    execution(env)
+    advance(env, 14)
+    observe(env)
+    advance(env, 1)
+    assert candidates(env) == ()
+
+
+def test_FR20_internal_off_through_real_execution(env):
+    from nearpilot.core.lifecycle.execution import ExecutionService
+    from nearpilot.shared.enums import CommandOutcome, NodeResultState, StoreOutcome
+    from nearpilot.shared.models import CommandRecord, CommandResult, NodeResult, StoreResult
+
+    class Store:
+        def __init__(self):
+            self.commands, self.internal, self.calls = {}, [], []
+        def execution(self, internal_request_id):
+            return self.commands.get(internal_request_id)
+        def link_internal_request(self, req):
+            self.internal.append(req)
+            return StoreResult(StoreOutcome.APPLIED)
+        def link_command(self, internal_request_id, node_id, action):
+            req = next(r for r in self.internal if r.internal_request_id == internal_request_id)
+            record = CommandRecord("command-1", internal_request_id, node_id, action,
+                                   ExecutionStatus.PENDING, ExecutionKind.SERVER_INTERNAL)
+            self.commands[internal_request_id] = record
+            return StoreResult(StoreOutcome.APPLIED, command=record)
+        def begin_send(self, command_id):
+            # 전송 시작 직전에 새 켜기 성공이 끼어들 수 없음을 확인한다.
+            assert not service_holders()
+            record = replace(self.commands["internal-1"], status=ExecutionStatus.IN_PROGRESS)
+            self.commands["internal-1"] = record
+            return StoreResult(StoreOutcome.APPLIED, command=record)
+        def record_result(self, command_id, outcome, occurred_at, rental_due_at, evidence):
+            record = replace(self.commands["internal-1"], status=ExecutionStatus(outcome.value),
+                             outcome=outcome, occurred_at=occurred_at, evidence=evidence)
+            self.commands["internal-1"] = record
+            return StoreResult(StoreOutcome.APPLIED, command=record)
+
+    class Gateway:
+        def __init__(self):
+            self.sent = []
+        def send(self, command, timeout):
+            self.sent.append(command)
+            now = env.time[0]
+            report = NodeResult(command.node_id, command.target_session_id, 99, now, now,
+                                command.command_id, "event-off", NodeResultState.SUCCEEDED, now)
+            return CommandResult(command.command_id, CommandOutcome.SUCCEEDED, report)
+
+    store, gateway = Store(), Gateway()
+    holder = {}
+    service_holders = lambda: holder["light"]._lights["light-1"].holders
+    executor = ExecutionService(repository=env.repository, store=store, rechecker=None, gateway=gateway,
+        clock=lambda: env.time[0], lock_for=env.lock_for, can_execute=lambda node_id: True,
+        record_isolated=None, confirm_internal=lambda ctx: light.can_request_off(ctx.node_id))
+    light = SharedLightService(repository=env.repository, policy=env.policy,
+        settings=lambda: env.settings[0], clock=lambda: env.time[0], lock_for=env.lock_for,
+        execute=executor.execute, new_id=lambda: "internal-1")
+    holder["light"] = light
+    light.resume("light-1")
+    env.service = light
+    execution(env)
+    advance(env, 15)
+    assert candidates(env) == ("light-1",)
+    assert [c.action for c in gateway.sent] == [Action.OFF]
+    assert store.internal[0].cause == InternalRequestCause.LEAVE_OFF
+    assert store.commands["internal-1"].status == ExecutionStatus.SUCCEEDED
+    assert light.tick() == ()
