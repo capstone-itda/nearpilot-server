@@ -152,6 +152,39 @@ def test_FR19_restore_pending_excludes_resolved_node(store, conn):
     assert len(bundle.sessions) == 1
 
 
+def test_FR19_restore_pending_excludes_denied_request(store, conn):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="node1", occupancy="rental", device_state="AVAILABLE")
+    insert_request(conn, internal_request_id="req1")
+    # 대상은 확정됐지만(node_id 저장) 거부돼서 예약이 전혀 없다.
+    conn.execute(
+        "UPDATE request SET verdict = 'DENY', reason_code = 'POLICY_DENIED', node_id = 'node1' "
+        "WHERE internal_request_id = 'req1'"
+    )
+
+    bundles = store.restore_pending()
+
+    assert _bundle_for(bundles, "node1") is None
+
+
+def test_FR19_restore_pending_excludes_open_shared_without_write(store, conn):
+    """`open` 정책의 공용형 성공은 세션도 사용분도 쓰지 않는다(#27) — 복원할 예약이 없다."""
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="light1", capability="light", occupancy="shared", device_state="AVAILABLE")
+    insert_request(conn, internal_request_id="req-open", node_id="light1", action="on")
+    conn.execute(
+        "UPDATE request SET verdict = 'OK', reason_code = 'OK', node_id = 'light1' "
+        "WHERE internal_request_id = 'req-open'"
+    )
+    # link_command도, use_session도, approval_usage도 전혀 없다.
+
+    bundles = store.restore_pending()
+
+    assert _bundle_for(bundles, "light1") is None
+
+
 def test_FR19_restore_pending_error_raises(store, conn):
     conn.close()
 

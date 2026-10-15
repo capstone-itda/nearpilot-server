@@ -743,13 +743,21 @@ class SqliteExecutionStore:
         return by_node
 
     def _pending_requests_by_node(self, linked_ids: set[str]) -> dict[str, list[PendingRequestRecord]]:
-        """`link_command` 전에 멈춘 예약 요청이다. 이미 취소된 요청은 뺀다 (6절 결정)."""
+        """`link_command` 전에 멈춘, **예약이 실제로 남아있는** 요청이다 (6절 결정).
+
+        `verdict = OK`만으로는 부족하다. `DENY` 등 다른 판정은 처음부터 걸러지지만, `open`
+        정책의 공용형 성공은 아무것도 쓰지 않는다(#27) — 그런 요청은 세션도 사용분도 없어
+        복원할 예약이 없다. 점유 세션이 `RESERVED`이거나 승인 사용분이 `reserved`인 경우만
+        넣는다. 이미 `cancel_not_sent`로 취소된 요청도 이 조건에서 자연히 빠진다(세션은
+        `CLOSED`, 사용분은 `released`로 바뀌어 있다) — `_already_cancelled`를 또 부르지
+        않아도 된다.
+        """
         by_node: dict[str, list[PendingRequestRecord]] = defaultdict(list)
         for row in self._conn.execute(
             "SELECT * FROM request WHERE verdict = ? AND node_id IS NOT NULL", (Verdict.OK.value,)
         ):
             internal_request_id = row["internal_request_id"]
-            if internal_request_id in linked_ids or self._already_cancelled(internal_request_id):
+            if internal_request_id in linked_ids:
                 continue
             node_id = row["node_id"]
             node_row = self._conn.execute(
@@ -757,12 +765,19 @@ class SqliteExecutionStore:
             ).fetchone()
             if node_row is None:
                 continue
+            session_row = self._conn.execute(
+                "SELECT 1 FROM use_session WHERE internal_request_id = ? AND state = ?",
+                (internal_request_id, SessionState.RESERVED.value),
+            ).fetchone()
+            usage_row = self._conn.execute(
+                "SELECT usage_id FROM approval_usage WHERE internal_request_id = ? AND state = ?",
+                (internal_request_id, ApprovalUsageState.RESERVED.value),
+            ).fetchone()
+            if session_row is None and usage_row is None:
+                continue
             execution_kind, use_id = self._resolve_execution_kind(
                 internal_request_id, node_id, node_row["occupancy"]
             )
-            usage_row = self._conn.execute(
-                "SELECT usage_id FROM approval_usage WHERE internal_request_id = ?", (internal_request_id,)
-            ).fetchone()
             by_node[node_id].append(PendingRequestRecord(
                 internal_request_id=internal_request_id,
                 request=self._use_request_from_row(row),
