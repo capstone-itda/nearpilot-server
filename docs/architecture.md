@@ -188,7 +188,7 @@ api  ──▶  core  ──▶  db
 
 ### 예약과 승인 사용분
 
-[#27](https://github.com/capstone-itda/nearpilot-server/issues/27)의 결정을 따른다.
+[#27](https://github.com/capstone-itda/nearpilot-server/issues/27)의 결정과 [#77](https://github.com/capstone-itda/nearpilot-server/issues/77)의 A안을 따른다.
 판정은 대여형과 공용형 모두 `Repository.reserve_if_free()` 하나만 호출한다.
 
 | 기기와 요청 | DB가 반영하는 내용 | `ReserveResult` |
@@ -198,6 +198,7 @@ api  ──▶  core  ──▶  db
 | 공용형이고 정책이 `open`이며 `approval_id`가 `None`이다 | 아무것도 쓰지 않는다. | 결과는 `RESERVED`다. `use_id`와 `usage_id`는 `None`이다. |
 
 - 판정은 기기의 점유 방식에 따라 호출을 나누지 않는다. DB가 기기의 `occupancy`를 보고 건너뛸 검사를 정한다.
+- 승인이 필요한 공용형 요청도 ④가 반환한 `approval_id`로 `reserve_if_free()`를 호출해서 사용분을 확보한다. 점유 세션은 만들지 않는다. 사용분 확보 전용 DB 호출은 두지 않는다.
 - 호출 하나는 `BEGIN IMMEDIATE` 트랜잭션 하나다. 대여형의 ⑤⑥ 검사, `RESERVED` 생성, 승인 사용분 예약과 공용형의 승인 사용분 예약은 같은 쓰기 경로다.
 - 공용형 예약은 `approval_usage`의 `reserved` 행만 만든다. DB는 기기 상태와 점유 세션을 바꾸지 않는다.
 - 승인 방식이 `time_window`이고 `max_uses`가 NULL이어도 DB는 요청별 사용분 행을 만든다. 사용분 행은 명령과 감사 기록을 연결한다. DB는 횟수 검사만 생략한다.
