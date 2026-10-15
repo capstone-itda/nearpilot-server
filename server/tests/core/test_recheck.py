@@ -12,6 +12,7 @@ from nearpilot.shared.enums import (
     Action,
     Capability,
     DeviceState,
+    ExecutionKind,
     Occupancy,
     ReasonCode,
     SessionState,
@@ -44,16 +45,29 @@ def node(node_id="locker-1", **kw) -> NodeInfo:
     return NodeInfo(**base)
 
 
-def ctx(use_id="use-1", node_id="locker-1") -> ExecutionContext:
-    req = UseRequest(user_id="u1", request_id="r1", target=TargetSpec.parse("nearest:locker"),
+def anchor() -> NodeInfo:
+    """비콘을 본 기기. 후보가 아닌 종류(조명)로 두어서 후보 조건과 분리한다."""
+    return node("anchor-1", occupancy=Occupancy.SHARED, capability=Capability.LIGHT,
+                device_state=DeviceState.AVAILABLE)
+
+
+def frame(node_id="locker-1") -> RssiFrame:
+    return RssiFrame(node_id, BEACON, -60.0, NOW, "s1", 1, NOW, NOW)
+
+
+def ctx(use_id="use-1", node_id="locker-1", target="nearest:locker",
+        kind=ExecutionKind.RENTAL_INITIAL, settings=None) -> ExecutionContext:
+    req = UseRequest(user_id="u1", request_id="r1", target=TargetSpec.parse(target),
                      action=Action.OPEN, host_kind="claude", received_at=NOW - timedelta(seconds=4))
-    return ExecutionContext("i1", req, node_id, use_id, None, Settings(version="v1"))
+    return ExecutionContext("i1", req, node_id, use_id, None, settings or Settings(version="v1"),
+                            execution_kind=kind)
 
 
 class FakeRepo:
     def __init__(self):
         self.nodes_list = [node()]
-        self.frames = [RssiFrame("locker-1", BEACON, -60.0, NOW)]
+        self.frames = [frame()]
+        self.beacons = [BEACON]
         self.session_obj = UseSession("use-1", "i1", "locker-1", SessionState.RESERVED)
         self.owner_ok = True
         self.calls: list[str] = []
@@ -66,7 +80,7 @@ class FakeRepo:
 
     def beacons_of(self, user_id):
         self._hit("beacons_of")
-        return [BEACON]
+        return self.beacons
 
     def rssi_since(self, beacons, since):
         self._hit("rssi_since")
@@ -95,9 +109,11 @@ class FakeProximity:
     def __init__(self, posteriors):
         self.posteriors = posteriors
         self.calls = []
+        self.place_nodes = []
 
-    def posterior(self, beacons, candidates, at):
+    def posterior(self, beacons, candidates, at, *, place_nodes):
         self.calls.append([n.node_id for n in candidates])
+        self.place_nodes.append([n.node_id for n in place_nodes])
         return ProximityResult(self.posteriors, at, at, "m", "c")
 
 
@@ -150,14 +166,15 @@ def test_FR18_재검사_비콘이_없으면_거부한다():
 ])
 def test_FR18_재검사_대상이_후보_밖이면_거부한다(kw):
     rc, repo, prox, pol, audit = build()
-    repo.nodes_list = [node(**kw), node("locker-2")]
+    repo.nodes_list = [node(**kw), node("locker-2"), anchor()]
+    repo.frames = [frame("anchor-1")]
     d = rc.recheck(ctx())
     assert (d.verdict, d.reason, d.node_id) == (Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE, "locker-1")
     assert prox.calls == []
 
 
 def test_FR18_재검사_확률이_낮으면_MOVE_CLOSER이고_대상을_바꾸지_않는다():
-    rc, repo, prox, pol, audit = build({"locker-1": 0.4, "locker-2": 0.99})
+    rc, repo, prox, pol, audit = build({"locker-1": 0.4, "locker-2": 0.59})
     repo.nodes_list = [node(), node("locker-2", device_state=DeviceState.AVAILABLE)]
     d = rc.recheck(ctx())
     assert prox.calls == [["locker-1", "locker-2"]]
@@ -166,7 +183,7 @@ def test_FR18_재검사_확률이_낮으면_MOVE_CLOSER이고_대상을_바꾸�
 
 
 def test_FR18_재검사는_다른_기기를_고르지_않는다():
-    rc, repo, prox, pol, audit = build({"locker-1": 0.99, "locker-2": 0.999})
+    rc, repo, prox, pol, audit = build({"locker-1": 0.96, "locker-2": 0.03})
     repo.nodes_list = [node(), node("locker-2", device_state=DeviceState.AVAILABLE)]
     d = rc.recheck(ctx())
     assert d.node_id == "locker-1" and pol.calls == ["locker-1"]
@@ -191,7 +208,7 @@ def test_FR18_재검사는_자기_예약을_타인_점유로_보지_않는다():
 
 def test_FR18_재검사_공용형은_예약_검사를_건너뛴다():
     rc, repo, *_ = build()
-    d = rc.recheck(ctx(use_id=None))
+    d = rc.recheck(ctx(use_id=None, kind=ExecutionKind.SHARED))
     assert d.verdict is Verdict.OK and "session" not in repo.calls
 
 
@@ -253,3 +270,48 @@ def test_FR18_재검사는_감사_기록에_설정_버전을_남긴다():
 def test_FR11_재검사_Decision에는_사용자_ID가_없다():
     rc, *_ = build()
     assert "u1" not in repr(rc.recheck(ctx()))
+
+
+def test_FR18_재검사_재조작은_ACTIVE_세션이어야_통과한다():
+    rc, repo, *_ = build()
+    c = ctx(kind=ExecutionKind.RENTAL_REOPERATION)
+    repo.session_obj = UseSession("use-1", "i0", "locker-1", SessionState.ACTIVE)
+    assert rc.recheck(c).verdict is Verdict.OK
+    repo.session_obj = UseSession("use-1", "i0", "locker-1", SessionState.RESERVED)
+    assert rc.recheck(c).reason is ReasonCode.RECHECK_FAILED
+
+
+def test_FR18_재검사_최초_대여는_ACTIVE_세션을_통과시키지_않는다():
+    rc, repo, *_ = build()
+    repo.session_obj = UseSession("use-1", "i1", "locker-1", SessionState.ACTIVE)
+    assert rc.recheck(ctx()).reason is ReasonCode.RECHECK_FAILED
+
+
+def test_FR18_재검사는_대상_장소의_전체_기기를_근접에_넘긴다():
+    rc, repo, prox, pol, audit = build()
+    repo.nodes_list = [node(), node("other-1", place_id="q"), anchor()]
+    assert rc.recheck(ctx()).verdict is Verdict.OK
+    assert sorted(prox.place_nodes[0]) == ["anchor-1", "locker-1"] and prox.calls == [["locker-1"]]
+
+
+def test_FR18_재검사_비콘을_다른_장소만_봤으면_거부한다():
+    rc, repo, prox, pol, audit = build()
+    repo.nodes_list = [node(), node("other-1", place_id="q")]
+    repo.frames = [frame("other-1")]
+    d = rc.recheck(ctx())
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.BEACON_NOT_SEEN)
+    assert prox.calls == []
+
+
+def test_FR18_재검사_활성_비콘이_둘이면_RECHECK_FAILED():
+    rc, repo, *_ = build()
+    repo.beacons = [BEACON, BeaconKey("u", 1, 2)]
+    assert rc.recheck(ctx()).reason is ReasonCode.RECHECK_FAILED
+
+
+def test_FR18_재검사_명시_지정은_별도_임계값을_쓰고_없으면_RECHECK_FAILED():
+    settings = Settings(version="v1", threshold_locker=0.95, threshold_explicit_locker=0.6)
+    rc, *_ = build({"locker-1": 0.7})
+    assert rc.recheck(ctx(target="locker-1", settings=settings)).verdict is Verdict.OK
+    assert rc.recheck(ctx()).reason is ReasonCode.MOVE_CLOSER  # 일반 임계값 0.95
+    assert rc.recheck(ctx(target="locker-1")).reason is ReasonCode.RECHECK_FAILED
