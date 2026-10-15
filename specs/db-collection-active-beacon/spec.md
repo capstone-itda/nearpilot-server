@@ -1,6 +1,6 @@
 # 비활성 비콘은 수집 회차를 시작하지 못함 (`AdminRepository.start_collection`)
 
-- 상태: 작성 중
+- 상태: 완료
 - 담당: paiwhy (DB)
 - 요구사항: FR-16, FR-01
 - 따르는 결정: #138 (PR #145)

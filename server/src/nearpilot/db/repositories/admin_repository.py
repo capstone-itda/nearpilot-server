@@ -231,10 +231,11 @@ class SqliteAdminRepository:
     ) -> AdminWriteResult:
         with immediate_transaction(self._conn):
             beacon_row = self._conn.execute(
-                "SELECT beacon_id FROM beacon WHERE uuid = ? AND major = ? AND minor = ?",
-                (beacon.uuid, beacon.major, beacon.minor),
+                "SELECT beacon_id FROM beacon WHERE uuid = ? AND major = ? AND minor = ? AND is_active = ?",
+                (beacon.uuid, beacon.major, beacon.minor, 1),
             ).fetchone()
             if beacon_row is None:
+                # 비활성 비콘도 등록되지 않은 비콘과 같은 사유로 거부한다 (#138).
                 return AdminWriteResult(
                     outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.BEACON_NOT_FOUND
                 )
