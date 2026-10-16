@@ -12,10 +12,7 @@ export const ACTION_NAME: Record<Action, string> = { open: '열기', on: '켜기
 export const ACTION_DOING: Record<Action, string> = { open: '여는 중', on: '켜는 중', off: '끄는 중' };
 export const ACTION_DONE: Record<Action, string> = { open: '열렸어요', on: '켜졌어요', off: '꺼졌어요' };
 export const ACTION_DID: Record<Action, string> = { open: '열었는지', on: '켰는지', off: '껐는지' };
-export const ACTION_CAN: Record<Action, string> = { open: '열', on: '켤', off: '끌' };
 export const ACTION_VERB: Record<Action, string> = { open: '열어요', on: '켜요', off: '꺼요' };
-/** 영어 동작 이름 뒤 조사 */
-export const ACTION_OBJ: Record<Action, string> = { open: '열기 명령을', on: '켜기 명령을', off: '끄기 명령을' };
 
 export const DEVICE_STATE_NAME: Record<string, string> = {
   AVAILABLE: '사용 가능', RESERVED: '예약', ACTIVE: '사용 중', CLOSING: '반납 확인', FAULT: '고장 격리'

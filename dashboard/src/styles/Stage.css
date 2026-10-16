@@ -107,7 +107,7 @@
 
 /* 무대가 더 작게 그려지는 곳(SET-01 배치, 연결 끊김 배너 아래): 보조 글자를 키워 1366에서도 11px 이상 */
 .np-stage[data-scene="layout"] :is(.np-stage__cap, .np-stage__code, .np-stage__device-status, .np-stage__sub, .np-stage__note),
-.np-monitor[data-live="false"] .np-stage :is(.np-stage__cap, .np-stage__code, .np-stage__device-status, .np-stage__sub, .np-stage__note) { font-size: 18px; }
+.np-monitor[data-live="false"] .np-stage :is(.np-stage__cap, .np-stage__code, .np-stage__device-status, .np-stage__sub, .np-stage__note, .np-stage__judge-row, .np-stage__judge-mark) { font-size: 18px; }
 .np-stage[data-scene="layout"] .np-stage__visitor-letter,
 .np-monitor[data-live="false"] .np-stage .np-stage__visitor-letter { font-size: 18px; }
 
@@ -133,3 +133,29 @@
 .np-stage__packet[data-tone="deny"] { fill: var(--deny); }
 .np-app[data-motion="off"] .np-stage__packet { display: none; }
 @media (prefers-reduced-motion: reduce) { .np-stage__packet { display: none; } }
+
+/* 서버 상자: 판정 표시, 판정 게이지, 확인 네 칸. 판정이 나면 테두리와 표시가 판정 색이 된다 (바탕은 그대로 두어 글자 대비를 지킨다). */
+.np-stage__judge-mark { font-family: var(--font-sans); font-size: 16px; font-weight: 600; fill: var(--accent-strong); }
+.np-stage__judge-row { font-family: var(--font-sans); font-size: 16px; fill: var(--ink-3); }
+.np-stage__judge-row[data-result="pass"] { fill: var(--ink-2); }
+.np-stage__judge-row[data-result="pass"] .np-stage__judge-icon { fill: var(--accent-strong); }
+.np-stage__judge-row[data-result="fail"] { fill: var(--deny); font-weight: 600; }
+.np-stage__judge-row[data-result="unsure"] { fill: var(--ask); font-weight: 600; }
+.np-stage__judge-row[data-result="wait"] { fill: var(--appr); font-weight: 600; }
+.np-stage__judge-icon { font-family: var(--font-mono); }
+.np-stage__gauge { fill: var(--line-soft); }
+.np-stage__gauge-fill { fill: var(--accent); transform-box: fill-box; transform-origin: left; }
+.np-app[data-motion="on"] .np-stage__gauge-fill { animation: np-gauge 1s linear 0.6s backwards; }
+@media (prefers-reduced-motion: reduce) {
+  .np-app[data-motion="on"] .np-stage__gauge-fill { animation: none; }
+}
+.np-stage__server[data-tone="ok"] .np-stage__node-box { stroke: var(--ok); fill: var(--surface); }
+.np-stage__server[data-tone="ask"] .np-stage__node-box { stroke: var(--ask); fill: var(--surface); }
+.np-stage__server[data-tone="appr"] .np-stage__node-box { stroke: var(--appr); fill: var(--surface); }
+.np-stage__server[data-tone="busy"] .np-stage__node-box { stroke: var(--busy); fill: var(--surface); }
+.np-stage__server[data-tone="deny"] .np-stage__node-box { stroke: var(--deny); fill: var(--surface); }
+.np-stage__server[data-tone="ok"] .np-stage__judge-mark { fill: var(--ok); }
+.np-stage__server[data-tone="ask"] .np-stage__judge-mark { fill: var(--ask); }
+.np-stage__server[data-tone="appr"] .np-stage__judge-mark { fill: var(--appr); }
+.np-stage__server[data-tone="busy"] .np-stage__judge-mark { fill: var(--busy); }
+.np-stage__server[data-tone="deny"] .np-stage__judge-mark { fill: var(--deny); }

@@ -124,7 +124,7 @@ test('FR12B 연결 끊김에서 다시 연결하면 실시간 화면으로 돌�
 test('FR12B 재생 모드는 장면을 차례로 바꾼다', async ({ page }) => {
   await page.clock.install();
   await ready(page, 'scene=play');
-  await expect(page.locator('.np-rail__title')).toHaveText('요청을 기다리고 있어요');
+  await expect(page.locator('.np-rail__title')).toHaveText('요청 대기');
   await page.clock.runFor(6100);
   await expect(page.locator('.np-rail__title')).toHaveText('방문자 A · 사물함 열기');
   await expect(page.locator('.np-panel__title')).toContainText('ASK');
@@ -216,7 +216,7 @@ test('FR12A 점검은 장면의 비콘 수신과 연결 끊김을 따르고, 빈
 test('FR12B 실시간 흐름 모드는 이벤트가 도착하는 순서대로 화면을 바꾼다', async ({ page }) => {
   await page.clock.install();
   await ready(page, 'scene=live');
-  await expect(page.locator('.np-rail__title')).toHaveText('요청을 기다리고 있어요');
+  await expect(page.locator('.np-rail__title')).toHaveText('요청 대기');
   await expect(page.locator('.np-topbar__mock')).toHaveText('목 데이터');
   // 무대 장면과 레일 3단계 표시를 0.2초마다 적는다
   const seen: string[] = [];

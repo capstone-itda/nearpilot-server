@@ -93,6 +93,23 @@ function Node({ x, y, w, h, label, sub, active, dim, flash }: { x: number; y: nu
   );
 }
 
+const CHECK_MARK = { pass: '✓', fail: '✕', wait: '…', unsure: '?', none: '·', skip: '–' };
+
+/** 서버 상자: 판정 표시와 확인 네 칸. 판정 전에는 윗변의 판정 게이지가 찬다. 판정이 나면 다시 그려져 도착 강조가 한 번 나온다. */
+function ServerNode({ on, j }: { on: boolean; j: StageView['judge'] }) {
+  return (
+    <g className="np-stage__node np-stage__server np-flash" data-component="StageServer" data-active={b(on)} data-dim="false" data-tone={j.tone}>
+      <rect className="np-stage__node-box" x={30} y={370} width={220} height={140} />
+      {j.gauge ? <><rect className="np-stage__gauge" x={31} y={371} width={218} height={6} /><rect className="np-stage__gauge-fill" x={31} y={371} width={218} height={6} /></> : null}
+      <text className="np-stage__label" x={48} y={402}>서버</text>
+      <text className="np-stage__judge-mark" x={232} y={402} data-anchor="end">{j.mark}</text>
+      {j.checks.map(([res, text], k) => (
+        <text key={k} className="np-stage__judge-row" data-result={res} x={48} y={430 + k * 22}><tspan className="np-stage__judge-icon">{CHECK_MARK[res]}</tspan> {text}</text>
+      ))}
+    </g>
+  );
+}
+
 /** 서버에서 기기까지 배선을 따라가는 흐름 선과 화살표 */
 function routeTo(d: StageDeviceView | undefined): { path: string; arrow: string } {
   if (!d) return { path: '', arrow: '' };
@@ -172,17 +189,16 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
         </defs>
         <rect className="np-stage__grid-fill" width="1400" height="800" />
 
-        <text className="np-stage__note" x={ROOM.x} y="40">표시용 배치예요. 실제 위치나 거리와 달라요.</text>
+        <text className="np-stage__note" x={ROOM.x} y="40">표시용 배치 · 실제 거리와 다름</text>
 
         <g className="np-stage__nodes" data-on={b(v.scene !== 'layout')}>
           <text className="np-stage__cap" x="30" y="150">AI 호스트</text>
           {HOSTS.map(([k, name, y]) => <Node key={`${k}|${v.host === k}`} x={30} y={y} w={220} h={46} label={name} active={v.host === k} dim={!!v.host && v.host !== k} />)}
           <path className="np-stage__link" d="M250 188H272M250 246H272M250 304H272M272 188V420H250" />
-          <Node key={`server|${v.server}`} x={30} y={370} w={220} h={140} flash label="NearPilot 서버" sub="누구·어디·정책·빈자리" active={v.server} dim={false} />
+          <ServerNode key={`server|${v.server}|${JSON.stringify(v.judge)}`} on={v.server} j={v.judge} />
           <path className="np-stage__node-corner" d="M30 386V370H46M234 370H250V386M250 494V510H234M46 510H30V494" />
-          <text className="np-stage__code" x="48" y="482">MCP · MQTT</text>
           <path className="np-stage__link" data-dashed="true" d="M140 510V600" />
-          <Node key={`owner|${v.owner}`} x={30} y={600} w={220} h={64} flash label="소유자 폰" sub="승인 알림을 받아요" active={v.owner} dim={false} />
+          <Node key={`owner|${v.owner}`} x={30} y={600} w={220} h={64} flash label="소유자 폰" sub="승인 알림" active={v.owner} dim={false} />
           <path className="np-stage__bus" d={bus} />
         </g>
 
@@ -217,7 +233,7 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
         <g key={`${c.title}|${c.body}`} className="np-stage__callout np-flash" data-component="StageCallout" data-on={b(c.on)} data-tone={c.tone}>
           <path className="np-stage__callout-leader" d={`M${c.ax} ${c.ay}L${c.lx} ${c.ly}`} />
           <g transform={`translate(${c.x} ${c.y})`}>
-            <rect className="np-stage__callout-box" width="390" height="76" />
+            <rect className="np-stage__callout-box" width="390" height={c.body ? 76 : 50} />
             <text className="np-stage__callout-title" x="18" y="32">{c.title}</text>
             <text className="np-stage__callout-body" x="18" y="58">{c.body}</text>
           </g>

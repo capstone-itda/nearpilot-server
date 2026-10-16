@@ -3,10 +3,12 @@ import type { DeviceStatus, FloorLayout, HostKind, LayoutDevice, Person, Request
 import { ROOM, facing, frontOf, type Facing } from './arrange';
 import { calloutSpot, chooseLabel, deviceTextBox, freePersonSpot, frontBox, labelBox, leaderEnd, personBox, ringBox, rssiBox, placeRssi, type Rect } from './placement';
 import {
-  ACTION_DID, ACTION_DOING, ACTION_CAN, ACTION_DONE, ACTION_NAME, ACTION_OBJ, CAPABILITY_NAME,
+  ACTION_DID, ACTION_DOING, ACTION_DONE, ACTION_NAME, CAPABILITY_NAME,
   DEVICE_STATE_NAME, approvalText, josa, reasonText
 } from './text';
 import { isDecided } from '../model/types';
+import { CHECK_NAMES, serverChecks, type CheckResult } from './rail';
+import { VERDICT_LABEL } from './text';
 
 /** 응답 선을 보이는 시간 (초). 표시용 값이라 설정이 아니다. */
 const REPLY_SHOW_SEC = 3;
@@ -37,6 +39,8 @@ export interface StageView {
   modelVersion: string;
   host: HostKind | null;
   server: boolean;
+  /** 서버 상자: 판정 표시, 판정 게이지, 확인 네 칸 */
+  judge: { mark: string; tone: Tone; gauge: boolean; checks: [CheckResult, string][] };
   owner: boolean;
   devices: StageDeviceView[];
   visitors: StageVisitorView[];
@@ -56,6 +60,8 @@ export interface StageView {
   fault: string | null;
   callout: CalloutView;
 }
+
+const VERDICT_TONE = { OK: 'ok', ASK: 'ask', NEED_APPROVAL: 'appr', BUSY: 'busy', DENY: 'deny' } as const;
 
 const dbm = (v: number) => `${String(v).replace('-', '−')} dBm`;
 
@@ -197,6 +203,11 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     modelVersion: layout.modelVersion,
     host: opt.layoutCheck ? null : r?.host ?? null,
     server: !opt.layoutCheck && !!r,
+    judge: !r || opt.layoutCheck
+      ? { mark: '', tone: 'none', gauge: false, checks: CHECK_NAMES.map((n) => ['none', n] as [CheckResult, string]) }
+      : isDecided(r)
+        ? { mark: VERDICT_LABEL[r.verdict], tone: VERDICT_TONE[r.verdict], gauge: false, checks: serverChecks(r, layout) }
+        : { mark: '판정 중', tone: 'accent', gauge: true, checks: serverChecks(r, layout) },
     owner: !opt.layoutCheck && !!r && r.verdict === 'NEED_APPROVAL' && s.ownerNotified,
     devices,
     visitors: vis,
@@ -245,74 +256,72 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     view.aria = s.connected ? `대기 중인 ${layout.placeName}` : `연결이 끊긴 ${layout.placeName}의 마지막 화면`;
     // 대기 안내는 글자를 가리지 않을 자리가 있을 때만 보인다
     const spot = idlePerson && atVisitor(idlePerson.id);
-    if (spot?.clean) set('accent', spot, '폰이 비콘 신호를 보내는 중', '기기가 신호 세기를 재서 서버로 보내요');
+    if (spot?.clean) set('accent', spot, '비콘 신호를 받는 중', '');
   } else {
     const name = devName(target ?? undefined);
     const cap = CAPABILITY_NAME[r.target.capability ?? layout.devices.find((d) => d.nodeId === target)?.capability ?? 'locker'];
     const act = ACTION_NAME[r.action];
     switch (scene) {
       case 'judging':
-        // 판정은 1초 안에 끝난다. 단계를 하나씩 말하지 않는다.
+        // 서버 상자가 판정 게이지를 보인다. 콜아웃은 두지 않는다.
         view.aria = `${who}의 ${cap} ${act} 요청을 서버가 판정하는 중`;
-        set('accent', place(250, 440), `${who}의 요청이 도착했어요`, '서버가 판정하는 중');
         break;
       case 'flow':
         if (r.execution === 'succeeded') {
           view.aria = `${who}의 요청으로 ${josa(name, '이', '가')} ${ACTION_DONE[r.action]}`;
-          set('ok', atDevice(target), `${name} ${act} 완료`, `${josa(name, '이', '가')} ${ACTION_DONE[r.action]}`);
+          set('ok', atDevice(target), `${name} ${act} 완료`, '');
         } else if (!r.execution) {
           view.aria = `${who}의 ${cap} ${act} 요청을 허가함`;
-          set('ok', atDevice(target), `${name} ${act} 허가`, `${layout.devices.find((d) => d.nodeId === target)?.occupancy === 'shared' ? '세 가지' : '네 가지'} 확인을 모두 통과했어요`);
+          set('ok', atDevice(target), `${name} ${act} 허가`, '');
         } else {
           view.aria = `${who}의 ${cap} ${act} 요청이 실행되는 중`;
-          set('ok', atDevice(target), `${name} ${act} 명령`, `${layout.devices.find((d) => d.nodeId === target)?.occupancy === 'shared' ? '세 가지' : '네 가지'} 확인을 모두 통과해서 ${ACTION_OBJ[r.action]} 보냈어요`);
+          set('ok', atDevice(target), `${name}에 ${act} 명령`, '');
         }
         break;
       case 'fault':
         if (r.execution === 'failed') {
           view.aria = `${josa(name, '이', '가')} 실행 실패를 알려 격리됨`;
-          set('deny', atDevice(target), `${name} 격리`, '기기가 실패를 알려서 다시 쓰지 않게 막았어요');
+          set('deny', atDevice(target), `${name} 격리`, '기기가 실패를 알려 사용을 막음');
         } else {
           view.aria = `${josa(name, '이', '가')} 결과 불명으로 격리됨`;
-          set('deny', atDevice(target), `${name} 격리`, `${ACTION_DID[r.action]} 알 수 없어서 다시 쓰지 않게 막았어요`);
+          set('deny', atDevice(target), `${name} 격리`, `${ACTION_DID[r.action]} 몰라 사용을 막음`);
         }
         break;
       case 'ask': {
         const top = Object.entries(r.posteriors ?? {}).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([id]) => devName(id));
         if (r.reason === 'MOVE_CLOSER') view.aria = `${josa(who, '이', '가')} ${devName(r.target.nodeId)} 앞인지 확실하지 않아 서버가 다시 묻는 중`;
         else view.aria = top.length === 2 ? `${josa(who, '이', '가')} ${josa(top[0], '과', '와')} ${top[1]} 사이에 있어 서버가 다시 묻는 중` : `${who}에게 서버가 다시 묻는 중`;
-        if (r.reason === 'MOVE_CLOSER') set('ask', atVisitor(r.personId), `${devName(r.target.nodeId)} 앞인지 확실하지 않아요`, '조금 더 가까이 가 달라고 해요');
-        else set('ask', atVisitor(r.personId), `어느 ${cap} 앞인지 애매해요`, top.length === 2 ? `${josa(top[0], '과', '와')} ${top[1]} 사이라서 다시 물어봐요` : '다시 물어봐요');
+        if (r.reason === 'MOVE_CLOSER') set('ask', atVisitor(r.personId), `${devName(r.target.nodeId)} 앞인지 애매해요`, '더 가까이 와 달라고 함');
+        else set('ask', atVisitor(r.personId), `어느 ${cap} 앞인지 애매해요`, top.length === 2 ? `${top[0]}·${top[1]} 사이` : '');
         break;
       }
       case 'approval':
         view.aria = s.ownerNotified ? `${who}의 ${cap} ${act} 요청이 소유자 승인을 기다리는 중`
           : `${who}의 ${cap} ${act} 요청을 실행하지 않음: ${approvalText(r.reason!).title}`;
-        if (r.accessExpiredAt) set('appr', place(250, 632), '승인 신청이 만료됐어요', `소유자가 응답하지 않아 ${josa(name || cap, '은', '는')} 실행하지 않았어요`);
-        else if (s.ownerNotified) set('appr', place(250, 632), '소유자에게 승인 요청', `${josa(name || cap, '은', '는')} 소유자가 승인해야 ${ACTION_CAN[r.action]} 수 있어요`);
-        else if (r.reason === 'APPROVAL_REQUIRED') set('appr', atDevice(target), '소유자 승인이 필요해요', 'AI가 승인을 신청하면 소유자가 승인 여부를 정해요');
-        else set('appr', atDevice(target), approvalText(r.reason!).title, approvalText(r.reason!).detail);
+        if (r.accessExpiredAt) set('appr', place(250, 632), '승인 신청 만료', '소유자 응답 없음');
+        else if (s.ownerNotified) set('appr', place(250, 632), '소유자에게 승인 요청', '');
+        else set('appr', atDevice(target), approvalText(r.reason!).title, '');
         break;
       case 'busy':
         view.aria = `${who}의 ${cap} ${act} 요청이 바빠서 실행되지 않음`;
         if (target) set('busy', atDevice(target), r.reason === 'USER_BUSY' ? '이미 다른 기기를 쓰는 중' : r.reason === 'COMMAND_IN_PROGRESS' ? `${name} 명령 실행 중` : `${name} 사용 중`,
-          r.reason === 'USER_BUSY' ? '쓰던 기기를 먼저 반납해야 해요' : r.reason === 'COMMAND_IN_PROGRESS' ? '다른 명령을 실행하는 중이라 기다려야 해요' : '이미 점유된 기기라 실행하지 않았어요');
-        else set('busy', atVisitor(r.personId), reasonText(r.reason!), '지금은 쓸 수 없어서 실행하지 않았어요');
+          '');
+        else set('busy', atVisitor(r.personId), reasonText(r.reason!), '');
         break;
       case 'deny': {
         view.aria = `${who}의 ${cap} ${act} 요청을 거부함`;
         const t = ({
-          BEACON_NOT_SEEN: ['폰 신호를 받지 못했어요', '비콘이 꺼져 있거나 장소 밖이에요'],
-          NO_CANDIDATE: ['쓸 수 있는 기기가 없어요', `이 장소에 쓸 수 있는 ${josa(cap, '이', '가')} 없어요`],
-          TARGET_UNAVAILABLE: ['지금 쓸 수 없는 기기예요', '고장, 연결 끊김, 미신뢰 중 하나예요'],
-          POLICY_DENIED: ['정책이 허락하지 않아요', '이 기기는 이 사람에게 열려 있지 않아요'],
-          RECHECK_FAILED: ['실행 직전 확인에 실패했어요', '다시 확인하다 오류가 나서 실행하지 않았어요'],
-          INTERNAL_ERROR: ['서버 오류로 거부했어요', '판정 중 오류가 나서 실행하지 않았어요'],
-          CAPACITY_EXCEEDED: ['요청이 너무 많아요', '지금은 새 요청을 받지 않아요'],
-          INVALID_INPUT: ['요청 형식이 맞지 않아요', 'AI가 보낸 값을 읽을 수 없어요'],
-          INVALID_TOKEN: ['인증하지 못했어요', 'AI 호스트의 토큰이 맞지 않아요'],
-          REQUEST_ID_CONFLICT: ['같은 요청 번호가 이미 있어요', '내용이 다른 요청이라 받지 않았어요']
-        } as Record<string, [string, string]>)[r.reason!] ?? ['요청을 거부했어요', '실행하지 않았어요'];
+          BEACON_NOT_SEEN: ['폰 신호를 받지 못했어요', '비콘이 꺼졌거나 장소 밖'],
+          NO_CANDIDATE: [`쓸 수 있는 ${josa(cap, '이', '가')} 없어요`, ''],
+          TARGET_UNAVAILABLE: ['지금 쓸 수 없는 기기예요', '고장, 연결 끊김, 미신뢰 중 하나'],
+          POLICY_DENIED: ['정책이 허락하지 않아요', ''],
+          RECHECK_FAILED: ['실행 직전 재검사 실패', ''],
+          INTERNAL_ERROR: ['서버 오류로 거부했어요', ''],
+          CAPACITY_EXCEEDED: ['요청이 너무 많아요', ''],
+          INVALID_INPUT: ['요청 형식이 맞지 않아요', ''],
+          INVALID_TOKEN: ['인증하지 못했어요', ''],
+          REQUEST_ID_CONFLICT: ['같은 요청 번호가 이미 있어요', '']
+        } as Record<string, [string, string]>)[r.reason!] ?? ['요청을 거부했어요', ''];
         const pos = target ? atDevice(target) : atVisitor(r.personId);
         set('deny', pos, t[0], t[1]);
         break;

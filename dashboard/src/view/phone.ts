@@ -17,10 +17,10 @@ export function choosePhone(s: MonitorState, f: FollowSettings, previous: string
   const r = s.request;
 
   if (r && r.verdict === 'NEED_APPROVAL' && s.ownerNotified && f.followApprover && owner) {
-    return { personId: owner.id, who: name(owner.id), follow: '승인할 사람으로 자동 전환됨' };
+    return { personId: owner.id, who: name(owner.id), follow: '승인자로 자동 전환' };
   }
   if (r && f.followRequester) {
-    return { personId: r.personId, who: name(r.personId), follow: '요청한 사람을 따라가는 중' };
+    return { personId: r.personId, who: name(r.personId), follow: '요청자를 따라가는 중' };
   }
   if (!f.followRequester && !f.followApprover) {
     const id = previous ?? s.people.find((p) => p.role === 'visitor')?.id;

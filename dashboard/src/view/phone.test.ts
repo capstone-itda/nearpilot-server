@@ -7,10 +7,10 @@ const ON = { followRequester: true, followApprover: true };
 
 describe('choosePhone', () => {
   it('FR12B D3 요청이 있으면 요청한 사람을 따라간다', () => {
-    expect(choosePhone(SCENES.fault(), ON, 'p-a')).toMatchObject({ personId: 'p-b', who: '방문자 B', follow: '요청한 사람을 따라가는 중' });
+    expect(choosePhone(SCENES.fault(), ON, 'p-a')).toMatchObject({ personId: 'p-b', who: '방문자 B', follow: '요청자를 따라가는 중' });
   });
   it('FR12B D3 승인 알림이 가면 소유자로 바꾼다', () => {
-    expect(choosePhone(SCENES.approval(), ON, 'p-b')).toMatchObject({ personId: 'p-owner', follow: '승인할 사람으로 자동 전환됨' });
+    expect(choosePhone(SCENES.approval(), ON, 'p-b')).toMatchObject({ personId: 'p-owner', follow: '승인자로 자동 전환' });
   });
   it('FR12B D3 승인자 따라가기를 끄면 요청자를 그대로 보인다', () => {
     expect(choosePhone(SCENES.approval(), { ...ON, followApprover: false }, 'p-b').personId).toBe('p-b');

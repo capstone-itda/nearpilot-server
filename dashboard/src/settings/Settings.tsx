@@ -27,7 +27,7 @@ export function SettingsNav({ current, onPick, onBack }: { current: SettingsKey;
           <span className="np-snav__name">{n}</span><span className="np-snav__desc">{d}</span>
         </button>
       ))}
-      <p className="np-snav__note">설정 화면은 이 PC의 표시만 바꿔요. 서버 데이터는 바꾸지 않아요.</p>
+      <p className="np-snav__note">이 PC의 표시만 바꿔요. 서버에는 쓰지 않아요.</p>
     </nav>
   );
 }
@@ -101,7 +101,7 @@ export function LayoutCheck({ arrangement, canPlace, onChange, onReset }: Layout
         <div className="np-layoutcheck__side">
           <section className="np-card" data-component="Card">
             <div className="np-card__head"><h2 className="np-card__title">표시용 배치</h2></div>
-            <p className="np-sec__hint">끌어서 옮기거나, 기기를 고른 뒤 화살표 키로 한 칸씩 옮겨요. 다른 기기에 막히면 그 너머 빈자리로 건너뛰어요. 실제 위치나 거리와는 상관없어요.</p>
+            <p className="np-sec__hint">끌거나 화살표 키로 옮겨요. 실제 거리와는 상관없어요.</p>
             <div className="np-actions">
               <button className="np-btn" type="button" onClick={exportFile}>파일로 내보내기</button>
               <button className="np-btn" type="button" onClick={() => file.current?.click()}>파일 불러오기</button>

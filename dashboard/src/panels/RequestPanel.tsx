@@ -8,7 +8,7 @@ import { ACTION_DONE, ACTION_NAME, ACTION_VERB, CAPABILITY_NAME, CIRCLED, HOST_N
 const STOP_RESULT: Record<Verdict, StepRowResult> = { OK: 'pass', ASK: 'ask', NEED_APPROVAL: 'appr', BUSY: 'fail', DENY: 'fail' };
 
 function stopHint(r: RequestProgress, cap: string): string {
-  if (!isDecided(r)) return '단계 결과가 도착하는 대로 채워져요';
+  if (!isDecided(r)) return '판정 중';
   const i = r.steps.findIndex((s) => s.result === 'stop');
   if (i === -1) return r.verdict === 'OK' ? '모든 단계를 통과했어요' : `단계 확인 밖에서 멈췄어요 · ${reasonText(r.reason)}`;
   const why: Record<string, string> = {
@@ -31,8 +31,8 @@ function execText(r: RequestProgress, subject: string): string {
     case 'succeeded': return `${subject} ${ACTION_DONE[r.action]}`;
     case 'failed': return '기기가 실패를 알려 고장 격리했어요 (EXEC_FAILED)';
     case 'unknown': return '응답이 없어 결과를 몰라 고장 격리했어요 (EXEC_UNKNOWN)';
-    case 'sent': return '명령을 보냈고 결과를 기다려요';
-    default: return '허가했고 명령을 보낼 차례예요';
+    case 'sent': return '명령 보냄 · 결과 기다림';
+    default: return '허가 · 명령 보낼 차례';
   }
 }
 
@@ -71,11 +71,11 @@ export function RequestPanel({ r, onClose }: { r: RequestProgress; onClose: () =
           <Timeline items={d.accessRequestedAt
             ? [['done', d.accessRequestedAt, 'request_access로 승인 신청 → 소유자 폰에 알림 (알림 수단 미결)'],
               ...(d.accessExpiredAt
-                ? [['now', d.accessExpiredAt, `소유자 응답 없이 신청 만료 · ${josa(cap, '은', '는')} 실행하지 않음`, 'appr'] as ['now', string, string, string]]
-                : snapshot.request?.id === d.id ? [['now', snapshot.lastReceivedAt, '소유자 응답 기다림 · 실행 허가 아님', 'appr'] as ['now', string, string, string]] : [])]
+                ? [['now', d.accessExpiredAt, '소유자 응답 없이 신청 만료 · 실행 안 함', 'appr'] as ['now', string, string, string]]
+                : snapshot.request?.id === d.id ? [['now', snapshot.lastReceivedAt, '소유자 응답 기다림', 'appr'] as ['now', string, string, string]] : [])]
             : [['now', d.at, d.reason === 'APPROVAL_REQUIRED'
-              ? `AI가 request_access로 신청하기를 기다림 · ${josa(cap, '은', '는')} 아직 실행하지 않음`
-              : `${approvalText(d.reason).detail} · ${josa(cap, '은', '는')} 아직 실행하지 않음`, 'appr']]} />
+              ? 'AI의 승인 신청(request_access)을 기다림'
+              : approvalText(d.reason).detail, 'appr']]} />
         </Section>
       ) : null}
     </Panel>

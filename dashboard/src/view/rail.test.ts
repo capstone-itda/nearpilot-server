@@ -1,27 +1,32 @@
-// FR-12B: 흐름 레일 다섯 단계를 쉬운 말로 계산한다
+// FR-12B: 흐름 레일 다섯 단계를 쉬운 말로 계산하고, 서버 상자의 확인 네 칸을 계산한다
 import { describe, expect, it } from 'vitest';
 import { LAYOUT } from '../data/mock/fixtures';
 import { SCENES, sec, stateAt } from '../data/mock/story';
-import { railView } from './rail';
+import type { MonitorState } from '../model/types';
+import { railView, serverChecks } from './rail';
+
+const checksOf = (s: MonitorState) => serverChecks(s.request!, LAYOUT);
 
 describe('railView', () => {
   it('FR12B 대기: 안내 모드와 다섯 단계 설명', () => {
     const v = railView(SCENES.idle(), LAYOUT, 'p-a');
-    expect(v.mode).toBe('guide');
-    expect(v.title).toBe('요청을 기다리고 있어요');
+    expect(v).toMatchObject({ mode: 'guide', title: '요청 대기', meta: '' });
     expect(v.steps.every((s) => s.status === 'guide')).toBe(true);
   });
 
   it('FR12B 연결 끊김: 마지막 화면 안내', () => {
-    expect(railView(SCENES.offline(), LAYOUT, 'p-a').title).toBe('마지막으로 받은 화면이에요');
+    expect(railView(SCENES.offline(), LAYOUT, 'p-a').title).toBe('마지막으로 받은 화면');
   });
 
-  it('FR12B 요청 진행: 4단계가 지금 단계, 네 가지 확인 통과', () => {
-    const v = railView(SCENES.flow(), LAYOUT, 'p-a');
+  it('FR12B 요청 진행: 4단계가 지금 단계, 3단계는 모두 통과', () => {
+    const s = SCENES.flow();
+    const v = railView(s, LAYOUT, 'p-a');
     expect(v).toMatchObject({ mode: 'live', title: '방문자 A · 사물함 열기', meta: 'Claude · 14:28:10', code: 'request_use(nearest:locker, open)' });
-    expect(v.steps.map((s) => s.status)).toEqual(['done', 'done', 'done', 'current', 'todo']);
-    expect(v.steps[0]).toMatchObject({ detail: '방문자 A가 AI에게 말함', code: '대화는 왼쪽 폰 화면에' });
-    expect(v.steps[2].checks).toEqual([['pass', '누구인지'], ['pass', '사물함 1 앞'], ['pass', '정책 통과'], ['pass', '비어 있음']]);
+    expect(v.steps.map((x) => x.status)).toEqual(['done', 'done', 'done', 'current', 'todo']);
+    // 대화가 왼쪽 폰에 보이면 따로 말하지 않는다
+    expect(v.steps[0]).toMatchObject({ detail: '방문자 A가 AI에게 말함', code: '' });
+    expect(v.steps[2].detail).toBe('모두 통과');
+    expect(checksOf(s)).toEqual([['pass', '누구인지'], ['pass', '사물함 1 앞'], ['pass', '정책 통과'], ['pass', '비어 있음']]);
     expect(v.steps[3]).toMatchObject({ tone: 'ok', mark: '실행 중', detail: '사물함 1에 열기 명령', code: 'locker-1 · open · MQTT' });
   });
 
@@ -38,18 +43,21 @@ describe('railView', () => {
     expect(v.steps[4]).toMatchObject({ status: 'current', tone: 'deny', mark: '고장 격리', code: 'EXEC_UNKNOWN → FAULT' });
   });
 
-  it('FR12B ASK: 실행하지 않고 근접 확인이 애매함, 뒤 확인은 하지 않음', () => {
-    const v = railView(SCENES.ask(), LAYOUT, 'p-a');
-    expect(v.steps[2].checks).toEqual([['pass', '누구인지'], ['unsure', '어디 앞인지 애매함'], ['none'], ['none']]);
+  it('FR12B ASK: 실행하지 않고, 3단계는 멈춘 단계, 근접 칸이 애매함', () => {
+    const s = SCENES.ask();
+    const v = railView(s, LAYOUT, 'p-a');
+    expect(v.steps[2].detail).toBe('③ 근접에서 멈춤');
+    expect(checksOf(s)).toEqual([['pass', '누구인지'], ['unsure', '어디 앞인지 애매'], ['none', '정책'], ['none', '비었는지']]);
     expect(v.steps[3]).toMatchObject({ status: 'todo', detail: '실행하지 않음' });
-    expect(v.steps[4]).toMatchObject({ tone: 'ask', code: '③ 근접에서 멈춤 · LOW_CONFIDENCE' });
+    expect(v.steps[4]).toMatchObject({ tone: 'ask', code: 'ASK · LOW_CONFIDENCE' });
   });
 
   it('FR12B 승인 대기: 폰은 소유자를 보여서 대화는 요청자 폰에 있다고 안내', () => {
-    const v = railView(SCENES.approval(), LAYOUT, 'p-owner');
+    const s = SCENES.approval();
+    const v = railView(s, LAYOUT, 'p-owner');
     expect(v.steps[0].code).toBe('대화는 방문자 B의 폰에');
-    expect(v.steps[2].checks).toEqual([['pass', '누구인지'], ['pass', '조명 1 앞'], ['wait', '소유자 승인 필요'], ['none', '공용형 생략']]);
-    expect(v.steps[3]).toMatchObject({ status: 'todo', detail: '아직 켜지 않았어요' });
+    expect(checksOf(s)).toEqual([['pass', '누구인지'], ['pass', '조명 1 앞'], ['wait', '승인 필요'], ['none', '공용형 생략']]);
+    expect(v.steps[3]).toMatchObject({ status: 'todo', detail: '실행하지 않음' });
     expect(v.steps[4]).toMatchObject({ tone: 'appr', mark: '승인 기다림', code: 'NEED_APPROVAL → request_access' });
   });
 
@@ -57,15 +65,15 @@ describe('railView', () => {
     const busy = SCENES.flow();
     busy.request = { ...busy.request!, verdict: 'BUSY', reason: 'DEVICE_BUSY', execution: undefined,
       steps: [0, 1, 2, 3, 4].map(() => ({ result: 'pass' as const })).concat([{ result: 'stop' }, { result: 'skip' }]) };
-    const b = railView(busy, LAYOUT, 'p-a');
-    expect(b.steps[2].checks![3]).toEqual(['fail', '이미 점유됨']);
-    expect(b.steps[4]).toMatchObject({ tone: 'busy', mark: '바쁨' });
+    expect(checksOf(busy)[3]).toEqual(['fail', '이미 점유됨']);
+    expect(railView(busy, LAYOUT, 'p-a').steps[4]).toMatchObject({ tone: 'busy', mark: '바쁨' });
     const deny = SCENES.flow();
     deny.request = { ...deny.request!, verdict: 'DENY', reason: 'BEACON_NOT_SEEN', nodeId: undefined, execution: undefined,
       steps: [{ result: 'pass' }, { result: 'stop' }, ...[0, 1, 2, 3, 4].map(() => ({ result: 'skip' as const }))] };
+    expect(checksOf(deny)[0]).toEqual(['fail', '폰 신호 없음']);
     const d = railView(deny, LAYOUT, 'p-a');
-    expect(d.steps[2].checks![0]).toEqual(['fail', '폰 신호 없음']);
-    expect(d.steps[4]).toMatchObject({ tone: 'deny', code: '① 비콘에서 멈춤 · BEACON_NOT_SEEN' });
+    expect(d.steps[2].detail).toBe('① 비콘에서 멈춤');
+    expect(d.steps[4]).toMatchObject({ tone: 'deny', code: 'DENY · BEACON_NOT_SEEN' });
   });
 });
 
@@ -75,51 +83,49 @@ describe('railView 사유별 문구', () => {
     s.request = { ...s.request!, execution: 'failed' };
     expect(railView(s, LAYOUT, 'p-b').steps[4]).toMatchObject({ mark: '고장 격리', code: 'EXEC_FAILED → FAULT' });
   });
-  it('FR12B 확신 부족 ASK는 다시 묻고, 이동 안내는 MOVE_CLOSER에만 쓴다', () => {
+  it('FR12B 확신 부족 ASK는 되묻고, 이동 안내는 MOVE_CLOSER에만 쓴다', () => {
     const s = SCENES.ask();
-    expect(railView(s, LAYOUT, 'p-a').steps[4].detail).toBe('어느 기기인지 다시 물어봐요');
+    expect(railView(s, LAYOUT, 'p-a').steps[4].detail).toBe('어느 기기인지 되물음');
     s.request = { ...s.request!, reason: 'MOVE_CLOSER' };
-    expect(railView(s, LAYOUT, 'p-a').steps[4].detail).toBe('가까이 가서 다시 말해 달라고 안내');
+    expect(railView(s, LAYOUT, 'p-a').steps[4].detail).toBe('더 가까이 와 달라고 함');
   });
 });
 
 describe('railView 단계 밖 판정', () => {
-  it('FR12B 단계 밖에서 멈춘 거부는 확인 칸을 통과로 보이지 않는다', () => {
+  it('FR12B 단계 밖에서 멈춘 거부는 확인 칸을 통과로 보이지 않고 사유를 적는다', () => {
     const s = SCENES.flow();
     s.request = { ...s.request!, verdict: 'DENY', reason: 'CAPACITY_EXCEEDED', nodeId: undefined, execution: undefined, steps: Array(7).fill({ result: 'skip' }) };
-    expect(railView(s, LAYOUT, 'p-a').steps[2].checks!.every(([c]) => c === 'none')).toBe(true);
+    expect(checksOf(s).every(([c]) => c === 'none')).toBe(true);
+    expect(railView(s, LAYOUT, 'p-a').steps[2].detail).not.toBe('모두 통과');
   });
   it('FR12B 다른 명령이 진행 중인 BUSY는 점유와 다르게 쓴다', () => {
     const s = SCENES.flow();
     const steps = s.request!.steps.map((x, i) => (i === 5 ? { result: 'stop' as const } : i === 6 ? { result: 'skip' as const } : x));
     s.request = { ...s.request!, verdict: 'BUSY', reason: 'COMMAND_IN_PROGRESS', execution: undefined, steps };
-    expect(railView(s, LAYOUT, 'p-a').steps[2].checks![3]).toEqual(['fail', '다른 명령 실행 중']);
+    expect(checksOf(s)[3]).toEqual(['fail', '다른 명령 실행 중']);
   });
   it('FR12B 승인 필요 사유를 구분해서 보인다', () => {
     const s = SCENES.approval();
     s.request = { ...s.request!, reason: 'APPROVAL_PENDING', accessRequestedAt: undefined };
-    expect(railView(s, LAYOUT, 'p-b').steps[4]).toMatchObject({ mark: '승인 기다림', code: '④ 정책에서 멈춤 · APPROVAL_PENDING' });
+    expect(railView(s, LAYOUT, 'p-b').steps[4]).toMatchObject({ mark: '승인 기다림', code: 'NEED_APPROVAL · APPROVAL_PENDING' });
   });
   it('FR12B 서버 오류로 멈춘 칸은 단계 이유 대신 서버 오류라고 쓴다', () => {
     const s = SCENES.flow();
     const steps = s.request!.steps.map((x, i) => (i === 4 ? { result: 'stop' as const } : i > 4 ? { result: 'skip' as const } : x));
     s.request = { ...s.request!, verdict: 'DENY', reason: 'INTERNAL_ERROR', execution: undefined, steps };
-    expect(railView(s, LAYOUT, 'p-a').steps[2].checks![2]).toEqual(['fail', '서버 오류']);
+    expect(checksOf(s)[2]).toEqual(['fail', '서버 오류']);
   });
 });
 
 describe('railView 판정 전', () => {
-  it('FR12B 판정 전에는 3단계가 판정 게이지를 채우고, 도착한 단계를 하나씩 보이지 않는다', () => {
+  it('FR12B 판정 전에는 3단계가 판정 게이지를 채우고, 확인 칸은 비어 있다', () => {
     for (const t of ['14:28:10.01', '14:28:10.09', '14:26:12.09']) {
-      const v = railView(stateAt(sec(t)), LAYOUT, 'p-a');
-      expect(v.steps.map((s) => s.status)).toEqual(['done', 'done', 'current', 'todo', 'todo']);
-      expect(v.steps[2]).toMatchObject({ mark: '판정 중', gauge: true, checks: [['none'], ['none'], ['none'], ['none']] });
+      const s = stateAt(sec(t));
+      const v = railView(s, LAYOUT, 'p-a');
+      expect(v.steps.map((x) => x.status)).toEqual(['done', 'done', 'current', 'todo', 'todo']);
+      expect(v.steps[2]).toMatchObject({ mark: '판정 중', gauge: true });
+      expect(checksOf(s).every(([c]) => c === 'none')).toBe(true);
     }
-  });
-  it('FR12B 판정이 나면 결과에 멈춘 단계를 적는다', () => {
-    expect(railView(stateAt(sec('14:26:12.5')), LAYOUT, 'p-a').steps[4].code).toBe('③ 근접에서 멈춤 · LOW_CONFIDENCE');
-    // OK는 멈추지 않았다
-    expect(railView(stateAt(sec('14:28:10.5')), LAYOUT, 'p-a').steps[4].code).toBe('');
   });
   it('FR12B 승인 신청이 만료되면 5단계가 만료를 말한다', () => {
     const s = stateAt(sec('14:41:01'));

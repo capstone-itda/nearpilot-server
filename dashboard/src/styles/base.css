@@ -167,6 +167,8 @@ body { margin: 0; }
   55% { opacity: 1; box-shadow: 0 0 0 3px var(--accent), 0 0 24px var(--accent); }
   100% { opacity: 1; box-shadow: 0 0 0 0 transparent; }
 }
+/* 판정 게이지: 요청 점이 서버에 닿은 뒤(0.6초) 1초 동안 찬다 (pace.ts의 JUDGE_GAUGE_MS) */
+@keyframes np-gauge { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 .np-app[data-motion="on"] svg .np-flash { animation: np-arrive-svg 1.6s ease-out; }
 .np-app[data-motion="on"] .np-flash:not(g) { animation: np-arrive-box 1.6s ease-out; }
 /* 꺼지는 노드는 강조하지 않는다 */
