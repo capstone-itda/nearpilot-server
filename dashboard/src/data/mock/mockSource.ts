@@ -3,7 +3,7 @@ import type { DataSource } from '../source';
 import { liveSnapshot, liveTime } from './live';
 import type { HistoryQuery, Snapshot, UseRow } from '../../model/types';
 import {
-  APPROVALS, AUDIT, HEALTH, HISTORY, PLACE, PLAY_ORDER, RENTAL_DUE, RENTALS, REQUESTS, SCENES, TRUST, TRUST_BASE, USES,
+  APPROVAL_WAIT_MIN, APPROVALS, AUDIT, HEALTH, HISTORY, PLACE, PLAY_ORDER, RENTAL_DUE, RENTALS, REQUESTS, SCENES, TRUST, TRUST_BASE, USES,
   type SceneName, type Since
 } from './fixtures';
 
@@ -94,11 +94,19 @@ export function createMockSource(opt: MockOptions): DataSource {
       const over = overdue(u.nodeId);
       return { ...strip<UseRow>(u), session: st === 'FAULT' ? u.session : st as UseRow['session'], ...(over ? { overdueMinutes: over } : {}) };
     })),
-    approvals: () => copy({
-      pending: APPROVALS.pending.filter((a) => seen(a.since)).map(strip),
-      active: APPROVALS.active.filter((a) => seen(a.since)).map(strip),
-      ended: APPROVALS.ended.filter((a) => seen(a.since)).map(strip)
-    }),
+    // 기다리는 승인의 남은 시간은 신청 시각부터 줄고, 다 되면 대기 만료로 끝난다
+    approvals: () => {
+      const left = (since: string) => Math.floor(APPROVAL_WAIT_MIN - (sec(current.lastReceivedAt) - sec(since)) / 60);
+      const pending = APPROVALS.pending.filter((a) => seen(a.since));
+      return copy({
+        pending: pending.filter((a) => left(a.since) > 0).map((a) => ({ ...strip(a), remainingMinutes: left(a.since) })),
+        active: APPROVALS.active.filter((a) => seen(a.since)).map(strip),
+        ended: [
+          ...pending.filter((a) => left(a.since) <= 0).map(({ nodeId, personId }) => ({ nodeId, personId, endReason: 'APPROVAL_REQUEST_EXPIRED' as const })),
+          ...APPROVALS.ended.filter((a) => seen(a.since)).map(strip)
+        ]
+      });
+    },
     audit: () => copy(AUDIT.filter((a) => seen(a.at))),
     history: (q: HistoryQuery) => copy(HISTORY.filter((h) => seen(h.since) &&
       inPeriod(h.at, q.period) && (!q.verdict || h.verdict === q.verdict) && (!q.nodeId || h.nodeId === q.nodeId) && (!q.host || h.host === q.host)).map(strip)),

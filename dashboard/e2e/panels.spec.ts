@@ -213,5 +213,15 @@ test('FR12B 실시간 흐름 모드는 신호 세기와 판정이 시각에 따�
   await expect(page.locator('.np-rail__meta')).toContainText('14:28:10');
   await page.clock.runFor(60000);
   await expect(page.locator('.np-rail__title')).toHaveText('방문자 B · 조명 켜기');
+  await expect(page.locator('.np-topbar__recv')).toContainText('수신 14:31');
   expect(writes).toEqual([]);
+});
+
+test('FR12B 흐름 중에 메뉴로 연 목록 패널은 자동 패널로 바뀌지 않는다', async ({ page }) => {
+  await page.clock.install();
+  await ready(page, 'scene=live&panel=audit');
+  await expect(page.locator('.np-panel__title')).toHaveText('감사 로그');
+  await page.clock.runFor(75000);
+  await expect(page.locator('.np-rail__title')).toHaveText('방문자 B · 조명 켜기');
+  await expect(page.locator('.np-panel__title')).toHaveText('감사 로그');
 });

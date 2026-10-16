@@ -76,8 +76,10 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     const faults = snapshot.devices.filter((d) => d.state === 'FAULT').map((d) => d.nodeId);
     const newFaults = faults.filter((id) => !s.faults.has(id) && (!first || id === r?.nodeId));
     const auto = !(first && initialPanel);
-    if (auto && r && key !== s.request && (r.verdict === 'ASK' || r.verdict === 'NEED_APPROVAL')) setPanel({ kind: 'request', request: r, live: true });
-    else if (auto && newFaults.length) setPanel({ kind: 'device', nodeId: newFaults[0] });
+    // 사람이 메뉴로 연 목록 패널(점유, 승인, 감사, 이력, 신뢰도)은 자동 패널로 바꾸지 않는다
+    const keepList = (next: PanelState) => (p: PanelState | null) => (p && p.kind !== 'request' && p.kind !== 'device' ? p : next);
+    if (auto && r && key !== s.request && (r.verdict === 'ASK' || r.verdict === 'NEED_APPROVAL')) setPanel(keepList({ kind: 'request', request: r, live: true }));
+    else if (auto && newFaults.length) setPanel(keepList({ kind: 'device', nodeId: newFaults[0] }));
     else setPanel((p) => {
       if (!p || p.kind !== 'request' || !p.live) return p;
       return r && p.request.id === r.id ? { ...p, request: r } : null;
@@ -132,7 +134,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
 
   const current: MenuKey | null = view !== 'monitor' ? view : panel && panel.kind !== 'request' && panel.kind !== 'device' ? panel.kind : null;
   const topBar = (
-    <TopBar theme={theme} live={snapshot.connected} placeName={layout.placeName} menuOpen={menuOpen} current={current}
+    <TopBar theme={theme} live={snapshot.connected} receivedAt={snapshot.lastReceivedAt} placeName={layout.placeName} menuOpen={menuOpen} current={current}
       onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))} onToggleMenu={() => setMenuOpen((o) => !o)} onPick={pick} />
   );
 

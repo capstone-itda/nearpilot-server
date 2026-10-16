@@ -55,4 +55,40 @@ describe('목 실시간 흐름', () => {
     expect(got.length).toBeGreaterThan(LIVE_LENGTH_SEC);
     off();
   });
+  it('FR12B 이력에 결과가 오른 요청은 무대에서도 결과를 기다리지 않는다', async () => {
+    vi.useFakeTimers();
+    const s = createMockSource({ scene: 'live', intervalMs: 500 });
+    let cur: Snapshot | undefined;
+    const off = s.subscribe((x) => { cur = x; });
+    for (let e = 0; e <= LIVE_LENGTH_SEC; e += 0.5) {
+      const rows = await s.history({ period: '오늘' });
+      const r = cur!.request;
+      if (r && rows.some((h) => h.requestId === r.id)) expect(r.execution, `${cur!.lastReceivedAt} ${r.id}`).not.toBe('sent');
+      vi.advanceTimersByTime(500);
+    }
+    off();
+  });
+  it('FR12B 서 있는 사람의 가장 센 기기는 흔들림으로 바뀌지 않는다', () => {
+    const strongest = (e: number, id: string) => Object.entries(at(e).people.find((p) => p.id === id)!.rssi).sort((a, b) => b[1] - a[1])[0]?.[0];
+    const tail = new Set<string | undefined>();
+    for (let e = LIVE_LENGTH_SEC; e < LIVE_LENGTH_SEC + 120; e += 0.5) { tail.add(strongest(e, 'p-a')); tail.add(`B:${strongest(e, 'p-b')}`); }
+    expect([...tail].sort()).toEqual(['B:light-1', 'locker-1']);
+    const entry = new Set<string | undefined>();
+    for (let e = 0; e < 2; e += 0.5) entry.add(strongest(e, 'p-a'));
+    expect([...entry]).toEqual(['speaker-1']);
+  });
+  it('FR12A 기다리는 승인의 남은 시간은 줄고, 다 되면 대기 만료로 끝난다', async () => {
+    vi.useFakeTimers();
+    const s = createMockSource({ scene: 'live', intervalMs: 500 });
+    const off = s.subscribe(() => {});
+    vi.advanceTimersByTime(LIVE_LENGTH_SEC * 1000);
+    expect((await s.approvals()).pending[0].remainingMinutes).toBe(9);
+    vi.advanceTimersByTime(5 * 60 * 1000);
+    expect((await s.approvals()).pending[0].remainingMinutes).toBe(4);
+    vi.advanceTimersByTime(6 * 60 * 1000);
+    const a = await s.approvals();
+    expect(a.pending).toEqual([]);
+    expect(a.ended[0]).toMatchObject({ nodeId: 'light-1', personId: 'p-b', endReason: 'APPROVAL_REQUEST_EXPIRED' });
+    off();
+  });
 });

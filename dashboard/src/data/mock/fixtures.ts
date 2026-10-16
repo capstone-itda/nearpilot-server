@@ -30,13 +30,13 @@ const dev = (over: Partial<Record<string, Partial<DeviceStatus>>> = {}): DeviceS
   PLACE.devices.map((d) => ({ nodeId: d.nodeId, state: 'AVAILABLE', online: true, trust: 'trusted', overdue: false, ...over[d.nodeId] }));
 
 export const RSSI_IDLE_A = { 'locker-1': -69, 'locker-2': -69, 'locker-3': -71, 'speaker-1': -70, 'light-1': -70, 'light-2': -70, 'light-3': -72 };
-export const RSSI_IDLE_B = { 'locker-1': -79, 'locker-2': -76, 'locker-3': -73, 'speaker-1': -81, 'light-1': -79, 'light-2': -78, 'light-3': -76 };
+export const RSSI_IDLE_B = { 'locker-1': -77, 'locker-2': -76, 'locker-3': -73, 'speaker-1': -83, 'light-1': -77, 'light-2': -78, 'light-3': -76 };
 /** 판정이 고른 기기의 신호가 가장 세다 */
-export const RSSI_FAULT_B = { 'locker-1': -74, 'locker-2': -58, 'locker-3': -70, 'speaker-1': -80, 'light-1': -78, 'light-2': -79, 'light-3': -83 };
-export const RSSI_APPROVAL_B = { 'locker-1': -72, 'locker-2': -75, 'locker-3': -79, 'speaker-1': -70, 'light-1': -57, 'light-2': -71, 'light-3': -80 };
+export const RSSI_FAULT_B = { 'locker-1': -74, 'locker-2': -58, 'locker-3': -70, 'speaker-1': -83, 'light-1': -77, 'light-2': -77, 'light-3': -84 };
+export const RSSI_APPROVAL_B = { 'locker-1': -72, 'locker-2': -75, 'locker-3': -77, 'speaker-1': -70, 'light-1': -57, 'light-2': -71, 'light-3': -83 };
 /** A가 사물함 1과 2 사이 (ASK), 사물함 1 앞 (열기) */
 export const RSSI_ASK_A = { 'locker-1': -61, 'locker-2': -63, 'locker-3': -75, 'speaker-1': -82, 'light-1': -84, 'light-2': -86, 'light-3': -88 };
-export const RSSI_FLOW_A = { 'locker-1': -52, 'locker-2': -67, 'locker-3': -74, 'speaker-1': -79, 'light-1': -81, 'light-2': -84, 'light-3': -86 };
+export const RSSI_FLOW_A = { 'locker-1': -52, 'locker-2': -67, 'locker-3': -74, 'speaker-1': -77, 'light-1': -83, 'light-2': -84, 'light-3': -86 };
 
 type PersonOver = Partial<Pick<Person, 'beaconSeen' | 'rssi'>>;
 const people = (a: PersonOver = {}, b: PersonOver = {}): Person[] => [
@@ -169,6 +169,9 @@ export const USES: Since<UseRow>[] = [
   { nodeId: 'locker-1', personId: 'p-a', occupancy: 'rental', session: 'ACTIVE', startedAt: '14:28', since: '14:28:10' },
   { nodeId: 'locker-2', personId: 'p-b', occupancy: 'rental', session: 'RESERVED', sessionNote: '실행 미확인 · 고장으로 보존', startedAt: '14:29', since: '14:29:37' }
 ];
+
+/** 승인 신청 대기 시간 (분). 목 전용 값이고 실제 값은 설정에서 받는다. */
+export const APPROVAL_WAIT_MIN = 10;
 
 export const APPROVALS: { [K in keyof Approvals]: Since<ApprovalRow>[] } = {
   pending: [{ nodeId: 'light-1', personId: 'p-b', requestedAt: '14:31', remainingMinutes: 9, since: '14:31:00' }],

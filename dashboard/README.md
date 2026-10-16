@@ -17,7 +17,7 @@ npx playwright test  # 화면 검사 (시스템 Chrome 사용)
 
 | 값 | 뜻 |
 |---|---|
-| `scene` | 목 장면: `idle`, `ask`, `flow`, `done`, `fault`, `approval`, `later`, `offline`, `play`(차례로 한 번 재생) |
+| `scene` | 목 장면: `idle`, `ask`, `flow`, `done`, `fault`, `approval`, `later`, `offline`, `play`(차례로 한 번 재생), `live`(0.5초마다 스냅숏이 들어오며 신호와 판정이 시각에 따라 흐름) |
 | `panel` | 처음 열 패널: `uses`, `approvals`, `audit`, `history`, `trust`, `device:<기기 ID>`, `request:<요청 ID>` |
 | `view` | 설정 화면: `layout`, `phones`, `check` |
 | `theme` | `dark`, `light` |

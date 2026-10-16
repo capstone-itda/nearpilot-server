@@ -17,12 +17,12 @@ export function useData(): Ctx {
 }
 
 /**
- * 판정 흐름이 바뀌었는지 가리는 열쇠. 요청, 판정, 실행 결과, 기기 상태, 연결, 분 단위 수신 시각이 바뀌면 달라진다.
+ * 판정 흐름이 바뀌었는지 가리는 열쇠. 요청, 판정, 실행 결과, 승인 알림, 기기 상태, 비콘 수신, 연결, 분 단위 수신 시각이 바뀌면 달라진다.
  * 신호 세기처럼 자주 바뀌는 값은 넣지 않는다.
  */
 export function snapshotKey(s: Snapshot): string {
   const r = s.request;
-  return [s.connected, s.lastReceivedAt.slice(0, 5), r?.id, r?.verdict, r?.execution, ...s.devices.map((d) => `${d.nodeId}:${d.state}`)].join('|');
+  return [s.connected, s.lastReceivedAt.slice(0, 5), r?.id, r?.verdict, r?.execution, s.ownerNotified, ...s.devices.map((d) => `${d.nodeId}:${d.state}`), ...s.people.map((p) => `${p.id}:${p.beaconSeen}`)].join('|');
 }
 
 /**
