@@ -11,7 +11,9 @@ import argparse
 from datetime import datetime, timezone
 
 from nearpilot.cli import EXIT_FAILED, EXIT_INVALID, EXIT_OK
-from nearpilot.cli.common import CliError, dirs_for, load_cli_config, open_read_db, resolve_input, resolve_output
+from nearpilot.cli.common import (
+    CliError, dirs_for, load_cli_config, open_read_db, require_name, resolve_input, resolve_output,
+)
 from nearpilot.core.proximity.files import FitFileError, load_fit_file
 from tools.evaluation.runs import list_runs
 from tools.evaluation.split import SplitError, split_runs, split_to_json
@@ -40,6 +42,7 @@ def register(subparsers: argparse._SubParsersAction, parent: argparse.ArgumentPa
 
 
 def _split(args: argparse.Namespace) -> int:
+    require_name(args.place, "장소")
     config = load_cli_config(args.config)
     dirs = dirs_for(config.source)
     fit_path = resolve_input(args.fit or f"{args.place}.toml", dirs.fit, kind="적합 설정")

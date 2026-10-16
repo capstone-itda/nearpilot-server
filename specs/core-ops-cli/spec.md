@@ -82,6 +82,7 @@
 |---|---|---|
 | 파일 인자에 `/`나 `\`가 없는데 기본 폴더에 파일이 없다 | 찾은 경로와 기본 폴더의 파일 목록을 쓰고 종료 코드 2 | `test_FR16_cli_missing_default_file_lists_candidates` |
 | 파일 인자가 경로다 | 실행 폴더 기준으로 읽는다. 기본 폴더를 보지 않는다 | `test_FR16_cli_path_argument_uses_cwd` |
+| `split PLACE`나 `fit --version`에 구분자, `.`, `..`가 있다 | DB를 읽기 전에 종료 코드 2 | `test_FR16_split_cli_place_must_be_a_name`, `test_FR16_fit_version_must_be_a_file_name` |
 | 설정 파일이 없거나 잘못됐다 | 사유를 쓰고 종료 코드 2. DB 파일을 만들지 않는다 | `test_FR16_cli_invalid_config_creates_nothing` |
 | `serve --collect-only` | 모델을 읽지 않고 시작한다. MQTT 보고와 RSSI를 저장한다. `/mcp`가 없다 | `test_FR05_collect_only_starts_without_models`, `test_FR06_collect_only_has_no_mcp` |
 | `serve`(일반)에서 모델 표가 비었다 | 기존대로 시작하지 않는다 | `test_FR16_serve_requires_models_without_collect_only` |
@@ -162,7 +163,7 @@
 - `collect run`과 `collect close`는 기존 `tools/data_collection/cli.main`에 설정의 DB로 만든 `SqliteAdminRepository`를 넘긴다.
 - `--record`가 없으면 `var/records/<계획 파일 이름(확장자 제외)>-<UTC YYYYMMDD>.jsonl`이다. `nearpilot collect`가 이 경로를 계산해 기존 `tools/data_collection/cli.main`에 넘긴다. 수집 도구 코드는 바꾸지 않는다.
 - `collect run`과 `collect close`는 DB 파일이 없으면 수집 도구를 부르지 않는다. `collect run`은 계획 파일을 찾은 뒤, 기록 폴더를 만들기 전에 확인한다.
-- `collect list`는 읽기 전용 연결로 `collection_run`과 연결된 관측 수를 읽는다. `--place`, `--label`, `--open`, `--summary`, `--fit`을 받는다. `--summary --place`는 적합 설정의 `min_runs_per_label`과 비교한 분할 가능 여부를 쓴다.
+- `collect list`는 읽기 전용 연결로 `collection_run`과 연결된 관측 수를 읽는다. `--place`, `--label`, `--open`, `--summary`, `--fit`을 받는다. `--summary --place`는 적합 설정의 `min_runs_per_label`과 비교한 분할 가능 여부를 쓴다. 기본 적합 설정(`<장소>.toml`)이 없으면 그 칸을 `-`로 쓰고 안내한다. `--fit`으로 직접 준 파일이 없으면 다른 명령처럼 종료 코드 2다.
 - 회차의 장소: 라벨이 기기면 그 기기의 `place_id`다. 라벨이 `none`이면 회차에 연결된 관측의 기기들이 속한 장소다. 여러 장소의 기기가 섞이면 장소를 정할 수 없는 회차로 보고 분할에서 뺀다.
 
 ### split

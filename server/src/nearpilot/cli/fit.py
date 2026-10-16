@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 
 from nearpilot.cli import EXIT_FAILED, EXIT_INVALID, EXIT_OK
-from nearpilot.cli.common import CliError, dirs_for, load_cli_config, open_read_db, resolve_input
+from nearpilot.cli.common import CliError, dirs_for, load_cli_config, open_read_db, require_name, resolve_input
 from nearpilot.core.proximity.files import FitFileError, LayoutFileError, load_fit_file, load_layout
 from nearpilot.core.proximity.fit import FitConfig, FitError, FitResult, fit_model, write_model_file
 from tools.evaluation.runs import RunLoadError, load_labeled_runs
@@ -43,6 +43,7 @@ def register(subparsers: argparse._SubParsersAction, parent: argparse.ArgumentPa
 
 
 def _fit(args: argparse.Namespace) -> int:
+    require_name(args.version, "--version")
     config = load_cli_config(args.config)
     dirs = dirs_for(config.source)
 

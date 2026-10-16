@@ -407,3 +407,12 @@ def test_FR16_split_help_and_usage_errors(run_cli, tmp_path):
         code, out, err = run_cli(argv, cwd=tmp_path)  # 인자 오류는 argparse가 사용법과 사유를 stderr에 쓰고 2다
         assert (code, out) == (EXIT_INVALID, ""), argv
         assert "nearpilot" in err and "split" in err, argv
+
+
+def test_FR16_split_cli_place_must_be_a_name(server_dir, run_cli, split_db):
+    for place in ("../evil", "a/b", "a\\b", ".."):
+        code, out, err = run_cli(["split", place], cwd=server_dir)
+
+        assert (code, out) == (EXIT_INVALID, ""), place
+        assert err.startswith("장소은(는) 경로 구분자가 없는 이름이어야 한다"), place
+    assert not (server_dir / "var" / "splits").exists()

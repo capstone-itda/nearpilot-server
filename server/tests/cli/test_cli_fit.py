@@ -396,8 +396,9 @@ def test_FR16_fit_version_must_be_a_file_name(server_dir, run_cli, fit_data):
     for version in ("../evil", "../../evil", "a/b", "a\\b", ".."):
         code, out, err = run_cli(fit_argv(version), cwd=server_dir)
 
-        assert (code, out) == (EXIT_FAILED, ""), version
-        assert err.startswith("적합 실패: model_version: "), version
+        # DB를 읽기 전에 입력 오류로 거부한다
+        assert (code, out) == (EXIT_INVALID, ""), version
+        assert err.startswith("--version은(는) 경로 구분자가 없는 이름이어야 한다"), version
     # 모델 폴더도, 폴더 밖으로 나간 파일도 만들지 않는다
     assert not (server_dir / "var" / "models").exists() and not (server_dir / "var" / "evil.json").exists()
 

@@ -568,17 +568,15 @@ def test_FR16_collect_list_summary_without_fit_file_says_so(server_dir, run_cli,
         f"적합 설정 파일이 없어 분할 가능 여부를 보지 않았다: {expected_path}\n"
     )
 
-    # --fit으로 다른 파일을 가리켜도 없으면 같다. 이름은 fit/ 폴더, 경로는 실행 폴더 기준이다.
-    code, out, _ = run_cli(["collect", "list", "--summary", "--place", "place-a", "--fit", "other.toml"],
-                           cwd=server_dir)
-    assert code == EXIT_OK
-    assert out.splitlines()[-1] == (
-        f"적합 설정 파일이 없어 분할 가능 여부를 보지 않았다: {(server_dir / 'config' / 'fit' / 'other.toml').resolve()}")
-    code, out, _ = run_cli(["collect", "list", "--summary", "--place", "place-a", "--fit", "./mine.toml"],
-                           cwd=server_dir)
-    assert code == EXIT_OK
-    assert out.splitlines()[-1] == (
-        f"적합 설정 파일이 없어 분할 가능 여부를 보지 않았다: {(server_dir / 'mine.toml').resolve()}")
+    # --fit으로 직접 준 파일이 없으면 다른 명령처럼 입력 오류다. 이름은 fit/ 폴더, 경로는 실행 폴더 기준이다.
+    code, out, err = run_cli(["collect", "list", "--summary", "--place", "place-a", "--fit", "other.toml"],
+                             cwd=server_dir)
+    assert (code, out) == (EXIT_INVALID, "")
+    assert err.startswith(f"적합 설정 파일이 없다: {server_dir / 'config' / 'fit' / 'other.toml'}")
+    code, out, err = run_cli(["collect", "list", "--summary", "--place", "place-a", "--fit", "./mine.toml"],
+                             cwd=server_dir)
+    assert (code, out) == (EXIT_INVALID, "")
+    assert err == f"적합 설정 파일이 없다: {(server_dir / 'mine.toml').resolve()}\n"
 
 
 def test_FR16_collect_list_summary_reads_the_chosen_fit_file(server_dir, run_cli, make_collection_db, tmp_path):
@@ -599,7 +597,10 @@ def test_FR16_collect_list_summary_reads_the_chosen_fit_file(server_dir, run_cli
     assert verdict() == "예"  # 기본은 <장소>.toml
     assert verdict("--fit", "strict.toml") == "아니오"  # 이름은 fit/ 폴더에서 찾는다
     config = str(server_dir / "config" / "server.toml")
-    assert verdict("--fit", "p.toml", "--config", config, cwd=elsewhere) == "-"  # 이름이면 fit/ 폴더라서 elsewhere/p.toml 이 아니다
+    # 이름이면 fit/ 폴더라서 elsewhere/p.toml 이 아니다 — fit/에 없으므로 입력 오류
+    code, _, _ = run_cli(["collect", "list", "--summary", "--place", "place-a", "--fit", "p.toml", "--config", config],
+                         cwd=elsewhere)
+    assert code == EXIT_INVALID
     assert verdict("--fit", "./p.toml", "--config", config, cwd=elsewhere) == "아니오"  # 경로면 실행 폴더 기준
 
 

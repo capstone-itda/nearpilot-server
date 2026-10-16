@@ -180,7 +180,9 @@ def _print_summary(runs: list[RunInfo], place: str | None, fit_arg: str | None, 
     min_runs = None
     fit_path = None
     if place is not None:
-        fit_path = resolve_output(fit_arg, fit_dir, f"{place}.toml")  # 경로만 정한다. 있는지는 아래에서 본다
+        # 직접 준 --fit은 다른 명령처럼 없으면 입력 오류다. 기본 파일만 없어도 된다.
+        fit_path = (resolve_input(fit_arg, fit_dir, kind="적합 설정") if fit_arg is not None
+                    else resolve_output(None, fit_dir, f"{place}.toml"))
         if fit_path.is_file():
             try:
                 min_runs = load_fit_file(fit_path).split.min_runs_per_label

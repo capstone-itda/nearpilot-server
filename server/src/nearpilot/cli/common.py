@@ -62,6 +62,13 @@ def is_path_argument(arg: str) -> bool:
     return "/" in arg or "\\" in arg
 
 
+def require_name(value: str, what: str) -> str:
+    """파일·폴더 이름 하나로 쓰일 값을 검사한다. 비었거나 `.`, `..`이거나 구분자가 있으면 `CliError`(2)다."""
+    if not value or value in (".", "..") or is_path_argument(value):
+        raise CliError(f"{what}은(는) 경로 구분자가 없는 이름이어야 한다: {value!r}", EXIT_INVALID)
+    return value
+
+
 def resolve_input(arg: str, default_dir: Path, *, kind: str) -> Path:
     """읽을 파일 인자를 절대 경로로 바꾼다. 파일이 없으면 `CliError`(종료 코드 2)다."""
     if is_path_argument(arg):

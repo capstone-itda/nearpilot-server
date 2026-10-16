@@ -91,5 +91,6 @@ nearpilot serve
 - `split`, `fit`, `eval`은 `--fit`을 생략하면 `<장소>.toml`을 읽는다. 예시 파일은 `example.toml`이라서 `--fit example.toml`을 준다.
   `split`과 `fit`은 이미 있는 결과 파일과 같은 모델 버전을 덮어쓰지 않는다.
 - `eval`은 기준에 못 미쳐도 종료 코드 0이고, 보고서의 통과 칸에 쓴다. 전환 시간과 깜빡임은 `미측정`이다.
+- `server.example.toml`의 `[proximity.models]` 값(`replace-with-model-version`)은 자리값이다. 첫 모델을 만들기 전에는 `serve --collect-only`만 쓴다.
 - `fit` 출력의 `place-a = "v1"` 줄을 `config/server.toml`의 `[proximity.models]`에 쓴다.
   수집 전용 서버를 끈 뒤 `nearpilot serve`를 실행한다. 모델 표가 없으면 일반 `serve`는 시작하지 않는다 (종료 코드 2).
