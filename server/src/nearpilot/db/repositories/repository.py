@@ -10,6 +10,7 @@ import sqlite3
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 
+from nearpilot.db.repositories.retention import SqliteRetentionStore
 from nearpilot.db.repositories._common import (
     from_json, immediate_transaction, iso, new_id, parse_iso, settings_to_json, to_json,
 )
@@ -310,15 +311,19 @@ class SqliteRepository:
         return f"{target.kind.value}:{target.capability.value}"
 
     def _insert_new_request(self, req: UseRequest, input_digest: str, target_spec: str) -> RequestLink:
-        """한도(`dedup_entry_limit`) 이상이면 `request_id` 없이 만든다 (#165).
+        """한도(`dedup_entry_limit`) 이상이면 만료 ID를 비우고 다시 센다 (FR-22).
+
+        그래도 한도 이상이면 `request_id` 없이 만든다 (#165).
 
         이 행은 외부 `request_id`가 있는 요청 수 집계에서 빠지므로 한도를 더 늘리지 않는다.
         `DENY`·`CAPACITY_EXCEEDED`로 바꾸는 판정은 CORE 가 한다.
         """
-        count_row = self._conn.execute(
-            "SELECT COUNT(*) AS n FROM request WHERE request_id IS NOT NULL"
-        ).fetchone()
-        capacity_exceeded = count_row["n"] >= self._settings.dedup_entry_limit
+        count = self._keyed_request_count()
+        if count >= self._settings.dedup_entry_limit:
+            # 같은 DB 트랜잭션에서 ID만 정리한다. 이력·감사는 지우지 않는다.
+            SqliteRetentionStore(self._conn, self._settings).clear_expired_request_ids(req.received_at)
+            count = self._keyed_request_count()
+        capacity_exceeded = count >= self._settings.dedup_entry_limit
         internal_request_id = new_id()
         stored_request_id = None if capacity_exceeded else req.request_id
         self._conn.execute(
@@ -335,6 +340,11 @@ class SqliteRepository:
             internal_request_id=internal_request_id, is_new=True, conflict=False,
             capacity_exceeded=capacity_exceeded,
         )
+
+    def _keyed_request_count(self) -> int:
+        return self._conn.execute(
+            "SELECT COUNT(*) AS n FROM request WHERE request_id IS NOT NULL"
+        ).fetchone()["n"]
 
     def _link_existing_row(self, req: UseRequest, input_digest: str, row: sqlite3.Row) -> RequestLink:
         if row["input_digest"] != input_digest:

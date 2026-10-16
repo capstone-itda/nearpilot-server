@@ -36,7 +36,7 @@ class SqliteRetentionStore:
     def cleanup(self, now: datetime) -> CleanupReport:
         now = now.astimezone(timezone.utc) if now.tzinfo else now.replace(tzinfo=timezone.utc)
         with immediate_transaction(self._conn):
-            cleared_requests = self._clear_expired_request_ids(now)
+            cleared_requests = self.clear_expired_request_ids(now)
             deleted_sessions = self._delete_eligible_sessions(now)
             deleted_audit_rows = self._delete_eligible_audit_rows(now)
         return CleanupReport(
@@ -108,7 +108,10 @@ class SqliteRetentionStore:
 
     # ── 외부 request_id 비우기 ───────────────────────────────────
 
-    def _clear_expired_request_ids(self, now: datetime) -> int:
+    def clear_expired_request_ids(self, now: datetime) -> int:
+        """DB 내부 접점. 호출자가 연 쓰기 트랜잭션에서 만료 ID만 비운다."""
+        if not self._conn.in_transaction:
+            raise RuntimeError("Request ID cleanup requires an active transaction")
         rows = self._conn.execute(
             "SELECT internal_request_id FROM request WHERE request_id IS NOT NULL"
         ).fetchall()

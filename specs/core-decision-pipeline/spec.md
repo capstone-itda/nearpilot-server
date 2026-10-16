@@ -13,8 +13,8 @@ spec 규칙
 # FR-18 결정론적 판정 파이프라인 (⓪~⑥)
 
 - 담당: eunji719 (판정)
-- 요구사항: FR-18
-- 따르는 결정: #15, #23, #24, #25, #26, #27, #33, #34, #35, #39, #42
+- 요구사항: FR-18, FR-22
+- 따르는 결정: #15, #23, #24, #25, #26, #27, #33, #34, #35, #39, #42, #165
 
 ## 1. 왜
 
@@ -77,6 +77,7 @@ spec 규칙
 ### 고치는 곳
 - `server/src/nearpilot/core/decision/`
 - `server/tests/core/`
+- `server/tests/integration/` (용량 거부의 실제 DB 검증)
 
 ### 고치지 않는 곳
 - 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
@@ -108,7 +109,7 @@ spec 규칙
 | 같은 `(계정, request_id)`에 다른 입력이 온다 | `DENY` / `REQUEST_ID_CONFLICT`를 반환한다 | `test_FR18_같은_키_다른_입력이면_REQUEST_ID_CONFLICT이고_저장하지_않는다` |
 | 다른 계정이 같은 `request_id`를 보낸다 | 다른 계정의 결과를 반환하지 않는다 | `test_FR18_다른_계정의_같은_request_id는_서로_다른_요청으로_판정한다` |
 | 보장기간이 지나 DB가 비운 `request_id`가 다시 온다 | 새 요청으로 판정한다 | `test_FR18_통과한_대여형은_OK이고_RESERVED를_만든다` (DB가 `is_new`로 알리는 새 요청의 정상 경로) |
-| 새 요청인데 중복 방지 항목이 한도 이상이다 | `DENY` / `CAPACITY_EXCEEDED`를 반환한다. 재전송에는 기존 결과를 반환한다 | 미결 (7절). 구현하지 않는다 |
+| 새 요청인데 중복 방지 항목이 한도 이상이다 (`RequestLink.capacity_exceeded`) | ⓪에서 `DENY` / `CAPACITY_EXCEEDED`를 저장·감사하고 ①~⑥과 실행 인계를 하지 않는다. 재전송에는 기존 결과를 반환한다 | `test_FR22_capacity_stops_before_beacon_and_saves_record` |
 | 단계 실행 중 예상하지 못한 예외가 난다 | `DENY` / `INTERNAL_ERROR`를 반환한다. 호스트 응답에 예외 내용을 넣지 않는다 | `test_FR18_단계에서_예외가_나면_INTERNAL_ERROR로_거부한다` |
 | 두 요청이 같은 기기를 동시에 요청한다 | `reserve_if_free()` 결과를 따른다. 실패한 요청은 `BUSY`다 | `test_FR18_FR19_점유_실패는_reserve_if_free_결과를_따른다` |
 | 공용형 제한 기기를 요청한다 | `reserve_if_free()`를 호출한다. `use_id`는 `None`이고 `usage_id`는 사용분 ID다 | `test_FR18_공용형_승인_사용분_ID를_점유_요청에_넘기고_인계에_담는다` |
@@ -186,7 +187,7 @@ spec 규칙
 - `reserve_if_free()`가 예외를 내면 `INTERNAL_ERROR`로 거부한다. 반영 여부가 불명인 예약의 정리는 이 작업 밖이다.
 - 외부 요청의 중복 방지 보장기간이 지나면 DB가 외부 `request_id`를 비운다 (FR-22). 그 뒤 같은 `request_id`가 오면 ⓪은 새 요청으로 본다. 판정은 ⓪~⑥을 처음부터 검사한다.
 - 신규 조작 접수 제한은 ⓪에서 새 요청으로 확인한 요청에만 적용한다 (FR-22). 한도 이상이면 `DENY` / `CAPACITY_EXCEEDED`다. 같은 요청의 재전송에는 기존 결과를 반환한다.
-- 미결: DB가 한도 초과를 판정에 알리는 접점과 거부한 요청을 기록하는 방식. `link_request()`의 반환에 담을지, 별도 조회를 둘지 DB 담당과 정한다. 접점이 정해질 때까지 판정은 용량 부족 거부를 구현하지 않는다.
+- #165가 접점을 정했다. DB는 `link_request()`에서 외부 `request_id`를 비운 행을 만들고 `capacity_exceeded=True`를 반환한다. 판정은 이 플래그를 ⓪에서 검사해 기존 저장·감사 경로로 거부를 기록한다.
 - 미결: 후보가 있는데 관측이 없을 때 `posterior()`가 빈 `posteriors`를 반환하는가, 균등 분포를 반환하는가. 판정은 빈 `posteriors`를 `LOW_CONFIDENCE`로 처리하려 한다. 근접 추정 담당에게 확인한다 (#26).
 - 실행 직전 재검사는 판정이 제공하고 상태 관리가 호출한다. 재검사 실패의 미전송 취소도 상태 관리가 시작한다.
 - 미결: 명시 지정 임계값의 수치. 근접 추정 담당이 검증셋으로 실험한 뒤 정한다. 설정 이름은 `threshold_explicit_locker`, `threshold_explicit_light`, `threshold_explicit_speaker`다. 기본값 `None`이면 명시 지정 실행을 허가하지 않는다.
@@ -204,6 +205,8 @@ spec 규칙
 | FR-18 | `test_FR18_명시_지정은_별도_임계값을_쓴다` 외 | 임계값 선택과 `None` 처리 |
 | FR-18 | `test_FR18_FR19_본인_재조작은_기존_use_id로_OK이고_재조작으로_인계한다` 외 | 실행 종류와 인계 context |
 | FR-22 | `test_FR22_판정_기록에_적용한_값이_담긴다` 외 | 판정 기록과 저장 충돌 |
+| FR-22 | `test_FR22_capacity_stops_before_beacon_and_saves_record` | 용량 거부는 ⓪에서 멈추고 저장·감사한다 |
+| FR-18, FR-22 | `server/tests/integration/test_capacity_access_real_db.py` | 실제 DB에서 용량 거부, 예약 없음, 기존 재전송 유지 |
 | FR-11 | `test_FR11_Decision에는_사용자_ID가_없다` | 판정에 사용자 ID가 없다 |
 
 - 구현은 `server/tests/core/test_decision_pipeline.py`다.

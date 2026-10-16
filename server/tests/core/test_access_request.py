@@ -267,3 +267,14 @@ def test_FR18_판정_저장이_충돌하면_거부한다():
     repo.save_outcome = StoreOutcome.CONFLICT
     d = ask(svc)
     assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+
+
+def test_FR22_한도에서는_승인_신청도_용량_초과로_거부하고_신청을_만들지_않는다():
+    svc, repo, pol, audit = build()
+    repo.link = RequestLink("full", True, False, capacity_exceeded=True)
+    d = ask(svc)
+    assert (d.verdict, d.reason, d.internal_request_id) == (
+        Verdict.DENY, ReasonCode.CAPACITY_EXCEEDED, "full")
+    assert repo.approval_calls == [] and pol.calls == []
+    assert repo.saved[0][0] == d
+    assert audit.events[-1].payload["capacity_exceeded"] is True

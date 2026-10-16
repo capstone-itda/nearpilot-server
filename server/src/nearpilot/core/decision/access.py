@@ -86,7 +86,11 @@ class AccessRequestService:
             return self._internal_error(request_id, iid, exc, save=False)
 
         try:
-            decision, policy_version, detail = self._decide(req, iid, now)
+            if link.capacity_exceeded:  # 한도에서는 조작과 같이 거부한다. 신청을 만들지 않는다 (#165)
+                decision = self._deny(request_id, iid, ReasonCode.CAPACITY_EXCEEDED)
+                policy_version, detail = None, {"capacity_exceeded": True}
+            else:
+                decision, policy_version, detail = self._decide(req, iid, now)
             self._audit_step(iid, {
                 "verdict": decision.verdict.value, "reason": decision.reason.value,
                 "settings_version": self._settings.version, **detail})
