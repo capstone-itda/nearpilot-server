@@ -46,3 +46,51 @@ keepalive, 접속·시작·종료 제한 시간, 재접속 최소·최대 대기
 시작은 설정·모델 검증, DB 준비, 근접 관측 복원, MQTT 구독 확인, 재시작 복원, 보존기간 정리 순서다.
 하나라도 실패하면 요청을 받지 않고 끝낸다. 종료할 때 제한 시간을 넘긴 작업은 오류로 알리고,
 미완료 기록은 다음 시작의 복원에서 다시 확인한다.
+
+# 운영 명령
+
+`pip install -e .` 뒤 `server/`에서 `nearpilot <명령>`으로 쓴다. `nearpilot serve`는 위의 `python -m nearpilot`과 같은 서버를 띄운다.
+설정 파일은 `--config`로 고르고 기본은 `config/server.toml`이다 (실행 폴더 기준).
+종료 코드는 0 성공, 1 실행 중 거부·실패, 2 입력 오류다.
+
+파일 인자에 이름(`/`나 `\`가 없는 값)을 주면 아래 기본 폴더에서 찾고, 경로를 주면 실행 폴더 기준으로 읽는다.
+
+| 폴더 | 파일 | 만드는 쪽 | 읽는 명령 |
+|---|---|---|---|
+| `config/seed/` | 시드: 계정, 비콘, 장소, 기기 신뢰와 종료 정책, 접근 정책 | 사람 | `seed` |
+| `config/plans/` | 수집 계획: 회차 순서와 길이, 수집하는 사람의 비콘 | 사람 | `collect run` |
+| `config/layouts/` | 배치: 기기와 기기 앞 위치의 좌표, none 지점 | 사람 | `fit` |
+| `config/fit/` | 적합 설정: 분할 비율, 후보 값, 통과 기준 | 사람 | `collect list --summary`, `split`, `fit`, `eval` |
+| `var/records/` | 수집 회차 기록 | `collect run` | |
+| `var/splits/` | 분할 결과 | `split` | `fit`, `eval` |
+| `var/models/` | 모델 파일 (`[proximity].model_root`) | `fit` | `eval`, `serve` |
+| `var/reports/` | 평가 보고서 (CSV, Markdown) | `eval` | |
+
+`config/`의 `example.*`는 예시다. 좌표, 회차 길이, 통과 기준을 실제 환경에 맞춰 바꾼다.
+`var/`는 설정 파일 폴더의 부모(`server/var/`)이고 명령이 만든다. 다만 `serve`는 DB 파일의 부모 폴더를 만들지 않으므로,
+새로 받은 `server/`에서는 처음 한 번 `mkdir var`로 만든다.
+
+모델을 처음 만들 때의 흐름이다.
+
+```
+nearpilot serve --collect-only
+nearpilot seed example.toml
+nearpilot collect run example.json
+nearpilot collect list --summary --place place-a --fit example.toml
+nearpilot split place-a --fit example.toml
+nearpilot fit example.json --split place-a-seed42.json --version v1 --fit example.toml
+nearpilot eval place-a/v1 --split place-a-seed42.json --fit example.toml
+nearpilot serve
+```
+
+- `serve --collect-only`는 근접 모델 없이 시작해서 RSSI와 기기 보고를 저장하고 MCP를 열지 않는다. 수집하는 동안 켜 둔다.
+- 기기는 MQTT로 발표해야 DB에 생긴다. 발표 전에 `seed`를 실행하면 없는 기기에 관한 항목만 거부되고(종료 코드 1)
+  나머지는 반영된다. 기기가 발표한 뒤 같은 명령을 다시 실행한다. 이미 있는 계정은 건너뛴다.
+  계정 토큰은 등록할 때 한 번만 화면에 나온다. DB에는 해시만 저장한다.
+- `collect run`은 회차마다 Enter로 시작하고 q로 끝낸다. 기록은 `var/records/<계획 파일 이름>-<UTC 날짜>.jsonl`에 덧붙인다.
+  `collect list --summary --place`의 `분할 가능`이 라벨마다 `예`이면 `split`을 실행한다.
+- `split`, `fit`, `eval`은 `--fit`을 생략하면 `<장소>.toml`을 읽는다. 예시 파일은 `example.toml`이라서 `--fit example.toml`을 준다.
+  `split`과 `fit`은 이미 있는 결과 파일과 같은 모델 버전을 덮어쓰지 않는다.
+- `eval`은 기준에 못 미쳐도 종료 코드 0이고, 보고서의 통과 칸에 쓴다. 전환 시간과 깜빡임은 `미측정`이다.
+- `fit` 출력의 `place-a = "v1"` 줄을 `config/server.toml`의 `[proximity.models]`에 쓴다.
+  수집 전용 서버를 끈 뒤 `nearpilot serve`를 실행한다. 모델 표가 없으면 일반 `serve`는 시작하지 않는다 (종료 코드 2).

@@ -1,0 +1,67 @@
+# 시드 파일 예시. `nearpilot seed example.toml`로 반영한다.
+# 계정, 비콘, 장소, 기기 신뢰와 종료 정책, 접근 정책을 넣는다. 표 배열은 모두 선택이고, 모르는 키는 오류다.
+# 기기는 서버가 MQTT 발표를 받아야 DB에 생긴다. 발표 전의 기기 항목은 거부되고(종료 코드 1) 나머지는 반영되니,
+# 기기가 발표한 뒤 같은 명령을 다시 실행한다. 이미 있는 계정은 건너뛰고 토큰을 새로 만들지 않는다.
+# 계정 토큰은 등록할 때 한 번만 화면에 나온다. 이 파일에는 쓰지 않는다.
+
+[[accounts]]
+user_id = "owner"
+name = "소유자"
+role = "owner"  # owner | visitor
+
+[[accounts]]
+user_id = "visitor-1"
+name = "방문자 1"
+role = "visitor"
+
+# 비콘의 (uuid, major, minor)는 다른 계정과 겹칠 수 없다. 계정당 활성 비콘은 하나다.
+# 수집 계획(config/plans/)의 beacon은 수집하는 사람의 활성 비콘과 같은 값이다.
+[[beacons]]
+beacon_id = "beacon-owner"
+user_id = "owner"
+uuid = "11111111-2222-3333-4444-555555555555"
+major = 1
+minor = 1
+
+[[beacons]]
+beacon_id = "beacon-visitor-1"
+user_id = "visitor-1"
+uuid = "11111111-2222-3333-4444-555555555555"
+major = 1
+minor = 2
+
+# 장소의 소유자(owner)가 그 장소 기기의 신뢰와 정책을 쓰는 행위자다. 기기는 한 장소에만 둔다.
+[[places]]
+place_id = "place-a"
+owner = "owner"
+name = "시연 공간"
+nodes = ["locker-1", "locker-2"]
+
+# trust: discovered | trusted | revoked
+# release_policy: 점유를 끝낼 때 기기가 검사할 기준(check_criteria)이다.
+[[nodes]]
+node_id = "locker-1"
+trust = "trusted"
+release_policy = { check_criteria = { id = "locker-return", version = 1 } }
+
+[[nodes]]
+node_id = "locker-2"
+trust = "trusted"
+release_policy = { check_criteria = { id = "locker-return", version = 1 } }
+
+# visibility: public | private, mode: open | restricted, approval_mode: one_time | time_window
+# approver, approval_ttl_sec, max_uses는 선택이다. 정책 내용이 그대로면 다시 실행해도 새 리비전을 만들지 않는다.
+[[policies]]
+node_id = "locker-1"
+visibility = "public"
+mode = "open"
+approval_mode = "one_time"
+
+[[policies]]
+node_id = "locker-2"
+visibility = "public"
+mode = "restricted"
+approver = "owner"
+approval_mode = "time_window"
+approval_ttl_sec = 3600
+max_uses = 3

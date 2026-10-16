@@ -1,0 +1,22 @@
+# 적합 설정 예시. split, fit, eval, collect list --summary가 읽는다 (`--fit example.toml`).
+# 파일 이름을 <장소>.toml(예: place-a.toml)로 두면 `--fit`을 생략해도 읽는다.
+# 아래 값은 예시다. 실제 수집 환경과 통과 기준에 맞춰 바꾼다.
+
+# 회차를 학습·검증·시험으로 나누는 설정 (nearpilot split).
+[split]
+ratios = [0.6, 0.2, 0.2]    # 학습, 검증, 시험. 양수 셋이고 합이 1이다
+min_runs_per_label = 5      # 라벨(기기별, none)마다 닫힌 회차가 이 수 이상이어야 나눈다 (3 이상)
+
+# 모델 적합의 후보 값 (nearpilot fit). 검증 회차의 손실이 가장 작은 조합을 고른다.
+[fit]
+# calib_version = "c1"      # 선택. --calib-version을 주지 않았을 때 쓴다. 이것도 없으면 --version 값을 쓴다
+min_distance_m = 0.3        # 이보다 가까운 거리는 이 값으로 본다
+taus = [0.5, 1.0, 2.0]      # 증거 온도 τ
+stays = [0.8, 0.9, 0.95]    # 한 시간 칸에서 같은 상태에 머무를 확률 (0 초과 1 미만)
+# window_secs는 .5 단위로 둔다. 정수이면 창의 마지막 시간 칸이 비어 조합마다 손실이 같아질 수 있다 (수신이 관측보다 늦다).
+window_secs = [2.5, 3.5, 4.5]
+
+# 평가의 통과 기준 (nearpilot eval). 기준에 못 미쳐도 명령은 종료 코드 0이고 보고서의 통과 칸에 쓴다.
+[acceptance]
+max_misselection = 0.05     # 정면 오선택률 상한 (0 이상 1 이하)
+max_ece = 0.05              # ECE 상한 (0 이상 1 이하)

@@ -57,14 +57,21 @@ nearpilot-server/
 ├── .github/                    이슈 양식, PR 양식, CI
 ├── server/
 │   ├── pyproject.toml
+│   ├── config/                 서버 설정 예시와 README
+│   │   ├── seed/               시드 파일 예시 (계정, 비콘, 장소, 정책)
+│   │   ├── plans/              수집 계획 예시
+│   │   ├── layouts/            기기 배치 예시
+│   │   └── fit/                적합 설정 예시 (분할, 후보 값, 통과 기준)
 │   ├── src/nearpilot/
 │   │   ├── shared/             계층 간 계약: 도메인 모델, 열거형, 인터페이스, 설정
+│   │   ├── cli/                운영 명령 `nearpilot`: serve, seed, collect, split, fit, eval (FR-16)
 │   │   ├── api/
 │   │   │   ├── mcp/            MCP 엔드포인트와 도구 6개 (FR-08~FR-11)
 │   │   │   ├── auth/           토큰으로 계정 식별, 무효 토큰 거부
 │   │   │   ├── rest/           앱(계정, 승인)과 대시보드(조회)용 API, `FAULT` 복구
 │   │   │   └── ws/             실시간 모니터링 (FR-12B)
 │   │   ├── core/
+│   │   │   ├── admin/          AdminService: 계정·비콘 등록, 기기 신뢰, 장소 배치, 정책, 종료 정책 쓰기 (FR-01, FR-12A, FR-13, FR-14)
 │   │   │   ├── decision/       ⓪~⑥ 판정 파이프라인 (FR-15, FR-18)
 │   │   │   ├── proximity/      관측 모델, HMM, 재질문 임계값 (FR-16, FR-17)
 │   │   │   ├── policy/         접근 정책과 승인 검사 (FR-14)
@@ -78,7 +85,7 @@ nearpilot-server/
 │   │       ├── mqtt/           브로커 연결, 구독, 명령 전송
 │   │       └── messages/       MQTT 페이로드 스키마 (펌웨어와의 계약)
 │   ├── tests/
-│   │   ├── api/ core/ db/ iot/ shared/    계층별 단위 테스트
+│   │   ├── api/ cli/ core/ db/ iot/ shared/    계층별 단위 테스트
 │   │   └── integration/        계층을 합친 시나리오 테스트
 │   └── tools/
 │       ├── node_sim/           가상 ESP32 기기 (하드웨어 없이 개발과 부하 시험)
@@ -96,7 +103,7 @@ nearpilot-server/
 | 역할 | 담당 폴더 | 책임 |
 |---|---|---|
 | **판정** | `src/nearpilot/core/decision/`, `core/allocation/`, `api/mcp/`, `api/auth/` | 판정 ⓪~⑥ 조합, 근접, 정책, 점유 결과의 반영, 실행 직전 재검사, 전역 할당, MCP 도구 6개, 토큰으로 계정 식별, `CoreService`와 MCP 앱을 만드는 연결 함수 |
-| **근접 추정** | `src/nearpilot/core/proximity/`, `tools/data_collection/` | 관측 모델과 HMM, 사후확률 계산, 근접 추정 인터페이스, 수집 회차와 라벨 기록 |
+| **근접 추정** | `src/nearpilot/core/proximity/`, `core/admin/`, `tools/data_collection/` | 관측 모델과 HMM, 사후확률 계산, 근접 추정 인터페이스, 수집 회차와 라벨 기록, `AdminService` (`AdminRepository` 위의 관리 쓰기) |
 | **상태 관리** | `src/nearpilot/core/lifecycle/`, `iot/`, `tools/node_sim/` | 예약 뒤의 상태 전이, 대여 점유 유지와 초과시간 계산, 명시적 해제, `FAULT` 복구, MQTT 게이트웨이, 기기 시뮬레이터, CORE 쪽 `NodeEventSink`, 서버 실행 진입점과 CORE 서비스 조립 |
 | **DB** | `src/nearpilot/db/`, `core/policy/`, `tools/evaluation/` | 스키마, 저장소, 원자적 점유와 승인 사용분, 감사 로그, 평가 스크립트, 접근 정책과 승인 검사, 토큰 해시로 계정 조회 (`AccountLookup`), 관리 쓰기 접점 (`AdminRepository`) |
 | **공동** | `src/nearpilot/shared/`, `tests/integration/` | 계층 간 계약, 계층을 합친 시나리오 테스트 |
@@ -104,7 +111,7 @@ nearpilot-server/
 - 이 표는 역할별 담당 범위를 기록한다. 개인 이름은 쓰지 않는다.
 - [#88](https://github.com/capstone-itda/nearpilot-server/issues/88)의 A안을 따른다. 상태 관리는 서버 실행 진입점과 조립 모듈을 만든다. 조립은 설정, DB 저장소, MQTT 게이트웨이와 CORE 서비스를 만들고 연결한다. 판정은 `CoreService`와 MCP 앱을 만드는 연결 함수만 제공한다. 진입점이 이 함수로 MCP 엔드포인트를 붙인다.
 - 조립은 게이트웨이를 구독한 뒤, 요청을 받기 전에 재시작 복원을 한 번 실행한다. 모든 상태 관리 서비스에 같은 복구 서비스와 기기별 잠금을 주입한다. 반납 검사와 이탈 판단의 `tick()`을 주기적으로 호출한다.
-- 미결: 진입점과 조립 모듈의 경로와 실행 명령. 상태 관리 spec에서 정한다.
+- 서버 실행 진입점은 `nearpilot serve`다 (`src/nearpilot/cli/`). 조립 모듈은 `src/nearpilot/runtime/`에 있다.
 - 미결: `api/rest/`와 `api/ws/`의 담당. 앱과 대시보드의 담당을 정할 때 함께 배정한다.
 - 미결: 앱(`app/`)과 대시보드(`dashboard/`)의 담당. 서버 담당 업무를 먼저 마친 사람이 맡는다.
 - 미결: 펌웨어(`firmware/`)의 담당과 IOT 구현의 담당 배정. 팀이 펌웨어 담당을 배정할 때 함께 정한다.
@@ -127,7 +134,7 @@ api  ──▶  core  ──▶  db
 | 승인 저장 인터페이스 | DB | CORE | 접근 승인 요청을 저장한다 (`Repository.create_approval_request`). 소유자의 결정을 조건부로 반영한다 (`Repository.decide_approval`). 요청자·기기의 승인 이력을 조회한다 (`Repository.approvals_in_scope`). `FAULT` 복구의 소유자 승인에는 쓰지 않는다. |
 | 판정 기록 인터페이스 | DB | CORE (판정) | 판정 한 건마다 판정과 `DecisionRecord`를 한 번 저장한다 (`Repository.save_decision`). |
 | 계정 조회 인터페이스 | DB | API (`api/auth`) | `api/auth`가 토큰의 SHA-256 해시를 계산해서 넘긴다. DB는 저장한 해시와 비교해서 계정을 반환한다 (`AccountLookup.account_by_token_hash`). |
-| 관리 쓰기 인터페이스 | DB | 관리 기능 (`AdminService`), 수집 도구 (`tools/data_collection`) | 계정과 비콘 등록, 기기 신뢰 변경, 장소 배치, 정책 변경, 수집 회차 기록을 저장한다 (`AdminRepository`). 시드 스크립트는 `AdminService`를 거쳐 쓴다. `AdminService`는 담당을 배정한 뒤 이 접점 위에 만든다. 관리 쓰기 REST는 두지 않는다. |
+| 관리 쓰기 인터페이스 | DB | 관리 기능 (`AdminService`), 수집 도구 (`tools/data_collection`) | 계정과 비콘 등록, 기기 신뢰 변경, 장소 배치, 정책 변경, 종료 정책 변경, 수집 회차 기록을 저장한다 (`AdminRepository`). 시드 스크립트는 `AdminService`를 거쳐 쓴다. `AdminService` (`core/admin/`)는 이 접점 위에서 행위자를 검사하고 쓴다. 관리 쓰기 REST는 두지 않는다. |
 | 사건별 저장 인터페이스 | DB | CORE | 예약 이후의 명령 연결, 전송 시작, 미전송 취소, 실행 결과, 이상 격리, 종료를 사건마다 원자적으로 반영한다 (`ExecutionStore`). |
 | 복원·복구 저장 인터페이스 | DB | CORE (상태 관리) | 재시작 복원 조회, 복구 건 저장과 조회, 복구 정산을 제공한다 (`restore_pending`, `save_recovery`, `recovery`, `settle_recovery`). |
 | 복구 인터페이스 | CORE (상태 관리) | API | 복구 준비 조회와 복구 승인 요청을 따로 제공한다. 준비 판단, 재검사, 불명 결과 확인은 상태 관리가 맡는다. |
@@ -291,9 +298,10 @@ DB는 승인 이력을 거르지 않고 반환한다. `core/policy`가 승인 �
 | 기기 신뢰 변경 | `node.trust_state` | `trust_state`만 바꾼다. `device_state`와 점유 세션은 바꾸지 않는다. |
 | 장소 배치 | `place`, `node.place_id` | 기기를 장소에 연결한다. |
 | 정책 변경 | `access_policy`, `policy_revision` | 새 `policy_revision` 행 추가와 `access_policy.current_version` 갱신을 한 트랜잭션에서 한다. 과거 리비전은 바꾸지 않는다. |
+| 종료 정책 변경 | `node.release_policy` | `release_policy`만 바꾼다. 진행 중인 점유 세션은 생성 당시 값을 보존하므로 소급하지 않는다. 감사 기록(`Step.ADMIN`)과 한 트랜잭션에서 반영한다. |
 | 수집 회차 기록 | `collection_run` | 회차를 진행 중으로 만들고, 끝 시각을 기록한다. 구간 규칙은 아래 "RSSI 수집 회차"를 따른다 ([#131](https://github.com/capstone-itda/nearpilot-server/issues/131)). |
 
-- DB는 `AdminRepository`를 지금 구현한다. `AdminService`는 담당을 배정한 뒤 `AdminRepository` 위에 만든다.
+- DB는 `AdminRepository`를 지금 구현한다. `AdminService`는 `core/admin/`에서 `AdminRepository` 위에 만들었다.
 - `AdminService`는 행위자와 장소 소유권을 검사한 뒤 `AdminRepository`에 쓴다. 계정과 비콘 등록도 `AdminService`가 맡는다.
 - 시드 스크립트는 `AdminService`를 거쳐 기기 신뢰, 장소 배치, 정책, 시연 데이터와 시험 데이터를 넣는다. 시드 스크립트는 SQL을 직접 실행하지 않는다.
 - `tools/data_collection`도 `AdminRepository`로 수집 회차를 기록한다. 수집 도구는 SQL을 직접 실행하지 않는다 (#131).
