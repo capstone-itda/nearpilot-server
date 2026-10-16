@@ -155,8 +155,8 @@ export function Stage({ v }: { v: StageView }) {
 
         <rect className="np-stage__titleblock" x="1060" y="752" width="280" height="40" />
         <text className="np-stage__code" x="1074" y="777">{v.placeName} · 근접 모델 {v.modelVersion}</text>
-        <path className="np-stage__dim" d="M900 772H1020M900 766V778M1020 766V778" />
-        <text className="np-stage__code" x="960" y="792" data-anchor="middle">1 M</text>
+        <path className="np-stage__dim" d={`M${1020 - v.meterPx} 772H1020M${1020 - v.meterPx} 766V778M1020 766V778`} />
+        <text className="np-stage__code" x={1020 - v.meterPx / 2} y="792" data-anchor="middle">1 M</text>
       </svg>
     </section>
   );

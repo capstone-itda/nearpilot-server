@@ -6,6 +6,11 @@ import { stageView } from './stage';
 const dev = (v: ReturnType<typeof stageView>, id: string) => v.devices.find((d) => d.nodeId === id)!;
 
 describe('stageView', () => {
+  it('FR12B 축척 막대 1 m 길이를 배치의 방 너비에서 계산한다', () => {
+    expect(stageView(SCENES.idle(), LAYOUT, { panelOpen: false }).meterPx).toBe(120.2);
+    expect(stageView(SCENES.idle(), { ...LAYOUT, widthM: 10.1 }, { panelOpen: false }).meterPx).toBe(100);
+  });
+
   it('FR12B 대기: 비콘을 보내는 첫 방문자의 신호와 상향 흐름, 안내 콜아웃', () => {
     const v = stageView(SCENES.idle(), LAYOUT, { panelOpen: false });
     expect(v.scene).toBe('idle');

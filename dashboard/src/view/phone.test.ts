@@ -22,4 +22,10 @@ describe('choosePhone', () => {
     expect(choosePhone(SCENES.idle(), ON, undefined).personId).toBe('p-a');
     expect(choosePhone(SCENES.idle(), ON, 'p-b').personId).toBe('p-b');
   });
+  it('D3 승인 알림 뒤 요청이 끝나면 소유자에 머물지 않는다', () => {
+    expect(choosePhone(SCENES.later(), ON, 'p-owner').personId).toBe('p-a');
+  });
+  it('D3 요청자 따라가기만 끄면 문구가 승인 알림만 따른다고 말한다', () => {
+    expect(choosePhone(SCENES.flow(), { followRequester: false, followApprover: true }, 'p-b')).toMatchObject({ personId: 'p-b', follow: '승인 알림이 오면 소유자로 바꿔요' });
+  });
 });

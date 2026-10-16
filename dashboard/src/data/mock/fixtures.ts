@@ -15,6 +15,7 @@ export const LAYOUT: FloorLayout = {
   depthM: 5.4,
   modelVersion: 'v3',
   calibrationVersion: 'cal-2',
+  weakRssiDbm: -80,
   // NFR-10 시연 장비: 사물함 3, LED 조명 3, 스피커 1
   devices: [
     { nodeId: 'locker-1', name: '사물함 1', capability: 'locker', occupancy: 'rental', body: m(450, 112), front: m(450, 260), wall: 'top' },

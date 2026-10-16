@@ -29,6 +29,8 @@ export interface StageView {
   placeName: string;
   widthM: number;
   depthM: number;
+  /** 축척 막대 1 m의 SVG 길이 */
+  meterPx: number;
   modelVersion: string;
   host: HostKind | null;
   server: boolean;
@@ -144,6 +146,7 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
     placeName: layout.placeName,
     widthM: layout.widthM,
     depthM: layout.depthM,
+    meterPx: Math.round((ROOM.w / layout.widthM) * 10) / 10,
     modelVersion: layout.modelVersion,
     host: opt.layoutCheck ? null : r?.host ?? null,
     server: !opt.layoutCheck && !!r,

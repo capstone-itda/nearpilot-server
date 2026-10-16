@@ -1,4 +1,4 @@
-// MON-05 기기 상세: 상태, 고장 격리의 복구 준비, 대여 초과
+// MON-05 기기 상세: 상태, 고장 격리 원인, 대여 초과
 import { KeyValue, NoteBox, Section, StateStrip, Timeline, VerdictTag } from '../components/common';
 import { Loading, Panel } from '../components/Panel';
 import { useData, useQuery } from '../data/context';
@@ -7,7 +7,9 @@ import { ACTION_NAME, DEVICE_STATE_NAME } from '../view/text';
 function FaultBody({ nodeId }: { nodeId: string }) {
   const { snapshot } = useData();
   const f = snapshot.devices.find((d) => d.nodeId === nodeId)?.fault;
-  const why = f ? `${f.action ? `${f.action} 명령의` : '명령의'} 결과를 몰라서(${f.cause}) 후보에서 빼고 격리했어요` : '후보에서 빼고 격리했어요';
+  const cmd = f?.action ? `${ACTION_NAME[f.action]} 명령` : '명령';
+  const cause = !f ? '' : f.cause === 'EXEC_UNKNOWN' ? `${cmd}의 결과를 몰라서` : f.cause === 'EXEC_FAILED' ? `기기가 ${cmd} 실패를 알려서` : `기기 이상(${f.cause})으로`;
+  const why = f ? `${cause} 후보에서 빼고 격리했어요` : '후보에서 빼고 격리했어요';
   return (
     <>
       <Section title="상태" hint={why}>

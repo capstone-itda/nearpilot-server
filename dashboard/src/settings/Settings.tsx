@@ -10,9 +10,6 @@ import type { FollowSettings } from '../view/phone';
 import { stageView } from '../view/stage';
 import { HOST_NAME } from '../view/text';
 
-/** 약한 신호 표시 기준 (dBm). 대시보드 표시 설정값이고 서버 판정과 무관하다. */
-export const WEAK_RSSI_DBM = -80;
-
 const NAV: [SettingsKey, string, string][] = [
   ['layout', '배치·신호 점검', '모델 배치와 실시간 신호'],
   ['phones', '폰 연결', '미러링 창과 비콘'],
@@ -46,11 +43,12 @@ const fmtDbm = (v: number) => String(v).replace('-', '−');
 
 export function LayoutCheck() {
   const { snapshot, layout } = useData();
+  const weakDbm = layout.weakRssiDbm;
   const visitors = snapshot.people.filter((p) => p.role === 'visitor' && p.beaconSeen);
   const weak: string[] = [];
   for (const d of layout.devices) for (const p of visitors) {
     const v = p.rssi[d.nodeId];
-    if (v !== undefined && v < WEAK_RSSI_DBM) weak.push(`${d.name}에서 ${p.pseudonym}의 신호가 약해요.`);
+    if (v !== undefined && v < weakDbm) weak.push(`${d.name}에서 ${p.pseudonym}의 신호가 약해요.`);
   }
   return (
     <SettingsContent title="배치·신호 점검" sub="근접 모델 파일의 배치를 그대로 그려요. 여기서는 고치지 않아요.">
@@ -67,10 +65,10 @@ export function LayoutCheck() {
               key: d.nodeId,
               cells: [<Td key="n" main={d.name} />, ...visitors.map((p) => {
                 const v = p.rssi[d.nodeId];
-                return <td key={p.id} className="np-signal__value" data-tone={v !== undefined && v < WEAK_RSSI_DBM ? 'weak' : 'normal'}>{v === undefined ? '—' : fmtDbm(v)}</td>;
+                return <td key={p.id} className="np-signal__value" data-tone={v !== undefined && v < weakDbm ? 'weak' : 'normal'}>{v === undefined ? '—' : fmtDbm(v)}</td>;
               })]
             }))} />
-            <p className="np-sec__hint">점선 밑줄: {fmtDbm(WEAK_RSSI_DBM)} dBm보다 약함 (대시보드 표시 설정값 · 서버 판정과 무관)</p>
+            <p className="np-sec__hint">점선 밑줄: {fmtDbm(weakDbm)} dBm보다 약함 (설정값 · 판정에는 쓰지 않음)</p>
           </section>
           {weak.length ? (
             <div className="np-warn" data-component="Warning" role="note">

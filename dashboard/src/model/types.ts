@@ -29,6 +29,8 @@ export interface FloorLayout {
   depthM: number;
   modelVersion: string;
   calibrationVersion: string;
+  /** 배치·신호 점검에서 약한 신호로 표시할 기준 (dBm). 설정에서 받는다. 판정에는 쓰지 않는다. */
+  weakRssiDbm: number;
   devices: LayoutDevice[];
 }
 export interface LayoutDevice {

@@ -3,7 +3,7 @@ import type { RequestProgress } from '../model/types';
 import { KeyValue, ProbBars, Section, StepList, Timeline, VerdictTag, type StepRowResult } from '../components/common';
 import { Panel } from '../components/Panel';
 import { useData } from '../data/context';
-import { ACTION_VERB, CAPABILITY_NAME, CIRCLED, HOST_NAME, STEP_SHORT, VERDICT_LABEL, josa, requestTitle, toolCall } from '../view/text';
+import { ACTION_DONE, ACTION_NAME, ACTION_VERB, CAPABILITY_NAME, CIRCLED, HOST_NAME, STEP_SHORT, VERDICT_LABEL, josa, requestTitle, toolCall } from '../view/text';
 
 const STOP_RESULT: Record<RequestProgress['verdict'], StepRowResult> = { OK: 'pass', ASK: 'ask', NEED_APPROVAL: 'appr', BUSY: 'fail', DENY: 'fail' };
 
@@ -25,6 +25,15 @@ function stopHint(r: RequestProgress, cap: string): string {
   return `${CIRCLED[i]} ${STEP_SHORT[i]}에서 ${why[r.reason] ?? `${r.reason}(으)로`} 멈췄어요`;
 }
 
+function execText(r: RequestProgress, subject: string): string {
+  switch (r.execution) {
+    case 'succeeded': return `${subject} ${ACTION_DONE[r.action]}`;
+    case 'failed': return '기기가 실패를 알려 고장 격리했어요 (EXEC_FAILED)';
+    case 'unknown': return '응답이 없어 결과를 몰라 고장 격리했어요 (EXEC_UNKNOWN)';
+    default: return '명령을 보냈고 결과를 기다려요';
+  }
+}
+
 export function RequestPanel({ r, onClose }: { r: RequestProgress; onClose: () => void }) {
   const { personName, deviceName, layout, snapshot } = useData();
   const cap = CAPABILITY_NAME[r.target.capability ?? layout.devices.find((d) => d.nodeId === r.nodeId)?.capability ?? 'locker'];
@@ -43,6 +52,11 @@ export function RequestPanel({ r, onClose }: { r: RequestProgress; onClose: () =
       <Section title="서버가 확인한 순서" hint={stopHint(r, cap)}>
         <StepList items={rows} />
       </Section>
+      {r.verdict === 'OK' && r.nodeId ? (
+        <Section title="실행 결과">
+          <KeyValue rows={[['명령', `${deviceName(r.nodeId)} ${ACTION_NAME[r.action]}`], ['결과', execText(r, josa(deviceName(r.nodeId), '이', '가'))]]} />
+        </Section>
+      ) : null}
       {showBars ? (
         <Section title={`어느 ${cap} 앞일까`} hint={`가장 높은 확률이 기준선을 넘어야 ${ACTION_VERB[r.action]}`}>
           <ProbBars rows={layout.devices.filter((d) => r.posteriors![d.nodeId] !== undefined).map((d) => [d.name, r.posteriors![d.nodeId], d.nodeId === post[0][0] ? 'ask' : 'muted'])} threshold={r.threshold!} />
