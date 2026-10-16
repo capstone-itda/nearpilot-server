@@ -1,24 +1,26 @@
 // 스냅숏 → 무대(평면도) 표시값. 장면별 고정 값 없이 규칙으로 계산한다.
-import type { DeviceStatus, FloorLayout, HostKind, LayoutDevice, Person, Point, RequestProgress, Snapshot } from '../model/types';
+import type { DeviceStatus, FloorLayout, HostKind, LayoutDevice, Person, RequestProgress, Snapshot, Spot } from '../model/types';
+import { ROOM, facing, frontOf, type Facing } from './arrange';
 import {
   ACTION_DID, ACTION_DOING, ACTION_CAN, ACTION_DONE, ACTION_NAME, ACTION_OBJ, CAPABILITY_NAME,
-  DEVICE_STATE_NAME, josa
+  DEVICE_STATE_NAME, approvalText, josa
 } from './text';
 
-/** 평면도 SVG 좌표계: 방 벽 사각형 */
-export const ROOM = { x: 330, y: 90, w: 1010, h: 650 };
+export { ROOM };
 const CALLOUT_H = 76;
+/** 같은 기기 앞에 선 사람끼리, ASK에서 두 기기 사이에 선 사람을 띄우는 거리 */
+const PERSON_GAP = 64;
 
 export type Tone = 'none' | 'active' | 'ok' | 'ask' | 'appr' | 'busy' | 'deny' | 'accent';
 export type StageScene = 'idle' | 'flow' | 'fault' | 'ask' | 'approval' | 'busy' | 'deny' | 'layout';
 
 export interface StageDeviceView {
   nodeId: string; name: string; capability: LayoutDevice['capability'];
-  x: number; y: number; fx: number; fy: number; wall: LayoutDevice['wall'];
+  x: number; y: number; fx: number; fy: number; wall: Facing;
   status: string; code: string; tone: Tone; dim: boolean;
 }
 export interface StageVisitorView {
-  personId: string; letter: string; x: number; y: number;
+  personId: string; letter: string; name: string; x: number; y: number;
   active: boolean; dim: boolean; on: boolean; label: 'right' | 'left' | 'above';
 }
 export interface CalloutView { on: boolean; tone: Tone; x: number; y: number; ax: number; ay: number; title: string; body: string }
@@ -27,10 +29,6 @@ export interface StageView {
   scene: StageScene;
   aria: string;
   placeName: string;
-  widthM: number;
-  depthM: number;
-  /** 축척 막대 1 m의 SVG 길이 */
-  meterPx: number;
   modelVersion: string;
   host: HostKind | null;
   server: boolean;
@@ -41,7 +39,6 @@ export interface StageView {
   signals: { personId: string; x: number; y: number; on: boolean }[];
   rssiOn: boolean;
   rssi: Record<string, string>;
-  coords: boolean;
   mcp: HostKind | null;
   uplink: boolean;
   /** 실행 명령 선의 대상 기기 */
@@ -52,17 +49,13 @@ export interface StageView {
   callout: CalloutView;
 }
 
-export const toSvg = (p: Point, layout: Pick<FloorLayout, 'widthM' | 'depthM'>) => ({
-  x: Math.round((ROOM.x + (p.x * ROOM.w) / layout.widthM) * 10) / 10,
-  y: Math.round((ROOM.y + (p.y * ROOM.h) / layout.depthM) * 10) / 10
-});
-
 const dbm = (v: number) => `${String(v).replace('-', '−')} dBm`;
 
 function baseDevice(st: DeviceStatus | undefined): { status: string; code: string; tone: Tone } {
   if (!st) return { status: '알 수 없음', code: '—', tone: 'none' };
   if (st.state === 'FAULT') return { status: DEVICE_STATE_NAME.FAULT, code: 'FAULT', tone: 'deny' };
   if (st.state === 'AVAILABLE') return { status: DEVICE_STATE_NAME.AVAILABLE, code: 'AVAILABLE', tone: 'none' };
+  if (st.state === 'RESERVED') return { status: DEVICE_STATE_NAME.RESERVED, code: 'RESERVED', tone: 'active' };
   const name = st.state === 'CLOSING' ? DEVICE_STATE_NAME.CLOSING : DEVICE_STATE_NAME.ACTIVE;
   return { status: st.overdue ? `${name} · 대여 초과` : name, code: st.state, tone: 'active' };
 }
@@ -74,10 +67,47 @@ export function focusDevices(r: RequestProgress, layout: FloorLayout): string[] 
   return layout.devices.filter((d) => d.capability === r.target.capability).map((d) => d.nodeId);
 }
 
+/**
+ * 무대에서 사람을 세울 자리. 서버는 사람 좌표를 주지 않으므로 표시용으로만 고른다 (판정과 무관).
+ * 요청한 사람: 고른 기기 앞, ASK면 확률이 높은 두 기기 사이, 아니면 확률이 가장 높은 기기 앞.
+ * 그 밖의 사람: 신호가 가장 센 기기 앞. 신호가 없으면 그리지 않는다.
+ */
+export function personAnchors(s: Snapshot, layout: FloorLayout, visitors: Person[]): Map<string, Spot> {
+  const fronts = new Map(layout.devices.map((d) => [d.nodeId, frontOf(d.spot)]));
+  const inward = (p: Spot, k: number): Spot => ({ x: p.x, y: p.y + (p.y < ROOM.y + ROOM.h / 2 ? k : -k) });
+  const r = s.request;
+  const out = new Map<string, Spot>();
+  const used = new Map<string, number>();
+  // 요청한 사람을 먼저 세워서 그 자리를 비켜 주지 않게 한다
+  const order = [...visitors].sort((a, b) => Number(b.id === r?.personId) - Number(a.id === r?.personId));
+  for (const p of order) {
+    if (!p.beaconSeen) continue;
+    let key: string | undefined;
+    let spot: Spot | undefined;
+    if (r && r.personId === p.id) {
+      const ranked = Object.entries(r.posteriors ?? {}).filter(([id]) => fronts.has(id)).sort((a, b) => b[1] - a[1]).map(([id]) => id);
+      const pick = r.nodeId ?? r.target.nodeId;
+      if (pick && fronts.has(pick)) key = pick;
+      else if (r.verdict === 'ASK' && ranked.length >= 2) {
+        const [a, b] = [fronts.get(ranked[0])!, fronts.get(ranked[1])!];
+        key = `${ranked[0]}|${ranked[1]}`;
+        spot = inward({ x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2) }, PERSON_GAP);
+      } else key = ranked[0];
+    }
+    if (!key) key = Object.entries(p.rssi).filter(([id]) => fronts.has(id)).sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (!key) continue;
+    const base = spot ?? fronts.get(key)!;
+    const n = used.get(key) ?? 0;
+    used.set(key, n + 1);
+    out.set(p.id, inward(base, n * PERSON_GAP));
+  }
+  return out;
+}
+
 export interface StageOptions {
   /** 무대 위에 패널이 열려 있는가 (콜아웃을 패널 밖으로 둔다) */
   panelOpen: boolean;
-  /** SET-01 배치 점검 */
+  /** SET-01 배치 */
   layoutCheck?: boolean;
 }
 
@@ -99,8 +129,8 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
 
   // 기기
   const devices: StageDeviceView[] = layout.devices.map((d) => {
-    const b = toSvg(d.body, layout);
-    const f = toSvg(d.front, layout);
+    const b = d.spot;
+    const f = frontOf(d.spot);
     const v = { ...baseDevice(byId.get(d.nodeId)) };
     if (r && !opt.layoutCheck && keep.length === 1 && keep[0] === d.nodeId) {
       if (r.verdict === 'OK' && r.execution === 'sent') { v.status = ACTION_DOING[r.action]; v.tone = 'ok'; }
@@ -108,34 +138,36 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
       else if (r.verdict === 'BUSY') v.tone = 'busy';
     }
     return {
-      nodeId: d.nodeId, name: d.name, capability: d.capability, x: b.x, y: b.y, fx: f.x, fy: f.y, wall: d.wall,
+      nodeId: d.nodeId, name: d.name, capability: d.capability, x: b.x, y: b.y, fx: f.x, fy: f.y, wall: facing(d.spot),
       ...v, dim: !!r && !opt.layoutCheck && !keep.includes(d.nodeId)
     };
   });
 
   // 사람
   const calloutOnVisitor = !opt.layoutCheck && !!r && (r.verdict === 'ASK' || (r.verdict === 'DENY' && !r.nodeId));
+  const anchors = personAnchors(s, layout, visitors);
   const vis: StageVisitorView[] = visitors.map((p) => {
-    const pos = p.position ? toSvg(p.position, layout) : { x: ROOM.x + ROOM.w - 200, y: ROOM.y + ROOM.h / 2 };
+    const at = anchors.get(p.id);
+    const pos = at ?? { x: ROOM.x + ROOM.w - 200, y: ROOM.y + ROOM.h / 2 };
     const isReq = !!r && p.id === r.personId;
     const label: StageVisitorView['label'] = isReq && calloutOnVisitor ? 'left' : pos.y > ROOM.y + ROOM.h * 0.6 ? 'above' : 'right';
     return {
-      personId: p.id, letter: p.letter!, x: pos.x, y: pos.y,
+      personId: p.id, letter: p.letter!, name: p.pseudonym, x: pos.x, y: pos.y,
       active: s.connected && (r ? isReq : p.beaconSeen),
       dim: !!r && !opt.layoutCheck && !isReq,
-      on: !!p.position && p.beaconSeen,
+      on: !!at && p.beaconSeen,
       label
     };
   });
 
   // 신호와 흐름 선
   const idleShow = !r && s.connected && !opt.panelOpen && !opt.layoutCheck;
-  const idlePerson = idleShow ? visitors.find((p) => p.beaconSeen && p.position) : undefined;
-  const signalPerson: Person | undefined = opt.layoutCheck
-    ? undefined
-    : r && (scene === 'flow' || scene === 'ask') ? requester : idlePerson;
+  const idlePerson = idleShow ? visitors.find((p) => p.beaconSeen && anchors.has(p.id)) : undefined;
+  // 실행이 끝난 요청은 신호와 호출 선을 끈다
+  const inFlight = !!r && ((scene === 'flow' && r.execution !== 'succeeded') || scene === 'ask');
+  const signalPerson: Person | undefined = opt.layoutCheck ? undefined : inFlight ? requester : idlePerson;
   const signals = vis.map((v) => ({ personId: v.personId, x: v.x, y: v.y, on: !!signalPerson && signalPerson.id === v.personId }));
-  const rssiPerson = r && (scene === 'flow' || scene === 'ask') ? requester : undefined;
+  const rssiPerson = !opt.layoutCheck && inFlight ? requester : undefined;
   const rssi: Record<string, string> = {};
   if (rssiPerson) for (const [id, v] of Object.entries(rssiPerson.rssi)) rssi[id] = dbm(v);
 
@@ -144,9 +176,6 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
     scene,
     aria: '',
     placeName: layout.placeName,
-    widthM: layout.widthM,
-    depthM: layout.depthM,
-    meterPx: Math.round((ROOM.w / layout.widthM) * 10) / 10,
     modelVersion: layout.modelVersion,
     host: opt.layoutCheck ? null : r?.host ?? null,
     server: !opt.layoutCheck && !!r,
@@ -156,8 +185,7 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
     signals,
     rssiOn: !!rssiPerson,
     rssi,
-    coords: !!opt.layoutCheck,
-    mcp: scene === 'flow' ? r!.host : null,
+    mcp: scene === 'flow' && inFlight ? r!.host : null,
     uplink: scene === 'ask' || !!idlePerson,
     cmd: scene === 'flow' && r!.execution === 'sent' ? target : null,
     push: scene === 'approval' && s.ownerNotified,
@@ -190,7 +218,7 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
 
   const who = requester?.pseudonym ?? '방문자';
   if (opt.layoutCheck) {
-    view.aria = `${layout.placeName} 근접 모델 파일의 기기 배치`;
+    view.aria = `${layout.placeName}의 표시용 기기 배치`;
   } else if (!r) {
     view.aria = s.connected ? `대기 중인 ${layout.placeName}` : `연결이 끊긴 ${layout.placeName}의 마지막 화면`;
     if (idlePerson) set('accent', atVisitor(idlePerson.id), '폰이 비콘 신호를 보내는 중', '기기가 신호 세기를 재서 서버로 보내요');
@@ -219,7 +247,8 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
         break;
       case 'ask': {
         const top = Object.entries(r.posteriors ?? {}).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([id]) => devName(id));
-        view.aria = top.length === 2 ? `${josa(who, '이', '가')} ${josa(top[0], '과', '와')} ${top[1]} 사이에 있어 서버가 다시 묻는 중` : `${who}에게 서버가 다시 묻는 중`;
+        if (r.reason === 'MOVE_CLOSER') view.aria = `${josa(who, '이', '가')} ${devName(r.target.nodeId)} 앞인지 확실하지 않아 서버가 다시 묻는 중`;
+        else view.aria = top.length === 2 ? `${josa(who, '이', '가')} ${josa(top[0], '과', '와')} ${top[1]} 사이에 있어 서버가 다시 묻는 중` : `${who}에게 서버가 다시 묻는 중`;
         if (r.reason === 'MOVE_CLOSER') set('ask', atVisitor(r.personId), `${devName(r.target.nodeId)} 앞인지 확실하지 않아요`, '조금 더 가까이 가 달라고 해요');
         else set('ask', atVisitor(r.personId), `어느 ${cap} 앞인지 애매해요`, top.length === 2 ? `${josa(top[0], '과', '와')} ${top[1]} 사이라서 다시 물어봐요` : '다시 물어봐요');
         break;
@@ -227,12 +256,13 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
       case 'approval':
         view.aria = `${who}의 ${cap} ${act} 요청이 소유자 승인을 기다리는 중`;
         if (s.ownerNotified) set('appr', place('owner', 250, 632), '소유자에게 승인 요청', `${josa(name || cap, '은', '는')} 소유자가 승인해야 ${ACTION_CAN[r.action]} 수 있어요`);
-        else set('appr', atDevice(target), '소유자 승인이 필요해요', 'AI가 승인을 신청하면 소유자 폰에 알림이 가요');
+        else if (r.reason === 'APPROVAL_REQUIRED') set('appr', atDevice(target), '소유자 승인이 필요해요', 'AI가 승인을 신청하면 소유자 폰에 알림이 가요');
+        else set('appr', atDevice(target), approvalText(r.reason).title, approvalText(r.reason).detail);
         break;
       case 'busy':
         view.aria = `${who}의 ${cap} ${act} 요청이 바빠서 실행되지 않음`;
         if (target) set('busy', atDevice(target), r.reason === 'USER_BUSY' ? '이미 다른 기기를 쓰는 중' : r.reason === 'COMMAND_IN_PROGRESS' ? `${name} 명령 실행 중` : `${name} 사용 중`,
-          r.reason === 'USER_BUSY' ? '쓰던 기기를 먼저 반납해야 해요' : r.reason === 'COMMAND_IN_PROGRESS' ? '다른 명령을 실행하는 중이라 기다려야 해요' : '다른 사람이 쓰고 있어서 실행하지 않았어요');
+          r.reason === 'USER_BUSY' ? '쓰던 기기를 먼저 반납해야 해요' : r.reason === 'COMMAND_IN_PROGRESS' ? '다른 명령을 실행하는 중이라 기다려야 해요' : '이미 점유된 기기라 실행하지 않았어요');
         break;
       case 'deny': {
         view.aria = `${who}의 ${cap} ${act} 요청을 거부함`;

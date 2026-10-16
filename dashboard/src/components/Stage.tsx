@@ -1,7 +1,15 @@
-// 무대: 평면도 위의 기기, 사람, 무선 흐름(D5). 좌표는 근접 모델 파일의 배치에서 온다(D4).
-import type { HostKind } from '../model/types';
+// 무대: 표시용 배치 위의 기기, 사람, 무선 흐름(D5). 배치는 이 PC에서 정한다(D4). 실제 위치·거리가 아니다.
+import { useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import type { HostKind, Spot } from '../model/types';
+import { GRID, facing, frontOf, snap } from '../view/arrange';
 import type { StageDeviceView, StageView, StageVisitorView } from '../view/stage';
 import { ROOM } from '../view/stage';
+
+/** SET-01 배치 편집. 모니터 무대에는 넘기지 않는다. */
+export interface StageEdit {
+  canPlace: (nodeId: string, s: Spot) => boolean;
+  onMove: (nodeId: string, s: Spot) => void;
+}
 
 const b = (v: unknown) => (v ? 'true' : 'false');
 
@@ -11,10 +19,21 @@ const GLYPH = {
   light: <path className="np-stage__device-glyph" d="M0 -13a8 8 0 0 1 5 14v4h-10v-4a8 8 0 0 1 5 -14zM-4 9h8" />
 };
 
-function Device({ d }: { d: StageDeviceView }) {
+interface DeviceEditProps {
+  invalid: boolean;
+  onPointerDown: (e: PointerEvent<SVGGElement>) => void;
+  onKeyDown: (e: KeyboardEvent<SVGGElement>) => void;
+}
+
+function Device({ d, edit }: { d: StageDeviceView; edit?: DeviceEditProps }) {
   const ly = d.wall === 'top' ? [50, 72, 92] : [-78, -56, -36];
+  const editAttrs = edit ? {
+    tabIndex: 0, role: 'button', 'aria-label': `${d.name} 옮기기. 끌거나 화살표 키로 한 칸씩 옮겨요`,
+    'data-edit': 'true', 'data-invalid': b(edit.invalid), onPointerDown: edit.onPointerDown, onKeyDown: edit.onKeyDown
+  } : {};
   return (
-    <g className="np-stage__device" data-component="StageDevice" data-tone={d.tone} data-dim={b(d.dim)} transform={`translate(${d.x} ${d.y})`}>
+    <g className="np-stage__device" data-component="StageDevice" data-tone={d.tone} data-dim={b(d.dim)} transform={`translate(${d.x} ${d.y})`} {...editAttrs}>
+      {edit ? <rect className="np-stage__hit" x="-66" y="-48" width="132" height="96" /> : null}
       <rect className="np-stage__device-body" x="-36" y="-21" width="72" height="42" />
       {GLYPH[d.capability]}
       <text className="np-stage__label" x="0" y={ly[0]} data-anchor="middle">{d.name}</text>
@@ -25,15 +44,15 @@ function Device({ d }: { d: StageDeviceView }) {
 }
 
 function Visitor({ v }: { v: StageVisitorView }) {
-  const lx = v.label === 'left' ? -52 : v.label === 'above' ? 0 : 40;
-  const ly = v.label === 'above' ? -54 : v.label === 'left' ? 7 : -30;
+  const lx = v.label === 'left' ? -56 : v.label === 'above' ? 0 : 56;
+  const ly = v.label === 'above' ? -54 : 7;
   const anchor = v.label === 'left' ? 'end' : v.label === 'above' ? 'middle' : 'start';
   return (
     <g className="np-stage__visitor" data-component="StageVisitor" data-active={b(v.active)} data-dim={b(v.dim)} data-on={b(v.on)} transform={`translate(${v.x} ${v.y})`}>
       <circle className="np-stage__ring" r="24" /><circle className="np-stage__ring" r="35" /><circle className="np-stage__ring" r="46" />
       <circle className="np-stage__visitor-dot" r="14" />
       <text className="np-stage__visitor-letter" y="6" data-anchor="middle">{v.letter}</text>
-      <text className="np-stage__label" x={lx} y={ly} data-anchor={anchor}>방문자 {v.letter}</text>
+      <text className="np-stage__label" x={lx} y={ly} data-anchor={anchor}>{v.name}</text>
     </g>
   );
 }
@@ -61,33 +80,70 @@ function routeTo(d: StageDeviceView | undefined): { path: string; arrow: string 
 
 const HOSTS: [HostKind, string, number][] = [['claude', 'Claude', 165], ['chatgpt', 'ChatGPT', 223], ['gemini', 'Gemini', 281]];
 
-export function Stage({ v }: { v: StageView }) {
-  const tops = v.devices.filter((d) => d.wall === 'top');
-  const bottoms = v.devices.filter((d) => d.wall === 'bottom');
+const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-GRID, 0], ArrowRight: [GRID, 0], ArrowUp: [0, -GRID], ArrowDown: [0, GRID] };
+
+export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
+  const svg = useRef<SVGSVGElement>(null);
+  const [drag, setDrag] = useState<{ id: string; dx: number; dy: number; s: Spot; ok: boolean } | null>(null);
+  const toSvgPoint = (e: PointerEvent): Spot => {
+    const m = svg.current?.getScreenCTM();
+    if (!m) return { x: 0, y: 0 };
+    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
+    return { x: p.x, y: p.y };
+  };
+  const moved = (d: StageDeviceView, s: Spot): StageDeviceView => {
+    const f = frontOf(s);
+    return { ...d, x: s.x, y: s.y, fx: f.x, fy: f.y, wall: facing(s) };
+  };
+  const devices = v.devices.map((d) => (drag && drag.id === d.nodeId ? moved(d, drag.s) : d));
+  const editFor = (d: StageDeviceView): DeviceEditProps | undefined => edit && {
+    invalid: !!drag && drag.id === d.nodeId && !drag.ok,
+    onPointerDown: (e) => {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      const p = toSvgPoint(e);
+      setDrag({ id: d.nodeId, dx: p.x - d.x, dy: p.y - d.y, s: { x: d.x, y: d.y }, ok: true });
+    },
+    onKeyDown: (e) => {
+      const step = ARROWS[e.key];
+      if (!step) return;
+      e.preventDefault();
+      const s = { x: d.x + step[0], y: d.y + step[1] };
+      if (edit.canPlace(d.nodeId, s)) edit.onMove(d.nodeId, s);
+    }
+  };
+  const onPointerMove = (e: PointerEvent<SVGSVGElement>) => {
+    if (!drag || !edit) return;
+    const p = toSvgPoint(e);
+    const s = { x: snap(p.x - drag.dx), y: snap(p.y - drag.dy) };
+    if (s.x !== drag.s.x || s.y !== drag.s.y) setDrag({ ...drag, s, ok: edit.canPlace(drag.id, s) });
+  };
+  const onPointerUp = () => {
+    if (drag && edit && drag.ok) edit.onMove(drag.id, drag.s);
+    setDrag(null);
+  };
+
+  const tops = devices.filter((d) => d.wall === 'top');
+  const bottoms = devices.filter((d) => d.wall === 'bottom');
   const topEnd = Math.max(...tops.map((d) => d.x), 284);
   const botEnd = Math.max(...bottoms.map((d) => d.x), 284);
   const bus = [
     `M250 470H284V60H${topEnd}`, ...tops.map((d) => `M${d.x} 60V${d.y - 21}`),
     `M284 470V775H${botEnd}`, ...bottoms.map((d) => `M${d.x} 775V${d.y + 21}`)
   ].join('');
-  const cmd = routeTo(v.devices.find((d) => d.nodeId === v.cmd));
-  const fault = routeTo(v.devices.find((d) => d.nodeId === v.fault));
+  const cmd = routeTo(devices.find((d) => d.nodeId === v.cmd));
+  const fault = routeTo(devices.find((d) => d.nodeId === v.fault));
   const c = v.callout;
-  const fmt = (n: number) => String(n).replace(/\.0+$/, '');
 
   return (
     <section className="np-stage" data-component="Stage" data-scene={v.scene} aria-label={`${v.placeName} 평면도`}>
-      <svg className="np-stage__svg" viewBox={v.scene === 'layout' ? '276 0 1100 800' : '0 0 1400 800'} preserveAspectRatio="xMidYMid meet" role="img" aria-label={v.aria}>
+      <svg ref={svg} className="np-stage__svg" data-editing={b(!!drag)} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => setDrag(null)} viewBox={v.scene === 'layout' ? '276 0 1100 800' : '0 0 1400 800'} preserveAspectRatio="xMidYMid meet" role="img" aria-label={v.aria}>
         <defs>
           <pattern id="np-grid-minor" width="24" height="24" patternUnits="userSpaceOnUse"><path className="np-stage__grid-minor" d="M24 0H0V24" /></pattern>
           <pattern id="np-grid-major" width="120" height="120" patternUnits="userSpaceOnUse"><rect className="np-stage__grid-minor-fill" width="120" height="120" /><path className="np-stage__grid-major" d="M120 0H0V120" /></pattern>
         </defs>
         <rect className="np-stage__grid-fill" width="1400" height="800" />
 
-        <path className="np-stage__dim" d={`M${ROOM.x} 14V30M${ROOM.x + ROOM.w} 14V30M${ROOM.x} 22H${ROOM.x + ROOM.w}`} />
-        <text className="np-stage__cap" x={ROOM.x + 14} y="16" data-anchor="start">{fmt(v.widthM)} M</text>
-        <path className="np-stage__dim" d={`M304 ${ROOM.y}H320M304 ${ROOM.y + ROOM.h}H320M312 ${ROOM.y}V${ROOM.y + ROOM.h}`} />
-        <text className="np-stage__cap" transform="translate(304 415) rotate(-90)" data-anchor="middle">{fmt(v.depthM)} M</text>
+        <text className="np-stage__note" x={ROOM.x} y="40">표시용 배치예요. 실제 위치나 거리와 달라요.</text>
 
         <g className="np-stage__nodes" data-on={b(v.scene !== 'layout')}>
           <text className="np-stage__cap" x="30" y="150">AI 호스트</text>
@@ -102,33 +158,21 @@ export function Stage({ v }: { v: StageView }) {
         </g>
 
         <rect className="np-stage__wall" x={ROOM.x} y={ROOM.y} width={ROOM.w} height={ROOM.h} />
-        <line className="np-stage__door" x1="1340" y1="400" x2="1340" y2="480" />
-        <path className="np-stage__door-arc" d="M1340 400A80 80 0 0 0 1260 480" />
-        <text className="np-stage__cap" x="1326" y="510" data-anchor="end">입구</text>
 
-        {v.devices.map((d) => <circle key={d.nodeId} className="np-stage__front" cx={d.fx} cy={d.fy} r="44" />)}
+        {devices.map((d) => <circle key={d.nodeId} className="np-stage__front" cx={d.fx} cy={d.fy} r="44" />)}
 
         {v.signals.map((s) => (
           <g key={s.personId} className="np-stage__signals" data-on={b(s.on)}>
-            {v.devices.map((d) => <path key={d.nodeId} className="np-stage__signal" d={`M${s.x} ${s.y}L${d.fx} ${d.fy}`} />)}
+            {devices.map((d) => <path key={d.nodeId} className="np-stage__signal" d={`M${s.x} ${s.y}L${d.fx} ${d.fy}`} />)}
           </g>
         ))}
 
-        {v.devices.map((d) => <Device key={d.nodeId} d={d} />)}
+        {devices.map((d) => <Device key={d.nodeId} d={d} edit={editFor(d)} />)}
 
         <g className="np-stage__rssi" data-on={b(v.rssiOn)}>
-          {v.devices.map((d) => (
+          {devices.map((d) => (
             <text key={d.nodeId} className="np-stage__signal-label" x={d.wall === 'top' ? d.x - 42 : d.x - 10} y={d.wall === 'top' ? d.y + 6 : d.y + 45} data-anchor="end">{v.rssi[d.nodeId] ?? ''}</text>
           ))}
-        </g>
-        <g className="np-stage__coords" data-on={b(v.coords)}>
-          {v.devices.map((d) => {
-            const y0 = d.wall === 'top' ? d.fy + 66 : d.fy - 72;
-            return [
-              <text key={`${d.nodeId}-x`} className="np-stage__code" x={d.fx} y={y0} data-anchor="middle">x {((d.fx - ROOM.x) / (ROOM.w / v.widthM)).toFixed(2)}</text>,
-              <text key={`${d.nodeId}-y`} className="np-stage__code" x={d.fx} y={y0 + 20} data-anchor="middle">y {((d.fy - ROOM.y) / (ROOM.h / v.depthM)).toFixed(2)}</text>
-            ];
-          })}
         </g>
 
         {HOSTS.map(([k, , y]) => (
@@ -155,8 +199,6 @@ export function Stage({ v }: { v: StageView }) {
 
         <rect className="np-stage__titleblock" x="1060" y="752" width="280" height="40" />
         <text className="np-stage__code" x="1074" y="777">{v.placeName} · 근접 모델 {v.modelVersion}</text>
-        <path className="np-stage__dim" d={`M${1020 - v.meterPx} 772H1020M${1020 - v.meterPx} 766V778M1020 766V778`} />
-        <text className="np-stage__code" x={1020 - v.meterPx / 2} y="792" data-anchor="middle">1 M</text>
       </svg>
     </section>
   );

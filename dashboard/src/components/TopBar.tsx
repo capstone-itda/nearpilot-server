@@ -7,7 +7,7 @@ export type MenuKey = PanelKey | SettingsKey;
 export const MENU: [PanelKey, string][] = [
   ['uses', '점유·대여 현황'], ['approvals', '승인 현황'], ['audit', '감사 로그'], ['history', '요청·판정 이력'], ['trust', '신뢰도 지표']
 ];
-export const SETTINGS: [SettingsKey, string][] = [['layout', '배치·신호 점검'], ['phones', '폰 연결'], ['check', '점검']];
+export const SETTINGS: [SettingsKey, string][] = [['layout', '배치'], ['phones', '폰 연결'], ['check', '점검']];
 
 export function PanelMenu({ open, current, onPick }: { open: boolean; current: MenuKey | null; onPick: (k: MenuKey) => void }) {
   const item = ([k, label]: [MenuKey, string]) => (

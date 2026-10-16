@@ -1,43 +1,41 @@
 // 목 데이터: 승인한 화면 설계 목업의 예시 시각표.
 // 13:21 방문자 C가 사물함 3 대여(14:21:05부터 대여 초과). 14:12 방문자 A가 조명 1 시간 승인(15:12까지).
 // 14:26 A의 ASK, 14:28 A가 사물함 1, 14:29 B의 사물함 2가 결과 불명으로 FAULT, 14:30 B의 조명 1 승인 필요.
+import { resolveArrangement, withArrangement } from '../../view/arrange';
 import type {
-  Approvals, AuditRow, DeviceStatus, FloorLayout, Health, HistoryRow, Person,
+  ApprovalRow, Approvals, AuditRow, DeviceStatus, FloorLayout, Health, HistoryRow, Person, PlaceInfo,
   MockPhoneScreen, RentalInfo, RequestProgress, Snapshot, TrustReport, UseRow
 } from '../../model/types';
 
-/** 목업 평면도 좌표(SVG)를 m로 바꾼다. 방 8.4 m × 5.4 m = SVG 1010 × 650, 원점 (330, 90). */
-const m = (x: number, y: number) => ({ x: ((x - 330) * 8.4) / 1010, y: ((y - 90) * 5.4) / 650 });
-
-export const LAYOUT: FloorLayout = {
+export const PLACE: PlaceInfo = {
   placeName: '공용 라운지',
-  widthM: 8.4,
-  depthM: 5.4,
   modelVersion: 'v3',
   calibrationVersion: 'cal-2',
   weakRssiDbm: -80,
   // NFR-10 시연 장비: 사물함 3, LED 조명 3, 스피커 1
   devices: [
-    { nodeId: 'locker-1', name: '사물함 1', capability: 'locker', occupancy: 'rental', body: m(450, 112), front: m(450, 260), wall: 'top' },
-    { nodeId: 'locker-2', name: '사물함 2', capability: 'locker', occupancy: 'rental', body: m(610, 112), front: m(610, 260), wall: 'top' },
-    { nodeId: 'locker-3', name: '사물함 3', capability: 'locker', occupancy: 'rental', body: m(770, 112), front: m(770, 260), wall: 'top' },
-    { nodeId: 'speaker-1', name: '스피커', capability: 'speaker', occupancy: 'shared', body: m(430, 719), front: m(430, 560), wall: 'bottom' },
-    { nodeId: 'light-1', name: '조명 1', capability: 'light', occupancy: 'shared', body: m(555, 719), front: m(555, 560), wall: 'bottom' },
-    { nodeId: 'light-2', name: '조명 2', capability: 'light', occupancy: 'shared', body: m(680, 719), front: m(680, 560), wall: 'bottom' },
-    { nodeId: 'light-3', name: '조명 3', capability: 'light', occupancy: 'shared', body: m(805, 719), front: m(805, 560), wall: 'bottom' }
+    { nodeId: 'locker-1', name: '사물함 1', capability: 'locker', occupancy: 'rental' },
+    { nodeId: 'locker-2', name: '사물함 2', capability: 'locker', occupancy: 'rental' },
+    { nodeId: 'locker-3', name: '사물함 3', capability: 'locker', occupancy: 'rental' },
+    { nodeId: 'speaker-1', name: '스피커', capability: 'speaker', occupancy: 'shared' },
+    { nodeId: 'light-1', name: '조명 1', capability: 'light', occupancy: 'shared' },
+    { nodeId: 'light-2', name: '조명 2', capability: 'light', occupancy: 'shared' },
+    { nodeId: 'light-3', name: '조명 3', capability: 'light', occupancy: 'shared' }
   ]
 };
+/** 기본 표시 배치를 입힌 장소 (테스트용) */
+export const LAYOUT: FloorLayout = withArrangement(PLACE, resolveArrangement(PLACE.devices));
 
 const dev = (over: Partial<Record<string, Partial<DeviceStatus>>> = {}): DeviceStatus[] =>
-  LAYOUT.devices.map((d) => ({ nodeId: d.nodeId, state: 'AVAILABLE', online: true, trust: 'trusted', overdue: false, ...over[d.nodeId] }));
+  PLACE.devices.map((d) => ({ nodeId: d.nodeId, state: 'AVAILABLE', online: true, trust: 'trusted', overdue: false, ...over[d.nodeId] }));
 
 const RSSI_IDLE_A = { 'locker-1': -69, 'locker-2': -69, 'locker-3': -71, 'speaker-1': -70, 'light-1': -70, 'light-2': -70, 'light-3': -72 };
 const RSSI_IDLE_B = { 'locker-1': -79, 'locker-2': -76, 'locker-3': -73, 'speaker-1': -81, 'light-1': -79, 'light-2': -78, 'light-3': -76 };
 
-type PersonOver = Partial<Pick<Person, 'position' | 'beaconSeen' | 'rssi'>>;
+type PersonOver = Partial<Pick<Person, 'beaconSeen' | 'rssi'>>;
 const people = (a: PersonOver = {}, b: PersonOver = {}): Person[] => [
-  { id: 'p-a', pseudonym: '방문자 A', letter: 'A', role: 'visitor', beaconSeen: true, position: m(1040, 420), rssi: RSSI_IDLE_A, ...a },
-  { id: 'p-b', pseudonym: '방문자 B', letter: 'B', role: 'visitor', beaconSeen: true, position: m(1150, 300), rssi: RSSI_IDLE_B, ...b },
+  { id: 'p-a', pseudonym: '방문자 A', letter: 'A', role: 'visitor', beaconSeen: true, rssi: RSSI_IDLE_A, ...a },
+  { id: 'p-b', pseudonym: '방문자 B', letter: 'B', role: 'visitor', beaconSeen: true, rssi: RSSI_IDLE_B, ...b },
   { id: 'p-c', pseudonym: '방문자 C', letter: 'C', role: 'visitor', beaconSeen: false, rssi: {} },
   { id: 'p-owner', pseudonym: '소유자', role: 'owner', beaconSeen: false, rssi: {} }
 ];
@@ -64,7 +62,7 @@ export const SCENES = {
   ask: (): Snapshot => ({
     ...base(), lastReceivedAt: '14:26:12',
     devices: dev({ 'locker-3': { state: 'ACTIVE', overdue: true } }),
-    people: people({ position: m(530, 345), rssi: { 'locker-1': -61, 'locker-2': -63, 'locker-3': -75, 'speaker-1': -82, 'light-1': -84, 'light-2': -86, 'light-3': -88 } }, { position: undefined, beaconSeen: false }),
+    people: people({ rssi: { 'locker-1': -61, 'locker-2': -63, 'locker-3': -75, 'speaker-1': -82, 'light-1': -84, 'light-2': -86, 'light-3': -88 } }, { beaconSeen: false }),
     request: {
       id: 'r-1426', personId: 'p-a', host: 'claude', tool: 'request_use', target: { kind: 'nearest', capability: 'locker' }, action: 'open',
       at: '14:26:12', verdict: 'ASK', reason: 'LOW_CONFIDENCE',
@@ -77,7 +75,7 @@ export const SCENES = {
   flow: (): Snapshot => ({
     ...base(), lastReceivedAt: '14:28:10',
     devices: dev({ 'locker-1': { state: 'RESERVED' }, 'locker-3': { state: 'ACTIVE', overdue: true } }),
-    people: people({ position: m(450, 260), rssi: { 'locker-1': -52, 'locker-2': -67, 'locker-3': -74, 'speaker-1': -79, 'light-1': -81, 'light-2': -84, 'light-3': -86 } }, { position: undefined, beaconSeen: false }),
+    people: people({ rssi: { 'locker-1': -52, 'locker-2': -67, 'locker-3': -74, 'speaker-1': -79, 'light-1': -81, 'light-2': -84, 'light-3': -86 } }, { beaconSeen: false }),
     request: {
       id: 'r-1428', personId: 'p-a', host: 'claude', tool: 'request_use', target: { kind: 'nearest', capability: 'locker' }, action: 'open',
       at: '14:28:10', verdict: 'OK', reason: 'OK', nodeId: 'locker-1', execution: 'sent',
@@ -100,7 +98,7 @@ export const SCENES = {
   fault: (): Snapshot => ({
     ...base(), lastReceivedAt: '14:29:40',
     devices: dev({ 'locker-1': { state: 'ACTIVE' }, 'locker-2': { state: 'FAULT', fault: { cause: 'EXEC_UNKNOWN', action: 'open', at: '14:29:40' } }, 'locker-3': { state: 'ACTIVE', overdue: true } }),
-    people: people({ position: undefined, beaconSeen: false }, { position: m(610, 260) }),
+    people: people({ beaconSeen: false }),
     request: {
       id: 'r-1429', personId: 'p-b', host: 'gemini', tool: 'request_use', target: { kind: 'nearest', capability: 'locker' }, action: 'open',
       at: '14:29:37', verdict: 'OK', reason: 'OK', nodeId: 'locker-2', execution: 'unknown',
@@ -112,7 +110,7 @@ export const SCENES = {
   approval: (): Snapshot => ({
     ...base(), lastReceivedAt: '14:31:02',
     devices: dev({ 'locker-1': { state: 'ACTIVE' }, 'locker-2': { state: 'FAULT', fault: { cause: 'EXEC_UNKNOWN', action: 'open', at: '14:29:40' } }, 'locker-3': { state: 'ACTIVE', overdue: true } }),
-    people: people({}, { position: m(555, 560) }),
+    people: people(),
     request: {
       id: 'r-1430', personId: 'p-b', host: 'chatgpt', tool: 'request_use', target: { kind: 'nearest', capability: 'light' }, action: 'on',
       at: '14:30:58', verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED', nodeId: 'light-1', accessRequestedAt: '14:31:00',
@@ -155,19 +153,24 @@ export const REQUESTS: Record<string, () => RequestProgress> = {
     steps: [{ result: 'pass', detail: '새 요청' }, { result: 'stop' }, { result: 'skip' }, { result: 'skip' }, { result: 'skip' }, { result: 'skip' }, { result: 'skip' }]
   })
 };
-export const USES: UseRow[] = [
-  { nodeId: 'locker-3', personId: 'p-c', occupancy: 'rental', session: 'ACTIVE', startedAt: '13:21', overdueMinutes: 9 },
-  { nodeId: 'locker-1', personId: 'p-a', occupancy: 'rental', session: 'ACTIVE', startedAt: '14:28' },
-  { nodeId: 'locker-2', personId: 'p-b', occupancy: 'rental', session: 'RESERVED', sessionNote: '실행 미확인 · 고장으로 보존', startedAt: '14:29' }
+/** 목 전용: 이 시각부터 조회 결과에 나타난다. 조회는 지금 스냅숏의 수신 시각까지만 보여 준다. */
+export type Since<T> = T & { since: string };
+/** 대여 시간이 끝나는 시각 (목 전용, 실제 값은 설정 rental_duration_sec) */
+export const RENTAL_DUE: Record<string, string> = { 'locker-3': '14:21:05' };
+
+export const USES: Since<UseRow>[] = [
+  { nodeId: 'locker-3', personId: 'p-c', occupancy: 'rental', session: 'ACTIVE', startedAt: '13:21', since: '13:21:04' },
+  { nodeId: 'locker-1', personId: 'p-a', occupancy: 'rental', session: 'ACTIVE', startedAt: '14:28', since: '14:28:10' },
+  { nodeId: 'locker-2', personId: 'p-b', occupancy: 'rental', session: 'RESERVED', sessionNote: '실행 미확인 · 고장으로 보존', startedAt: '14:29', since: '14:29:37' }
 ];
 
-export const APPROVALS: Approvals = {
-  pending: [{ nodeId: 'light-1', personId: 'p-b', requestedAt: '14:31', remainingMinutes: 9 }],
-  active: [{ nodeId: 'light-1', personId: 'p-a', mode: 'time_window', validUntil: '15:12', uses: 3 }],
+export const APPROVALS: { [K in keyof Approvals]: Since<ApprovalRow>[] } = {
+  pending: [{ nodeId: 'light-1', personId: 'p-b', requestedAt: '14:31', remainingMinutes: 9, since: '14:31:00' }],
+  active: [{ nodeId: 'light-1', personId: 'p-a', mode: 'time_window', validUntil: '15:12', uses: 3, since: '14:12:00' }],
   ended: [
-    { nodeId: 'light-1', personId: 'p-c', endReason: 'APPROVAL_REJECTED' },
-    { nodeId: 'light-2', personId: 'p-c', endReason: 'APPROVAL_REQUEST_EXPIRED' },
-    { nodeId: 'locker-1', personId: 'p-a', mode: 'one_time', endReason: 'APPROVAL_EXHAUSTED' }
+    { nodeId: 'light-1', personId: 'p-c', endReason: 'APPROVAL_REJECTED', since: '13:40:00' },
+    { nodeId: 'light-2', personId: 'p-c', endReason: 'APPROVAL_REQUEST_EXPIRED', since: '13:52:00' },
+    { nodeId: 'locker-1', personId: 'p-a', mode: 'one_time', endReason: 'APPROVAL_EXHAUSTED', since: '13:58:00' }
   ]
 };
 
@@ -182,13 +185,13 @@ export const AUDIT: AuditRow[] = [
   { id: 'a1', at: '14:20:03', step: 'auth', text: '토큰 확인 실패', code: 'INVALID_TOKEN' }
 ];
 
-export const HISTORY: HistoryRow[] = [
-  { requestId: 'r-1430', at: '14:30', personId: 'p-b', host: 'chatgpt', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함 · 승인 신청', code: 'APPROVAL_REQUIRED' },
-  { requestId: 'r-1429', at: '14:29', personId: 'p-b', host: 'gemini', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-2', outcome: '결과 불명 → 고장 격리', code: 'EXEC_UNKNOWN' },
-  { requestId: 'r-1428', at: '14:28', personId: 'p-a', host: 'claude', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-1', outcome: '열림' },
-  { requestId: 'r-1426', at: '14:26', personId: 'p-a', host: 'claude', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'ASK', outcome: '다시 질문', code: 'LOW_CONFIDENCE' },
-  { requestId: 'r-1422', at: '14:22', personId: 'p-b', host: 'gemini', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'BUSY', nodeId: 'locker-3', outcome: '실행 안 함', code: 'DEVICE_BUSY' },
-  { requestId: 'r-1420', at: '14:20', personId: 'p-c', host: 'claude', target: { kind: 'nearest', capability: 'speaker' }, action: 'on', verdict: 'DENY', outcome: '실행 안 함', code: 'BEACON_NOT_SEEN' }
+export const HISTORY: Since<HistoryRow>[] = [
+  { requestId: 'r-1430', at: '14:30', personId: 'p-b', host: 'chatgpt', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함 · 승인 신청', code: 'APPROVAL_REQUIRED', since: '14:30:58' },
+  { requestId: 'r-1429', at: '14:29', personId: 'p-b', host: 'gemini', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-2', outcome: '결과 불명 → 고장 격리', code: 'EXEC_UNKNOWN', since: '14:29:40' },
+  { requestId: 'r-1428', at: '14:28', personId: 'p-a', host: 'claude', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-1', outcome: '열림', since: '14:28:11' },
+  { requestId: 'r-1426', at: '14:26', personId: 'p-a', host: 'claude', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'ASK', outcome: '다시 질문', code: 'LOW_CONFIDENCE', since: '14:26:12' },
+  { requestId: 'r-1422', at: '14:22', personId: 'p-b', host: 'gemini', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'BUSY', nodeId: 'locker-3', outcome: '실행 안 함', code: 'DEVICE_BUSY', since: '14:22:05' },
+  { requestId: 'r-1420', at: '14:20', personId: 'p-c', host: 'claude', target: { kind: 'nearest', capability: 'speaker' }, action: 'on', verdict: 'DENY', outcome: '실행 안 함', code: 'BEACON_NOT_SEEN', since: '14:20:41' }
 ];
 
 export const TRUST: TrustReport = {
@@ -215,16 +218,16 @@ export const TRUST: TrustReport = {
 };
 
 export const RENTALS: Record<string, RentalInfo> = {
-  'locker-3': { nodeId: 'locker-3', personId: 'p-c', startedAt: '13:21', overdueMinutes: 9, timeline: [
-    { at: '13:21:04', text: '예약 · RESERVED' }, { at: '13:21:05', text: '열림 · ACTIVE' }, { at: '14:21', text: '대여 시간 초과', now: true }
+  'locker-3': { nodeId: 'locker-3', personId: 'p-c', startedAt: '13:21', overdueMinutes: 0, timeline: [
+    { at: '13:21:04', text: '예약 · RESERVED' }, { at: '13:21:05', text: '열림 · ACTIVE' }, { at: '14:21:05', text: '대여 시간 초과' }
   ] },
   'locker-1': { nodeId: 'locker-1', personId: 'p-a', startedAt: '14:28', overdueMinutes: 0, timeline: [
-    { at: '14:28:10', text: '예약 · RESERVED' }, { at: '14:28:11', text: '열림 · ACTIVE', now: true }
+    { at: '14:28:10', text: '예약 · RESERVED' }, { at: '14:28:11', text: '열림 · ACTIVE' }
   ] }
 };
 
 export const HEALTH: Health = {
-  devices: LAYOUT.devices.map((d) => ({ nodeId: d.nodeId, connected: true, trust: 'trusted' })),
+  devices: PLACE.devices.map((d) => ({ nodeId: d.nodeId, connected: true, trust: 'trusted' })),
   beacons: [
     { personId: 'p-a', label: 'minor 101', lastSeenSec: 1 },
     { personId: 'p-b', label: 'minor 102', lastSeenSec: 1, note: '스피커 쪽 신호 약함' },

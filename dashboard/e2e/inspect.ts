@@ -89,7 +89,11 @@ export function inspect(page: Page): Promise<Report> {
       }
     }
 
-    // 글자 대비 (흐리게 한 요소와 미러링 영상 자리 제외)
+    // 글자 대비. 아래 세 곳은 4.5:1 검사에서 뺀다.
+    // - 흐리게 한 요소(data-dim): 지금 요청과 관계없는 기기·사람을 일부러 낮춘 비활성 표시다 (WCAG 1.4.3의 비활성 구성 요소 예외).
+    //   같은 정보는 레일과 패널에 흐리지 않은 글자로 있다.
+    // - 폰 목 화면(data-mock): 실제로는 미러링 영상이 들어가는 자리다.
+    // - 연결 끊김의 무대·레일·폰: 마지막 화면을 일부러 낮춘 것이다. 안내 배너는 검사한다.
     const parse = (c: string) => { const m = c.match(/[\d.]+/g)!.map(Number); return { r: m[0], g: m[1], b: m[2], a: m[3] ?? 1 }; };
     const lum = (c: { r: number; g: number; b: number }) => {
       const f = (v: number) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };

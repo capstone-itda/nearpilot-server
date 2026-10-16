@@ -57,7 +57,7 @@ describe('railView', () => {
     busy.request = { ...busy.request!, verdict: 'BUSY', reason: 'DEVICE_BUSY', execution: undefined,
       steps: [0, 1, 2, 3, 4].map(() => ({ result: 'pass' as const })).concat([{ result: 'stop' }, { result: 'skip' }]) };
     const b = railView(busy, LAYOUT, 'p-a');
-    expect(b.steps[2].checks![3]).toEqual(['fail', '다른 사람이 사용 중']);
+    expect(b.steps[2].checks![3]).toEqual(['fail', '이미 점유됨']);
     expect(b.steps[4]).toMatchObject({ tone: 'busy', mark: '바쁨' });
     const deny = SCENES.flow();
     deny.request = { ...deny.request!, verdict: 'DENY', reason: 'BEACON_NOT_SEEN', nodeId: undefined, execution: undefined,
@@ -79,5 +79,24 @@ describe('railView 사유별 문구', () => {
     expect(railView(s, LAYOUT, 'p-a').steps[4].detail).toBe('어느 기기인지 다시 물어봐요');
     s.request = { ...s.request!, reason: 'MOVE_CLOSER' };
     expect(railView(s, LAYOUT, 'p-a').steps[4].detail).toBe('가까이 가서 다시 말해 달라고 안내');
+  });
+});
+
+describe('railView 단계 밖 판정', () => {
+  it('FR12B 단계 밖에서 멈춘 거부는 확인 칸을 통과로 보이지 않는다', () => {
+    const s = SCENES.flow();
+    s.request = { ...s.request!, verdict: 'DENY', reason: 'CAPACITY_EXCEEDED', nodeId: undefined, execution: undefined, steps: Array(7).fill({ result: 'skip' }) };
+    expect(railView(s, LAYOUT, 'p-a').steps[2].checks!.every(([c]) => c === 'none')).toBe(true);
+  });
+  it('FR12B 다른 명령이 진행 중인 BUSY는 점유와 다르게 쓴다', () => {
+    const s = SCENES.flow();
+    const steps = s.request!.steps.map((x, i) => (i === 5 ? { result: 'stop' as const } : i === 6 ? { result: 'skip' as const } : x));
+    s.request = { ...s.request!, verdict: 'BUSY', reason: 'COMMAND_IN_PROGRESS', execution: undefined, steps };
+    expect(railView(s, LAYOUT, 'p-a').steps[2].checks![3]).toEqual(['fail', '다른 명령 실행 중']);
+  });
+  it('FR12B 승인 필요 사유를 구분해서 보인다', () => {
+    const s = SCENES.approval();
+    s.request = { ...s.request!, reason: 'APPROVAL_PENDING', accessRequestedAt: undefined };
+    expect(railView(s, LAYOUT, 'p-b').steps[4]).toMatchObject({ mark: '승인 기다림', code: 'NEED_APPROVAL · APPROVAL_PENDING' });
   });
 });

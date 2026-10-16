@@ -1,10 +1,15 @@
 // 목 어댑터: 서버 없이 화면을 그린다. 서버 어댑터는 경로와 형식이 정해진 뒤 같은 인터페이스로 만든다.
 import type { DataSource } from '../source';
-import type { HistoryQuery, Snapshot } from '../../model/types';
+import type { HistoryQuery, Snapshot, UseRow } from '../../model/types';
 import {
-  APPROVALS, AUDIT, HEALTH, HISTORY, LAYOUT, PLAY_ORDER, RENTALS, REQUESTS, SCENES, TRUST, USES,
-  type SceneName
+  APPROVALS, AUDIT, HEALTH, HISTORY, PLACE, PLAY_ORDER, RENTAL_DUE, RENTALS, REQUESTS, SCENES, TRUST, USES,
+  type SceneName, type Since
 } from './fixtures';
+
+/** HH:MM 또는 HH:MM:SS → 초 */
+const sec = (t: string) => { const [h, m, s = '0'] = t.split(':'); return Number(h) * 3600 + Number(m) * 60 + Number(s); };
+/** 목 전용 since 값을 떼어 낸다 */
+const strip = <T,>({ since: _since, ...row }: Since<T>) => row as unknown as T;
 
 export interface MockOptions {
   /** 고정할 장면. 'play'면 PLAY_ORDER를 차례로 재생한다. */
@@ -35,6 +40,14 @@ export function createMockSource(opt: MockOptions): DataSource {
   let timer: ReturnType<typeof setInterval> | undefined;
 
   const emit = () => listeners.forEach((l) => l(current));
+  const seen = (t: string) => sec(t) <= sec(current.lastReceivedAt);
+  /** 대여 시간을 넘긴 분. 넘기지 않았으면 0 */
+  const overdue = (nodeId: string) => {
+    const due = RENTAL_DUE[nodeId];
+    const st = current.devices.find((d) => d.nodeId === nodeId)?.state;
+    if (!due || !st || st === 'AVAILABLE' || !seen(due)) return 0;
+    return Math.floor((sec(current.lastReceivedAt) - sec(due)) / 60);
+  };
   const startPlay = () => {
     if (opt.scene !== 'play' || timer || index === PLAY_ORDER.length - 1) return;
     timer = setInterval(() => {
@@ -58,18 +71,35 @@ export function createMockSource(opt: MockOptions): DataSource {
     },
     reconnect() {
       if (current.connected) return;
-      current = { ...SCENES.later(), lastReceivedAt: current.lastReceivedAt };
+      current = SCENES.later();
       emit();
     },
-    layout: () => copy(LAYOUT),
-    uses: () => copy(USES),
-    approvals: () => copy(APPROVALS),
-    audit: () => copy(AUDIT),
-    history: (q: HistoryQuery) => copy(HISTORY.filter((h) =>
-      inPeriod(h.at, q.period) && (!q.verdict || h.verdict === q.verdict) && (!q.nodeId || h.nodeId === q.nodeId) && (!q.host || h.host === q.host))),
+    place: () => copy(PLACE),
+    // 조회는 지금 스냅숏의 수신 시각에 서버가 줄 결과를 흉내 낸다
+    uses: () => copy(USES.filter((u) => {
+      const st = current.devices.find((d) => d.nodeId === u.nodeId)?.state;
+      return st && st !== 'AVAILABLE' && seen(u.since);
+    }).map((u): UseRow => {
+      const st = current.devices.find((d) => d.nodeId === u.nodeId)!.state;
+      const over = overdue(u.nodeId);
+      return { ...strip<UseRow>(u), session: st === 'FAULT' ? u.session : st as UseRow['session'], ...(over ? { overdueMinutes: over } : {}) };
+    })),
+    approvals: () => copy({
+      pending: APPROVALS.pending.filter((a) => seen(a.since)).map(strip),
+      active: APPROVALS.active.filter((a) => seen(a.since)).map(strip),
+      ended: APPROVALS.ended.filter((a) => seen(a.since)).map(strip)
+    }),
+    audit: () => copy(AUDIT.filter((a) => seen(a.at))),
+    history: (q: HistoryQuery) => copy(HISTORY.filter((h) => seen(h.since) &&
+      inPeriod(h.at, q.period) && (!q.verdict || h.verdict === q.verdict) && (!q.nodeId || h.nodeId === q.nodeId) && (!q.host || h.host === q.host)).map(strip)),
     request: (id: string) => (REQUESTS[id] ? copy(REQUESTS[id]()) : Promise.reject(new Error(`요청 ${id} 없음`))),
     trust: () => copy(TRUST),
-    rental: (id: string) => (RENTALS[id] ? copy(RENTALS[id]) : Promise.reject(new Error(`대여 ${id} 없음`))),
+    rental: (id: string) => {
+      const r = RENTALS[id];
+      if (!r) return Promise.reject(new Error(`대여 ${id} 없음`));
+      const timeline = r.timeline.filter((t) => seen(t.at));
+      return copy({ ...r, overdueMinutes: overdue(id), timeline: timeline.map((t, i) => ({ ...t, now: i === timeline.length - 1 })) });
+    },
     health: () => copy(HEALTH)
   };
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DataSource } from './data/source';
 import { DataCtx, type Ctx } from './data/context';
-import type { FloorLayout, RequestProgress, Snapshot } from './model/types';
+import type { PlaceInfo, RequestProgress, Snapshot } from './model/types';
 import { OfflineBanner } from './components/common';
 import { FlowRail } from './components/FlowRail';
 import { PhoneMirror } from './components/PhoneMirror';
@@ -14,7 +14,8 @@ import { Check, LayoutCheck, Phones, SettingsNav } from './settings/Settings';
 import { choosePhone, type FollowSettings } from './view/phone';
 import { railView } from './view/rail';
 import { stageView } from './view/stage';
-import { loadPrefs, savePrefs } from './prefs';
+import { canPlace, resolveArrangement, withArrangement, type Arrangement } from './view/arrange';
+import { clearArrangement, loadArrangement, loadPrefs, saveArrangement, savePrefs } from './prefs';
 
 export type PanelState =
   | { kind: 'request'; request: RequestProgress; live: boolean }
@@ -36,7 +37,8 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   const prefs = useMemo(loadPrefs, []);
   const [theme, setTheme] = useState<'dark' | 'light'>(initialTheme ?? prefs.theme);
   const [follow, setFollow] = useState<FollowSettings>(prefs.follow);
-  const [layout, setLayout] = useState<FloorLayout>();
+  const [place, setPlace] = useState<PlaceInfo>();
+  const [arrangement, setArrangement] = useState<Arrangement>({});
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [view, setView] = useState<ViewState>(initialView);
   const [panel, setPanel] = useState<PanelState | null>(null);
@@ -46,7 +48,10 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   const seen = useRef<{ init?: boolean; request?: string; faults: Set<string> }>({ faults: new Set() });
 
   useEffect(() => { savePrefs({ theme, follow }); }, [theme, follow]);
-  useEffect(() => { source.layout().then(setLayout, () => undefined); }, [source]);
+  useEffect(() => {
+    source.place().then((p) => { setPlace(p); setArrangement(resolveArrangement(p.devices, loadArrangement(p.placeName))); }, () => undefined);
+  }, [source]);
+  const layout = useMemo(() => (place ? withArrangement(place, arrangement) : undefined), [place, arrangement]);
   useEffect(() => source.subscribe(setSnapshot), [source]);
 
   // 처음 화면의 패널
@@ -78,14 +83,20 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     s.faults = new Set(faults);
   }, [snapshot, initialPanel]);
 
-  // 메뉴는 Esc로 닫는다
+  // Esc는 메뉴를 먼저 닫고, 메뉴가 닫혀 있으면 패널을 닫는다
+  const menuRef = useRef(menuOpen);
+  menuRef.current = menuOpen;
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (menuRef.current) setMenuOpen(false);
+      else setPanel(null);
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  if (!layout || !snapshot) return <div className="np-app" data-theme={theme}><p className="np-loading" role="status">불러오는 중…</p></div>;
+  if (!place || !layout || !snapshot) return <div className="np-app" data-theme={theme}><p className="np-loading" role="status">불러오는 중…</p></div>;
 
   const people = new Map(snapshot.people.map((p) => [p.id, p.pseudonym]));
   const ctx: Ctx = {
@@ -107,6 +118,13 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
       stream.getVideoTracks()[0]?.addEventListener('ended', () => setStreams((s) => { const n = { ...s }; delete n[personId]; return n; }));
       setStreams((s) => ({ ...s, [personId]: stream }));
     }, () => undefined);
+  };
+
+  const arrange = {
+    arrangement,
+    canPlace: (nodeId: string, s: { x: number; y: number }) => canPlace(arrangement, nodeId, s),
+    onChange: (next: Arrangement) => { const r = resolveArrangement(place.devices, next); setArrangement(r); saveArrangement(place.placeName, r); },
+    onReset: () => { clearArrangement(place.placeName); setArrangement(resolveArrangement(place.devices)); }
   };
 
   const current: MenuKey | null = view !== 'monitor' ? view : panel && panel.kind !== 'request' && panel.kind !== 'device' ? panel.kind : null;
@@ -137,7 +155,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
       <div className="np-settings" data-component="SettingsLayout">
         {topBar}
         <SettingsNav current={view} onPick={setView} onBack={() => setView('monitor')} />
-        {view === 'layout' ? <LayoutCheck /> : view === 'phones' ? <Phones streams={streams} onPick={pickWindow} follow={follow} onFollow={setFollow} /> : <Check />}
+        {view === 'layout' ? <LayoutCheck {...arrange} /> : view === 'phones' ? <Phones streams={streams} onPick={pickWindow} follow={follow} onFollow={setFollow} /> : <Check />}
       </div>
     );
   }

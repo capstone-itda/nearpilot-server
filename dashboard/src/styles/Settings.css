@@ -91,3 +91,6 @@
   .np-settings { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); }
   .np-layoutcheck, .np-phones, .np-checks { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* SET-01 배치 파일 버튼 */
+.np-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }

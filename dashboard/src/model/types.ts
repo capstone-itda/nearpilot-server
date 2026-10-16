@@ -19,32 +19,30 @@ export type ReasonCode =
   | 'NOT_ASSIGNED' | 'USE_NOT_FOUND' | 'RECHECK_FAILED' | 'INTERNAL_ERROR' | 'COMMAND_IN_PROGRESS'
   | 'EXEC_FAILED' | 'EXEC_UNKNOWN' | 'RESERVATION_EXPIRED' | 'NODE_NOT_CONNECTED' | 'COMMAND_NOT_SENT';
 
-/** 평면 위의 점. 단위는 m, 원점은 방의 왼쪽 위 모서리. */
-export interface Point { x: number; y: number }
-
-/** 근접 모델 파일의 배치 (D4: 편집하지 않는다) */
-export interface FloorLayout {
-  placeName: string;
-  widthM: number;
-  depthM: number;
-  modelVersion: string;
-  calibrationVersion: string;
-  /** 배치·신호 점검에서 약한 신호로 표시할 기준 (dBm). 설정에서 받는다. 판정에는 쓰지 않는다. */
-  weakRssiDbm: number;
-  devices: LayoutDevice[];
-}
-export interface LayoutDevice {
+/** 조회 REST의 기기 한 대 (현재 상태의 기기 목록) */
+export interface DeviceInfo {
   nodeId: string;
   name: string;
   capability: Capability;
   occupancy: Occupancy;
-  /** 본체 위치 */
-  body: Point;
-  /** 기기 앞 위치 (근접 판정의 기준점) */
-  front: Point;
-  /** 벽: 위쪽 벽 기기는 이름표가 아래, 아래쪽 벽 기기는 위 */
-  wall: 'top' | 'bottom';
 }
+
+/** 조회 REST의 장소 정보. 좌표는 없다. */
+export interface PlaceInfo {
+  placeName: string;
+  modelVersion: string;
+  calibrationVersion: string;
+  /** 배치 화면에서 약한 신호로 표시할 기준 (dBm). 설정에서 받는다. 판정에는 쓰지 않는다. */
+  weakRssiDbm: number;
+  devices: DeviceInfo[];
+}
+
+/** 무대 위 표시 자리 (SVG 단위). 실제 위치가 아니고 이 PC에서 정한다. */
+export interface Spot { x: number; y: number }
+
+export interface LayoutDevice extends DeviceInfo { spot: Spot }
+/** 장소 정보에 이 PC의 표시 배치를 입힌 것 */
+export interface FloorLayout extends Omit<PlaceInfo, 'devices'> { devices: LayoutDevice[] }
 
 export interface DeviceStatus {
   nodeId: string;
@@ -66,8 +64,6 @@ export interface Person {
   role: 'visitor' | 'owner';
   /** 비콘을 최근에 받았는지 */
   beaconSeen: boolean;
-  /** 추정 위치. 없으면 무대에 그리지 않는다. */
-  position?: Point;
   /** 기기별 비콘 신호 세기 (dBm) */
   rssi: Record<string, number>;
 }

@@ -6,11 +6,6 @@ import { stageView } from './stage';
 const dev = (v: ReturnType<typeof stageView>, id: string) => v.devices.find((d) => d.nodeId === id)!;
 
 describe('stageView', () => {
-  it('FR12B 축척 막대 1 m 길이를 배치의 방 너비에서 계산한다', () => {
-    expect(stageView(SCENES.idle(), LAYOUT, { panelOpen: false }).meterPx).toBe(120.2);
-    expect(stageView(SCENES.idle(), { ...LAYOUT, widthM: 10.1 }, { panelOpen: false }).meterPx).toBe(100);
-  });
-
   it('FR12B 대기: 비콘을 보내는 첫 방문자의 신호와 상향 흐름, 안내 콜아웃', () => {
     const v = stageView(SCENES.idle(), LAYOUT, { panelOpen: false });
     expect(v.scene).toBe('idle');
@@ -84,16 +79,16 @@ describe('stageView', () => {
     expect(v.visitors.every((x) => !x.active)).toBe(true);
   });
 
-  it('D4 배치 점검: 좌표를 보이고 흐름은 숨긴다', () => {
+  it('FR12B D4 배치 화면: 흐름과 콜아웃을 숨긴다', () => {
     const v = stageView(SCENES.later(), LAYOUT, { panelOpen: false, layoutCheck: true });
-    expect(v).toMatchObject({ scene: 'layout', coords: true, host: null, server: false, uplink: false });
+    expect(v).toMatchObject({ scene: 'layout', host: null, server: false, uplink: false, rssiOn: false });
     expect(v.callout.on).toBe(false);
   });
 
-  it('D4 배치 좌표는 모델 파일의 m 값을 평면도 좌표로 바꾼다', () => {
+  it('FR12B D4 기기는 표시 배치 자리에 그리고, 기기 앞은 방 안쪽에 둔다', () => {
     const v = stageView(SCENES.idle(), LAYOUT, { panelOpen: false });
-    expect(dev(v, 'locker-1')).toMatchObject({ x: 450, y: 112, fx: 450, fy: 260 });
-    expect(dev(v, 'light-3')).toMatchObject({ x: 805, y: 719, fx: 805, fy: 560 });
+    expect(dev(v, 'locker-1')).toMatchObject({ x: 456, y: 120, fx: 456, fy: 264, wall: 'top' });
+    expect(dev(v, 'light-3')).toMatchObject({ x: 960, y: 720, fx: 960, fy: 576, wall: 'bottom' });
   });
 });
 
@@ -118,5 +113,43 @@ describe('stageView 사유별 콜아웃', () => {
       s.request = { ...SCENES.flow().request!, verdict: 'DENY', reason, execution: undefined };
       expect(stageView(s, LAYOUT, { panelOpen: false }).callout.body).not.toContain(reason);
     }
+  });
+});
+
+describe('무대의 사람 자리 (표시용)', () => {
+  const at = (v: ReturnType<typeof stageView>, id: string) => v.visitors.find((x) => x.personId === id)!;
+  it('FR12B 요청한 사람은 판정이 고른 기기 앞에 선다', () => {
+    const v = stageView(SCENES.flow(), LAYOUT, { panelOpen: false });
+    expect(at(v, 'p-a')).toMatchObject({ x: dev(v, 'locker-1').fx, y: dev(v, 'locker-1').fy, on: true });
+  });
+  it('FR12B ASK면 확률이 높은 두 기기 사이에 선다', () => {
+    const v = stageView(SCENES.ask(), LAYOUT, { panelOpen: false });
+    expect(at(v, 'p-a').x).toBe((dev(v, 'locker-1').fx + dev(v, 'locker-2').fx) / 2);
+  });
+  it('FR12B 요청하지 않은 사람은 신호가 가장 센 기기 앞, 신호가 없으면 그리지 않는다', () => {
+    const v = stageView(SCENES.idle(), LAYOUT, { panelOpen: false });
+    expect(at(v, 'p-b')).toMatchObject({ x: dev(v, 'locker-3').fx, on: true });
+    expect(at(v, 'p-c').on).toBe(false);
+  });
+  it('FR12B 같은 기기 앞의 두 사람은 겹치지 않게 띄운다', () => {
+    const s = SCENES.idle();
+    s.people = s.people.map((p) => (p.id === 'p-b' ? { ...p, rssi: { 'locker-1': -50 } } : p.id === 'p-a' ? { ...p, rssi: { 'locker-1': -50 } } : p));
+    const v = stageView(s, LAYOUT, { panelOpen: false });
+    expect(at(v, 'p-a').y).not.toBe(at(v, 'p-b').y);
+  });
+  it('FR12B 실행이 끝난 요청은 호출·신호 선을 끈다', () => {
+    const v = stageView(SCENES.done(), LAYOUT, { panelOpen: false });
+    expect(v).toMatchObject({ mcp: null, rssiOn: false, cmd: null });
+    expect(v.callout.title).toBe('사물함 1 열기 완료');
+  });
+  it('FR12B 예약된 기기는 사용 중이 아니라 예약으로 보인다', () => {
+    const v = stageView(SCENES.flow(), LAYOUT, { panelOpen: false, layoutCheck: true });
+    expect(dev(v, 'locker-1')).toMatchObject({ status: '예약', code: 'RESERVED' });
+  });
+  it('FR12B 승인 필요 사유를 구분해서 보인다', () => {
+    const s = SCENES.approval();
+    s.ownerNotified = false;
+    s.request = { ...s.request!, reason: 'APPROVAL_PENDING', accessRequestedAt: undefined };
+    expect(stageView(s, LAYOUT, { panelOpen: false }).callout.title).toBe('소유자 응답을 기다려요');
   });
 });

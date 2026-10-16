@@ -103,6 +103,7 @@ test('FR12A D7 테마를 바꾸고 다시 열어도 유지한다', async ({ page
 test('FR12B 연결 끊김에서 다시 연결하면 실시간 화면으로 돌아온다', async ({ page }) => {
   await ready(page, 'scene=offline');
   await expect(page.getByRole('status').filter({ hasText: '연결 끊김' })).toBeVisible();
+  await expect(page.locator('[data-component="OfflineBanner"]')).toContainText('마지막 수신 14:25:40');
   await page.getByRole('button', { name: '다시 연결' }).click();
   await expect(page.locator('[data-component="OfflineBanner"]')).toHaveCount(0);
   await expect(page.getByText('실시간 연결됨')).toBeVisible();
@@ -120,4 +121,61 @@ test('FR12B 재생 모드는 장면을 차례로 바꾼다', async ({ page }) =>
   await expect(page.locator('.np-rail__title')).toHaveText('방문자 A · 사물함 열기');
   await expect(page.locator('.np-rail__meta')).toContainText('14:28:10');
   await expect(page.locator('[data-component="Panel"]')).toHaveCount(0);
+});
+
+// D4: 무대 배치는 설정에서 끌어다 놓아 정하고, 이 PC에만 저장한다
+const device = (page: Page, name: string) => page.locator(`[data-component="StageDevice"][aria-label^="${name} 옮기기"]`);
+const spotOf = async (page: Page, name: string) => device(page, name).getAttribute('transform');
+/** 무대 SVG 좌표를 화면 좌표로 */
+const toScreen = (page: Page, x: number, y: number) => page.locator('.np-stage__svg').evaluate((svg: SVGSVGElement, p) => {
+  const m = svg.getScreenCTM()!;
+  const q = new DOMPoint(p.x, p.y).matrixTransform(m);
+  return { x: q.x, y: q.y };
+}, { x, y });
+
+test('FR12A D4 배치 화면에서 기기를 끌어 옮기면 이 PC에 저장되고 모니터 무대도 따라간다', async ({ page }) => {
+  await ready(page, 'scene=later&view=layout');
+  expect(await spotOf(page, '사물함 1')).toBe('translate(456 120)');
+  const from = await toScreen(page, 456, 120);
+  const to = await toScreen(page, 1032, 120);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 8 });
+  await page.mouse.up();
+  expect(await spotOf(page, '사물함 1')).toBe('translate(1032 120)');
+
+  // 겹치는 자리에는 놓지 않는다
+  const busy = await toScreen(page, 792, 120);
+  const back = await toScreen(page, 1032, 120);
+  await page.mouse.move(back.x, back.y);
+  await page.mouse.down();
+  await page.mouse.move(busy.x, busy.y, { steps: 8 });
+  await page.mouse.up();
+  expect(await spotOf(page, '사물함 1')).toBe('translate(1032 120)');
+
+  // 화살표 키로 한 칸씩
+  await device(page, '사물함 2').focus();
+  await page.keyboard.press('ArrowDown');
+  expect(await spotOf(page, '사물함 2')).toBe('translate(624 144)');
+
+  await ready(page, 'scene=later');
+  await expect(page.locator('[data-component="StageDevice"]').filter({ hasText: '사물함 1' })).toHaveAttribute('transform', 'translate(1032 120)');
+
+  await ready(page, 'scene=later&view=layout');
+  await page.getByRole('button', { name: '기본 배치로' }).click();
+  expect(await spotOf(page, '사물함 1')).toBe('translate(456 120)');
+  expect(writes).toEqual([]);
+});
+
+test('FR12A D4 배치를 파일로 내보내고 다시 불러온다', async ({ page }) => {
+  await ready(page, 'scene=later&view=layout');
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: '파일로 내보내기' }).click()]);
+  const file = JSON.parse(await (await download.createReadStream()).toArray().then((c) => Buffer.concat(c).toString('utf8')));
+  expect(file).toMatchObject({ kind: 'nearpilot-arrangement', version: 1, place: '공용 라운지' });
+  file.devices['locker-1'] = { x: 1176, y: 120 };
+  await page.locator('input[type="file"]').setInputFiles({ name: 'arr.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(file)) });
+  await expect(page.getByRole('status').filter({ hasText: '자리를 불러왔어요' })).toBeVisible();
+  expect(await spotOf(page, '사물함 1')).toBe('translate(1176 120)');
+  await page.locator('input[type="file"]').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{') });
+  await expect(page.getByRole('status').filter({ hasText: 'JSON 파일이 아니에요' })).toBeVisible();
 });

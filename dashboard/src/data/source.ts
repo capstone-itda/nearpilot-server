@@ -1,6 +1,6 @@
 // 화면이 의존하는 데이터 창구. 읽기 함수만 둔다 (FR-12A: 대시보드는 서버에 쓰지 않는다).
 import type {
-  Approvals, AuditRow, FloorLayout, Health, HistoryQuery, HistoryRow,
+  Approvals, AuditRow, Health, PlaceInfo, HistoryQuery, HistoryRow,
   RentalInfo, RequestProgress, Snapshot, TrustReport, UseRow
 } from '../model/types';
 
@@ -11,7 +11,8 @@ export interface DataSource {
   reconnect(): void;
 
   // 대시보드 조회 REST (FR-12A). 경로와 형식은 미결이다.
-  layout(): Promise<FloorLayout>;
+  /** 장소 이름, 모델 버전, 기기 목록. 무대 배치는 이 PC에서 정한다. */
+  place(): Promise<PlaceInfo>;
   uses(): Promise<UseRow[]>;
   approvals(): Promise<Approvals>;
   audit(): Promise<AuditRow[]>;

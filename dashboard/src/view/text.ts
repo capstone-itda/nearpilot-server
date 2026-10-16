@@ -44,9 +44,9 @@ export const REASON_TEXT: Partial<Record<ReasonCode, string>> = {
   APPROVAL_REJECTED: '소유자 거부',
   APPROVAL_EXPIRED: '승인 유효시간 끝남',
   APPROVAL_REQUEST_EXPIRED: '대기 만료',
-  APPROVAL_EXHAUSTED: '한 번 쓰고 끝남',
+  APPROVAL_EXHAUSTED: '사용 횟수를 다 씀',
   ACTION_NOT_ALLOWED: '승인과 다른 동작',
-  DEVICE_BUSY: '다른 사람이 점유 중',
+  DEVICE_BUSY: '이미 점유된 기기',
   USER_BUSY: '이미 다른 기기를 쓰는 중',
   NOT_ASSIGNED: '배정받지 못함',
   RECHECK_FAILED: '실행 직전 재검사 실패',
@@ -59,6 +59,18 @@ export const REASON_TEXT: Partial<Record<ReasonCode, string>> = {
   COMMAND_NOT_SENT: '명령을 보내지 못함'
 };
 export const reasonText = (code: ReasonCode) => REASON_TEXT[code] ?? code;
+
+/** NEED_APPROVAL 사유별 표시: 레일 표시, 무대 콜아웃 제목, 설명 (architecture.md 승인 사유 순서) */
+export const APPROVAL_TEXT: Record<string, { mark: string; title: string; detail: string }> = {
+  APPROVAL_REQUIRED: { mark: '승인 필요', title: '소유자 승인이 필요해요', detail: 'AI가 승인을 신청해야 해요' },
+  ACTION_NOT_ALLOWED: { mark: '다른 동작', title: '승인받은 동작과 달라요', detail: '승인받은 것과 다른 동작이라 새 승인이 필요해요' },
+  APPROVAL_PENDING: { mark: '승인 기다림', title: '소유자 응답을 기다려요', detail: '이미 보낸 승인 신청에 소유자가 아직 답하지 않았어요' },
+  APPROVAL_REQUEST_EXPIRED: { mark: '신청 만료', title: '승인 신청이 만료됐어요', detail: '소유자가 답하지 않아 지난 신청이 만료됐어요' },
+  APPROVAL_REJECTED: { mark: '승인 거부', title: '소유자가 거부했어요', detail: '소유자가 지난 승인 신청을 거부했어요' },
+  APPROVAL_EXPIRED: { mark: '승인 만료', title: '승인 시간이 끝났어요', detail: '승인받은 유효시간이 지났어요' },
+  APPROVAL_EXHAUSTED: { mark: '횟수 소진', title: '승인 횟수를 다 썼어요', detail: '승인받은 사용 횟수를 다 썼어요' }
+};
+export const approvalText = (code: ReasonCode) => APPROVAL_TEXT[code] ?? APPROVAL_TEXT.APPROVAL_REQUIRED;
 
 /** 마지막 글자에 받침이 있는가. 숫자는 한국어 읽기로 본다. */
 export function hasBatchim(word: string): boolean {

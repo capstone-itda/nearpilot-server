@@ -1,6 +1,6 @@
 // 스냅숏 → 흐름 레일 다섯 단계. 쉬운 말이 크게, 코드는 보조 글자로.
 import type { FloorLayout, RequestProgress, Snapshot } from '../model/types';
-import { ACTION_DONE, ACTION_NAME, HOST_NAME, josa, requestTitle, toolCall } from './text';
+import { ACTION_DONE, ACTION_NAME, HOST_NAME, approvalText, josa, requestTitle, toolCall } from './text';
 
 export type CheckResult = 'pass' | 'fail' | 'wait' | 'unsure' | 'none' | 'skip';
 export type StepTone = 'accent' | 'ok' | 'ask' | 'appr' | 'busy' | 'deny';
@@ -23,28 +23,28 @@ export const GUIDE_STEPS: RailStep[] = [
   { status: 'guide', detail: '결과가 AI를 거쳐 폰에 돌아가요', code: '판정 결과' }
 ];
 
-/** 3단계 확인 네 칸: ①비콘 ③근접 ④정책 ⑤⑥점유 */
+/** 3단계 확인 네 칸: ①비콘 ③근접 ④정책 ⑤⑥점유. 단계 밖에서 멈춘 요청(인증, 접수 제한, 재검사)은 통과한 칸만 ✓ */
 function checks(r: RequestProgress, name: string, shared: boolean): [CheckResult, string?][] {
   const st = r.steps;
   const stopAt = st.findIndex((x) => x.result === 'stop');
-  const reached = (i: number) => stopAt === -1 || i <= stopAt;
+  const passed = (i: number) => st[i]?.result === 'pass';
   const out: [CheckResult, string?][] = [['none'], ['none'], ['none'], ['none']];
 
-  // ① 누구인지 (⓪은 통과로 본다)
+  // ① 누구인지
   if (stopAt === 1) out[0] = ['fail', '폰 신호 없음'];
-  else if (reached(1) && stopAt !== 0) out[0] = ['pass', '누구인지'];
+  else if (passed(1)) out[0] = ['pass', '누구인지'];
   // ③ 어디 앞인지 (②에서 멈추면 후보 없음)
   if (stopAt === 2) out[1] = ['fail', '쓸 수 있는 기기 없음'];
-  else if (stopAt === 3) out[1] = r.verdict === 'ASK' ? ['unsure', '어디 앞인지 애매함'] : ['fail', '기기 앞이 아님'];
-  else if (reached(3) && stopAt > 3 || stopAt === -1) out[1] = ['pass', `${name} 앞`];
+  else if (stopAt === 3) out[1] = r.verdict !== 'ASK' ? ['fail', '기기 앞이 아님'] : r.reason === 'MOVE_CLOSER' ? ['unsure', '지정한 기기 앞인지 애매함'] : ['unsure', '어디 앞인지 애매함'];
+  else if (passed(3)) out[1] = ['pass', name ? `${name} 앞` : '기기 앞'];
   // ④ 정책
   if (stopAt === 4) out[2] = r.verdict === 'NEED_APPROVAL' ? ['wait', '소유자 승인 필요'] : ['fail', '정책이 막음'];
-  else if (stopAt > 4 || stopAt === -1) out[2] = ['pass', '정책 통과'];
+  else if (passed(4)) out[2] = ['pass', '정책 통과'];
   // ⑤⑥ 비어 있는지
   if (shared) out[3] = ['none', '공용형 생략'];
-  else if (stopAt === 5) out[3] = ['fail', '다른 사람이 사용 중'];
+  else if (stopAt === 5) out[3] = ['fail', r.reason === 'COMMAND_IN_PROGRESS' ? '다른 명령 실행 중' : '이미 점유됨'];
   else if (stopAt === 6) out[3] = ['fail', '이미 다른 기기 사용 중'];
-  else if (stopAt === -1) out[3] = ['pass', '비어 있음'];
+  else if (passed(5) && passed(6)) out[3] = ['pass', '비어 있음'];
   return out;
 }
 
@@ -91,7 +91,7 @@ export function railView(s: Snapshot, layout: FloorLayout, mirroredPersonId: str
       s4 = { status: 'todo', detail: `아직 ${r.action === 'open' ? '열지' : r.action === 'on' ? '켜지' : '끄지'} 않았어요`, code: '승인 뒤 request_use 다시 호출' };
       s5 = r.accessRequestedAt
         ? { status: 'current', tone: 'appr', mark: '승인 기다림', detail: 'AI가 승인을 신청했어요', code: 'NEED_APPROVAL → request_access' }
-        : { status: 'current', tone: 'appr', mark: '승인 필요', detail: 'AI가 승인을 신청해야 해요', code: `NEED_APPROVAL · ${r.reason}` };
+        : { status: 'current', tone: 'appr', mark: approvalText(r.reason).mark, detail: approvalText(r.reason).detail, code: `NEED_APPROVAL · ${r.reason}` };
       break;
     case 'BUSY':
       s4 = { status: 'todo', detail: '실행하지 않음', code: '' };

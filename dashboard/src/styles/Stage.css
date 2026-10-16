@@ -20,9 +20,6 @@
 .np-stage__grid-minor { fill: none; stroke: var(--grid); stroke-width: 1; }
 .np-stage__grid-major { fill: none; stroke: var(--grid-major); stroke-width: 1; }
 .np-stage__wall { fill: var(--room-fill); stroke: var(--accent-strong); stroke-width: 2.5; }
-.np-stage__door { stroke: var(--bg); stroke-width: 7; }
-.np-stage__door-arc { fill: none; stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 3 4; }
-.np-stage__dim { fill: none; stroke: var(--line); stroke-width: 1; }
 .np-stage__front { fill: var(--device-fill); stroke: var(--line); stroke-width: 1; stroke-dasharray: 4 4; }
 .np-stage__link { fill: none; stroke: var(--line); stroke-width: 1.4; }
 .np-stage__link[data-dashed="true"] { stroke-dasharray: 4 4; }
@@ -106,10 +103,21 @@
 }
 
 /* 글자 뒤 바탕색 테: 선이 지나도 글자를 읽을 수 있게 */
-.np-stage__device text, .np-stage__visitor .np-stage__label, .np-stage__signal-label, .np-stage__coords text { paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
+.np-stage__device text, .np-stage__visitor .np-stage__label, .np-stage__signal-label { paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
 
 /* 무대가 더 작게 그려지는 곳(SET-01 배치, 연결 끊김 배너 아래): 보조 글자를 키워 1366에서도 11px 이상 */
-.np-stage[data-scene="layout"] :is(.np-stage__cap, .np-stage__code, .np-stage__device-status, .np-stage__sub),
-.np-monitor[data-live="false"] .np-stage :is(.np-stage__cap, .np-stage__code, .np-stage__device-status, .np-stage__sub) { font-size: 18px; }
+.np-stage[data-scene="layout"] :is(.np-stage__cap, .np-stage__code, .np-stage__device-status, .np-stage__sub, .np-stage__note),
+.np-monitor[data-live="false"] .np-stage :is(.np-stage__cap, .np-stage__code, .np-stage__device-status, .np-stage__sub, .np-stage__note) { font-size: 18px; }
 .np-stage[data-scene="layout"] .np-stage__visitor-letter,
 .np-monitor[data-live="false"] .np-stage .np-stage__visitor-letter { font-size: 18px; }
+
+/* 표시용 배치 안내 */
+.np-stage__note { font-family: var(--font-sans); font-size: 16px; fill: var(--ink-3); }
+
+/* SET-01 배치 편집: 기기를 끌거나 화살표 키로 옮긴다 */
+.np-stage__hit { fill: transparent; stroke: none; }
+.np-stage__device[data-edit="true"] { cursor: grab; outline: none; touch-action: none; }
+.np-stage__svg[data-editing="true"], .np-stage__svg[data-editing="true"] .np-stage__device { cursor: grabbing; }
+.np-stage__device[data-edit="true"]:focus-visible .np-stage__hit { stroke: var(--accent-strong); stroke-width: 2.5; stroke-dasharray: 6 4; }
+.np-stage__device[data-invalid="true"] .np-stage__device-body { stroke: var(--ink); stroke-dasharray: 2 4; }
+.np-stage[data-scene="layout"] .np-stage__visitor { pointer-events: none; }

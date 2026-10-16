@@ -12,7 +12,7 @@ export const SCREENS: [string, string][] = [
   ['MON-09 이력', 'scene=later&panel=history'],
   ['MON-10 신뢰도 지표', 'scene=later&panel=trust'],
   ['CMN-02 연결 끊김', 'scene=offline'],
-  ['SET-01 배치·신호', 'scene=later&view=layout'],
+  ['SET-01 배치', 'scene=later&view=layout'],
   ['SET-02 폰 연결', 'scene=later&view=phones'],
   ['SET-03 점검', 'scene=later&view=check']
 ];

@@ -3,18 +3,18 @@ import type { RequestProgress } from '../model/types';
 import { KeyValue, ProbBars, Section, StepList, Timeline, VerdictTag, type StepRowResult } from '../components/common';
 import { Panel } from '../components/Panel';
 import { useData } from '../data/context';
-import { ACTION_DONE, ACTION_NAME, ACTION_VERB, CAPABILITY_NAME, CIRCLED, HOST_NAME, STEP_SHORT, VERDICT_LABEL, josa, requestTitle, toolCall } from '../view/text';
+import { ACTION_DONE, ACTION_NAME, ACTION_VERB, CAPABILITY_NAME, CIRCLED, HOST_NAME, STEP_SHORT, VERDICT_LABEL, approvalText, josa, reasonText, requestTitle, toolCall } from '../view/text';
 
 const STOP_RESULT: Record<RequestProgress['verdict'], StepRowResult> = { OK: 'pass', ASK: 'ask', NEED_APPROVAL: 'appr', BUSY: 'fail', DENY: 'fail' };
 
 function stopHint(r: RequestProgress, cap: string): string {
   const i = r.steps.findIndex((s) => s.result === 'stop');
-  if (i === -1) return '모든 단계를 통과했어요';
+  if (i === -1) return r.verdict === 'OK' ? '모든 단계를 통과했어요' : `단계 확인 밖에서 멈췄어요 · ${reasonText(r.reason)}`;
   const why: Record<string, string> = {
     APPROVAL_REQUIRED: '소유자 승인이 필요해',
     LOW_CONFIDENCE: `어느 ${cap} 앞인지 확신이 부족해`,
     MOVE_CLOSER: '기기 앞이라는 확신이 부족해',
-    DEVICE_BUSY: '다른 사람이 쓰고 있어',
+    DEVICE_BUSY: '이미 점유된 기기라',
     USER_BUSY: '이미 다른 기기를 쓰고 있어',
     COMMAND_IN_PROGRESS: '다른 명령을 실행하는 중이라',
     BEACON_NOT_SEEN: '폰 신호가 없어',
@@ -22,7 +22,7 @@ function stopHint(r: RequestProgress, cap: string): string {
     TARGET_UNAVAILABLE: '지금 쓸 수 없는 기기라',
     POLICY_DENIED: '정책이 허락하지 않아'
   };
-  return `${CIRCLED[i]} ${STEP_SHORT[i]}에서 ${why[r.reason] ?? `${r.reason}(으)로`} 멈췄어요`;
+  return why[r.reason] ? `${CIRCLED[i]} ${STEP_SHORT[i]}에서 ${why[r.reason]} 멈췄어요` : `${CIRCLED[i]} ${STEP_SHORT[i]}에서 멈췄어요 · ${reasonText(r.reason)}`;
 }
 
 function execText(r: RequestProgress, subject: string): string {
@@ -67,7 +67,9 @@ export function RequestPanel({ r, onClose }: { r: RequestProgress; onClose: () =
           <Timeline items={r.accessRequestedAt
             ? [['done', r.accessRequestedAt, 'request_access로 승인 신청 → 소유자 폰에 알림 (알림 수단 미결)'],
               ...(snapshot.request?.id === r.id ? [['now', snapshot.lastReceivedAt, '소유자 응답 기다림 · 실행 허가 아님', 'appr'] as ['now', string, string, string]] : [])]
-            : [['now', r.at, `AI가 request_access로 신청하기를 기다림 · ${josa(cap, '은', '는')} 아직 실행하지 않음`, 'appr']]} />
+            : [['now', r.at, r.reason === 'APPROVAL_REQUIRED'
+              ? `AI가 request_access로 신청하기를 기다림 · ${josa(cap, '은', '는')} 아직 실행하지 않음`
+              : `${approvalText(r.reason).detail} · ${josa(cap, '은', '는')} 아직 실행하지 않음`, 'appr']]} />
         </Section>
       ) : null}
     </Panel>

@@ -1,17 +1,19 @@
 // SET-01~03 설정. 이 PC의 표시만 바꾸고 서버 데이터는 바꾸지 않는다 (D7).
-import type { ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { DataTable, Icon, KeyValue, Switch, Td } from '../components/common';
 import { Stage } from '../components/Stage';
 import { Loading } from '../components/Panel';
 import { MirrorVideo } from '../components/PhoneMirror';
 import type { SettingsKey } from '../components/TopBar';
+import type { Spot } from '../model/types';
+import { parseFile, toFile, type Arrangement } from '../view/arrange';
 import { useData, useQuery } from '../data/context';
 import type { FollowSettings } from '../view/phone';
 import { stageView } from '../view/stage';
 import { HOST_NAME } from '../view/text';
 
 const NAV: [SettingsKey, string, string][] = [
-  ['layout', '배치·신호 점검', '모델 배치와 실시간 신호'],
+  ['layout', '배치', '무대 배치와 실시간 신호'],
   ['phones', '폰 연결', '미러링 창과 비콘'],
   ['check', '점검', '시연 직전 한 번에 확인']
 ];
@@ -41,8 +43,17 @@ export function SettingsContent({ title, sub, children }: { title: string; sub: 
 
 const fmtDbm = (v: number) => String(v).replace('-', '−');
 
-export function LayoutCheck() {
+export interface LayoutCheckProps {
+  arrangement: Arrangement;
+  canPlace: (nodeId: string, s: Spot) => boolean;
+  onChange: (next: Arrangement) => void;
+  onReset: () => void;
+}
+
+export function LayoutCheck({ arrangement, canPlace, onChange, onReset }: LayoutCheckProps) {
   const { snapshot, layout } = useData();
+  const file = useRef<HTMLInputElement>(null);
+  const [status, setStatus] = useState('');
   const weakDbm = layout.weakRssiDbm;
   const visitors = snapshot.people.filter((p) => p.role === 'visitor' && p.beaconSeen);
   const weak: string[] = [];
@@ -50,14 +61,45 @@ export function LayoutCheck() {
     const v = p.rssi[d.nodeId];
     if (v !== undefined && v < weakDbm) weak.push(`${d.name}에서 ${p.pseudonym}의 신호가 약해요.`);
   }
+  const exportFile = () => {
+    const blob = new Blob([JSON.stringify(toFile(layout.placeName, arrangement), null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nearpilot-배치-${layout.placeName}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setStatus('배치를 파일로 내보냈어요.');
+  };
+  const importFile = (f: File | undefined) => {
+    if (!f) return;
+    f.text().then((text) => {
+      const r = parseFile(text);
+      if (!r.ok) { setStatus(`불러오지 못했어요. ${r.error}.`); return; }
+      const known = layout.devices.filter((d) => r.devices[d.nodeId]).length;
+      onChange({ ...arrangement, ...r.devices });
+      const other = r.place && r.place !== layout.placeName ? ` 다른 장소(${r.place})의 파일이라 이름이 같은 기기만 옮겼어요.` : '';
+      setStatus(`기기 ${known}대의 자리를 불러왔어요.${other}`);
+    }, () => setStatus('파일을 읽지 못했어요.'));
+  };
   return (
-    <SettingsContent title="배치·신호 점검" sub="근접 모델 파일의 배치를 그대로 그려요. 여기서는 고치지 않아요.">
+    <SettingsContent title="배치" sub="기기를 끌어다 놓아 무대의 배치를 정해요. 이 PC에만 저장하고 서버는 바꾸지 않아요.">
       <div className="np-layoutcheck">
-        <div className="np-layoutcheck__plan"><Stage v={stageView(snapshot, layout, { panelOpen: false, layoutCheck: true })} /></div>
+        <div className="np-layoutcheck__plan">
+          <Stage v={stageView(snapshot, layout, { panelOpen: false, layoutCheck: true })} edit={{ canPlace, onMove: (id, s) => onChange({ ...arrangement, [id]: s }) }} />
+        </div>
         <div className="np-layoutcheck__side">
           <section className="np-card" data-component="Card">
-            <div className="np-card__head"><h2 className="np-card__title">모델 파일</h2></div>
-            <KeyValue rows={[['모델 버전', layout.modelVersion, true], ['보정 버전', layout.calibrationVersion, true], ['기기', `이 장소 ${layout.devices.length}대 (NFR-10)`], ['점선 원 옆 숫자', '기기 앞 위치 x, y (m)']]} />
+            <div className="np-card__head"><h2 className="np-card__title">표시용 배치</h2></div>
+            <p className="np-sec__hint">끌어서 옮기거나, 기기를 고른 뒤 화살표 키로 한 칸씩 옮겨요. 실제 위치나 거리와는 상관없어요.</p>
+            <div className="np-actions">
+              <button className="np-btn" type="button" onClick={exportFile}>파일로 내보내기</button>
+              <button className="np-btn" type="button" onClick={() => file.current?.click()}>파일 불러오기</button>
+              <button className="np-btn" data-variant="quiet" type="button" onClick={() => { onReset(); setStatus('기본 배치로 되돌렸어요.'); }}>기본 배치로</button>
+            </div>
+            <input ref={file} hidden type="file" accept="application/json,.json" aria-label="배치 파일" tabIndex={-1}
+              onChange={(e) => { importFile(e.target.files?.[0]); e.target.value = ''; }} />
+            {status ? <p className="np-sec__hint" role="status">{status}</p> : null}
           </section>
           <section className="np-card" data-component="Card">
             <div className="np-card__head"><h2 className="np-card__title">실시간 신호</h2><span className="np-cap">dBm</span></div>
@@ -106,7 +148,7 @@ export function Phones({ streams, onPick, follow, onFollow }: PhonesProps) {
             <section key={p.id} className="np-card" data-component="PhoneCard">
               <div className="np-card__head"><h2 className="np-card__title">{p.pseudonym}</h2><span className="np-pcard__status" data-linked={linked ? 'true' : 'false'}>{linked ? '미러링 연결됨' : mock ? '목 화면' : '미러링 창 없음'}</span></div>
               <div className="np-pcard__preview" data-linked={linked ? 'true' : 'false'}>
-                <div className="np-pcard__preview-screen">{linked ? <MirrorVideo stream={streams[p.id]} /> : mock ? '모니터에 목 화면을 보여 줘요. 창을 고르면 바뀌어요' : '창을 고르면 여기에 보여요'}</div>
+                <div className="np-pcard__preview-screen">{linked ? <MirrorVideo stream={streams[p.id]} /> : mock ? '목 화면 사용 중' : '창을 고르면 여기에 보여요'}</div>
               </div>
               <KeyValue rows={[['비콘', beacon?.label ?? '—', true], ['수신', beacon ? (beacon.lastSeenSec === null ? beacon.note ?? '—' : ago(beacon.lastSeenSec)) : '—']]} />
               <button className="np-btn" type="button" onClick={() => onPick(p.id)}>{linked ? '창 다시 고르기' : '미러링 창 고르기'}</button>
