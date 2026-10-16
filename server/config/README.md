@@ -23,8 +23,26 @@ keepalive, 접속·시작·종료 제한 시간, 재접속 최소·최대 대기
 
 `on_report`와 `on_connection_lost`는 후속 IOT 작업에 짧게 인계하는 콜백이다.
 이 콜백에서 CORE를 직접 호출하거나 명령 결과를 기다리지 않는다.
-보고의 검증·재인계, 명령의 결과 대기와 서버 진입점 조립은 후속 spec에서 연결한다.
+보고의 검증·재인계와 명령의 결과 대기는 서버 조립(`nearpilot.runtime`)이 연결한다.
 
 실제 브로커 테스트는 `MOSQUITTO_EXECUTABLE`과 `MOSQUITTO_PASSWD_EXECUTABLE`에 실행 파일 경로를 주거나
 두 명령을 PATH에 둔 뒤 `pytest tests/iot/test_broker_acl.py`로 실행한다.
 테스트는 localhost의 임시 포트·임시 자격정보만 사용한다.
+
+# 서버 실행 설정
+
+`server.example.toml`을 `server.toml`로 복사해서 배포 값을 채운다. 운영용 `server.toml`은 커밋하지 않는다.
+`server/`에서 `python -m nearpilot --config config/server.toml`로 실행한다. 단일 프로세스·단일 worker다.
+
+- 상대 경로는 설정 파일이 있는 디렉터리 기준이다. 알 수 없는 키나 빠진 필수 키는 시작을 막는다.
+- `[settings]`는 운영 수치(`Settings`)다. `version`만 필수이고 빠진 키는 시연용 초기값을 쓴다.
+  미설정 임계값(스피커, 명시 지정)은 쓰지 않는다. 비워 두면 그 요청은 실행을 허가하지 않는다.
+- `[runtime]`은 주기 작업 간격, SQLite 대기시간과 종료 대기 제한이다. 모두 선택이다.
+- `[proximity.models]`에 장소별 모델 버전을 명시한다. 파일은 `<model_root>/<place_id>/<model_version>.json`이다.
+- `[mqtt]`와 `[delivery]`는 모든 키가 필수다. `password_file`은 서버 계정의 원문 비밀번호 파일이다.
+- `[delivery.clock_skew_sec]`에 없는 기기의 관측과 검사는 쓰지 않는다. 0은 같은 PC의 시뮬레이터에만 쓴다.
+- 설정 변경은 재시작으로 적용한다. 진행 중인 요청과 점유는 저장한 설정 스냅샷을 그대로 쓴다.
+
+시작은 설정·모델 검증, DB 준비, 근접 관측 복원, MQTT 구독 확인, 재시작 복원, 보존기간 정리 순서다.
+하나라도 실패하면 요청을 받지 않고 끝낸다. 종료할 때 제한 시간을 넘긴 작업은 오류로 알리고,
+미완료 기록은 다음 시작의 복원에서 다시 확인한다.
