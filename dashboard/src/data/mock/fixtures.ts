@@ -3,7 +3,7 @@
 // 14:26 A의 ASK, 14:28 A가 사물함 1, 14:29 B의 사물함 2가 결과 불명으로 FAULT, 14:30 B의 조명 1 승인 필요.
 import type {
   Approvals, AuditRow, DeviceStatus, FloorLayout, Health, HistoryRow, Person,
-  RentalInfo, RequestProgress, Snapshot, TrustReport, UseRow
+  MockPhoneScreen, RentalInfo, RequestProgress, Snapshot, TrustReport, UseRow
 } from '../../model/types';
 
 /** 목업 평면도 좌표(SVG)를 m로 바꾼다. 방 8.4 m × 5.4 m = SVG 1010 × 650, 원점 (330, 90). */
@@ -44,9 +44,13 @@ const people = (a: PersonOver = {}, b: PersonOver = {}): Person[] => [
 
 const ALL_PASS = (details: string[]): RequestProgress['steps'] => details.map((detail) => ({ result: 'pass', detail }));
 
+/** 사람마다 대기 화면을 두고, 장면에서 바뀐 사람만 덮어쓴다 */
+const phones = (...over: MockPhoneScreen[]): MockPhoneScreen[] =>
+  ['p-a', 'p-b', 'p-c', 'p-owner'].map((id) => over.find((o) => o.personId === id) ?? { personId: id, scene: 'idle' });
+
 const base = (): Snapshot => ({
   connected: true, lastReceivedAt: '14:31:02', reconnectAttempts: 0,
-  devices: dev(), people: people(), ownerNotified: false
+  devices: dev(), people: people(), ownerNotified: false, mockPhones: phones()
 });
 
 export const SCENES = {
@@ -54,7 +58,7 @@ export const SCENES = {
   idle: (): Snapshot => ({
     ...base(), lastReceivedAt: '14:05:00',
     devices: dev({ 'locker-3': { state: 'ACTIVE' } }),
-    mockPhone: { personId: 'p-a', scene: 'idle' }
+    mockPhones: phones()
   }),
   /** MON-04 ASK: A가 사물함 1과 2 사이 */
   ask: (): Snapshot => ({
@@ -67,7 +71,7 @@ export const SCENES = {
       steps: [{ result: 'pass', detail: '새 요청' }, { result: 'pass', detail: '비콘 최근 수신' }, { result: 'pass', detail: '사물함 3대' }, { result: 'stop' }, { result: 'skip' }, { result: 'skip' }, { result: 'skip' }],
       posteriors: { 'locker-1': 0.58, 'locker-2': 0.31, 'locker-3': 0.02 }, threshold: 0.95
     },
-    mockPhone: { personId: 'p-a', scene: 'chat', said: '사물함 열어 줘', reply: '어느 사물함 앞인지 확실하지 않아요. 열고 싶은 사물함 앞으로 조금 더 가까이 가 주세요.' }
+    mockPhones: phones({ personId: 'p-a', scene: 'chat', said: '사물함 열어 줘', reply: '어느 사물함 앞인지 확실하지 않아요. 사물함 1과 2 중 어느 쪽인가요?' })
   }),
   /** MON-01·02·03 요청 진행: A의 사물함 1 열기 */
   flow: (): Snapshot => ({
@@ -80,8 +84,18 @@ export const SCENES = {
       steps: ALL_PASS(['새 요청', '비콘 최근 수신', '사물함 3대', 'P(locker-1) 0.97 ≥ 0.95 (설정값)', '열림 정책', '비어 있음', '다른 점유 없음']),
       posteriors: { 'locker-1': 0.97, 'locker-2': 0.02, 'locker-3': 0.01 }, threshold: 0.95
     },
-    mockPhone: { personId: 'p-a', scene: 'chat', said: '내 앞 사물함 열어 줘', reply: '서버 응답을 기다리는 중…' }
+    mockPhones: phones({ personId: 'p-a', scene: 'chat', said: '내 앞 사물함 열어 줘', reply: '서버 응답을 기다리는 중…' })
   }),
+  /** 요청 진행의 끝: A의 사물함 1이 열림 */
+  done: (): Snapshot => {
+    const s = SCENES.flow();
+    return {
+      ...s, lastReceivedAt: '14:28:12',
+      devices: dev({ 'locker-1': { state: 'ACTIVE' }, 'locker-3': { state: 'ACTIVE', overdue: true } }),
+      request: { ...s.request!, execution: 'succeeded' },
+      mockPhones: phones({ personId: 'p-a', scene: 'chat', said: '내 앞 사물함 열어 줘', reply: '사물함 1을 열었어요.' })
+    };
+  },
   /** MON-01·05 고장 격리: B의 사물함 2 결과 불명 */
   fault: (): Snapshot => ({
     ...base(), lastReceivedAt: '14:29:40',
@@ -92,7 +106,7 @@ export const SCENES = {
       at: '14:29:37', verdict: 'OK', reason: 'OK', nodeId: 'locker-2', execution: 'unknown',
       steps: ALL_PASS(['새 요청', '비콘 최근 수신', '사물함 3대', 'P(locker-2) 0.96 ≥ 0.95 (설정값)', '열림 정책', '비어 있음', '다른 점유 없음'])
     },
-    mockPhone: { personId: 'p-b', scene: 'chat', said: '내 앞 사물함 열어 줘', reply: '사물함 2가 열렸는지 확인되지 않아 사용을 멈췄어요. 직원에게 알려 주세요.' }
+    mockPhones: phones({ personId: 'p-b', scene: 'chat', said: '내 앞 사물함 열어 줘', reply: '사물함 2가 열렸는지 확인되지 않아 사용을 멈췄어요. 직원에게 알려 주세요.' })
   }),
   /** MON-01·04 승인 대기: B의 조명 1 켜기 */
   approval: (): Snapshot => ({
@@ -105,29 +119,29 @@ export const SCENES = {
       steps: [{ result: 'pass', detail: '새 요청' }, { result: 'pass', detail: '비콘 최근 수신' }, { result: 'pass', detail: '조명 3대' }, { result: 'pass', detail: 'P(light-1) 0.91 ≥ 0.75 (설정값)' }, { result: 'stop' }, { result: 'skip' }, { result: 'skip' }]
     },
     ownerNotified: true,
-    mockPhone: { personId: 'p-owner', scene: 'notice', notice: { title: '조명 켜기 승인 요청', body: '방문자 B가 조명 1을 켜려고 해요.', clock: '14:31' } }
+    mockPhones: phones({ personId: 'p-b', scene: 'chat', said: '조명 켜 줘', reply: '조명 1은 소유자 승인이 필요해요. 승인을 요청했어요.' }, { personId: 'p-owner', scene: 'notice', notice: { title: '조명 켜기 승인 요청', body: '방문자 B가 조명 1을 켜려고 해요.', clock: '14:31' } })
   }),
   /** 패널 화면의 바탕: 요청이 끝난 뒤 */
   later: (): Snapshot => ({
     ...base(),
     devices: dev({ 'locker-1': { state: 'ACTIVE' }, 'locker-2': { state: 'FAULT', fault: { cause: 'EXEC_UNKNOWN', action: 'open', at: '14:29:40' } }, 'locker-3': { state: 'ACTIVE', overdue: true } }),
-    mockPhone: { personId: 'p-a', scene: 'idle' }
+    mockPhones: phones()
   }),
   /** CMN-02 연결 끊김 */
   offline: (): Snapshot => ({
     ...base(), connected: false, lastReceivedAt: '14:25:40', reconnectAttempts: 3,
     devices: dev({ 'locker-3': { state: 'ACTIVE', overdue: true } }),
-    mockPhone: { personId: 'p-a', scene: 'idle' }
+    mockPhones: phones()
   })
 };
 export type SceneName = keyof typeof SCENES;
 /** 재생 순서 (시각순) */
-export const PLAY_ORDER: SceneName[] = ['idle', 'ask', 'flow', 'fault', 'approval', 'later'];
+export const PLAY_ORDER: SceneName[] = ['idle', 'ask', 'flow', 'done', 'fault', 'approval'];
 
 /** 이력에서 요청을 누르면 여는 판정 상세 */
 export const REQUESTS: Record<string, () => RequestProgress> = {
   'r-1426': () => SCENES.ask().request!,
-  'r-1428': () => ({ ...SCENES.flow().request!, execution: 'succeeded' }),
+  'r-1428': () => SCENES.done().request!,
   'r-1429': () => SCENES.fault().request!,
   'r-1430': () => SCENES.approval().request!,
   'r-1422': () => ({

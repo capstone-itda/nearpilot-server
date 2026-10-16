@@ -19,7 +19,7 @@ describe('railView', () => {
     const v = railView(SCENES.flow(), LAYOUT, 'p-a');
     expect(v).toMatchObject({ mode: 'live', title: '방문자 A · 사물함 열기', meta: 'Claude · 14:28:10', code: 'request_use(nearest:locker, open)' });
     expect(v.steps.map((s) => s.status)).toEqual(['done', 'done', 'done', 'current', 'todo']);
-    expect(v.steps[0]).toMatchObject({ detail: '방문자 A가 AI에게 말함', code: '말은 왼쪽 폰 화면' });
+    expect(v.steps[0]).toMatchObject({ detail: '방문자 A가 AI에게 말함', code: '대화는 왼쪽 폰 화면에' });
     expect(v.steps[2].checks).toEqual([['pass', '누구인지'], ['pass', '사물함 1 앞'], ['pass', '정책 통과'], ['pass', '비어 있음']]);
     expect(v.steps[3]).toMatchObject({ tone: 'ok', mark: '실행 중', detail: '사물함 1에 열기 명령', code: 'locker-1 · open · MQTT' });
   });
@@ -44,9 +44,9 @@ describe('railView', () => {
     expect(v.steps[4]).toMatchObject({ tone: 'ask', code: 'ASK · LOW_CONFIDENCE' });
   });
 
-  it('FR12B 승인 대기: 폰은 소유자를 보여서 말은 요청자 폰에 있다고 안내', () => {
+  it('FR12B 승인 대기: 폰은 소유자를 보여서 대화는 요청자 폰에 있다고 안내', () => {
     const v = railView(SCENES.approval(), LAYOUT, 'p-owner');
-    expect(v.steps[0].code).toBe('말은 방문자 B의 폰에');
+    expect(v.steps[0].code).toBe('대화는 방문자 B의 폰에');
     expect(v.steps[2].checks).toEqual([['pass', '누구인지'], ['pass', '조명 1 앞'], ['wait', '소유자 승인 필요'], ['none', '공용형 생략']]);
     expect(v.steps[3]).toMatchObject({ status: 'todo', detail: '아직 켜지 않았어요' });
     expect(v.steps[4]).toMatchObject({ tone: 'appr', mark: '승인 기다림', code: 'NEED_APPROVAL → request_access' });
@@ -65,5 +65,19 @@ describe('railView', () => {
     const d = railView(deny, LAYOUT, 'p-a');
     expect(d.steps[2].checks![0]).toEqual(['fail', '폰 신호 없음']);
     expect(d.steps[4]).toMatchObject({ tone: 'deny', code: 'DENY · BEACON_NOT_SEEN' });
+  });
+});
+
+describe('railView 사유별 문구', () => {
+  it('FR12B 실행 실패는 고장 격리로 보인다', () => {
+    const s = SCENES.fault();
+    s.request = { ...s.request!, execution: 'failed' };
+    expect(railView(s, LAYOUT, 'p-b').steps[4]).toMatchObject({ mark: '고장 격리', code: 'EXEC_FAILED → FAULT' });
+  });
+  it('FR12B 확신 부족 ASK는 다시 묻고, 이동 안내는 MOVE_CLOSER에만 쓴다', () => {
+    const s = SCENES.ask();
+    expect(railView(s, LAYOUT, 'p-a').steps[4].detail).toBe('어느 기기인지 다시 물어봐요');
+    s.request = { ...s.request!, reason: 'MOVE_CLOSER' };
+    expect(railView(s, LAYOUT, 'p-a').steps[4].detail).toBe('가까이 가서 다시 말해 달라고 안내');
   });
 });

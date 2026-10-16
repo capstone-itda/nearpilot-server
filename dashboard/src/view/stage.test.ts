@@ -96,3 +96,27 @@ describe('stageView', () => {
     expect(dev(v, 'light-3')).toMatchObject({ x: 805, y: 719, fx: 805, fy: 560 });
   });
 });
+
+describe('stageView 사유별 콜아웃', () => {
+  const failed = () => {
+    const s = SCENES.fault();
+    s.request = { ...s.request!, execution: 'failed' };
+    return s;
+  };
+  it('FR12B 실행 실패도 격리로 보이고 실행하지 않았다고 단정하지 않는다', () => {
+    const c = stageView(failed(), LAYOUT, { panelOpen: false }).callout;
+    expect(c).toMatchObject({ tone: 'deny', title: '사물함 2 격리', body: '기기가 실패를 알려서 다시 쓰지 않게 막았어요' });
+  });
+  it('FR12B 다른 명령이 진행 중인 BUSY는 점유와 구분한다', () => {
+    const s = SCENES.flow();
+    s.request = { ...s.request!, verdict: 'BUSY', reason: 'COMMAND_IN_PROGRESS', execution: undefined };
+    expect(stageView(s, LAYOUT, { panelOpen: false }).callout.title).toBe('사물함 1 명령 실행 중');
+  });
+  it('FR12B 거부 사유를 코드 그대로 보이지 않는다', () => {
+    const s = SCENES.flow();
+    for (const reason of ['RECHECK_FAILED', 'INTERNAL_ERROR', 'CAPACITY_EXCEEDED'] as const) {
+      s.request = { ...SCENES.flow().request!, verdict: 'DENY', reason, execution: undefined };
+      expect(stageView(s, LAYOUT, { panelOpen: false }).callout.body).not.toContain(reason);
+    }
+  });
+});

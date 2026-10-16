@@ -63,7 +63,7 @@ export function railView(s: Snapshot, layout: FloorLayout, mirroredPersonId: str
   const act = ACTION_NAME[r.action];
   const nodeAct = `${r.nodeId} · ${r.action}`;
 
-  const s1: RailStep = { status: 'done', detail: `${josa(who, '이', '가')} AI에게 말함`, code: mirroredPersonId === r.personId ? '말은 왼쪽 폰 화면' : `말은 ${who}의 폰에` };
+  const s1: RailStep = { status: 'done', detail: `${josa(who, '이', '가')} AI에게 말함`, code: mirroredPersonId === r.personId ? '대화는 왼쪽 폰 화면에' : `대화는 ${who}의 폰에` };
   const s2: RailStep = { status: 'done', detail: `${josa(host, '이', '가')} 요청함`, code: r.tool };
   const s3: RailStep = { status: 'done', checks: checks(r, name, shared) };
   let s4: RailStep;
@@ -79,13 +79,13 @@ export function railView(s: Snapshot, layout: FloorLayout, mirroredPersonId: str
         s5 = r.execution === 'succeeded'
           ? { status: 'current', tone: 'ok', mark: '완료', detail: `${josa(name, '이', '가')} ${ACTION_DONE[r.action]}`, code: 'OK' }
           : r.execution === 'failed'
-            ? { status: 'current', tone: 'deny', mark: '실행 실패', detail: '기기가 실패를 알렸어요', code: 'EXEC_FAILED' }
+            ? { status: 'current', tone: 'deny', mark: '고장 격리', detail: '기기가 실패를 알렸어요', code: 'EXEC_FAILED → FAULT' }
             : { status: 'current', tone: 'deny', mark: '고장 격리', detail: '응답이 없어 결과를 몰라요', code: 'EXEC_UNKNOWN → FAULT' };
       }
       break;
     case 'ASK':
       s4 = { status: 'todo', detail: '실행하지 않음', code: '' };
-      s5 = { status: 'current', tone: 'ask', mark: '다시 질문', detail: '가까이 가서 다시 말해 달라고 안내', code: `ASK · ${r.reason}` };
+      s5 = { status: 'current', tone: 'ask', mark: '다시 질문', detail: r.reason === 'MOVE_CLOSER' ? '가까이 가서 다시 말해 달라고 안내' : '어느 기기인지 다시 물어봐요', code: `ASK · ${r.reason}` };
       break;
     case 'NEED_APPROVAL':
       s4 = { status: 'todo', detail: `아직 ${r.action === 'open' ? '열지' : r.action === 'on' ? '켜지' : '끄지'} 않았어요`, code: '승인 뒤 request_use 다시 호출' };
@@ -95,7 +95,7 @@ export function railView(s: Snapshot, layout: FloorLayout, mirroredPersonId: str
       break;
     case 'BUSY':
       s4 = { status: 'todo', detail: '실행하지 않음', code: '' };
-      s5 = { status: 'current', tone: 'busy', mark: '바쁨', detail: r.reason === 'USER_BUSY' ? '쓰던 기기를 먼저 반납해 달라고 안내' : '지금은 쓸 수 없다고 안내', code: `BUSY · ${r.reason}` };
+      s5 = { status: 'current', tone: 'busy', mark: '바쁨', detail: r.reason === 'USER_BUSY' ? '쓰던 기기를 먼저 반납해 달라고 안내' : r.reason === 'COMMAND_IN_PROGRESS' ? '다른 명령이 끝나면 다시 해 달라고 안내' : '지금은 쓸 수 없다고 안내', code: `BUSY · ${r.reason}` };
       break;
     default:
       s4 = { status: 'todo', detail: '실행하지 않음', code: '' };

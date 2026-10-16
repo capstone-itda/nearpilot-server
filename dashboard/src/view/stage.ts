@@ -210,8 +210,8 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
         break;
       case 'fault':
         if (r.execution === 'failed') {
-          view.aria = `${josa(name, '이', '가')} 실행 실패를 알림`;
-          set('deny', atDevice(target), `${name} 실행 실패`, '기기가 실패를 알려서 실행하지 않았어요');
+          view.aria = `${josa(name, '이', '가')} 실행 실패를 알려 격리됨`;
+          set('deny', atDevice(target), `${name} 격리`, '기기가 실패를 알려서 다시 쓰지 않게 막았어요');
         } else {
           view.aria = `${josa(name, '이', '가')} 결과 불명으로 격리됨`;
           set('deny', atDevice(target), `${name} 격리`, `${ACTION_DID[r.action]} 알 수 없어서 다시 쓰지 않게 막았어요`);
@@ -231,7 +231,7 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
         break;
       case 'busy':
         view.aria = `${who}의 ${cap} ${act} 요청이 바빠서 실행되지 않음`;
-        if (target) set('busy', atDevice(target), r.reason === 'USER_BUSY' ? '이미 다른 기기를 쓰는 중' : `${name} 사용 중`,
+        if (target) set('busy', atDevice(target), r.reason === 'USER_BUSY' ? '이미 다른 기기를 쓰는 중' : r.reason === 'COMMAND_IN_PROGRESS' ? `${name} 명령 실행 중` : `${name} 사용 중`,
           r.reason === 'USER_BUSY' ? '쓰던 기기를 먼저 반납해야 해요' : r.reason === 'COMMAND_IN_PROGRESS' ? '다른 명령을 실행하는 중이라 기다려야 해요' : '다른 사람이 쓰고 있어서 실행하지 않았어요');
         break;
       case 'deny': {
@@ -240,8 +240,14 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
           BEACON_NOT_SEEN: ['폰 신호를 받지 못했어요', '비콘이 꺼져 있거나 장소 밖이에요'],
           NO_CANDIDATE: ['쓸 수 있는 기기가 없어요', `이 장소에 쓸 수 있는 ${josa(cap, '이', '가')} 없어요`],
           TARGET_UNAVAILABLE: ['지금 쓸 수 없는 기기예요', '고장, 연결 끊김, 미신뢰 중 하나예요'],
-          POLICY_DENIED: ['정책이 허락하지 않아요', '이 기기는 이 사람에게 열려 있지 않아요']
-        } as Record<string, [string, string]>)[r.reason] ?? ['요청을 거부했어요', r.reason];
+          POLICY_DENIED: ['정책이 허락하지 않아요', '이 기기는 이 사람에게 열려 있지 않아요'],
+          RECHECK_FAILED: ['실행 직전 확인에 실패했어요', '다시 확인하다 오류가 나서 실행하지 않았어요'],
+          INTERNAL_ERROR: ['서버 오류로 거부했어요', '판정 중 오류가 나서 실행하지 않았어요'],
+          CAPACITY_EXCEEDED: ['요청이 너무 많아요', '지금은 새 요청을 받지 않아요'],
+          INVALID_INPUT: ['요청 형식이 맞지 않아요', 'AI가 보낸 값을 읽을 수 없어요'],
+          INVALID_TOKEN: ['인증하지 못했어요', 'AI 호스트의 토큰이 맞지 않아요'],
+          REQUEST_ID_CONFLICT: ['같은 요청 번호가 이미 있어요', '내용이 다른 요청이라 받지 않았어요']
+        } as Record<string, [string, string]>)[r.reason] ?? ['요청을 거부했어요', '실행하지 않았어요'];
         const pos = target ? atDevice(target) : atVisitor(r.personId);
         set('deny', pos, t[0], t[1]);
         break;

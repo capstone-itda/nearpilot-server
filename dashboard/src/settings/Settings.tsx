@@ -100,12 +100,13 @@ export function Phones({ streams, onPick, follow, onFollow }: PhonesProps) {
       <div className="np-phones">
         {people.map((p) => {
           const linked = !!streams[p.id];
+          const mock = !linked && snapshot.mockPhones?.some((m) => m.personId === p.id);
           const beacon = q.data?.beacons.find((x) => x.personId === p.id);
           return (
             <section key={p.id} className="np-card" data-component="PhoneCard">
-              <div className="np-card__head"><h2 className="np-card__title">{p.pseudonym}</h2><span className="np-pcard__status" data-linked={linked ? 'true' : 'false'}>{linked ? '미러링 연결됨' : '미러링 창 없음'}</span></div>
+              <div className="np-card__head"><h2 className="np-card__title">{p.pseudonym}</h2><span className="np-pcard__status" data-linked={linked ? 'true' : 'false'}>{linked ? '미러링 연결됨' : mock ? '목 화면' : '미러링 창 없음'}</span></div>
               <div className="np-pcard__preview" data-linked={linked ? 'true' : 'false'}>
-                <div className="np-pcard__preview-screen">{linked ? <MirrorVideo stream={streams[p.id]} /> : '창을 고르면 여기에 보여요'}</div>
+                <div className="np-pcard__preview-screen">{linked ? <MirrorVideo stream={streams[p.id]} /> : mock ? '모니터에 목 화면을 보여 줘요. 창을 고르면 바뀌어요' : '창을 고르면 여기에 보여요'}</div>
               </div>
               <KeyValue rows={[['비콘', beacon?.label ?? '—', true], ['수신', beacon ? (beacon.lastSeenSec === null ? beacon.note ?? '—' : ago(beacon.lastSeenSec)) : '—']]} />
               <button className="np-btn" type="button" onClick={() => onPick(p.id)}>{linked ? '창 다시 고르기' : '미러링 창 고르기'}</button>

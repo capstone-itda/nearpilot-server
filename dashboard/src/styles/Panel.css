@@ -1,5 +1,5 @@
 /* Panel: 무대 위에 겹쳐 열리는 상세 패널. 무대 크기와 위치는 바뀌지 않는다.
-   패널 안 부품: Section, StepList, ProbBars, Timeline, Checklist, StateStrip, DataTable, FilterBar, Tiles, Matrix, NoteBox */
+   패널 안 부품: Section, StepList, ProbBars, Timeline, StateStrip, DataTable, FilterBar, Tiles, Matrix, NoteBox */
 
 .np-panel {
   position: absolute;
@@ -79,14 +79,6 @@
 .np-tl__text { font-size: var(--fs-body); }
 .np-tl__item[data-state="next"] .np-tl__text { color: var(--ink-2); }
 
-/* Checklist: 복구 준비 등 */
-.np-checklist { display: flex; flex-direction: column; }
-.np-checklist__item { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr); gap: 0.1rem var(--sp-3); padding: var(--sp-2) 0; border-top: 1px solid var(--line-soft); }
-.np-checklist__mark { font-family: var(--font-mono); }
-.np-checklist__item[data-result="pass"] .np-checklist__mark { color: var(--accent-strong); }
-.np-checklist__item[data-result="fail"] .np-checklist__mark { color: var(--ink); font-weight: 600; }
-.np-checklist__item[data-result="fail"] .np-checklist__name { font-weight: 600; }
-.np-checklist__detail { grid-column: 2; font-family: var(--font-mono); font-size: var(--fs-cap); color: var(--ink-3); }
 
 /* StateStrip: 기기 상태 머신 */
 .np-states { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--sp-1); }
@@ -195,7 +187,6 @@
   .np-panel__body { gap: var(--sp-3); padding-top: var(--sp-3); padding-bottom: var(--sp-3); }
   .np-sec { gap: var(--sp-2); }
   .np-app .np-tl { gap: var(--sp-2); }
-  .np-checklist__item { padding: var(--sp-1) 0; }
   .np-panel[data-kind="trust"] .np-zone { padding: var(--sp-2) var(--sp-3); gap: var(--sp-2); }
   .np-panel[data-kind="trust"] .np-zone__body { gap: var(--sp-2); }
 }

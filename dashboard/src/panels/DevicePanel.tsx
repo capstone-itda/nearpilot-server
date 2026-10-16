@@ -6,7 +6,8 @@ import { ACTION_NAME, DEVICE_STATE_NAME } from '../view/text';
 
 function FaultBody({ nodeId }: { nodeId: string }) {
   const { snapshot } = useData();
-  const f = snapshot.devices.find((d) => d.nodeId === nodeId)?.fault;
+  const st = snapshot.devices.find((d) => d.nodeId === nodeId);
+  const f = st?.fault;
   const cmd = f?.action ? `${ACTION_NAME[f.action]} 명령` : '명령';
   const cause = !f ? '' : f.cause === 'EXEC_UNKNOWN' ? `${cmd}의 결과를 몰라서` : f.cause === 'EXEC_FAILED' ? `기기가 ${cmd} 실패를 알려서` : `기기 이상(${f.cause})으로`;
   const why = f ? `${cause} 후보에서 빼고 격리했어요` : '후보에서 빼고 격리했어요';
@@ -14,6 +15,9 @@ function FaultBody({ nodeId }: { nodeId: string }) {
     <>
       <Section title="상태" hint={why}>
         <StateStrip current="FAULT" tone="deny" />
+      </Section>
+      <Section title="기기">
+        <KeyValue rows={[['코드', nodeId, true], ['연결', st?.online ? '연결됨' : '연결 끊김'], ['신뢰', st?.trust ?? '—', true]]} />
       </Section>
       {f ? <Section title="최근 기록"><Timeline items={[['now', f.at, `격리 · ${f.cause}`, 'deny']]} /></Section> : null}
       <NoteBox text="다시 쓰려면 소유자가 스크립트로 복구 준비를 확인하고 승인해요. 이 화면은 상태만 보여요." code="FR-12A · NFR-04" />

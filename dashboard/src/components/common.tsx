@@ -1,6 +1,6 @@
 // 작은 공용 컴포넌트. 마크업은 화면 설계 목업과 같다.
 import type { ReactNode } from 'react';
-import { CIRCLED, STEP_NAMES, VERDICT_LABEL } from '../view/text';
+import { STEP_NAMES, VERDICT_LABEL } from '../view/text';
 
 const b = (v: unknown) => (v ? 'true' : 'false');
 
@@ -54,7 +54,6 @@ export function StepList({ items }: { items: [StepRowResult, string, string][] }
     </ol>
   );
 }
-export const circled = (i: number) => CIRCLED[i];
 
 export function ProbBars({ rows, threshold }: { rows: [string, number, 'ok' | 'ask' | 'muted'][]; threshold: number }) {
   const t = Math.round(threshold * 100);
@@ -85,19 +84,6 @@ export function Timeline({ items }: { items: ['done' | 'now' | 'next', string, s
         </li>
       ))}
     </ol>
-  );
-}
-
-export function Checklist({ items }: { items: ['pass' | 'fail', string, string][] }) {
-  return (
-    <ul className="np-checklist" data-component="Checklist">
-      {items.map(([res, name, detail]) => (
-        <li key={name} className="np-checklist__item" data-result={res}>
-          <span className="np-checklist__mark" aria-hidden="true">{res === 'pass' ? '✓' : '✕'}</span>
-          <span className="np-checklist__name">{name}</span><span className="np-checklist__detail">{detail}</span>
-        </li>
-      ))}
-    </ul>
   );
 }
 

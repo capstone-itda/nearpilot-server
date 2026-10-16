@@ -19,6 +19,7 @@ describe('createMockSource', () => {
     s.subscribe((x) => seen.push(x));
     vi.advanceTimersByTime(10 * PLAY_ORDER.length * 3);
     expect(seen.length).toBe(PLAY_ORDER.length);
+    expect(seen.some((x) => x.request?.execution === 'succeeded')).toBe(true);
     expect(seen.at(-1)).toEqual(SCENES[PLAY_ORDER.at(-1)!]());
   });
 });

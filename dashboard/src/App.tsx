@@ -119,7 +119,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   if (view === 'monitor') {
     const phone = choosePhone(snapshot, follow, shownPerson.current);
     shownPerson.current = phone.personId;
-    const mock = snapshot.mockPhone && snapshot.mockPhone.personId === phone.personId ? snapshot.mockPhone : undefined;
+    const mock = snapshot.mockPhones?.find((m) => m.personId === phone.personId);
     screen = (
       <div className="np-monitor" data-component="MonitorLayout" data-live={snapshot.connected ? 'true' : 'false'}>
         {topBar}

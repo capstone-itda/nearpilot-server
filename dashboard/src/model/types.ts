@@ -123,7 +123,8 @@ export interface Snapshot {
   request?: RequestProgress;
   /** 소유자 폰에 승인 알림을 보낸 중이면 true */
   ownerNotified: boolean;
-  mockPhone?: MockPhoneScreen;
+  /** 목 어댑터 전용: 사람별 가짜 폰 화면. 서버 어댑터는 비워 두고 미러링 영상을 쓴다. */
+  mockPhones?: MockPhoneScreen[];
 }
 
 // ── 조회 결과 (FR-12A 대시보드 조회 REST) ────────────────────────────────

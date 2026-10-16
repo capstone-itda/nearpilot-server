@@ -59,14 +59,14 @@ test('FR12A 점유 현황에서 기기를 누르면 기기 상세를 연다', as
   await expect(panel).toContainText('9분 초과');
 });
 
-test('D2 고장 격리 상세에는 복구 버튼이 없다', async ({ page }) => {
+test('FR12A D2 고장 격리 상세에는 복구 버튼이 없다', async ({ page }) => {
   await ready(page, 'scene=fault');
   const panel = page.locator('[data-component="Panel"]');
   await expect(panel).toContainText('스크립트');
   await expect(panel.getByRole('button')).toHaveCount(1); // 닫기만
 });
 
-test('D1 ASK·승인 필요·고장 격리는 상세 패널이 자동으로 열린다', async ({ page }) => {
+test('FR12B D1 ASK·승인 필요·고장 격리는 상세 패널이 자동으로 열린다', async ({ page }) => {
   for (const [scene, text] of [['ask', 'ASK'], ['approval', 'NEED_APPROVAL'], ['fault', 'FAULT']]) {
     await ready(page, `scene=${scene}`);
     await expect(page.locator('[data-component="Panel"] .np-panel__title')).toContainText(text);
@@ -75,7 +75,7 @@ test('D1 ASK·승인 필요·고장 격리는 상세 패널이 자동으로 열�
   await expect(page.locator('[data-component="Panel"]')).toHaveCount(0);
 });
 
-test('D7 설정 화면을 오가고 자동 전환 스위치는 이 PC에만 저장한다', async ({ page }) => {
+test('FR12A D7 설정 화면을 오가고 자동 전환 스위치는 이 PC에만 저장한다', async ({ page }) => {
   await ready(page, 'scene=later');
   await page.getByRole('button', { name: '메뉴' }).click();
   await page.getByRole('menuitem', { name: '폰 연결' }).click();
@@ -91,7 +91,7 @@ test('D7 설정 화면을 오가고 자동 전환 스위치는 이 PC에만 저�
   await expect(page.locator('[data-component="MonitorLayout"]')).toHaveCount(1);
 });
 
-test('테마를 바꾸고 다시 열어도 유지한다', async ({ page }) => {
+test('FR12A D7 테마를 바꾸고 다시 열어도 유지한다', async ({ page }) => {
   await ready(page, 'scene=idle');
   await expect(page.locator('.np-app')).toHaveAttribute('data-theme', 'dark');
   await page.getByRole('button', { name: '라이트 모드로 바꾸기' }).click();
@@ -100,7 +100,7 @@ test('테마를 바꾸고 다시 열어도 유지한다', async ({ page }) => {
   await expect(page.locator('.np-app')).toHaveAttribute('data-theme', 'light');
 });
 
-test('연결 끊김에서 다시 연결하면 실시간 화면으로 돌아온다', async ({ page }) => {
+test('FR12B 연결 끊김에서 다시 연결하면 실시간 화면으로 돌아온다', async ({ page }) => {
   await ready(page, 'scene=offline');
   await expect(page.getByRole('status').filter({ hasText: '연결 끊김' })).toBeVisible();
   await page.getByRole('button', { name: '다시 연결' }).click();
