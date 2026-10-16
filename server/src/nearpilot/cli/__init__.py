@@ -21,7 +21,7 @@ DEFAULT_CONFIG = "config/server.toml"  # 실행 폴더 기준
 def build_parser() -> argparse.ArgumentParser:
     """`--config`를 하위 명령 앞뒤 어디에 써도 되는 파서. 하위 명령은 필수다."""
     # 하위 명령 모듈이 위의 종료 코드를 가져다 쓰므로 상수를 정한 뒤에 가져온다.
-    from nearpilot.cli import serve
+    from nearpilot.cli import seed, serve
 
     parser = argparse.ArgumentParser(prog="nearpilot", description="NearPilot 서버를 실행하고 운영한다.")
     parser.add_argument("--config", metavar="PATH", default=DEFAULT_CONFIG,
@@ -32,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="서버 TOML 설정 파일. 하위 명령 앞에 써도 된다")
     subparsers = parser.add_subparsers(dest="command", required=True)
     serve.register(subparsers, parent)
+    seed.register(subparsers, parent)
     return parser
 
 

@@ -10,12 +10,17 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from nearpilot.cli import main, serve
+from nearpilot.db.repositories.repository import SqliteRepository
+from nearpilot.db.schema import connect
+from nearpilot.shared.enums import Capability, Occupancy
+from nearpilot.shared.models import NodeAnnounce
 
 # 유효한 최소 설정. 절 하나를 통째로 바꾸려면 `write_config(server_dir, proximity={...})`처럼 넘긴다.
 BASE_SECTIONS: dict[str, dict[str, Any]] = {
@@ -100,3 +105,29 @@ def run_server_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, bool]]:
 
     monkeypatch.setattr(serve, "run_server", fake)
     return calls
+
+
+@pytest.fixture
+def announce_nodes() -> Callable[..., None]:
+    """`announce_nodes(server_dir, "locker-1", ...)`: 서버가 MQTT 발표를 받은 것처럼 기기 행을 만든다 (DISCOVERED).
+
+    기기 행은 발표로만 생기므로 실제 경로인 `Repository.upsert_announced_node`를 쓴다.
+    기본 설정(`BASE_SECTIONS`의 `database.path`)의 DB인 `var/nearpilot.db`에 쓰고 폴더가 없으면 만든다.
+    """
+
+    def announce(server: Path, *node_ids: str, capability: Capability = Capability.LOCKER,
+                 occupancy: Occupancy = Occupancy.RENTAL) -> None:
+        db_file = server / "var" / "nearpilot.db"
+        db_file.parent.mkdir(parents=True, exist_ok=True)
+        now = datetime(2026, 10, 17, 9, 0, tzinfo=timezone.utc)
+        conn = connect(str(db_file))
+        try:
+            repository = SqliteRepository(conn)
+            for seq, node_id in enumerate(node_ids, start=1):
+                repository.upsert_announced_node(NodeAnnounce(
+                    node_id=node_id, capability=capability, occupancy=occupancy, received_at=now,
+                    session_id=f"session-{node_id}", seq=seq, sent_at=now))
+        finally:
+            conn.close()
+
+    return announce
