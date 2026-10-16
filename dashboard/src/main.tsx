@@ -17,11 +17,11 @@ import './styles/Settings.css';
 import { App, type AppProps } from './App';
 import { createMockSource, isSceneName } from './data/mock/mockSource';
 
-// 주소 값: ?scene=idle|ask|flow|fault|approval|later|offline|play (목 데이터 장면)
+// 주소 값: ?scene=idle|ask|flow|done|fault|approval|later|offline|play|live (목 데이터 장면, live는 시각에 따라 흐름)
 //          &view=layout|phones|check  &panel=uses|approvals|audit|history|trust|device:<id>|request:<id>  &theme=dark|light
 const q = new URLSearchParams(location.search);
 const scene = q.get('scene');
-const source = createMockSource({ scene: scene === 'play' ? 'play' : isSceneName(scene) ? scene : 'idle' });
+const source = createMockSource({ scene: scene === 'play' || scene === 'live' ? scene : isSceneName(scene) ? scene : 'idle' });
 
 const view = q.get('view');
 const panel = q.get('panel');

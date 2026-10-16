@@ -29,11 +29,14 @@ export const LAYOUT: FloorLayout = withArrangement(PLACE, resolveArrangement(PLA
 const dev = (over: Partial<Record<string, Partial<DeviceStatus>>> = {}): DeviceStatus[] =>
   PLACE.devices.map((d) => ({ nodeId: d.nodeId, state: 'AVAILABLE', online: true, trust: 'trusted', overdue: false, ...over[d.nodeId] }));
 
-const RSSI_IDLE_A = { 'locker-1': -69, 'locker-2': -69, 'locker-3': -71, 'speaker-1': -70, 'light-1': -70, 'light-2': -70, 'light-3': -72 };
-const RSSI_IDLE_B = { 'locker-1': -79, 'locker-2': -76, 'locker-3': -73, 'speaker-1': -81, 'light-1': -79, 'light-2': -78, 'light-3': -76 };
+export const RSSI_IDLE_A = { 'locker-1': -69, 'locker-2': -69, 'locker-3': -71, 'speaker-1': -70, 'light-1': -70, 'light-2': -70, 'light-3': -72 };
+export const RSSI_IDLE_B = { 'locker-1': -79, 'locker-2': -76, 'locker-3': -73, 'speaker-1': -81, 'light-1': -79, 'light-2': -78, 'light-3': -76 };
 /** 판정이 고른 기기의 신호가 가장 세다 */
-const RSSI_FAULT_B = { 'locker-1': -74, 'locker-2': -58, 'locker-3': -70, 'speaker-1': -80, 'light-1': -78, 'light-2': -79, 'light-3': -83 };
-const RSSI_APPROVAL_B = { 'locker-1': -72, 'locker-2': -75, 'locker-3': -79, 'speaker-1': -70, 'light-1': -57, 'light-2': -71, 'light-3': -80 };
+export const RSSI_FAULT_B = { 'locker-1': -74, 'locker-2': -58, 'locker-3': -70, 'speaker-1': -80, 'light-1': -78, 'light-2': -79, 'light-3': -83 };
+export const RSSI_APPROVAL_B = { 'locker-1': -72, 'locker-2': -75, 'locker-3': -79, 'speaker-1': -70, 'light-1': -57, 'light-2': -71, 'light-3': -80 };
+/** A가 사물함 1과 2 사이 (ASK), 사물함 1 앞 (열기) */
+export const RSSI_ASK_A = { 'locker-1': -61, 'locker-2': -63, 'locker-3': -75, 'speaker-1': -82, 'light-1': -84, 'light-2': -86, 'light-3': -88 };
+export const RSSI_FLOW_A = { 'locker-1': -52, 'locker-2': -67, 'locker-3': -74, 'speaker-1': -79, 'light-1': -81, 'light-2': -84, 'light-3': -86 };
 
 type PersonOver = Partial<Pick<Person, 'beaconSeen' | 'rssi'>>;
 const people = (a: PersonOver = {}, b: PersonOver = {}): Person[] => [
@@ -65,7 +68,7 @@ export const SCENES = {
   ask: (): Snapshot => ({
     ...base(), lastReceivedAt: '14:26:12',
     devices: dev({ 'locker-3': { state: 'ACTIVE', overdue: true } }),
-    people: people({ rssi: { 'locker-1': -61, 'locker-2': -63, 'locker-3': -75, 'speaker-1': -82, 'light-1': -84, 'light-2': -86, 'light-3': -88 } }, { beaconSeen: false }),
+    people: people({ rssi: RSSI_ASK_A }, { beaconSeen: false }),
     request: {
       id: 'r-1426', personId: 'p-a', host: 'claude', tool: 'request_use', target: { kind: 'nearest', capability: 'locker' }, action: 'open',
       at: '14:26:12', verdict: 'ASK', reason: 'LOW_CONFIDENCE',
@@ -78,7 +81,7 @@ export const SCENES = {
   flow: (): Snapshot => ({
     ...base(), lastReceivedAt: '14:28:10',
     devices: dev({ 'locker-1': { state: 'RESERVED' }, 'locker-3': { state: 'ACTIVE', overdue: true } }),
-    people: people({ rssi: { 'locker-1': -52, 'locker-2': -67, 'locker-3': -74, 'speaker-1': -79, 'light-1': -81, 'light-2': -84, 'light-3': -86 } }, { beaconSeen: false }),
+    people: people({ rssi: RSSI_FLOW_A }, { beaconSeen: false }),
     request: {
       id: 'r-1428', personId: 'p-a', host: 'claude', tool: 'request_use', target: { kind: 'nearest', capability: 'locker' }, action: 'open',
       at: '14:28:10', verdict: 'OK', reason: 'OK', nodeId: 'locker-1', execution: 'sent',

@@ -198,3 +198,20 @@ test('FR12A 점검은 장면의 비콘 수신과 연결 끊김을 따르고, 빈
   await expect(page.getByText('아직 기록이 없어요')).toBeVisible();
   await expect(page.locator('.np-table__empty')).toHaveText('없어요');
 });
+
+test('FR12B 실시간 흐름 모드는 신호 세기와 판정이 시각에 따라 바뀐다', async ({ page }) => {
+  await page.clock.install();
+  await ready(page, 'scene=live');
+  await expect(page.locator('.np-rail__title')).toHaveText('요청을 기다리고 있어요');
+  const labels = () => page.locator('.np-stage__signal-label').allTextContents();
+  await page.clock.runFor(9000);
+  await expect(page.locator('.np-rail__title')).toHaveText('방문자 A · 사물함 열기');
+  const first = await labels();
+  await page.clock.runFor(1000);
+  expect(await labels()).not.toEqual(first);
+  await page.clock.runFor(20000);
+  await expect(page.locator('.np-rail__meta')).toContainText('14:28:10');
+  await page.clock.runFor(60000);
+  await expect(page.locator('.np-rail__title')).toHaveText('방문자 B · 조명 켜기');
+  expect(writes).toEqual([]);
+});

@@ -1,5 +1,6 @@
 // 목 어댑터: 서버 없이 화면을 그린다. 서버 어댑터는 경로와 형식이 정해진 뒤 같은 인터페이스로 만든다.
 import type { DataSource } from '../source';
+import { liveSnapshot, liveTime } from './live';
 import type { HistoryQuery, Snapshot, UseRow } from '../../model/types';
 import {
   APPROVALS, AUDIT, HEALTH, HISTORY, PLACE, PLAY_ORDER, RENTAL_DUE, RENTALS, REQUESTS, SCENES, TRUST, TRUST_BASE, USES,
@@ -12,8 +13,8 @@ const sec = (t: string) => { const [h, m, s = '0'] = t.split(':'); return Number
 const strip = <T,>({ since: _since, ...row }: Since<T>) => row as unknown as T;
 
 export interface MockOptions {
-  /** 고정할 장면. 'play'면 PLAY_ORDER를 차례로 재생한다. */
-  scene: SceneName | 'play';
+  /** 고정할 장면. 'play'면 PLAY_ORDER를 차례로 재생하고, 'live'면 신호와 판정이 시각에 따라 흐른다. */
+  scene: SceneName | 'play' | 'live';
   /** 재생 간격 (ms) */
   intervalMs?: number;
 }
@@ -36,7 +37,7 @@ function inPeriod(at: string, period: string): boolean {
 export function createMockSource(opt: MockOptions): DataSource {
   const listeners = new Set<(s: Snapshot) => void>();
   let index = 0;
-  let current: Snapshot = opt.scene === 'play' ? SCENES[PLAY_ORDER[0]]() : SCENES[opt.scene]();
+  let current: Snapshot = opt.scene === 'live' ? liveSnapshot(liveTime(0)) : opt.scene === 'play' ? SCENES[PLAY_ORDER[0]]() : SCENES[opt.scene]();
   let timer: ReturnType<typeof setInterval> | undefined;
 
   const emit = () => listeners.forEach((l) => l(current));
@@ -48,7 +49,16 @@ export function createMockSource(opt: MockOptions): DataSource {
     if (!due || !st || st === 'AVAILABLE' || !seen(due)) return 0;
     return Math.floor((sec(current.lastReceivedAt) - sec(due)) / 60);
   };
+  const startLive = () => {
+    if (timer) return;
+    const started = Date.now();
+    timer = setInterval(() => {
+      current = liveSnapshot(liveTime((Date.now() - started) / 1000));
+      emit();
+    }, opt.intervalMs ?? 500);
+  };
   const startPlay = () => {
+    if (opt.scene === 'live') { startLive(); return; }
     if (opt.scene !== 'play' || timer || index === PLAY_ORDER.length - 1) return;
     timer = setInterval(() => {
       // 한 번만 재생한다. 처음으로 돌아가면 복구 없이 고장 격리가 풀린 것처럼 보인다.
