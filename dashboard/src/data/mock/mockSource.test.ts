@@ -94,3 +94,13 @@ describe('live', () => {
     expect(batches[1].at(-1)).toMatchObject({ type: 'link', connected: true });
   });
 });
+
+describe('조회는 판정을 앞서가지 않는다', () => {
+  it('FR12A 판정 중인 요청은 이력, 감사, 신뢰도 집계에 아직 없다', async () => {
+    const judging = createMockSource({ scene: 'judging' });
+    expect((await judging.history({ period: '오늘' })).map((h) => h.requestId)).not.toContain('r-1428');
+    const ask = createMockSource({ scene: 'ask' });
+    expect((await ask.history({ period: '오늘' })).map((h) => h.requestId)).toContain('r-1426');
+    expect((await ask.audit()).map((a) => a.id)).toContain('a4');
+  });
+});

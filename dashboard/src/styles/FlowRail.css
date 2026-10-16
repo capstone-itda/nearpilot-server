@@ -16,6 +16,7 @@
 .np-rail__head { display: flex; align-items: baseline; gap: var(--sp-4); min-width: 0; }
 .np-rail__title { font-size: var(--fs-lead); font-weight: 600; white-space: nowrap; }
 .np-rail__meta { font-size: var(--fs-body); color: var(--ink-2); white-space: nowrap; flex: none; }
+.np-rail__open { margin-left: auto; margin-block: calc(var(--sp-2) * -1); flex: none; align-self: center; }
 .np-rail__code { font-family: var(--font-mono); font-size: var(--fs-cap); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
 .np-rail__steps {

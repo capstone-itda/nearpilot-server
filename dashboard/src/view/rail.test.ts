@@ -126,3 +126,10 @@ describe('railView 판정 전', () => {
     expect(railView(s, LAYOUT, 'p-b').steps[4]).toMatchObject({ mark: '신청 만료', code: 'APPROVAL_REQUEST_EXPIRED' });
   });
 });
+
+describe('railView 명령 전', () => {
+  it('FR12B 판정은 OK지만 명령 이벤트가 오기 전에는 허가로 보이고, 명령이 오면 실행 중', () => {
+    expect(railView(stateAt(sec('14:28:10.205')), LAYOUT, 'p-a').steps[3]).toMatchObject({ status: 'current', mark: '허가' });
+    expect(railView(stateAt(sec('14:28:10.215')), LAYOUT, 'p-a').steps[3]).toMatchObject({ status: 'current', mark: '실행 중' });
+  });
+});

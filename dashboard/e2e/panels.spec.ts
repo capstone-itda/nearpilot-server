@@ -225,6 +225,11 @@ test('FR12B 실시간 흐름 모드는 이벤트가 도착하는 순서대로 �
     }
   }
   expect(rssiChanged).toBe(true);
+  // 자동으로 열린 ASK 상세는 다음 요청이 오면 닫힌다
+  await expect(page.locator('[data-component="Panel"]')).toHaveCount(0);
+  // 레일에서 진행 중인 요청의 상세를 연다
+  await page.getByRole('button', { name: '요청 상세' }).click();
+  await expect(page.locator('.np-panel__title')).toContainText('사물함 열기');
   // 대기 → 판정 중 → ASK → (내려감) 대기 → 판정 중 → 실행
   expect(seen).toEqual(['idle', 'judging', 'ask', 'idle', 'judging', 'flow']);
   await expect(page.locator('.np-rail__meta')).toContainText('14:28:10');
@@ -234,11 +239,18 @@ test('FR12B 실시간 흐름 모드는 이벤트가 도착하는 순서대로 �
   expect(writes).toEqual([]);
 });
 
+test('FR12B 판정 중 요청 상세는 단계가 도착하는 대로 채워진다', async ({ page }) => {
+  await ready(page, 'scene=judging');
+  await page.getByRole('button', { name: '요청 상세' }).click();
+  await expect(page.locator('[data-component="Panel"] [data-component="VerdictTag"]')).toContainText('판정 중');
+  await expect(page.locator('.np-steps__item[data-result="pending"]')).toHaveCount(5);
+});
+
 test('FR12B 흐름 중에 메뉴로 연 목록 패널은 자동 패널로 바뀌지 않는다', async ({ page }) => {
   await page.clock.install();
   await ready(page, 'scene=live&panel=audit');
   await expect(page.locator('.np-panel__title')).toHaveText('감사 로그');
-  await page.clock.runFor(75000);
+  await page.clock.runFor(90000);
   await expect(page.locator('.np-rail__title')).toHaveText('방문자 B · 조명 켜기');
   await expect(page.locator('.np-panel__title')).toHaveText('감사 로그');
 });

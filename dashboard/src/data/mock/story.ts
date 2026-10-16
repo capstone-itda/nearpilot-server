@@ -142,8 +142,9 @@ const REQUEST_SCRIPTS: RequestScript[] = [
 
 /** 승인 신청과 만료 (대기 10분은 목 값, 실제 값은 설정 approval_pending_ttl_sec) */
 const APPROVAL_EVENTS: StreamEvent[] = [
+  // 소유자 폰에 알림이 뜬 화면이 승인 신청 이벤트와 같은 묶음에 오게 먼저 둔다
+  phone(sec('14:30:59.9'), { personId: 'p-owner', scene: 'notice', notice: { title: '조명 켜기 승인 요청', body: '방문자 B가 조명 1을 켜려고 해요.', clock: '14:31' } }),
   { type: 'approval', at: '14:31:00.000', requestId: 'r-1430', nodeId: 'light-1', personId: 'p-b', kind: 'requested' },
-  phone(sec('14:31:00.1'), { personId: 'p-owner', scene: 'notice', notice: { title: '조명 켜기 승인 요청', body: '방문자 B가 조명 1을 켜려고 해요.', clock: '14:31' } }),
   phone(sec('14:31:00.2'), { personId: 'p-b', scene: 'chat', said: '조명 켜 줘', reply: '조명 1은 소유자 승인이 필요해요. 승인을 요청했어요.' }),
   { type: 'approval', at: '14:41:00.000', requestId: 'r-1430', nodeId: 'light-1', personId: 'p-b', kind: 'expired' },
   phone(sec('14:41:00.1'), { personId: 'p-owner', scene: 'idle' }),

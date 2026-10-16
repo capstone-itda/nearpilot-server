@@ -20,10 +20,12 @@ export function FlowStep({ s, i }: { s: RailStep; i: number }) {
   );
 }
 
-export function FlowRail({ v }: { v: RailView }) {
+/** onOpen: 진행 중인 요청의 상세를 연다 (판정 단계가 도착하는 대로 바뀐다) */
+export function FlowRail({ v, onOpen }: { v: RailView; onOpen?: () => void }) {
   return (
     <section className="np-rail" data-component="FlowRail" data-mode={v.mode} aria-label="요청 흐름">
-      <div className="np-rail__head"><h2 className="np-rail__title">{v.title}</h2><span className="np-rail__meta">{v.meta}</span><span className="np-rail__code">{v.code}</span></div>
+      <div className="np-rail__head"><h2 className="np-rail__title">{v.title}</h2><span className="np-rail__meta">{v.meta}</span><span className="np-rail__code">{v.code}</span>
+        {v.mode === 'live' && onOpen ? <button className="np-btn np-rail__open" data-variant="quiet" type="button" onClick={onOpen}>요청 상세</button> : null}</div>
       <ol className="np-rail__steps">
         {v.steps.map((s, i) => <FlowStep key={i} s={s} i={i} />)}
       </ol>

@@ -87,7 +87,11 @@ export function railView(s: MonitorState, layout: FloorLayout, mirroredPersonId:
   }
   switch (r.verdict) {
     case 'OK':
-      if (r.execution === 'sent' || !r.execution) {
+      if (!r.execution) {
+        // 판정은 났고 명령은 아직 보내지 않았다
+        s4 = { status: 'current', tone: 'ok', mark: '허가', detail: `${name}에 ${act} 명령을 보낼 차례`, code: nodeAct };
+        s5 = { status: 'todo', detail: '결과를 기다려요', code: '' };
+      } else if (r.execution === 'sent') {
         s4 = { status: 'current', tone: 'ok', mark: '실행 중', detail: `${name}에 ${act} 명령`, code: `${nodeAct} · MQTT` };
         s5 = { status: 'todo', detail: '결과를 기다려요', code: '' };
       } else {

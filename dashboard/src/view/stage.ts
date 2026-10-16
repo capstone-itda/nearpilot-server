@@ -264,6 +264,9 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
         if (r.execution === 'succeeded') {
           view.aria = `${who}의 요청으로 ${josa(name, '이', '가')} ${ACTION_DONE[r.action]}`;
           set('ok', atDevice(target), `${name} ${act} 완료`, `${josa(name, '이', '가')} ${ACTION_DONE[r.action]}`);
+        } else if (!r.execution) {
+          view.aria = `${who}의 ${cap} ${act} 요청을 허가함`;
+          set('ok', atDevice(target), `${name} ${act} 허가`, `${layout.devices.find((d) => d.nodeId === target)?.occupancy === 'shared' ? '세 가지' : '네 가지'} 확인을 모두 통과했어요`);
         } else {
           view.aria = `${who}의 ${cap} ${act} 요청이 실행되는 중`;
           set('ok', atDevice(target), `${name} ${act} 명령`, `${layout.devices.find((d) => d.nodeId === target)?.occupancy === 'shared' ? '세 가지' : '네 가지'} 확인을 모두 통과해서 ${ACTION_OBJ[r.action]} 보냈어요`);

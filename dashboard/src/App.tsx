@@ -86,9 +86,8 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     if (auto && r && key !== s.request && (r.verdict === 'ASK' || r.verdict === 'NEED_APPROVAL')) setPanel(keepList({ kind: 'request', request: r, live: true }));
     else if (auto && newFaults.length) setPanel(keepList({ kind: 'device', nodeId: newFaults[0] }));
     else setPanel((p) => {
-      if (!p || p.kind !== 'request' || !p.live) return p;
-      // 다음 요청이 오면 닫는다. 요청이 화면에서 내려가기만 하면 마지막 내용으로 남긴다.
-      if (!r) return { ...p, live: false };
+      // live: 흐름을 따라가는 상세. 다음 요청이 오면 닫고, 요청이 화면에서 내려가기만 하면 마지막 내용으로 남긴다.
+      if (!p || p.kind !== 'request' || !p.live || !r) return p;
       return p.request.id === r.id ? { ...p, request: r } : null;
     });
     s.request = key;
@@ -155,7 +154,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
         {topBar}
         <PhoneMirror who={phone.who} follow={phone.follow} stream={phone.personId ? streams[phone.personId] : undefined} mock={mock} />
         <Stage v={stageView(snapshot, layout, { panelOpen: !!panel, panelWide: !!panel && WIDE_PANELS.includes(panel.kind) })} />
-        <FlowRail v={railView(snapshot, layout, phone.personId)} />
+        <FlowRail v={railView(snapshot, layout, phone.personId)} onOpen={snapshot.request ? () => setPanel({ kind: 'request', request: snapshot.request!, live: true }) : undefined} />
         {!snapshot.connected ? (
           <OfflineBanner title="서버와 연결이 끊겼어요" detail={`마지막 수신 ${snapshot.lastReceivedAt} · 다시 연결 시도 ${snapshot.reconnectAttempts}회째`} onReconnect={() => source.reconnect()} />
         ) : null}

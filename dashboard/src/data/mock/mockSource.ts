@@ -39,6 +39,7 @@ export const LIVE_START = sec('14:25:50');
 
 /**
  * live의 실제 경과(초) → 이야기 시각. 요청 하나의 이벤트는 0.2초 안에 몰려 있어서 하나씩 약 0.9초 간격으로 늘려 보이고,
+ * 명령 뒤 결과를 기다리는 1초 안쪽의 간격은 2초로 늘려 명령 선이 보이게 하고,
  * 이벤트 사이의 긴 조용한 구간은 빨리 감는다. 마지막 이벤트 뒤에는 실제 속도로 간다.
  */
 export function liveClock(start = LIVE_START): (elapsedSec: number) => number {
@@ -50,7 +51,7 @@ export function liveClock(start = LIVE_START): (elapsedSec: number) => number {
   let prev = start;
   for (const t of times) {
     const g = t - prev;
-    real += g < 0.5 ? 0.9 : g <= 5 ? g : Math.min(8, 4 + g / 60);
+    real += g < 0.5 ? 0.9 : g <= 5 ? Math.max(g, 2) : Math.min(8, 4 + g / 60);
     knots.push([real, t]);
     prev = t;
   }
@@ -66,6 +67,11 @@ export function liveClock(start = LIVE_START): (elapsedSec: number) => number {
     return tl + (e - rl);
   };
 }
+
+/** 요청별 AI 응답(mcp_result) 시각. 이력은 응답한 뒤에 생긴다. */
+const RESPONDED: Record<string, string> = Object.fromEntries(STORY.flatMap((e) => (e.type === 'mcp_result' ? [[e.requestId, e.at]] : [])));
+/** 감사 로그 줄이 스트림에 온 시각 */
+const AUDIT_AT: Record<string, string> = Object.fromEntries(STORY.flatMap((e) => (e.type === 'audit' ? [[e.row.id, e.at]] : [])));
 
 export function createMockSource(opt: MockOptions): DataSource {
   const listeners = new Set<(events: StreamEvent[]) => void>();
@@ -94,6 +100,9 @@ export function createMockSource(opt: MockOptions): DataSource {
   };
 
   const seen = (t: string) => sec(t) <= now;
+  /** 판정 기록(이력, 감사)은 스트림에서 그 이벤트가 온 뒤부터 조회된다 */
+  const answered = (h: { requestId: string; since: string }) => sec(RESPONDED[h.requestId] ?? h.since) <= now;
+  const audited = (a: { id: string; at: string }) => sec(AUDIT_AT[a.id] ?? a.at) <= now;
   /** 대여 시간을 넘긴 분. 넘기지 않았으면 0 */
   const overdue = (nodeId: string) => {
     const due = RENTAL_DUE[nodeId];
@@ -167,19 +176,19 @@ export function createMockSource(opt: MockOptions): DataSource {
         ]
       });
     },
-    audit: () => copy(AUDIT.filter((a) => seen(a.at))),
-    history: (q: HistoryQuery) => copy(HISTORY.filter((h) => seen(h.since) &&
+    audit: () => copy(AUDIT.filter(audited)),
+    history: (q: HistoryQuery) => copy(HISTORY.filter((h) => answered(h) &&
       inPeriod(h.at, q.period) && (!q.verdict || h.verdict === q.verdict) && (!q.nodeId || h.nodeId === q.nodeId) && (!q.host || h.host === q.host)).map(strip)),
     // 진행 중인 요청은 지금 상태 그대로, 끝난 요청은 이력에 보인 뒤부터 준다
     request: (id: string) => {
       if (current.request?.id === id) return copy(current.request);
       const h = HISTORY.find((r) => r.requestId === id);
-      const r = h && seen(h.since) ? finishedRequest(id) : undefined;
+      const r = h && answered(h) ? finishedRequest(id) : undefined;
       return r ? copy(r) : Promise.reject(new Error(`요청 ${id} 없음`));
     },
     // 집계는 이력 앞의 기준치에 지금까지 보인 이력을 더한다
     trust: () => {
-      const rows = HISTORY.filter((h) => seen(h.since));
+      const rows = HISTORY.filter(answered);
       const counts = { ...TRUST_BASE.counts };
       for (const h of rows) counts[h.verdict] += 1;
       const decisions = TRUST_BASE.decisions + rows.length;
