@@ -109,3 +109,18 @@ export function parseFile(text: string): { ok: true; devices: Arrangement; place
   }
   return { ok: true, devices, place: typeof f.place === 'string' ? f.place : '' };
 }
+
+/**
+ * 불러온 자리를 지금 배치에 한꺼번에 입힌다. 지금 기기 목록에 있는 기기만 옮긴다.
+ * 한 대라도 방 밖이거나 겹치면 아무것도 바꾸지 않고 그 기기 이름을 돌려준다.
+ */
+export function applyFile(arr: Arrangement, devices: DeviceInfo[], spots: Arrangement):
+  { ok: true; next: Arrangement; moved: number; unknown: number } | { ok: false; bad: string[] } {
+  const known = devices.filter((d) => spots[d.nodeId]);
+  const next: Arrangement = { ...arr };
+  for (const d of known) next[d.nodeId] = spots[d.nodeId];
+  const bad = known.filter((d) => !canPlace(next, d.nodeId, next[d.nodeId])).map((d) => d.name);
+  if (bad.length) return { ok: false, bad };
+  const ids = new Set(devices.map((d) => d.nodeId));
+  return { ok: true, next, moved: known.length, unknown: Object.keys(spots).filter((id) => !ids.has(id)).length };
+}

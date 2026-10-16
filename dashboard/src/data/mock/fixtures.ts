@@ -194,8 +194,11 @@ export const HISTORY: Since<HistoryRow>[] = [
   { requestId: 'r-1420', at: '14:20', personId: 'p-c', host: 'claude', target: { kind: 'nearest', capability: 'speaker' }, action: 'on', verdict: 'DENY', outcome: '실행 안 함', code: 'BEACON_NOT_SEEN', since: '14:20:41' }
 ];
 
+/** 실시간 집계에서 HISTORY 앞의 판정들. 목 어댑터가 지금까지 보인 HISTORY를 더한다. */
+export const TRUST_BASE: TrustReport['live'] = { since: '14:00', decisions: 36, doubleOccupancy: 0, latencyMedianSec: 0.21, latencyP95Sec: 0.48, counts: { OK: 25, ASK: 5, NEED_APPROVAL: 3, BUSY: 1, DENY: 2 } };
+
 export const TRUST: TrustReport = {
-  live: { since: '14:00', decisions: 42, doubleOccupancy: 0, latencyMedianSec: 0.21, latencyP95Sec: 0.48, counts: { OK: 27, ASK: 6, NEED_APPROVAL: 4, BUSY: 2, DENY: 3 } },
+  live: TRUST_BASE,
   evaluation: {
     date: '2026-10-10',
     metrics: [

@@ -1,6 +1,6 @@
 // 스냅숏 → 흐름 레일 다섯 단계. 쉬운 말이 크게, 코드는 보조 글자로.
 import type { FloorLayout, RequestProgress, Snapshot } from '../model/types';
-import { ACTION_DONE, ACTION_NAME, HOST_NAME, approvalText, josa, requestTitle, toolCall } from './text';
+import { ACTION_DONE, ACTION_NAME, HOST_NAME, approvalText, josa, reasonText, requestTitle, toolCall } from './text';
 
 export type CheckResult = 'pass' | 'fail' | 'wait' | 'unsure' | 'none' | 'skip';
 export type StepTone = 'accent' | 'ok' | 'ask' | 'appr' | 'busy' | 'deny';
@@ -29,21 +29,23 @@ function checks(r: RequestProgress, name: string, shared: boolean): [CheckResult
   const stopAt = st.findIndex((x) => x.result === 'stop');
   const passed = (i: number) => st[i]?.result === 'pass';
   const out: [CheckResult, string?][] = [['none'], ['none'], ['none'], ['none']];
+  // 서버 오류로 멈추면 그 단계의 거절 이유가 아니므로 사유를 그대로 쓴다
+  const fail = (text: string): [CheckResult, string] => ['fail', r.reason === 'INTERNAL_ERROR' ? reasonText(r.reason) : text];
 
   // ① 누구인지
-  if (stopAt === 1) out[0] = ['fail', '폰 신호 없음'];
+  if (stopAt === 1) out[0] = fail('폰 신호 없음');
   else if (passed(1)) out[0] = ['pass', '누구인지'];
   // ③ 어디 앞인지 (②에서 멈추면 후보 없음)
-  if (stopAt === 2) out[1] = ['fail', '쓸 수 있는 기기 없음'];
-  else if (stopAt === 3) out[1] = r.verdict !== 'ASK' ? ['fail', '기기 앞이 아님'] : r.reason === 'MOVE_CLOSER' ? ['unsure', '지정한 기기 앞인지 애매함'] : ['unsure', '어디 앞인지 애매함'];
+  if (stopAt === 2) out[1] = fail('쓸 수 있는 기기 없음');
+  else if (stopAt === 3) out[1] = r.verdict !== 'ASK' ? fail('기기 앞이 아님') : r.reason === 'MOVE_CLOSER' ? ['unsure', '지정한 기기 앞인지 애매함'] : ['unsure', '어디 앞인지 애매함'];
   else if (passed(3)) out[1] = ['pass', name ? `${name} 앞` : '기기 앞'];
   // ④ 정책
-  if (stopAt === 4) out[2] = r.verdict === 'NEED_APPROVAL' ? ['wait', '소유자 승인 필요'] : ['fail', '정책이 막음'];
+  if (stopAt === 4) out[2] = r.verdict === 'NEED_APPROVAL' ? ['wait', '소유자 승인 필요'] : fail('정책이 막음');
   else if (passed(4)) out[2] = ['pass', '정책 통과'];
   // ⑤⑥ 비어 있는지
   if (shared) out[3] = ['none', '공용형 생략'];
-  else if (stopAt === 5) out[3] = ['fail', r.reason === 'COMMAND_IN_PROGRESS' ? '다른 명령 실행 중' : '이미 점유됨'];
-  else if (stopAt === 6) out[3] = ['fail', '이미 다른 기기 사용 중'];
+  else if (stopAt === 5) out[3] = fail(r.reason === 'COMMAND_IN_PROGRESS' ? '다른 명령 실행 중' : '이미 점유됨');
+  else if (stopAt === 6) out[3] = fail('이미 다른 기기 사용 중');
   else if (passed(5) && passed(6)) out[3] = ['pass', '비어 있음'];
   return out;
 }

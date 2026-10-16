@@ -99,4 +99,10 @@ describe('railView 단계 밖 판정', () => {
     s.request = { ...s.request!, reason: 'APPROVAL_PENDING', accessRequestedAt: undefined };
     expect(railView(s, LAYOUT, 'p-b').steps[4]).toMatchObject({ mark: '승인 기다림', code: 'NEED_APPROVAL · APPROVAL_PENDING' });
   });
+  it('FR12B 서버 오류로 멈춘 칸은 단계 이유 대신 서버 오류라고 쓴다', () => {
+    const s = SCENES.flow();
+    const steps = s.request!.steps.map((x, i) => (i === 4 ? { result: 'stop' as const } : i > 4 ? { result: 'skip' as const } : x));
+    s.request = { ...s.request!, verdict: 'DENY', reason: 'INTERNAL_ERROR', execution: undefined, steps };
+    expect(railView(s, LAYOUT, 'p-a').steps[2].checks![2]).toEqual(['fail', '서버 오류']);
+  });
 });

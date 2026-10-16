@@ -41,4 +41,18 @@ describe('목 조회는 지금 스냅숏 시각까지만 보인다', () => {
     expect((await s.rental('locker-1')).timeline.at(-1)).toMatchObject({ text: '예약 · RESERVED', now: true });
     expect((await s.uses()).find((u) => u.nodeId === 'locker-1')?.session).toBe('RESERVED');
   });
+  it('FR12A 신뢰도 실시간 집계는 지금까지 보인 판정만 센다', async () => {
+    const idle = (await createMockSource({ scene: 'idle' }).trust()).live;
+    const later = (await createMockSource({ scene: 'later' }).trust()).live;
+    expect(idle.decisions).toBe(36);
+    expect(later.decisions).toBe(42);
+    expect(later.counts).toEqual({ OK: 27, ASK: 6, NEED_APPROVAL: 4, BUSY: 2, DENY: 3 });
+  });
+  it('FR12A 요청 상세는 진행 중이면 스냅숏 그대로, 아직 생기지 않은 요청은 거절한다', async () => {
+    const flow = createMockSource({ scene: 'flow' });
+    expect(await flow.request('r-1428')).toEqual(SCENES.flow().request);
+    await expect(flow.request('r-1430')).rejects.toThrow();
+    await expect(createMockSource({ scene: 'idle' }).request('r-1426')).rejects.toThrow();
+    expect((await createMockSource({ scene: 'later' }).request('r-1426')).id).toBe('r-1426');
+  });
 });

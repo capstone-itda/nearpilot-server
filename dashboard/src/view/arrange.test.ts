@@ -1,7 +1,7 @@
 // D4: 무대의 표시용 배치는 이 PC에서 정하고, 격자에 맞추며, 겹치거나 방을 벗어나지 않는다
 import { describe, expect, it } from 'vitest';
 import { PLACE } from '../data/mock/fixtures';
-import { canPlace, parseFile, resolveArrangement, toFile } from './arrange';
+import { applyFile, canPlace, parseFile, resolveArrangement, toFile } from './arrange';
 
 describe('표시용 배치', () => {
   const base = resolveArrangement(PLACE.devices);
@@ -30,5 +30,12 @@ describe('표시용 배치', () => {
     expect(back).toEqual({ ok: true, devices: base, place: '공용 라운지' });
     expect(parseFile('{')).toEqual({ ok: false, error: 'JSON 파일이 아니에요' });
     expect(parseFile('{"kind":"x"}')).toEqual({ ok: false, error: 'NearPilot 배치 파일이 아니에요' });
+  });
+  it('FR12A D4 불러온 자리가 한 대라도 놓을 수 없으면 배치를 바꾸지 않고, 놓을 수 있으면 옮긴 수와 모르는 기기 수를 센다', () => {
+    const name = (id: string) => PLACE.devices.find((d) => d.nodeId === id)!.name;
+    expect(applyFile(base, PLACE.devices, { 'locker-1': { x: 0, y: 0 } })).toEqual({ ok: false, bad: [name('locker-1')] });
+    expect(applyFile(base, PLACE.devices, { 'locker-1': { ...base['locker-2'] } }).ok).toBe(false);
+    const swap = applyFile(base, PLACE.devices, { 'locker-1': base['locker-2'], 'locker-2': base['locker-1'], gone: { x: 600, y: 360 } });
+    expect(swap).toEqual({ ok: true, next: { ...base, 'locker-1': base['locker-2'], 'locker-2': base['locker-1'] }, moved: 2, unknown: 1 });
   });
 });

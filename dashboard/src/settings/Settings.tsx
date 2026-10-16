@@ -6,7 +6,7 @@ import { Loading } from '../components/Panel';
 import { MirrorVideo } from '../components/PhoneMirror';
 import type { SettingsKey } from '../components/TopBar';
 import type { Spot } from '../model/types';
-import { parseFile, toFile, type Arrangement } from '../view/arrange';
+import { applyFile, parseFile, toFile, type Arrangement } from '../view/arrange';
 import { useData, useQuery } from '../data/context';
 import type { FollowSettings } from '../view/phone';
 import { stageView } from '../view/stage';
@@ -76,10 +76,13 @@ export function LayoutCheck({ arrangement, canPlace, onChange, onReset }: Layout
     f.text().then((text) => {
       const r = parseFile(text);
       if (!r.ok) { setStatus(`불러오지 못했어요. ${r.error}.`); return; }
-      const known = layout.devices.filter((d) => r.devices[d.nodeId]).length;
-      onChange({ ...arrangement, ...r.devices });
+      const a = applyFile(arrangement, layout.devices, r.devices);
+      if (!a.ok) { setStatus(`불러오지 못했어요. ${a.bad.join(', ')}의 자리가 방 밖이거나 다른 기기와 겹쳐요. 배치는 그대로예요.`); return; }
+      if (a.moved === 0) { setStatus('불러오지 못했어요. 파일에 지금 장소의 기기가 없어요. 배치는 그대로예요.'); return; }
+      onChange(a.next);
       const other = r.place && r.place !== layout.placeName ? ` 다른 장소(${r.place})의 파일이라 이름이 같은 기기만 옮겼어요.` : '';
-      setStatus(`기기 ${known}대의 자리를 불러왔어요.${other}`);
+      const skipped = a.unknown ? ` 지금 장소에 없는 기기 ${a.unknown}대는 건너뛰었어요.` : '';
+      setStatus(`기기 ${a.moved}대의 자리를 불러왔어요.${other}${skipped}`);
     }, () => setStatus('파일을 읽지 못했어요.'));
   };
   return (

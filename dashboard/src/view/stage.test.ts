@@ -2,6 +2,9 @@
 import { describe, expect, it } from 'vitest';
 import { LAYOUT, SCENES } from '../data/mock/fixtures';
 import { stageView } from './stage';
+import { PLACE } from '../data/mock/fixtures';
+import { resolveArrangement, withArrangement } from './arrange';
+import { CALLOUT_H, CALLOUT_W, deviceTextBox, hits, labelBox, personBox } from './placement';
 
 const dev = (v: ReturnType<typeof stageView>, id: string) => v.devices.find((d) => d.nodeId === id)!;
 
@@ -46,7 +49,8 @@ describe('stageView', () => {
     expect(v.scene).toBe('fault');
     expect(dev(v, 'locker-2')).toMatchObject({ status: '고장 격리', tone: 'deny', dim: false });
     expect(v).toMatchObject({ fault: 'locker-2', cmd: null, mcp: null });
-    expect(v.callout).toMatchObject({ tone: 'deny', title: '사물함 2 격리', body: '열었는지 알 수 없어서 다시 쓰지 않게 막았어요', x: 440 });
+    expect(v.callout).toMatchObject({ tone: 'deny', title: '사물함 2 격리', body: '열었는지 알 수 없어서 다시 쓰지 않게 막았어요' });
+    expect(v.callout.x).toBeLessThanOrEqual(440);
   });
 
   it('FR12B ASK: 요청한 기능의 기기만 남기고 방문자에게 콜아웃', () => {
@@ -54,14 +58,14 @@ describe('stageView', () => {
     expect(v.devices.filter((d) => !d.dim).map((d) => d.nodeId)).toEqual(['locker-1', 'locker-2', 'locker-3']);
     expect(v.uplink).toBe(true);
     expect(v.callout).toMatchObject({ tone: 'ask', title: '어느 사물함 앞인지 애매해요', body: '사물함 1과 사물함 2 사이라서 다시 물어봐요' });
-    expect(v.visitors.find((x) => x.personId === 'p-a')!.label).toBe('left');
   });
 
   it('FR12B 승인 대기: 소유자 폰 알림 선과 보라 콜아웃, 대상 조명은 승인 색', () => {
     const v = stageView(SCENES.approval(), LAYOUT, { panelOpen: true });
     expect(v).toMatchObject({ scene: 'approval', owner: true, push: true, host: 'chatgpt' });
     expect(dev(v, 'light-1')).toMatchObject({ tone: 'appr', status: '사용 가능', dim: false });
-    expect(v.callout).toMatchObject({ tone: 'appr', title: '소유자에게 승인 요청', body: '조명 1은 소유자가 승인해야 켤 수 있어요', x: 345, y: 400 });
+    expect(v.callout).toMatchObject({ tone: 'appr', title: '소유자에게 승인 요청', body: '조명 1은 소유자가 승인해야 켤 수 있어요' });
+    expect(v.callout.x).toBeLessThanOrEqual(440);
     const a = v.visitors.find((x) => x.personId === 'p-a')!;
     expect(a).toMatchObject({ active: false, dim: true });
   });
@@ -152,4 +156,56 @@ describe('무대의 사람 자리 (표시용)', () => {
     s.request = { ...s.request!, reason: 'APPROVAL_PENDING', accessRequestedAt: undefined };
     expect(stageView(s, LAYOUT, { panelOpen: false }).callout.title).toBe('소유자 응답을 기다려요');
   });
+  it('FR12B 승인 대기가 아닌 승인 사유는 읽기용 설명에도 사유를 쓰고, 알림 수단은 단정하지 않는다', () => {
+    const s = SCENES.approval();
+    s.ownerNotified = false;
+    s.request = { ...s.request!, reason: 'ACTION_NOT_ALLOWED', accessRequestedAt: undefined };
+    expect(stageView(s, LAYOUT, { panelOpen: false }).aria).toContain('승인받은 동작과 달라요');
+    s.request = { ...s.request!, reason: 'APPROVAL_REQUIRED' };
+    expect(stageView(s, LAYOUT, { panelOpen: false }).callout.body).not.toContain('알림');
+  });
+  it('FR12B 기기 없이 멈춘 BUSY도 요청한 사람에게 콜아웃을 단다', () => {
+    const s = SCENES.flow();
+    s.request = { ...s.request!, verdict: 'BUSY', reason: 'NOT_ASSIGNED', nodeId: undefined, target: { kind: 'nearest', capability: 'locker' }, execution: undefined };
+    const v = stageView(s, LAYOUT, { panelOpen: false });
+    expect(v.callout).toMatchObject({ on: true, title: '배정받지 못함' });
+  });
+});
+
+describe('바꾼 배치에서도 무대 글자가 겹치지 않는다', () => {
+  const ARRANGEMENTS: Record<string, Record<string, { x: number; y: number }>> = {
+    // 사물함을 방 가운데 줄에, 조명·스피커는 아래 벽에
+    mid2: { 'locker-1': { x: 456, y: 432 }, 'locker-2': { x: 624, y: 432 }, 'locker-3': { x: 792, y: 432 } },
+    // 사물함 두 대를 위아래로 쌓기
+    stack: { 'locker-1': { x: 600, y: 120 }, 'locker-2': { x: 600, y: 336 } },
+    // 사물함은 가운데 위쪽 줄, 조명·스피커는 위 벽에
+    mid: { 'locker-1': { x: 456, y: 336 }, 'locker-2': { x: 624, y: 336 }, 'locker-3': { x: 792, y: 336 },
+      'speaker-1': { x: 456, y: 120 }, 'light-1': { x: 624, y: 120 }, 'light-2': { x: 792, y: 120 }, 'light-3': { x: 960, y: 120 } },
+    // 아래 기기를 오른쪽 끝으로
+    right: { 'speaker-1': { x: 768, y: 720 }, 'light-1': { x: 936, y: 720 }, 'light-2': { x: 1104, y: 720 }, 'light-3': { x: 1248, y: 720 } }
+  };
+  const ROOM_BOX = { x1: 330, y1: 90, x2: 1340, y2: 740 };
+  const within = (a: { x1: number; y1: number; x2: number; y2: number }) => a.x1 >= ROOM_BOX.x1 && a.x2 <= ROOM_BOX.x2 && a.y1 >= ROOM_BOX.y1 && a.y2 <= ROOM_BOX.y2;
+
+  for (const [arrName, saved] of Object.entries(ARRANGEMENTS)) {
+    const layout = withArrangement(PLACE, resolveArrangement(PLACE.devices, saved));
+    for (const [scene, make] of Object.entries(SCENES)) {
+      for (const panelOpen of [false, true]) {
+        it(`FR12B D4 ${arrName} 배치 · ${scene} 장면 · 패널 ${panelOpen ? '열림' : '닫힘'}`, () => {
+          const v = stageView(make(), layout, { panelOpen });
+          const texts = v.devices.map(deviceTextBox);
+          for (const p of v.visitors.filter((x) => x.on)) {
+            expect(texts.some((t) => hits(personBox(p), t)), `${p.name} 점`).toBe(false);
+            expect(texts.some((t) => hits(labelBox(p, p.label), t)), `${p.name} 이름표`).toBe(false);
+            expect(within(labelBox(p, p.label)), `${p.name} 이름표가 방 안`).toBe(true);
+          }
+          if (v.callout.on) {
+            const c = { x1: v.callout.x, y1: v.callout.y, x2: v.callout.x + CALLOUT_W, y2: v.callout.y + CALLOUT_H };
+            expect(texts.some((t) => hits(c, t)), '콜아웃과 기기 글자').toBe(false);
+            expect(within(c), '콜아웃이 방 안').toBe(true);
+          }
+        });
+      }
+    }
+  }
 });

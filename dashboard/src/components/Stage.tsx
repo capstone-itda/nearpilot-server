@@ -107,8 +107,11 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
       const step = ARROWS[e.key];
       if (!step) return;
       e.preventDefault();
-      const s = { x: d.x + step[0], y: d.y + step[1] };
-      if (edit.canPlace(d.nodeId, s)) edit.onMove(d.nodeId, s);
+      // 이웃 기기에 막히면 그 너머의 첫 빈자리까지 건너뛴다
+      for (let k = 1; k <= 60; k++) {
+        const s = { x: d.x + step[0] * k, y: d.y + step[1] * k };
+        if (edit.canPlace(d.nodeId, s)) { edit.onMove(d.nodeId, s); break; }
+      }
     }
   };
   const onPointerMove = (e: PointerEvent<SVGSVGElement>) => {
@@ -189,7 +192,7 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
         {v.visitors.map((x) => <Visitor key={x.personId} v={x} />)}
 
         <g className="np-stage__callout" data-component="StageCallout" data-on={b(c.on)} data-tone={c.tone}>
-          <path className="np-stage__callout-leader" d={`M${c.ax} ${c.ay}L${c.x} ${c.y + 38}`} />
+          <path className="np-stage__callout-leader" d={`M${c.ax} ${c.ay}L${c.lx} ${c.ly}`} />
           <g transform={`translate(${c.x} ${c.y})`}>
             <rect className="np-stage__callout-box" width="390" height="76" />
             <text className="np-stage__callout-title" x="18" y="32">{c.title}</text>
@@ -197,8 +200,8 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
           </g>
         </g>
 
-        <rect className="np-stage__titleblock" x="1060" y="752" width="280" height="40" />
-        <text className="np-stage__code" x="1074" y="777">{v.placeName} · 근접 모델 {v.modelVersion}</text>
+        <rect className="np-stage__titleblock" x="1060" y="12" width="280" height="40" />
+        <text className="np-stage__code" x="1074" y="37">{v.placeName} · 근접 모델 {v.modelVersion}</text>
       </svg>
     </section>
   );

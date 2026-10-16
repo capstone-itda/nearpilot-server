@@ -1,15 +1,13 @@
 // 스냅숏 → 무대(평면도) 표시값. 장면별 고정 값 없이 규칙으로 계산한다.
 import type { DeviceStatus, FloorLayout, HostKind, LayoutDevice, Person, RequestProgress, Snapshot, Spot } from '../model/types';
 import { ROOM, facing, frontOf, type Facing } from './arrange';
+import { calloutSpot, chooseLabel, deviceTextBox, freePersonSpot, frontBox, labelBox, leaderEnd, personBox, ringBox, rssiBox, type Rect } from './placement';
 import {
   ACTION_DID, ACTION_DOING, ACTION_CAN, ACTION_DONE, ACTION_NAME, ACTION_OBJ, CAPABILITY_NAME,
-  DEVICE_STATE_NAME, approvalText, josa
+  DEVICE_STATE_NAME, approvalText, josa, reasonText
 } from './text';
 
 export { ROOM };
-const CALLOUT_H = 76;
-/** 같은 기기 앞에 선 사람끼리, ASK에서 두 기기 사이에 선 사람을 띄우는 거리 */
-const PERSON_GAP = 64;
 
 export type Tone = 'none' | 'active' | 'ok' | 'ask' | 'appr' | 'busy' | 'deny' | 'accent';
 export type StageScene = 'idle' | 'flow' | 'fault' | 'ask' | 'approval' | 'busy' | 'deny' | 'layout';
@@ -23,7 +21,7 @@ export interface StageVisitorView {
   personId: string; letter: string; name: string; x: number; y: number;
   active: boolean; dim: boolean; on: boolean; label: 'right' | 'left' | 'above';
 }
-export interface CalloutView { on: boolean; tone: Tone; x: number; y: number; ax: number; ay: number; title: string; body: string }
+export interface CalloutView { on: boolean; tone: Tone; x: number; y: number; ax: number; ay: number; lx: number; ly: number; title: string; body: string }
 
 export interface StageView {
   scene: StageScene;
@@ -71,35 +69,38 @@ export function focusDevices(r: RequestProgress, layout: FloorLayout): string[] 
  * 무대에서 사람을 세울 자리. 서버는 사람 좌표를 주지 않으므로 표시용으로만 고른다 (판정과 무관).
  * 요청한 사람: 고른 기기 앞, ASK면 확률이 높은 두 기기 사이, 아니면 확률이 가장 높은 기기 앞.
  * 그 밖의 사람: 신호가 가장 센 기기 앞. 신호가 없으면 그리지 않는다.
+ * 기기 글자나 다른 사람과 겹치면 기기 앞 방향(방 안쪽)으로 비켜 선다.
  */
-export function personAnchors(s: Snapshot, layout: FloorLayout, visitors: Person[]): Map<string, Spot> {
-  const fronts = new Map(layout.devices.map((d) => [d.nodeId, frontOf(d.spot)]));
-  const inward = (p: Spot, k: number): Spot => ({ x: p.x, y: p.y + (p.y < ROOM.y + ROOM.h / 2 ? k : -k) });
+export function personAnchors(s: Snapshot, devices: StageDeviceView[], visitors: Person[]): Map<string, Spot> {
+  const byId = new Map(devices.map((d) => [d.nodeId, d]));
+  const dirOf = (d: StageDeviceView): 1 | -1 => (d.wall === 'top' ? 1 : -1);
+  const obstacles = devices.map(deviceTextBox);
   const r = s.request;
   const out = new Map<string, Spot>();
-  const used = new Map<string, number>();
   // 요청한 사람을 먼저 세워서 그 자리를 비켜 주지 않게 한다
   const order = [...visitors].sort((a, b) => Number(b.id === r?.personId) - Number(a.id === r?.personId));
   for (const p of order) {
     if (!p.beaconSeen) continue;
-    let key: string | undefined;
-    let spot: Spot | undefined;
+    let base: Spot | undefined;
+    let dir: 1 | -1 = 1;
     if (r && r.personId === p.id) {
-      const ranked = Object.entries(r.posteriors ?? {}).filter(([id]) => fronts.has(id)).sort((a, b) => b[1] - a[1]).map(([id]) => id);
-      const pick = r.nodeId ?? r.target.nodeId;
-      if (pick && fronts.has(pick)) key = pick;
+      const ranked = Object.entries(r.posteriors ?? {}).filter(([id]) => byId.has(id)).sort((a, b) => b[1] - a[1]).map(([id]) => byId.get(id)!);
+      const pick = byId.get(r.nodeId ?? r.target.nodeId ?? '');
+      if (pick) { base = { x: pick.fx, y: pick.fy }; dir = dirOf(pick); }
       else if (r.verdict === 'ASK' && ranked.length >= 2) {
-        const [a, b] = [fronts.get(ranked[0])!, fronts.get(ranked[1])!];
-        key = `${ranked[0]}|${ranked[1]}`;
-        spot = inward({ x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2) }, PERSON_GAP);
-      } else key = ranked[0];
+        const [a, b] = ranked;
+        base = { x: Math.round((a.fx + b.fx) / 2), y: Math.round((a.fy + b.fy) / 2) };
+        dir = dirOf(a);
+      } else if (ranked[0]) { base = { x: ranked[0].fx, y: ranked[0].fy }; dir = dirOf(ranked[0]); }
     }
-    if (!key) key = Object.entries(p.rssi).filter(([id]) => fronts.has(id)).sort((a, b) => b[1] - a[1])[0]?.[0];
-    if (!key) continue;
-    const base = spot ?? fronts.get(key)!;
-    const n = used.get(key) ?? 0;
-    used.set(key, n + 1);
-    out.set(p.id, inward(base, n * PERSON_GAP));
+    if (!base) {
+      const d = byId.get(Object.entries(p.rssi).filter(([id]) => byId.has(id)).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '');
+      if (d) { base = { x: d.fx, y: d.fy }; dir = dirOf(d); }
+    }
+    if (!base) continue;
+    const spot = freePersonSpot(base, dir, obstacles);
+    out.set(p.id, spot);
+    obstacles.push(personBox(spot));
   }
   return out;
 }
@@ -144,13 +145,15 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
   });
 
   // 사람
-  const calloutOnVisitor = !opt.layoutCheck && !!r && (r.verdict === 'ASK' || (r.verdict === 'DENY' && !r.nodeId));
-  const anchors = personAnchors(s, layout, visitors);
+  const anchors = personAnchors(s, devices, visitors);
+  // 이름표는 기기 글자, 사람 점, 이미 놓은 이름표를 피한다
+  const labelObstacles: Rect[] = [...devices.map(deviceTextBox), ...[...anchors.values()].map(personBox)];
   const vis: StageVisitorView[] = visitors.map((p) => {
     const at = anchors.get(p.id);
     const pos = at ?? { x: ROOM.x + ROOM.w - 200, y: ROOM.y + ROOM.h / 2 };
     const isReq = !!r && p.id === r.personId;
-    const label: StageVisitorView['label'] = isReq && calloutOnVisitor ? 'left' : pos.y > ROOM.y + ROOM.h * 0.6 ? 'above' : 'right';
+    const label = chooseLabel(pos, labelObstacles);
+    if (at) labelObstacles.push(labelBox(pos, label));
     return {
       personId: p.id, letter: p.letter!, name: p.pseudonym, x: pos.x, y: pos.y,
       active: s.connected && (r ? isReq : p.beaconSeen),
@@ -190,29 +193,31 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
     cmd: scene === 'flow' && r!.execution === 'sent' ? target : null,
     push: scene === 'approval' && s.ownerNotified,
     fault: scene === 'fault' ? target : null,
-    callout: { on: false, tone: 'accent', x: 0, y: 0, ax: 0, ay: 0, title: '', body: '' }
+    callout: { on: false, tone: 'accent', x: 0, y: 0, ax: 0, ay: 0, lx: 0, ly: 0, title: '', body: '' }
   };
 
-  // 콜아웃: 한 번에 하나
-  const anchorDevice = (id: string | null) => devices.find((d) => d.nodeId === id);
-  const place = (kind: 'device-top' | 'device-bottom' | 'visitor' | 'owner' | 'server', ax: number, ay: number): Pick<CalloutView, 'x' | 'y' | 'ax' | 'ay'> => {
-    const maxX = opt.panelOpen ? 440 : 860;
-    const x = Math.min(Math.max(ax - 90, 345), maxX);
-    let y: number;
-    if (kind === 'owner' || kind === 'server') y = 400;
-    else if (kind === 'device-bottom') y = ay - 34 - CALLOUT_H;
-    else y = ay + 34 + CALLOUT_H > ROOM.y + ROOM.h ? ay - 92 - 34 - CALLOUT_H : ay + 34;
-    return { x, y, ax, ay };
+  // 콜아웃: 한 번에 하나. 기기 글자, 사람, 이름표, 신호 세기 글자를 피해서 가리키는 점 가까이에 둔다.
+  const calloutObstacles: Rect[] = [
+    ...devices.map(deviceTextBox),
+    ...devices.map(frontBox),
+    ...vis.filter((v) => v.on).flatMap((v) => [ringBox(v), labelBox(v, v.label)]),
+    ...(rssiPerson ? devices.map(rssiBox) : [])
+  ];
+  type Pos = Pick<CalloutView, 'x' | 'y' | 'ax' | 'ay' | 'lx' | 'ly'>;
+  const place = (ax: number, ay: number): Pos => {
+    const c = calloutSpot(ax, ay, calloutObstacles, opt.panelOpen ? 440 : ROOM.x + ROOM.w);
+    const l = leaderEnd(c, ax, ay);
+    return { x: c.x, y: c.y, ax, ay, lx: l.x, ly: l.y };
   };
   const atDevice = (id: string | null) => {
-    const d = anchorDevice(id)!;
-    return d.wall === 'top' ? place('device-top', d.fx, d.fy + 46) : place('device-bottom', d.fx, d.fy - 46);
+    const d = devices.find((x) => x.nodeId === id)!;
+    return place(d.fx, d.wall === 'top' ? d.fy + 44 : d.fy - 44);
   };
   const atVisitor = (personId: string) => {
     const v = vis.find((x) => x.personId === personId && x.on);
-    return v ? place('visitor', v.x, v.y + 46) : place('server', 250, 440);
+    return v ? place(v.x, v.y + 26) : place(250, 440);
   };
-  const set = (tone: Tone, pos: Pick<CalloutView, 'x' | 'y' | 'ax' | 'ay'>, title: string, body: string) => {
+  const set = (tone: Tone, pos: Pos, title: string, body: string) => {
     view.callout = { on: true, tone, ...pos, title, body };
   };
 
@@ -254,15 +259,17 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
         break;
       }
       case 'approval':
-        view.aria = `${who}의 ${cap} ${act} 요청이 소유자 승인을 기다리는 중`;
-        if (s.ownerNotified) set('appr', place('owner', 250, 632), '소유자에게 승인 요청', `${josa(name || cap, '은', '는')} 소유자가 승인해야 ${ACTION_CAN[r.action]} 수 있어요`);
-        else if (r.reason === 'APPROVAL_REQUIRED') set('appr', atDevice(target), '소유자 승인이 필요해요', 'AI가 승인을 신청하면 소유자 폰에 알림이 가요');
+        view.aria = s.ownerNotified ? `${who}의 ${cap} ${act} 요청이 소유자 승인을 기다리는 중`
+          : `${who}의 ${cap} ${act} 요청을 실행하지 않음: ${approvalText(r.reason).title}`;
+        if (s.ownerNotified) set('appr', place(250, 632), '소유자에게 승인 요청', `${josa(name || cap, '은', '는')} 소유자가 승인해야 ${ACTION_CAN[r.action]} 수 있어요`);
+        else if (r.reason === 'APPROVAL_REQUIRED') set('appr', atDevice(target), '소유자 승인이 필요해요', 'AI가 승인을 신청하면 소유자가 승인 여부를 정해요');
         else set('appr', atDevice(target), approvalText(r.reason).title, approvalText(r.reason).detail);
         break;
       case 'busy':
         view.aria = `${who}의 ${cap} ${act} 요청이 바빠서 실행되지 않음`;
         if (target) set('busy', atDevice(target), r.reason === 'USER_BUSY' ? '이미 다른 기기를 쓰는 중' : r.reason === 'COMMAND_IN_PROGRESS' ? `${name} 명령 실행 중` : `${name} 사용 중`,
           r.reason === 'USER_BUSY' ? '쓰던 기기를 먼저 반납해야 해요' : r.reason === 'COMMAND_IN_PROGRESS' ? '다른 명령을 실행하는 중이라 기다려야 해요' : '이미 점유된 기기라 실행하지 않았어요');
+        else set('busy', atVisitor(r.personId), reasonText(r.reason), '지금은 쓸 수 없어서 실행하지 않았어요');
         break;
       case 'deny': {
         view.aria = `${who}의 ${cap} ${act} 요청을 거부함`;

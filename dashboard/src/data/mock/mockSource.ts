@@ -2,7 +2,7 @@
 import type { DataSource } from '../source';
 import type { HistoryQuery, Snapshot, UseRow } from '../../model/types';
 import {
-  APPROVALS, AUDIT, HEALTH, HISTORY, PLACE, PLAY_ORDER, RENTAL_DUE, RENTALS, REQUESTS, SCENES, TRUST, USES,
+  APPROVALS, AUDIT, HEALTH, HISTORY, PLACE, PLAY_ORDER, RENTAL_DUE, RENTALS, REQUESTS, SCENES, TRUST, TRUST_BASE, USES,
   type SceneName, type Since
 } from './fixtures';
 
@@ -92,8 +92,19 @@ export function createMockSource(opt: MockOptions): DataSource {
     audit: () => copy(AUDIT.filter((a) => seen(a.at))),
     history: (q: HistoryQuery) => copy(HISTORY.filter((h) => seen(h.since) &&
       inPeriod(h.at, q.period) && (!q.verdict || h.verdict === q.verdict) && (!q.nodeId || h.nodeId === q.nodeId) && (!q.host || h.host === q.host)).map(strip)),
-    request: (id: string) => (REQUESTS[id] ? copy(REQUESTS[id]()) : Promise.reject(new Error(`요청 ${id} 없음`))),
-    trust: () => copy(TRUST),
+    // 진행 중인 요청은 스냅숏 그대로, 끝난 요청은 이력에 보인 뒤부터 준다
+    request: (id: string) => {
+      if (current.request?.id === id) return copy(current.request);
+      const h = HISTORY.find((r) => r.requestId === id);
+      return REQUESTS[id] && h && seen(h.since) ? copy(REQUESTS[id]()) : Promise.reject(new Error(`요청 ${id} 없음`));
+    },
+    // 집계는 이력 앞의 기준치에 지금까지 보인 이력을 더한다
+    trust: () => {
+      const rows = HISTORY.filter((h) => seen(h.since));
+      const counts = { ...TRUST_BASE.counts };
+      for (const h of rows) counts[h.verdict] += 1;
+      return copy({ ...TRUST, live: { ...TRUST_BASE, decisions: TRUST_BASE.decisions + rows.length, counts } });
+    },
     rental: (id: string) => {
       const r = RENTALS[id];
       if (!r) return Promise.reject(new Error(`대여 ${id} 없음`));

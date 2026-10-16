@@ -62,7 +62,7 @@ export function PhoneMirror({ who, follow, stream, mock }: PhoneMirrorProps) {
           </div>
         </div>
       </div>
-      <div className="np-phone__foot"><span className="np-cap">미러링 영상</span><span className="np-cap">실제 폰</span></div>
+      <div className="np-phone__foot"><span className="np-cap">{stream ? '미러링 영상' : mock ? '목 화면 · 실제 폰 아님' : '미러링 영상 없음'}</span>{stream ? <span className="np-cap">실제 폰</span> : null}</div>
     </aside>
   );
 }

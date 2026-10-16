@@ -157,6 +157,9 @@ test('FR12A D4 배치 화면에서 기기를 끌어 옮기면 이 PC에 저장�
   await device(page, '사물함 2').focus();
   await page.keyboard.press('ArrowDown');
   expect(await spotOf(page, '사물함 2')).toBe('translate(624 144)');
+  // 이웃 기기에 막히면 그 너머의 첫 빈자리로 건너뛴다 (사물함 3, 사물함 1 너머)
+  await page.keyboard.press('ArrowRight');
+  expect(await spotOf(page, '사물함 2')).toBe('translate(1200 144)');
 
   await ready(page, 'scene=later');
   await expect(page.locator('[data-component="StageDevice"]').filter({ hasText: '사물함 1' })).toHaveAttribute('transform', 'translate(1032 120)');
@@ -178,4 +181,10 @@ test('FR12A D4 배치를 파일로 내보내고 다시 불러온다', async ({ p
   expect(await spotOf(page, '사물함 1')).toBe('translate(1176 120)');
   await page.locator('input[type="file"]').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{') });
   await expect(page.getByRole('status').filter({ hasText: 'JSON 파일이 아니에요' })).toBeVisible();
+  // 한 대라도 놓을 수 없는 자리면 아무것도 바꾸지 않는다
+  file.devices['locker-1'] = { x: 456, y: 120 };
+  file.devices['locker-2'] = { x: 456, y: 120 };
+  await page.locator('input[type="file"]').setInputFiles({ name: 'clash.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(file)) });
+  await expect(page.getByRole('status').filter({ hasText: '배치는 그대로예요' })).toBeVisible();
+  expect(await spotOf(page, '사물함 1')).toBe('translate(1176 120)');
 });
