@@ -5,18 +5,26 @@
 
 from __future__ import annotations
 
+import sqlite3
+import sys
+from pathlib import PurePosixPath, PureWindowsPath
+
 import pytest
 
 from nearpilot.cli import EXIT_FAILED, EXIT_INTERRUPTED, EXIT_INVALID, EXIT_OK, serve
 from nearpilot.cli.common import (
     CliError,
+    _uri_path,
     dirs_for,
     is_path_argument,
     load_cli_config,
+    open_read_db,
     open_write_db,
+    require_db_file,
     resolve_input,
     resolve_output,
 )
+from nearpilot.db.schema import connect
 
 
 def test_FR16_cli_missing_default_file_lists_candidates(server_dir):
@@ -138,6 +146,121 @@ def test_FR16_cli_open_write_db_creates_parent_folder(server_dir):
         assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == config.runtime.sqlite_busy_timeout_ms
     finally:
         conn.close()
+
+
+def test_FR16_cli_require_db_file_rejects_missing_db(server_dir):
+    config = load_cli_config(str(server_dir / "config" / "server.toml"))
+
+    with pytest.raises(CliError) as error:
+        require_db_file(config)
+    assert error.value.exit_code == EXIT_INVALID == 2
+    assert error.value.message == (
+        f"DB 파일이 없다: {config.database.path}. 먼저 nearpilot serve --collect-only로 서버를 한 번 시작한다")
+    assert not (server_dir / "var").exists()  # 검사만 하고 아무것도 만들지 않는다
+
+    # 폴더는 DB 파일이 아니다
+    config.database.path.mkdir(parents=True)
+    with pytest.raises(CliError) as error:
+        require_db_file(config)
+    assert error.value.exit_code == EXIT_INVALID
+    config.database.path.rmdir()
+
+    open_write_db(config).close()  # 서버가 한 번 시작해서 DB를 만든 것과 같다
+    assert require_db_file(config) == config.database.path
+
+
+def test_FR16_cli_open_read_db_opens_read_only(server_dir):
+    config = load_cli_config(str(server_dir / "config" / "server.toml"))
+    open_write_db(config).close()
+
+    conn = open_read_db(config)
+    try:
+        assert conn.execute("SELECT count(*) FROM user").fetchone()[0] == 0
+        with pytest.raises(sqlite3.OperationalError):  # 쓰기 문장은 sqlite가 거부한다
+            conn.execute("DELETE FROM user")
+    finally:
+        conn.close()
+
+
+def test_FR16_cli_open_read_db_does_not_create_a_missing_db(server_dir):
+    config = load_cli_config(str(server_dir / "config" / "server.toml"))
+
+    with pytest.raises(CliError) as error:
+        open_read_db(config)
+
+    assert error.value.exit_code == EXIT_INVALID
+    assert error.value.message.startswith(f"DB 파일이 없다: {config.database.path}. ")
+    assert not (server_dir / "var").exists()  # sqlite가 빈 DB를 새로 만들지 않는다
+
+
+def test_FR16_cli_open_read_db_rejects_other_schema_version(server_dir):
+    config = load_cli_config(str(server_dir / "config" / "server.toml"))
+    open_write_db(config).close()
+    conn = sqlite3.connect(config.database.path)
+    conn.execute("PRAGMA user_version = 99")
+    conn.close()
+
+    with pytest.raises(CliError) as error:
+        open_read_db(config)
+
+    assert error.value.exit_code == EXIT_INVALID
+    assert error.value.message.startswith("DB 스키마 버전 99이 이 도구가 기대하는 ")
+
+
+# 폴더 이름의 ? 는 Windows 파일 이름에 쓸 수 없다
+_NO_QUESTION_MARK_ON_WINDOWS = pytest.mark.skipif(sys.platform == "win32", reason="Windows는 폴더 이름에 ?를 쓸 수 없다")
+
+
+@pytest.mark.parametrize("folder", [
+    "with space",
+    "hash#dir",
+    "percent%20dir",
+    "all of 100% #1",
+    "한글 폴더",
+    pytest.param("question?dir", marks=_NO_QUESTION_MARK_ON_WINDOWS),
+    pytest.param("a b#c%d?e", marks=_NO_QUESTION_MARK_ON_WINDOWS),
+])
+def test_FR16_cli_read_db_path_with_special_characters(tmp_path, write_config, folder):
+    db_path = tmp_path / folder / "nearpilot.db"
+    db_path.parent.mkdir()
+    writer = connect(str(db_path))
+    try:
+        writer.execute("INSERT INTO user (user_id, name, token_hash, role) VALUES ('owner', '소유자', 'hash', 'owner')")
+    finally:
+        writer.close()
+    server = tmp_path / "server"
+    config_path = write_config(
+        server, database={"path": str(db_path), "audit_jsonl": str(db_path.with_name("audit.jsonl"))})
+
+    conn = open_read_db(load_cli_config(str(config_path)))
+    try:
+        # URI가 다른 파일을 가리켰다면 열리지 않았거나 빈 DB였을 것이다. 쓴 행이 그대로 보인다
+        assert [row[0] for row in conn.execute("SELECT user_id FROM user")] == ["owner"]
+    finally:
+        conn.close()
+    assert sorted(path.name for path in tmp_path.iterdir()) == sorted([folder, "server"])  # 다른 폴더를 만들지 않았다
+
+
+def test_FR16_cli_uri_path_encodes_for_the_read_only_uri():
+    class Resolved:
+        """`Path.resolve()`가 정해진 경로를 돌려주는 경로. 이 PC에서 Windows 경로 모양을 만들 때 쓴다."""
+
+        def __init__(self, resolved) -> None:
+            self._resolved = resolved
+
+        def resolve(self):
+            return self._resolved
+
+    # Windows: 드라이브 문자로 시작하면 앞에 /를 붙여 file:/C:/… 가 된다
+    assert _uri_path(Resolved(PureWindowsPath("C:\\x\\y.db"))) == "/C:/x/y.db"
+    windows = Resolved(PureWindowsPath("d:\\내 폴더\\a#b\\c.db"))
+    assert _uri_path(windows) == "/d:/%EB%82%B4%20%ED%8F%B4%EB%8D%94/a%23b/c.db"
+    # POSIX: URI 문법으로 읽히는 글자(공백, #, %, ?)와 한글을 퍼센트 인코딩한다. / 와 : 는 그대로 둔다
+    special = Resolved(PurePosixPath("/data/a b#c%d?e/한글.db"))
+    assert _uri_path(special) == "/data/a%20b%23c%25d%3Fe/%ED%95%9C%EA%B8%80.db"
+    assert _uri_path(Resolved(PurePosixPath("/data/plain/nearpilot.db"))) == "/data/plain/nearpilot.db"
+    assert _uri_path(Resolved(PurePosixPath("/mnt/a:b/x.db"))) == "/mnt/a:b/x.db"  # 경로 중간의 :는 드라이브 문자가 아니다
+    assert _uri_path(Resolved(PurePosixPath("/:odd/x.db"))) == "/:odd/x.db"  # 루트 바로 아래 이름이 :로 시작해도 그렇다
 
 
 def test_FR16_cli_config_option_goes_before_or_after_subcommand(server_dir, run_cli, run_server_calls, tmp_path):

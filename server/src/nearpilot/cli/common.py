@@ -10,10 +10,12 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 from nearpilot.cli import EXIT_INVALID
 from nearpilot.db.schema import connect
 from nearpilot.runtime import ConfigError, ServerConfig, load_config
+from tools.evaluation.db import SchemaVersionMismatch, open_readonly
 
 
 class CliError(Exception):
@@ -95,6 +97,40 @@ def open_write_db(config: ServerConfig) -> sqlite3.Connection:
     """설정의 DB를 쓰기 연결로 연다. DB 파일의 부모 폴더가 없으면 만든다."""
     config.database.path.parent.mkdir(parents=True, exist_ok=True)
     return connect(str(config.database.path), busy_timeout_ms=config.runtime.sqlite_busy_timeout_ms)
+
+
+def require_db_file(config: ServerConfig) -> Path:
+    """설정의 DB 파일 경로를 돌려준다. 파일이 아니면 `CliError`(종료 코드 2)다.
+
+    DB는 `serve`가 처음 시작할 때 만든다. 오타 난 `--config`가 가리키는 곳에 빈 DB를 새로 만들지 않도록
+    DB를 여는 명령은 먼저 이 검사를 한다.
+    """
+    path = config.database.path
+    if not path.is_file():
+        raise CliError(
+            f"DB 파일이 없다: {path}. 먼저 nearpilot serve --collect-only로 서버를 한 번 시작한다", EXIT_INVALID)
+    return path
+
+
+def open_read_db(config: ServerConfig) -> sqlite3.Connection:
+    """설정의 DB를 읽기 전용 연결로 연다 (NFR-13). 파일이 없거나 스키마 버전이 다르면 `CliError`(종료 코드 2)다."""
+    path = require_db_file(config)
+    try:
+        return open_readonly(_uri_path(path))
+    except SchemaVersionMismatch as error:
+        raise CliError(str(error), EXIT_INVALID) from None
+
+
+def _uri_path(path: Path) -> str:
+    """읽기 전용 URI(`file:<경로>?mode=ro`)에 넣을 경로.
+
+    폴더 이름의 `?`, `#`, `%`와 공백이 URI 문법으로 읽히지 않게 퍼센트 인코딩한다.
+    Windows 드라이브 문자(`C:/…`)는 앞에 `/`를 붙여 `file:/C:/…`가 되게 한다.
+    """
+    posix = path.resolve().as_posix()
+    if posix[1:3] == ":/":
+        posix = "/" + posix
+    return quote(posix, safe="/:")
 
 
 def _file_names(folder: Path) -> list[str]:

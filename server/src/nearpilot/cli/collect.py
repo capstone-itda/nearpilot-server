@@ -14,14 +14,22 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from nearpilot.cli import EXIT_INVALID, EXIT_OK
-from nearpilot.cli.common import CliError, dirs_for, load_cli_config, open_write_db, resolve_input, resolve_output
+from nearpilot.cli.common import (
+    CliError,
+    dirs_for,
+    load_cli_config,
+    open_read_db,
+    open_write_db,
+    require_db_file,
+    resolve_input,
+    resolve_output,
+)
 from nearpilot.core.proximity.files import FitFileError, load_fit_file
 from nearpilot.db.repositories.admin_repository import SqliteAdminRepository
 from nearpilot.runtime import ServerConfig
 from nearpilot.shared.interfaces import AdminRepository
 from tools.data_collection.cli import main as collection_main
 from tools.data_collection.session import SessionIO
-from tools.evaluation.db import SchemaVersionMismatch, open_readonly
 from tools.evaluation.runs import RunInfo, list_runs
 
 # None이면 수집 도구가 실제 시계, 대기, 표준 입출력을 쓴다. 테스트는 가짜 `SessionIO`로 바꿔서 입력과 시간을 기다리지 않는다.
@@ -79,6 +87,7 @@ def _run(args: argparse.Namespace) -> int:
     config = load_cli_config(args.config)
     dirs = dirs_for(config.source)
     plan = resolve_input(args.file, dirs.plans, kind="수집 계획")
+    require_db_file(config)  # 빈 DB를 새로 만들거나 기록 폴더를 만들기 전에 막는다
     record = resolve_output(args.record, dirs.records, f"{plan.stem}-{today_utc():%Y%m%d}.jsonl")
     try:
         record.parent.mkdir(parents=True, exist_ok=True)  # 수집 도구는 기록 파일을 여는 일만 한다
@@ -91,6 +100,7 @@ def _run(args: argparse.Namespace) -> int:
 
 def _close(args: argparse.Namespace) -> int:
     config = load_cli_config(args.config)
+    require_db_file(config)
     return _call_collection_tool(config, ["close", "--collection-id", args.collection_id])
 
 
@@ -118,7 +128,7 @@ def _call_collection_tool(config: ServerConfig, argv: list[str]) -> int:
 
 def _list(args: argparse.Namespace) -> int:
     config = load_cli_config(args.config)
-    runs = [run for run in _read_runs(config.database.path) if _selected(run, args)]
+    runs = [run for run in _read_runs(config) if _selected(run, args)]
     if not runs:
         print("수집 회차가 없다.")
         return EXIT_OK
@@ -131,14 +141,9 @@ def _list(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def _read_runs(db_path: Path) -> list[RunInfo]:
-    """DB의 모든 회차를 읽기 전용 연결로 읽는다. DB 파일이 없으면 sqlite가 새로 만들지 않도록 먼저 막는다."""
-    if not db_path.is_file():
-        raise CliError(f"DB 파일이 없다: {db_path}", EXIT_INVALID)
-    try:
-        conn = open_readonly(str(db_path))
-    except SchemaVersionMismatch as error:
-        raise CliError(str(error), EXIT_INVALID) from None
+def _read_runs(config: ServerConfig) -> list[RunInfo]:
+    """DB의 모든 회차를 읽기 전용 연결로 읽는다."""
+    conn = open_read_db(config)
     try:
         return list_runs(conn)
     finally:

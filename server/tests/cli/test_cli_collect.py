@@ -17,6 +17,7 @@ import pytest
 
 from nearpilot.cli import EXIT_FAILED, EXIT_INTERRUPTED, EXIT_INVALID, EXIT_OK
 from nearpilot.cli import collect as collect_cli
+from nearpilot.cli import common as common_cli
 from nearpilot.core.proximity.fit import AnchorLayout, PlaceLayout
 from nearpilot.shared.models import BeaconKey
 from tools.data_collection.session import SessionIO
@@ -101,6 +102,21 @@ def today(monkeypatch):
     state = SimpleNamespace(day=date(2026, 10, 17))
     monkeypatch.setattr(collect_cli, "today_utc", lambda: state.day)
     return state
+
+
+@pytest.fixture
+def opened_connections(monkeypatch):
+    """`collect.open_write_db`가 연 연결을 쌓는다. 수집 도구가 저장소를 만들었는지 본다."""
+    opened = []
+    real = collect_cli.open_write_db
+
+    def spy(config):
+        conn = real(config)
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(collect_cli, "open_write_db", spy)
+    return opened
 
 
 def layout(place_id: str, *node_ids: str) -> PlaceLayout:
@@ -268,7 +284,9 @@ def test_FR16_collect_run_returns_the_tool_exit_code(server_dir, run_cli, make_c
     assert db_runs(server_dir) == []
 
 
-def test_FR16_collect_run_invalid_plan_creates_no_database(server_dir, run_cli, use_session, today):
+def test_FR16_collect_run_invalid_plan_writes_nothing(server_dir, run_cli, announce_nodes, use_session, today,
+                                                      opened_connections):
+    announce_nodes(server_dir, "locker-1")  # DB는 서버가 만들어 둔 것이다
     plans = server_dir / "config" / "plans"
     plans.mkdir(parents=True)
     (plans / "bad.json").write_text('{"place_id": "place-a"}', encoding="utf-8")
@@ -278,15 +296,17 @@ def test_FR16_collect_run_invalid_plan_creates_no_database(server_dir, run_cli, 
 
     assert code == EXIT_INVALID  # 수집 도구의 종료 코드를 그대로 돌려준다
     assert any(line.startswith("계획 파일이 올바르지 않다") for line in session.lines)
-    assert not db_file(server_dir).exists()  # 도구가 검사를 마친 뒤에야 저장소를 만든다. 틀린 계획은 DB를 만들지 않는다
+    assert opened_connections == []  # 도구가 검사를 마친 뒤에야 저장소를 만든다. 틀린 계획은 DB를 열지 않는다
+    assert db_runs(server_dir) == []
     assert not (server_dir / "var" / "records" / "bad-20261017.jsonl").exists()
 
     code, _, _ = run_cli(["collect", "run", "bad.json", "--start-at", "x"], cwd=server_dir)  # 숫자가 아닌 --start-at
     assert code == EXIT_INVALID
 
 
-def test_FR16_collect_run_start_at_out_of_range_creates_no_database(server_dir, run_cli, collect_beacon, use_session,
-                                                                    today):
+def test_FR16_collect_run_start_at_out_of_range_writes_nothing(server_dir, run_cli, announce_nodes, collect_beacon,
+                                                               use_session, today, opened_connections):
+    announce_nodes(server_dir, "locker-1")
     write_plan(server_dir, collect_beacon)
     session = use_session()
 
@@ -294,7 +314,7 @@ def test_FR16_collect_run_start_at_out_of_range_creates_no_database(server_dir, 
 
     assert code == EXIT_INVALID
     assert "--start-at은 1 이상 1 이하여야 한다 (5)" in session.lines
-    assert not db_file(server_dir).exists()
+    assert opened_connections == [] and db_runs(server_dir) == []
 
 
 def test_FR16_collect_run_missing_plan_lists_candidates(server_dir, run_cli, collect_beacon, use_session, today):
@@ -315,18 +335,33 @@ def test_FR16_collect_run_missing_plan_lists_candidates(server_dir, run_cli, col
     assert err == f"수집 계획 파일이 없다: {(server_dir / 'a.json').resolve()}\n"
 
 
-def test_FR16_collect_run_unwritable_record_folder_is_input_error(server_dir, run_cli, collect_beacon, use_session,
-                                                                  today):
+def test_FR16_collect_run_unwritable_record_folder_is_input_error(server_dir, run_cli, announce_nodes, collect_beacon,
+                                                                  use_session, today, opened_connections):
+    announce_nodes(server_dir, "locker-1")
     write_plan(server_dir, collect_beacon)
     use_session()
-    (server_dir / "var").mkdir()
     (server_dir / "var" / "records").write_text("폴더 자리에 파일이 있다", encoding="utf-8")
 
     code, out, err = run_cli(["collect", "run", "demo.json"], cwd=server_dir)
 
     assert (code, out) == (EXIT_INVALID, "")
     assert err.startswith(f"기록 파일의 폴더를 만들 수 없다: {(server_dir / 'var' / 'records').resolve()} (")
-    assert not db_file(server_dir).exists()
+    assert opened_connections == [] and db_runs(server_dir) == []
+
+
+def test_FR16_collect_requires_existing_db(server_dir, run_cli, collect_beacon, use_session, today,
+                                           opened_connections):
+    write_plan(server_dir, collect_beacon)
+    session = use_session()
+    expected = (f"DB 파일이 없다: {db_file(server_dir).resolve()}. "
+                "먼저 nearpilot serve --collect-only로 서버를 한 번 시작한다\n")
+
+    for argv in (["collect", "run", "demo.json"], ["collect", "close", "--collection-id", "col-001"]):
+        code, out, err = run_cli(argv, cwd=server_dir)
+        assert (code, out, err) == (EXIT_INVALID, "", expected), argv
+
+    assert not (server_dir / "var").exists()  # DB도 기록 폴더도 만들지 않는다
+    assert opened_connections == [] and session.lines == []  # 수집 도구를 부르지 않았다
 
 
 def test_FR16_collect_run_closes_database_connections(server_dir, run_cli, make_collection_db, collect_beacon,
@@ -596,7 +631,8 @@ def test_FR16_collect_list_without_database_is_input_error(server_dir, run_cli):
     code, out, err = run_cli(["collect", "list"], cwd=server_dir)
 
     assert (code, out) == (EXIT_INVALID, "")
-    assert err == f"DB 파일이 없다: {(server_dir / 'var' / 'nearpilot.db').resolve()}\n"
+    assert err == (f"DB 파일이 없다: {(server_dir / 'var' / 'nearpilot.db').resolve()}. "
+                   "먼저 nearpilot serve --collect-only로 서버를 한 번 시작한다\n")
     assert not (server_dir / "var").exists()  # sqlite가 빈 DB를 새로 만들지 않는다
 
 
@@ -637,7 +673,7 @@ def test_NFR13_collect_list_reads_through_a_read_only_connection(server_dir, run
 def test_FR16_collect_list_closes_connection_on_failure(server_dir, run_cli, make_collection_db, monkeypatch):
     make_collection_db(server_dir, layout("place-a", "locker-1"), timeline(("locker-1", 30, frames("locker-1", 1))))
     opened = []
-    real = collect_cli.open_readonly
+    real = common_cli.open_readonly
 
     def spy(path):
         conn = real(path)
@@ -647,7 +683,7 @@ def test_FR16_collect_list_closes_connection_on_failure(server_dir, run_cli, mak
     def failing(conn):
         raise RuntimeError("읽다가 실패")
 
-    monkeypatch.setattr(collect_cli, "open_readonly", spy)
+    monkeypatch.setattr(common_cli, "open_readonly", spy)
     monkeypatch.setattr(collect_cli, "list_runs", failing)
 
     with pytest.raises(RuntimeError, match="읽다가 실패"):
