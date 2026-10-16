@@ -171,7 +171,7 @@ export interface HistoryRow {
 export interface HistoryQuery { period: string; verdict?: Verdict; nodeId?: string; host?: HostKind }
 
 export interface TrustReport {
-  live: { since: string; decisions: number; doubleOccupancy: number; latencyMedianSec: number; latencyP95Sec: number; counts: Record<Verdict, number> };
+  live: { since: string; decisions: number; doubleOccupancy: number; latencyMedianSec: number | null; latencyP95Sec: number | null; counts: Record<Verdict, number> };
   evaluation: {
     date: string;
     metrics: { id: number; name: string; pass: boolean | null; label: string; sample: string; sampleNote?: string }[];

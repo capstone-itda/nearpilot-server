@@ -103,7 +103,9 @@ export function createMockSource(opt: MockOptions): DataSource {
       const rows = HISTORY.filter((h) => seen(h.since));
       const counts = { ...TRUST_BASE.counts };
       for (const h of rows) counts[h.verdict] += 1;
-      return copy({ ...TRUST, live: { ...TRUST_BASE, decisions: TRUST_BASE.decisions + rows.length, counts } });
+      const decisions = TRUST_BASE.decisions + rows.length;
+      const latency = decisions ? {} : { latencyMedianSec: null, latencyP95Sec: null };
+      return copy({ ...TRUST, live: { ...TRUST_BASE, decisions, counts, ...latency } });
     },
     rental: (id: string) => {
       const r = RENTALS[id];
@@ -111,6 +113,10 @@ export function createMockSource(opt: MockOptions): DataSource {
       const timeline = r.timeline.filter((t) => seen(t.at));
       return copy({ ...r, overdueMinutes: overdue(id), timeline: timeline.map((t, i) => ({ ...t, now: i === timeline.length - 1 })) });
     },
-    health: () => copy(HEALTH)
+    // 비콘 수신은 지금 스냅숏을 따른다
+    health: () => copy({ ...HEALTH, beacons: HEALTH.beacons.map((b) => {
+      const p = current.people.find((x) => x.id === b.personId);
+      return p?.role === 'visitor' && !p.beaconSeen ? { ...b, lastSeenSec: null, note: '최근 신호 없음' } : b;
+    }) })
   };
 }

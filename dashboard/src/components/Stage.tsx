@@ -174,7 +174,7 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
 
         <g className="np-stage__rssi" data-on={b(v.rssiOn)}>
           {devices.map((d) => (
-            <text key={d.nodeId} className="np-stage__signal-label" x={d.wall === 'top' ? d.x - 42 : d.x - 10} y={d.wall === 'top' ? d.y + 6 : d.y + 45} data-anchor="end">{v.rssi[d.nodeId] ?? ''}</text>
+            <text key={d.nodeId} className="np-stage__signal-label" x={d.rssiRight ? d.x + 42 : d.wall === 'top' ? d.x - 42 : d.x - 10} y={d.wall === 'top' ? d.y + 6 : d.y + 45} data-anchor={d.rssiRight ? 'start' : 'end'}>{v.rssi[d.nodeId] ?? ''}</text>
           ))}
         </g>
 

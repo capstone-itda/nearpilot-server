@@ -17,6 +17,9 @@ import { stageView } from './view/stage';
 import { canPlace, resolveArrangement, withArrangement, type Arrangement } from './view/arrange';
 import { clearArrangement, loadArrangement, loadPrefs, saveArrangement, savePrefs } from './prefs';
 
+/** 무대 위를 넓게 덮는 패널 (ListPanels의 size="wide") */
+const WIDE_PANELS: string[] = ['audit', 'history', 'trust'];
+
 export type PanelState =
   | { kind: 'request'; request: RequestProgress; live: boolean }
   | { kind: 'device'; nodeId: string }
@@ -142,7 +145,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
       <div className="np-monitor" data-component="MonitorLayout" data-live={snapshot.connected ? 'true' : 'false'}>
         {topBar}
         <PhoneMirror who={phone.who} follow={phone.follow} stream={phone.personId ? streams[phone.personId] : undefined} mock={mock} />
-        <Stage v={stageView(snapshot, layout, { panelOpen: !!panel })} />
+        <Stage v={stageView(snapshot, layout, { panelOpen: !!panel, panelWide: !!panel && WIDE_PANELS.includes(panel.kind) })} />
         <FlowRail v={railView(snapshot, layout, phone.personId)} />
         {!snapshot.connected ? (
           <OfflineBanner title="서버와 연결이 끊겼어요" detail={`마지막 수신 ${snapshot.lastReceivedAt} · 다시 연결 시도 ${snapshot.reconnectAttempts}회째`} onReconnect={() => source.reconnect()} />

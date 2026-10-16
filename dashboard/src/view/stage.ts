@@ -1,7 +1,7 @@
 // 스냅숏 → 무대(평면도) 표시값. 장면별 고정 값 없이 규칙으로 계산한다.
 import type { DeviceStatus, FloorLayout, HostKind, LayoutDevice, Person, RequestProgress, Snapshot, Spot } from '../model/types';
 import { ROOM, facing, frontOf, type Facing } from './arrange';
-import { calloutSpot, chooseLabel, deviceTextBox, freePersonSpot, frontBox, labelBox, leaderEnd, personBox, ringBox, rssiBox, type Rect } from './placement';
+import { calloutSpot, chooseLabel, deviceTextBox, freePersonSpot, frontBox, labelBox, leaderEnd, personBox, ringBox, rssiBox, placeRssi, type Rect } from './placement';
 import {
   ACTION_DID, ACTION_DOING, ACTION_CAN, ACTION_DONE, ACTION_NAME, ACTION_OBJ, CAPABILITY_NAME,
   DEVICE_STATE_NAME, approvalText, josa, reasonText
@@ -15,6 +15,8 @@ export type StageScene = 'idle' | 'flow' | 'fault' | 'ask' | 'approval' | 'busy'
 export interface StageDeviceView {
   nodeId: string; name: string; capability: LayoutDevice['capability'];
   x: number; y: number; fx: number; fy: number; wall: Facing;
+  /** 신호 세기 글자를 본체 오른쪽에 둔다 (왼쪽 벽 가까이) */
+  rssiRight: boolean;
   status: string; code: string; tone: Tone; dim: boolean;
 }
 export interface StageVisitorView {
@@ -108,6 +110,8 @@ export function personAnchors(s: Snapshot, devices: StageDeviceView[], visitors:
 export interface StageOptions {
   /** 무대 위에 패널이 열려 있는가 (콜아웃을 패널 밖으로 둔다) */
   panelOpen: boolean;
+  /** 넓은 패널(감사, 이력, 신뢰도)이 열려 있다. 콜아웃 둘 자리가 없어 숨긴다. */
+  panelWide?: boolean;
   /** SET-01 배치 */
   layoutCheck?: boolean;
 }
@@ -139,10 +143,12 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
       else if (r.verdict === 'BUSY') v.tone = 'busy';
     }
     return {
-      nodeId: d.nodeId, name: d.name, capability: d.capability, x: b.x, y: b.y, fx: f.x, fy: f.y, wall: facing(d.spot),
+      nodeId: d.nodeId, name: d.name, capability: d.capability, x: b.x, y: b.y, fx: f.x, fy: f.y, wall: facing(d.spot), rssiRight: false,
       ...v, dim: !!r && !opt.layoutCheck && !keep.includes(d.nodeId)
     };
   });
+
+  placeRssi(devices);
 
   // 사람
   const anchors = personAnchors(s, devices, visitors);
@@ -203,11 +209,11 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
     ...vis.filter((v) => v.on).flatMap((v) => [ringBox(v), labelBox(v, v.label)]),
     ...(rssiPerson ? devices.map(rssiBox) : [])
   ];
-  type Pos = Pick<CalloutView, 'x' | 'y' | 'ax' | 'ay' | 'lx' | 'ly'>;
+  type Pos = Pick<CalloutView, 'x' | 'y' | 'ax' | 'ay' | 'lx' | 'ly'> & { clean: boolean };
   const place = (ax: number, ay: number): Pos => {
-    const c = calloutSpot(ax, ay, calloutObstacles, opt.panelOpen ? 440 : ROOM.x + ROOM.w);
+    const c = calloutSpot(ax, ay, calloutObstacles, opt.panelOpen ? 440 : ROOM.x + ROOM.w, devices.map(deviceTextBox));
     const l = leaderEnd(c, ax, ay);
-    return { x: c.x, y: c.y, ax, ay, lx: l.x, ly: l.y };
+    return { x: c.x, y: c.y, ax, ay, lx: l.x, ly: l.y, clean: c.clean };
   };
   const atDevice = (id: string | null) => {
     const d = devices.find((x) => x.nodeId === id)!;
@@ -217,8 +223,9 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
     const v = vis.find((x) => x.personId === personId && x.on);
     return v ? place(v.x, v.y + 26) : place(250, 440);
   };
-  const set = (tone: Tone, pos: Pos, title: string, body: string) => {
-    view.callout = { on: true, tone, ...pos, title, body };
+  // 패널이 열려 있으면 패널이 같은 내용을 보이므로, 글자를 가리지 않고 둘 자리가 없을 때 콜아웃을 숨긴다
+  const set = (tone: Tone, { clean, ...pos }: Pos, title: string, body: string) => {
+    view.callout = { on: !opt.panelWide && (clean || !opt.panelOpen), tone, ...pos, title, body };
   };
 
   const who = requester?.pseudonym ?? '방문자';

@@ -188,3 +188,13 @@ test('FR12A D4 배치를 파일로 내보내고 다시 불러온다', async ({ p
   await expect(page.getByRole('status').filter({ hasText: '배치는 그대로예요' })).toBeVisible();
   expect(await spotOf(page, '사물함 1')).toBe('translate(1176 120)');
 });
+
+test('FR12A 점검은 장면의 비콘 수신과 연결 끊김을 따르고, 빈 감사 로그는 비었다고 말한다', async ({ page }) => {
+  await ready(page, 'scene=fault&view=check');
+  await expect(page.locator('.np-crow').filter({ hasText: '방문자 A' })).toContainText('최근 신호 없음');
+  await ready(page, 'scene=offline&view=check');
+  await expect(page.getByRole('status').filter({ hasText: '서버와 연결이 끊겼어요' })).toBeVisible();
+  await ready(page, 'scene=idle&panel=audit');
+  await expect(page.getByText('아직 기록이 없어요')).toBeVisible();
+  await expect(page.locator('.np-table__empty')).toHaveText('없어요');
+});

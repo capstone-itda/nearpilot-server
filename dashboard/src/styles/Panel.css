@@ -92,6 +92,7 @@
 /* DataTable */
 .np-table-wrap { overflow-x: auto; }
 .np-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.np-table .np-table__empty { color: var(--ink-2); }
 .np-table th { text-align: left; font-family: var(--font-mono); font-size: var(--fs-cap); font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); padding: var(--sp-2); border-bottom: 1px solid var(--line); white-space: nowrap; }
 .np-table td { padding: var(--sp-2); border-bottom: 1px solid var(--line-soft); vertical-align: top; }
 .np-rowlink { display: flex; flex-direction: column; justify-content: center; width: 100%; min-height: var(--hit); padding: 0; border: 0; background: transparent; text-align: left; font-size: inherit; cursor: pointer; }

@@ -8,6 +8,8 @@ import { ACTION_NAME, CAPABILITY_NAME, HOST_NAME, REASON_TEXT, VERDICT_LABEL, ta
 
 type Close = { onClose: () => void };
 
+const sec2 = (v: number | null) => (v === null ? '—' : `${v.toFixed(2)}초`);
+
 export function UsesPanel({ onClose, onOpenDevice }: Close & { onOpenDevice: (id: string) => void }) {
   const { source, deviceName, personName } = useData();
   const q = useQuery(() => source.uses(), []);
@@ -75,7 +77,7 @@ export function AuditPanel({ onClose }: Close) {
         <FilterBar items={[['전체', filter === null], ...STEPS.map((s): [string, boolean] => [s, filter === s])]}
           onToggle={(l) => setFilter(l === '전체' ? null : (l as AuditStep))} />
       </Section>
-      <Section title="기록" hint={q.data ? `${range} · 새 기록이 위${filter ? ` · ${rows.length}건` : ''}` : undefined}>
+      <Section title="기록" hint={q.data ? (q.data.length ? `${range} · 새 기록이 위${filter ? ` · ${rows.length}건` : ''}` : '아직 기록이 없어요') : undefined}>
         {q.data ? (
           <DataTable label="감사 로그" head={['시각', '단계', '기기', '내용']} rows={rows.map((r) => ({
             key: r.id,
@@ -155,8 +157,8 @@ export function TrustPanel({ onClose }: Close) {
         <div className="np-tiles">
           <div className="np-tile"><span className="np-tile__label">판정</span><span className="np-tile__value">{t.live.decisions}</span><span className="np-tile__note">{t.live.since}부터</span></div>
           <div className="np-tile"><span className="np-tile__label">이중 점유</span><span className="np-tile__value" data-tone={t.live.doubleOccupancy === 0 ? 'ok' : 'deny'}>{t.live.doubleOccupancy}</span><span className="np-tile__note">지표 3</span></div>
-          <div className="np-tile"><span className="np-tile__label">서버 판정 지연 중앙값</span><span className="np-tile__value">{t.live.latencyMedianSec.toFixed(2)}초</span><span className="np-tile__note">지표 7 · 기준 1초</span></div>
-          <div className="np-tile"><span className="np-tile__label">서버 판정 지연 p95</span><span className="np-tile__value">{t.live.latencyP95Sec.toFixed(2)}초</span><span className="np-tile__note">지표 7 · 기준 2초</span></div>
+          <div className="np-tile"><span className="np-tile__label">서버 판정 지연 중앙값</span><span className="np-tile__value">{sec2(t.live.latencyMedianSec)}</span><span className="np-tile__note">지표 7 · 기준 1초</span></div>
+          <div className="np-tile"><span className="np-tile__label">서버 판정 지연 p95</span><span className="np-tile__value">{sec2(t.live.latencyP95Sec)}</span><span className="np-tile__note">지표 7 · 기준 2초</span></div>
         </div>
         <div className="np-stack" role="img" aria-label="판정 비율">
           <svg className="np-bars__svg" viewBox="0 0 100 10" preserveAspectRatio="none">

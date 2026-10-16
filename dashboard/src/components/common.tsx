@@ -107,9 +107,9 @@ export function DataTable({ head, rows, label }: { head: string[]; rows: TableRo
       <table className="np-table" aria-label={label}>
         <thead><tr>{head.map((h) => <th key={h} scope="col">{h}</th>)}</tr></thead>
         <tbody>
-          {rows.map((r) => (
+          {rows.length ? rows.map((r) => (
             <tr key={r.key} data-tone={r.tone ?? 'none'} data-selected={b(r.selected)}>{r.cells}</tr>
-          ))}
+          )) : <tr><td className="np-table__empty" colSpan={head.length}>없어요</td></tr>}
         </tbody>
       </table>
     </div>

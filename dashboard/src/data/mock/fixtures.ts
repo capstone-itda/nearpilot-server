@@ -31,6 +31,9 @@ const dev = (over: Partial<Record<string, Partial<DeviceStatus>>> = {}): DeviceS
 
 const RSSI_IDLE_A = { 'locker-1': -69, 'locker-2': -69, 'locker-3': -71, 'speaker-1': -70, 'light-1': -70, 'light-2': -70, 'light-3': -72 };
 const RSSI_IDLE_B = { 'locker-1': -79, 'locker-2': -76, 'locker-3': -73, 'speaker-1': -81, 'light-1': -79, 'light-2': -78, 'light-3': -76 };
+/** 판정이 고른 기기의 신호가 가장 세다 */
+const RSSI_FAULT_B = { 'locker-1': -74, 'locker-2': -58, 'locker-3': -70, 'speaker-1': -80, 'light-1': -78, 'light-2': -79, 'light-3': -83 };
+const RSSI_APPROVAL_B = { 'locker-1': -72, 'locker-2': -75, 'locker-3': -79, 'speaker-1': -70, 'light-1': -57, 'light-2': -71, 'light-3': -80 };
 
 type PersonOver = Partial<Pick<Person, 'beaconSeen' | 'rssi'>>;
 const people = (a: PersonOver = {}, b: PersonOver = {}): Person[] => [
@@ -98,19 +101,19 @@ export const SCENES = {
   fault: (): Snapshot => ({
     ...base(), lastReceivedAt: '14:29:40',
     devices: dev({ 'locker-1': { state: 'ACTIVE' }, 'locker-2': { state: 'FAULT', fault: { cause: 'EXEC_UNKNOWN', action: 'open', at: '14:29:40' } }, 'locker-3': { state: 'ACTIVE', overdue: true } }),
-    people: people({ beaconSeen: false }),
+    people: people({ beaconSeen: false }, { rssi: RSSI_FAULT_B }),
     request: {
       id: 'r-1429', personId: 'p-b', host: 'gemini', tool: 'request_use', target: { kind: 'nearest', capability: 'locker' }, action: 'open',
       at: '14:29:37', verdict: 'OK', reason: 'OK', nodeId: 'locker-2', execution: 'unknown',
       steps: ALL_PASS(['새 요청', '비콘 최근 수신', '사물함 3대', 'P(locker-2) 0.96 ≥ 0.95 (설정값)', '열림 정책', '비어 있음', '다른 점유 없음'])
     },
-    mockPhones: phones({ personId: 'p-b', scene: 'chat', said: '내 앞 사물함 열어 줘', reply: '사물함 2가 열렸는지 확인되지 않아 사용을 멈췄어요. 직원에게 알려 주세요.' })
+    mockPhones: phones({ personId: 'p-b', scene: 'chat', said: '내 앞 사물함 열어 줘', reply: '사물함 2가 열렸는지 확인되지 않아 사용을 멈췄어요. 소유자에게 알려 주세요.' })
   }),
   /** MON-01·04 승인 대기: B의 조명 1 켜기 */
   approval: (): Snapshot => ({
     ...base(), lastReceivedAt: '14:31:02',
     devices: dev({ 'locker-1': { state: 'ACTIVE' }, 'locker-2': { state: 'FAULT', fault: { cause: 'EXEC_UNKNOWN', action: 'open', at: '14:29:40' } }, 'locker-3': { state: 'ACTIVE', overdue: true } }),
-    people: people(),
+    people: people({}, { rssi: RSSI_APPROVAL_B }),
     request: {
       id: 'r-1430', personId: 'p-b', host: 'chatgpt', tool: 'request_use', target: { kind: 'nearest', capability: 'light' }, action: 'on',
       at: '14:30:58', verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED', nodeId: 'light-1', accessRequestedAt: '14:31:00',
@@ -170,7 +173,7 @@ export const APPROVALS: { [K in keyof Approvals]: Since<ApprovalRow>[] } = {
   ended: [
     { nodeId: 'light-1', personId: 'p-c', endReason: 'APPROVAL_REJECTED', since: '13:40:00' },
     { nodeId: 'light-2', personId: 'p-c', endReason: 'APPROVAL_REQUEST_EXPIRED', since: '13:52:00' },
-    { nodeId: 'locker-1', personId: 'p-a', mode: 'one_time', endReason: 'APPROVAL_EXHAUSTED', since: '13:58:00' }
+    { nodeId: 'light-2', personId: 'p-a', mode: 'one_time', endReason: 'APPROVAL_EXHAUSTED', since: '13:58:00' }
   ]
 };
 
@@ -194,8 +197,8 @@ export const HISTORY: Since<HistoryRow>[] = [
   { requestId: 'r-1420', at: '14:20', personId: 'p-c', host: 'claude', target: { kind: 'nearest', capability: 'speaker' }, action: 'on', verdict: 'DENY', outcome: '실행 안 함', code: 'BEACON_NOT_SEEN', since: '14:20:41' }
 ];
 
-/** 실시간 집계에서 HISTORY 앞의 판정들. 목 어댑터가 지금까지 보인 HISTORY를 더한다. */
-export const TRUST_BASE: TrustReport['live'] = { since: '14:00', decisions: 36, doubleOccupancy: 0, latencyMedianSec: 0.21, latencyP95Sec: 0.48, counts: { OK: 25, ASK: 5, NEED_APPROVAL: 3, BUSY: 1, DENY: 2 } };
+/** 실시간 집계의 바탕. 목 어댑터가 지금까지 보인 HISTORY를 센다. 이력 "오늘"과 같은 수가 된다. */
+export const TRUST_BASE: TrustReport['live'] = { since: '14:00', decisions: 0, doubleOccupancy: 0, latencyMedianSec: 0.21, latencyP95Sec: 0.48, counts: { OK: 0, ASK: 0, NEED_APPROVAL: 0, BUSY: 0, DENY: 0 } };
 
 export const TRUST: TrustReport = {
   live: TRUST_BASE,

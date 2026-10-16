@@ -4,7 +4,7 @@ import { LAYOUT, SCENES } from '../data/mock/fixtures';
 import { stageView } from './stage';
 import { PLACE } from '../data/mock/fixtures';
 import { resolveArrangement, withArrangement } from './arrange';
-import { CALLOUT_H, CALLOUT_W, deviceTextBox, hits, labelBox, personBox } from './placement';
+import { CALLOUT_H, CALLOUT_W, canPlaceAll, crosses, deviceTextBox, hits, labelBox, personBox, rssiBox } from './placement';
 
 const dev = (v: ReturnType<typeof stageView>, id: string) => v.devices.find((d) => d.nodeId === id)!;
 
@@ -182,13 +182,23 @@ describe('바꾼 배치에서도 무대 글자가 겹치지 않는다', () => {
     mid: { 'locker-1': { x: 456, y: 336 }, 'locker-2': { x: 624, y: 336 }, 'locker-3': { x: 792, y: 336 },
       'speaker-1': { x: 456, y: 120 }, 'light-1': { x: 624, y: 120 }, 'light-2': { x: 792, y: 120 }, 'light-3': { x: 960, y: 120 } },
     // 아래 기기를 오른쪽 끝으로
-    right: { 'speaker-1': { x: 768, y: 720 }, 'light-1': { x: 936, y: 720 }, 'light-2': { x: 1104, y: 720 }, 'light-3': { x: 1248, y: 720 } }
+    right: { 'speaker-1': { x: 744, y: 720 }, 'light-1': { x: 912, y: 720 }, 'light-2': { x: 1080, y: 720 }, 'light-3': { x: 1248, y: 720 } },
+    // 오른쪽 위 구석에 사물함과 조명을 모으기
+    rightcluster: { 'locker-1': { x: 1248, y: 120 }, 'locker-2': { x: 1248, y: 336 }, 'locker-3': { x: 1080, y: 120 }, 'light-3': { x: 1080, y: 336 },
+      'speaker-1': { x: 744, y: 720 }, 'light-1': { x: 912, y: 720 }, 'light-2': { x: 1080, y: 720 } },
+    // 왼쪽 벽에 사물함 두 대를 위아래로
+    stackleft: { 'locker-1': { x: 408, y: 120 }, 'locker-2': { x: 408, y: 336 } },
+    // 모든 기기를 아래 벽에
+    bottomall: { 'locker-1': { x: 408, y: 720 }, 'locker-2': { x: 576, y: 720 }, 'locker-3': { x: 744, y: 720 },
+      'speaker-1': { x: 912, y: 720 }, 'light-1': { x: 1080, y: 720 }, 'light-2': { x: 1248, y: 504 }, 'light-3': { x: 1080, y: 504 } }
   };
   const ROOM_BOX = { x1: 330, y1: 90, x2: 1340, y2: 740 };
   const within = (a: { x1: number; y1: number; x2: number; y2: number }) => a.x1 >= ROOM_BOX.x1 && a.x2 <= ROOM_BOX.x2 && a.y1 >= ROOM_BOX.y1 && a.y2 <= ROOM_BOX.y2;
 
   for (const [arrName, saved] of Object.entries(ARRANGEMENTS)) {
-    const layout = withArrangement(PLACE, resolveArrangement(PLACE.devices, saved));
+    const arr = resolveArrangement(PLACE.devices, saved);
+    it(`FR12A D4 ${arrName} 배치는 저장한 자리 그대로 허용된다`, () => expect(canPlaceAll(arr, saved)).toBe(true));
+    const layout = withArrangement(PLACE, arr);
     for (const [scene, make] of Object.entries(SCENES)) {
       for (const panelOpen of [false, true]) {
         it(`FR12B D4 ${arrName} 배치 · ${scene} 장면 · 패널 ${panelOpen ? '열림' : '닫힘'}`, () => {
@@ -203,7 +213,15 @@ describe('바꾼 배치에서도 무대 글자가 겹치지 않는다', () => {
             const c = { x1: v.callout.x, y1: v.callout.y, x2: v.callout.x + CALLOUT_W, y2: v.callout.y + CALLOUT_H };
             expect(texts.some((t) => hits(c, t)), '콜아웃과 기기 글자').toBe(false);
             expect(within(c), '콜아웃이 방 안').toBe(true);
+            const a = { x: v.callout.ax, y: v.callout.ay };
+            const e = { x: v.callout.lx, y: v.callout.ly };
+            if (v.callout.ax > ROOM_BOX.x1) expect(texts.some((t) => crosses(a, e, t)), '지시선과 기기 글자').toBe(false);
           }
+          if (v.rssiOn) for (const d of v.devices) {
+            expect(rssiBox(d).x1 >= ROOM_BOX.x1 - 12 || d.wall === 'bottom', `${d.name} 신호 글자가 왼쪽 벽 안`).toBe(true);
+            expect(v.devices.some((o) => o !== d && hits(rssiBox(d), rssiBox(o))), `${d.name} 신호 글자끼리`).toBe(false);
+          }
+          expect(stageView(make(), layout, { panelOpen: true, panelWide: true }).callout.on, '넓은 패널이면 콜아웃 숨김').toBe(false);
         });
       }
     }

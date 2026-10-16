@@ -104,9 +104,12 @@ export function parseFile(text: string): { ok: true; devices: Arrangement; place
     return { ok: false, error: 'NearPilot 배치 파일이 아니에요' };
   }
   const devices: Arrangement = {};
+  const invalid: string[] = [];
   for (const [id, s] of Object.entries(f.devices)) {
     if (s && typeof s.x === 'number' && typeof s.y === 'number' && Number.isFinite(s.x) && Number.isFinite(s.y)) devices[id] = { x: snap(s.x), y: snap(s.y) };
+    else invalid.push(id);
   }
+  if (invalid.length) return { ok: false, error: `좌표가 숫자가 아닌 기기가 있어요 (${invalid.join(', ')})` };
   return { ok: true, devices, place: typeof f.place === 'string' ? f.place : '' };
 }
 
@@ -115,12 +118,15 @@ export function parseFile(text: string): { ok: true; devices: Arrangement; place
  * 한 대라도 방 밖이거나 겹치면 아무것도 바꾸지 않고 그 기기 이름을 돌려준다.
  */
 export function applyFile(arr: Arrangement, devices: DeviceInfo[], spots: Arrangement):
-  { ok: true; next: Arrangement; moved: number; unknown: number } | { ok: false; bad: string[] } {
+  { ok: true; next: Arrangement; moved: number; unknown: number } | { ok: false; outside: string[]; overlap: string[] } {
   const known = devices.filter((d) => spots[d.nodeId]);
   const next: Arrangement = { ...arr };
   for (const d of known) next[d.nodeId] = spots[d.nodeId];
-  const bad = known.filter((d) => !canPlace(next, d.nodeId, next[d.nodeId])).map((d) => d.name);
-  if (bad.length) return { ok: false, bad };
+  const bad = known.filter((d) => !canPlace(next, d.nodeId, next[d.nodeId]));
+  // 혼자 놓아도 안 되면 방 밖, 혼자는 되면 다른 기기와 겹침
+  const outside = bad.filter((d) => !canPlace({}, d.nodeId, next[d.nodeId])).map((d) => d.name);
+  const overlap = bad.filter((d) => canPlace({}, d.nodeId, next[d.nodeId])).map((d) => d.name);
+  if (bad.length) return { ok: false, outside, overlap };
   const ids = new Set(devices.map((d) => d.nodeId));
   return { ok: true, next, moved: known.length, unknown: Object.keys(spots).filter((id) => !ids.has(id)).length };
 }

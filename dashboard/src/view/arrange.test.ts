@@ -33,7 +33,9 @@ describe('표시용 배치', () => {
   });
   it('FR12A D4 불러온 자리가 한 대라도 놓을 수 없으면 배치를 바꾸지 않고, 놓을 수 있으면 옮긴 수와 모르는 기기 수를 센다', () => {
     const name = (id: string) => PLACE.devices.find((d) => d.nodeId === id)!.name;
-    expect(applyFile(base, PLACE.devices, { 'locker-1': { x: 0, y: 0 } })).toEqual({ ok: false, bad: [name('locker-1')] });
+    expect(applyFile(base, PLACE.devices, { 'locker-1': { x: 0, y: 0 } })).toEqual({ ok: false, outside: [name('locker-1')], overlap: [] });
+    expect(applyFile(base, PLACE.devices, { 'locker-1': { ...base['locker-2'] } })).toMatchObject({ ok: false, outside: [], overlap: [name('locker-1')] });
+    expect(parseFile(JSON.stringify({ kind: 'nearpilot-arrangement', version: 1, place: '', devices: { 'locker-1': { x: '1', y: null } } }))).toEqual({ ok: false, error: '좌표가 숫자가 아닌 기기가 있어요 (locker-1)' });
     expect(applyFile(base, PLACE.devices, { 'locker-1': { ...base['locker-2'] } }).ok).toBe(false);
     const swap = applyFile(base, PLACE.devices, { 'locker-1': base['locker-2'], 'locker-2': base['locker-1'], gone: { x: 600, y: 360 } });
     expect(swap).toEqual({ ok: true, next: { ...base, 'locker-1': base['locker-2'], 'locker-2': base['locker-1'] }, moved: 2, unknown: 1 });

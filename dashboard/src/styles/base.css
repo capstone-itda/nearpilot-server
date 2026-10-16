@@ -26,6 +26,8 @@ body { margin: 0; }
   text-transform: uppercase;
   color: var(--ink-3);
 }
+/* 단위처럼 대소문자가 뜻을 가지는 글자 */
+.np-cap[data-case="keep"] { text-transform: none; }
 .np-code {
   font-family: var(--font-mono);
   font-size: var(--fs-cap);

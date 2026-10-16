@@ -7,9 +7,14 @@ const ARRANGEMENTS: Record<string, Record<string, { x: number; y: number }>> = {
   stack: { 'locker-1': { x: 600, y: 120 }, 'locker-2': { x: 600, y: 336 } },
   mid: { 'locker-1': { x: 456, y: 336 }, 'locker-2': { x: 624, y: 336 }, 'locker-3': { x: 792, y: 336 },
     'speaker-1': { x: 456, y: 120 }, 'light-1': { x: 624, y: 120 }, 'light-2': { x: 792, y: 120 }, 'light-3': { x: 960, y: 120 } },
-  right: { 'speaker-1': { x: 768, y: 720 }, 'light-1': { x: 936, y: 720 }, 'light-2': { x: 1104, y: 720 }, 'light-3': { x: 1248, y: 720 } }
+  right: { 'speaker-1': { x: 744, y: 720 }, 'light-1': { x: 912, y: 720 }, 'light-2': { x: 1080, y: 720 }, 'light-3': { x: 1248, y: 720 } },
+  rightcluster: { 'locker-1': { x: 1248, y: 120 }, 'locker-2': { x: 1248, y: 336 }, 'locker-3': { x: 1080, y: 120 }, 'light-3': { x: 1080, y: 336 },
+    'speaker-1': { x: 744, y: 720 }, 'light-1': { x: 912, y: 720 }, 'light-2': { x: 1080, y: 720 } },
+  stackleft: { 'locker-1': { x: 408, y: 120 }, 'locker-2': { x: 408, y: 336 } },
+  bottomall: { 'locker-1': { x: 408, y: 720 }, 'locker-2': { x: 576, y: 720 }, 'locker-3': { x: 744, y: 720 },
+    'speaker-1': { x: 912, y: 720 }, 'light-1': { x: 1080, y: 720 }, 'light-2': { x: 1248, y: 504 }, 'light-3': { x: 1080, y: 504 } }
 };
-const SCENES = ['idle', 'ask', 'flow', 'done', 'fault', 'approval', 'later&view=layout'];
+const SCENES = ['idle', 'ask', 'flow', 'done', 'fault', 'approval', 'offline', 'ask&panel=trust', 'later&view=layout'];
 const SIZES: [number, number][] = [[1366, 768], [1920, 1080]];
 
 for (const [name, devices] of Object.entries(ARRANGEMENTS)) {

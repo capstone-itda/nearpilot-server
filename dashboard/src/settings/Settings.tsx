@@ -77,7 +77,11 @@ export function LayoutCheck({ arrangement, canPlace, onChange, onReset }: Layout
       const r = parseFile(text);
       if (!r.ok) { setStatus(`불러오지 못했어요. ${r.error}.`); return; }
       const a = applyFile(arrangement, layout.devices, r.devices);
-      if (!a.ok) { setStatus(`불러오지 못했어요. ${a.bad.join(', ')}의 자리가 방 밖이거나 다른 기기와 겹쳐요. 배치는 그대로예요.`); return; }
+      if (!a.ok) {
+        const why = [a.outside.length ? `${a.outside.join(', ')}의 자리가 방 밖이에요.` : '', a.overlap.length ? `${a.overlap.join(', ')}의 자리가 다른 기기와 겹쳐요.` : ''].filter(Boolean).join(' ');
+        setStatus(`불러오지 못했어요. ${why} 배치는 그대로예요.`);
+        return;
+      }
       if (a.moved === 0) { setStatus('불러오지 못했어요. 파일에 지금 장소의 기기가 없어요. 배치는 그대로예요.'); return; }
       onChange(a.next);
       const other = r.place && r.place !== layout.placeName ? ` 다른 장소(${r.place})의 파일이라 이름이 같은 기기만 옮겼어요.` : '';
@@ -94,7 +98,7 @@ export function LayoutCheck({ arrangement, canPlace, onChange, onReset }: Layout
         <div className="np-layoutcheck__side">
           <section className="np-card" data-component="Card">
             <div className="np-card__head"><h2 className="np-card__title">표시용 배치</h2></div>
-            <p className="np-sec__hint">끌어서 옮기거나, 기기를 고른 뒤 화살표 키로 한 칸씩 옮겨요. 실제 위치나 거리와는 상관없어요.</p>
+            <p className="np-sec__hint">끌어서 옮기거나, 기기를 고른 뒤 화살표 키로 한 칸씩 옮겨요. 다른 기기에 막히면 그 너머 빈자리로 건너뛰어요. 실제 위치나 거리와는 상관없어요.</p>
             <div className="np-actions">
               <button className="np-btn" type="button" onClick={exportFile}>파일로 내보내기</button>
               <button className="np-btn" type="button" onClick={() => file.current?.click()}>파일 불러오기</button>
@@ -105,7 +109,7 @@ export function LayoutCheck({ arrangement, canPlace, onChange, onReset }: Layout
             {status ? <p className="np-sec__hint" role="status">{status}</p> : null}
           </section>
           <section className="np-card" data-component="Card">
-            <div className="np-card__head"><h2 className="np-card__title">실시간 신호</h2><span className="np-cap">dBm</span></div>
+            <div className="np-card__head"><h2 className="np-card__title">실시간 신호</h2><span className="np-cap" data-case="keep">dBm</span></div>
             <DataTable label="기기별 신호 세기" head={['기기', ...visitors.map((p) => p.pseudonym)]} rows={layout.devices.map((d) => ({
               key: d.nodeId,
               cells: [<Td key="n" main={d.name} />, ...visitors.map((p) => {
@@ -183,22 +187,31 @@ export function Check() {
   const h = q.data;
   const faulted = new Set(snapshot.devices.filter((d) => d.state === 'FAULT').map((d) => d.nodeId));
   if (!h) return <SettingsContent title="점검" sub="시연 직전에 한 번에 확인해요."><Loading error={q.error} /></SettingsContent>;
-  const devices = h.devices.map((d) => ({ ...d, fault: faulted.has(d.nodeId), state: (!d.connected || faulted.has(d.nodeId) ? 'bad' : d.trust !== 'trusted' ? 'warn' : 'ok') as 'ok' | 'warn' | 'bad' }));
-  const beacons = h.beacons.filter((b) => b.lastSeenSec !== null).map((b) => ({ ...b, state: (b.note ? 'warn' : 'ok') as 'ok' | 'warn' }));
+  const devices = h.devices.map((d) => ({ ...d, fault: faulted.has(d.nodeId), state: (faulted.has(d.nodeId) ? 'bad' : !d.connected || d.trust !== 'trusted' ? 'warn' : 'ok') as 'ok' | 'warn' | 'bad' }));
+  // 방문자 비콘만 본다. 소유자는 비콘 없이 승인만 한다.
+  const visitorIds = new Set(snapshot.people.filter((p) => p.role === 'visitor').map((p) => p.id));
+  const beacons = h.beacons.filter((b) => visitorIds.has(b.personId)).map((b) => ({ ...b, state: (b.note || b.lastSeenSec === null ? 'warn' : 'ok') as 'ok' | 'warn' }));
   const hosts = h.hosts.map((x) => ({ ...x, state: (x.lastToolsList ? 'ok' : 'warn') as 'ok' | 'warn' }));
   const server: [string, boolean, string][] = [['데이터베이스', h.server.database, h.server.database ? '정상' : '응답 없음'], ['MQTT 브로커', h.server.mqtt, h.server.mqtt ? '연결됨' : '연결 끊김'], ['근접 모델 파일', true, h.server.model]];
   const issues = [...devices, ...beacons, ...hosts].filter((x) => x.state !== 'ok').length + server.filter(([, ok]) => !ok).length;
   return (
     <SettingsContent title="점검" sub="시연 직전에 한 번에 확인해요.">
-      <div className="np-ready" data-component="ReadyBanner" data-state={issues ? 'warn' : 'ok'} role="status">
-        <span className="np-ready__title">{issues ? `확인할 것 ${issues}건` : '모두 정상이에요'}</span>
-        <span className="np-ready__body">{issues ? '나머지는 모두 정상이에요.' : '시연을 시작해도 돼요.'}</span>
-      </div>
+      {snapshot.connected ? (
+        <div className="np-ready" data-component="ReadyBanner" data-state={issues ? 'warn' : 'ok'} role="status">
+          <span className="np-ready__title">{issues ? `확인할 것 ${issues}건` : '모두 정상이에요'}</span>
+          <span className="np-ready__body">{issues ? '나머지는 모두 정상이에요.' : '시연을 시작해도 돼요.'}</span>
+        </div>
+      ) : (
+        <div className="np-ready" data-component="ReadyBanner" data-state="warn" role="status">
+          <span className="np-ready__title">서버와 연결이 끊겼어요</span>
+          <span className="np-ready__body">아래는 {snapshot.lastReceivedAt}에 마지막으로 받은 결과예요. 지금 상태와 다를 수 있어요.</span>
+        </div>
+      )}
       <div className="np-checks">
         <CheckCard title="기기">{devices.map((d) => <Crow key={d.nodeId} state={d.state} name={deviceName(d.nodeId)} right={`${d.fault ? '고장 격리 · ' : ''}${d.connected ? '연결됨' : '연결 끊김'} · ${d.trust}`} />)}</CheckCard>
-        <CheckCard title="폰 비콘">{beacons.map((b) => <Crow key={b.personId} state={b.state} name={personName(b.personId)} right={`${ago(b.lastSeenSec)}${b.note ? ` · ${b.note}` : ''}`} />)}</CheckCard>
+        <CheckCard title="폰 비콘">{beacons.map((b) => <Crow key={b.personId} state={b.state} name={personName(b.personId)} right={b.lastSeenSec === null ? b.note ?? '신호 없음' : `${ago(b.lastSeenSec)}${b.note ? ` · ${b.note}` : ''}`} />)}</CheckCard>
         <CheckCard title="AI 호스트">{hosts.map((x) => <Crow key={x.host} state={x.state} name={HOST_NAME[x.host]} right={x.lastToolsList ? `tools/list ${x.lastToolsList}` : '연결 기록 없음'} />)}</CheckCard>
-        <CheckCard title="서버">{server.map(([n, ok, r]) => <Crow key={n} state={ok ? 'ok' : 'bad'} name={n} right={r} />)}</CheckCard>
+        <CheckCard title="서버">{server.map(([n, ok, r]) => <Crow key={n} state={ok ? 'ok' : 'warn'} name={n} right={r} />)}</CheckCard>
       </div>
     </SettingsContent>
   );
