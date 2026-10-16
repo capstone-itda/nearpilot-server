@@ -87,6 +87,8 @@
 | 프레임의 비콘이 회차의 비콘과 다르거나, 앵커가 배치에 없거나, `frame_ts`가 구간 밖이다 | 그 프레임을 쓰지 않는다 | `test_FR16_fit_ignores_foreign_frames` |
 | 정답 상태의 확률이 0으로 내려간다 | 그 조합의 손실은 무한대다. 다른 조합을 고른다. 모든 조합이 무한대이면 `FitError` | `test_FR16_zero_probability_loses` |
 | 쓸 모델 파일이 이미 있다 | `FileExistsError`. 있는 파일을 바꾸지 않는다 | `test_FR16_write_refuses_overwrite` |
+| 모델의 `calibration_method`가 `none`, `temperature`가 아니거나, 무한대·NaN 값이 남아 있다 | `ValueError`. 디렉터리도 파일도 만들지 않는다 | `test_FR16_model_to_dict_rejects_unknown_calibration`, `test_FR16_write_rejects_non_finite_values` |
+| `validation_log_loss`를 직접 부를 때 회차가 없거나, `bin_sec`가 0 이하·유한하지 않거나, 라벨이 배치에 없다 | `FitError` (`fit_model`과 같은 조건이다) | `test_FR16_validation_log_loss_rejects_invalid_input` |
 
 ## 6. 결정
 
@@ -138,6 +140,7 @@
 |---|---|---|
 | FR-16 | `test_FR16_temperature_model_file_is_read` | `temperature`와 `tau`를 읽는다. `none`의 τ는 1.0이다 |
 | FR-16 | `test_FR16_temperature_one_equals_none` | τ = 1의 결과가 `none`과 같다 |
+| FR-16 | `test_FR16_temperature_divides_evidence_log_likelihood` | 사후확률이 τ로 나눈 증거로 직접 계산한 forward와 같다 |
 | FR-16 | `test_FR16_temperature_tempers_evidence` | τ가 크면 같은 관측의 사후확률이 처음 분포에 가깝다. 최대 기기는 바뀌지 않는다 |
 | FR-16 | `test_FR16_fit_recovers_path_loss` | 알려진 값으로 만든 합성 회차에서 `A`, `n`, `sigma`를 허용 오차 안으로 되찾는다 |
 | FR-16 | `test_FR16_fit_none_params_from_none_runs` | `none_rssi`, `none_sigma`가 `none` 회차의 평균과 표준편차다 |

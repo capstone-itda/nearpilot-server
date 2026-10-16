@@ -66,7 +66,8 @@
 | (#88 결정 뒤) | 서버 시작 때 `Repository.rssi_since`로 최근 프레임을 읽어 복원 접점에 넘기는 호출 | #31, #88 |
 | (#88 결정 뒤) | 서버 시작 때 장소별로 어느 모델 버전을 읽을지 고르는 조립 코드 | #88 |
 | `feat/core-proximity-data-collection` | 수집 회차와 라벨 기록, "앞"의 거리 기준 | FR-16 |
-| `feat/core-proximity-calibration` | 실데이터 적합, 보정, 명시 지정 임계값 실험, 운영 모델 파일 | FR-16, FR-17, 지표 8 |
+| `feat/core-proximity-model-fit` | 보정 방법(우도 온도)과 수집 회차로 모델 파일을 만드는 적합 함수 (`specs/core-proximity-model-fit/spec.md`) | FR-16 |
+| `feat/core-proximity-calibration` | 실데이터 적합, 명시 지정 임계값 실험, 운영 모델 파일 | FR-16, FR-17, 지표 8 |
 
 - 임계값 비교와 대상 선택 — 판정의 몫이다 (#39).
 - 운영용 모델 파일 — 실데이터가 없다. 이 작업은 테스트용 합성 모델 파일만 만든다.
@@ -108,7 +109,7 @@
   - `nodes`: `node_id`마다 앵커 위치 `x`, `y`, 기기 앞 위치 `front_x`, `front_y`, 경로손실 값 `A`, `n`, `sigma`, "어느 기기 앞도 아님" 상태의 RSSI 평균 `none_rssi`와 표준편차 `none_sigma`
   - `none_points`: "어느 기기 앞도 아님" 상태의 대표 위치 `x`, `y`의 배열. 기기 앞이 아닌 장소 안의 위치들이다. 빈 배열이면 먼 위치 성분만 쓴다.
   - `min_distance_m`: 거리 계산의 최솟값
-  - `calibration.method`: 보정 방법
+  - `calibration`: 보정 방법. `{"method": "none"}` 또는 `{"method": "temperature", "tau": τ}`(τ > 0)다. `temperature`는 시간 칸마다 증거의 로그우도를 τ로 나눈다 (`specs/core-proximity-model-fit/spec.md` 6절).
   - `validation`: 검증에 쓴 임계값과 결과. 없어도 된다. 근접 추정은 이 값을 계산에 쓰지 않는다 (#40).
 - 관측 구간을 매번 다시 계산한다 — `posterior(at)`은 `(at − window_sec, at]`의 프레임으로 처음 분포부터 필터를 다시 돌린다. 판정, 재현, 평가가 같은 함수를 쓴다. 메모리 필터는 서버를 켠 뒤의 모든 프레임에 기대서 재현하기 어렵다 (FR-22).
 - 관측 구간 길이 `window_sec`는 모델 파일에 둔다 — HMM 전이와 함께 데이터로 고르는 모델 값이고, 모델 버전과 함께 바뀌어야 재현된다. `Settings`에 새 값을 더하면 공용 설정 변경이다.
@@ -132,7 +133,7 @@ FR-16의 미결(관측 특징, 결측값 처리, HMM 상태와 전이, 보정 �
 - "어느 기기 앞도 아님" 상태는 같은 비중의 혼합이다. 성분은 먼 위치 하나와 `none_points`의 위치마다 하나다. 먼 위치 성분에서 RSSI는 앵커마다 `none_rssi`, `none_sigma`의 정규분포를 따른다. `none_points` 성분은 그 위치에서 기기 앞 상태와 같은 경로손실 식과 `sigma`를 쓴다. 혼합은 시간 칸마다 앵커들의 우도를 성분별로 곱한 뒤 평균한다. 먼 위치 성분 하나만 쓰면 기기 뒤 1~3 m에 선 방문자에게 엉뚱한 기기를 0.99로 고른다 (예: locker-3 2.5 m 뒤 → locker-1 0.99). 앞 상태와 none 상태의 경계는 `none_points`의 위치로 정해진다. 합성 파일은 기기 앞 위치보다 1 m 이상 뒤에 점을 둔다. 운영 파일의 위치는 "앞"의 거리 기준(`feat/core-proximity-data-collection`)에 맞춰 `feat/core-proximity-calibration`에서 정한다 — 미결 (FR-16)
 - 한 시간 칸에 프레임이 없는 앵커는 증거로 쓰지 않는다. 그 앵커의 우도는 모든 상태에서 같다 — 미결 (FR-16 결측값 처리)
 - HMM 상태는 전체 상태와 같다. 처음 분포는 균등이다. 전이는 머무를 확률 하나로 정한다 — 미결 (FR-16 HMM 상태와 전이)
-- 보정은 하지 않는다. `calibration.method`는 `none`이다 — 미결 (FR-16 보정 방법)
+- 보정 방법은 `none`과 우도 온도 `temperature` 두 가지다. 합성 파일은 `none`이다 — 미결 (FR-16 보정 방법). 근거와 적합은 `specs/core-proximity-model-fit/spec.md`에 있다.
 - 한 시간 칸에 같은 앵커의 프레임이 여럿이면 RSSI를 평균한다 — 미결 (프레임 안 집계 방법, MQTT 계약 v1에 없음)
 
 ## 8. 테스트
