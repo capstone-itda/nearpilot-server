@@ -86,8 +86,18 @@ class ProximityModel:
     validation: Mapping[str, Any]  # 검증에 쓴 임계값과 결과. 계산에 쓰지 않는다 (#40)
     # "어느 기기 앞도 아님" 상태의 대표 위치 (x, y), 미터. 기기 앞이 아닌 장소 안의 위치들이다
     none_points: tuple[tuple[float, float], ...] = ()
+    calibration_tau: float = 1.0  # 우도 온도 τ. 증거의 로그우도를 나누는 값이다. calibration_method가 "none"이면 1.0이다
 
     def __post_init__(self) -> None:
+        # 계산은 τ만 읽고 모델 파일은 방법을 쓴다. 둘이 어긋난 모델은 쓴 파일과 계산이 달라서 만들지 않는다.
+        if self.calibration_method == "none":
+            if self.calibration_tau != 1.0:
+                raise ValueError(f'calibration_method가 "none"이면 calibration_tau는 1.0이어야 한다 ({self.calibration_tau!r})')
+        elif self.calibration_method == "temperature":
+            if not 0.0 < self.calibration_tau < inf:
+                raise ValueError(f"calibration_tau는 0보다 큰 유한한 수여야 한다 ({self.calibration_tau!r})")
+        else:
+            raise ValueError(f'calibration_method는 "none", "temperature" 중 하나여야 한다 ({self.calibration_method!r})')
         object.__setattr__(self, "nodes", _freeze(self.nodes))
         object.__setattr__(self, "validation", _freeze(self.validation))
         object.__setattr__(self, "none_points", tuple((float(x), float(y)) for x, y in self.none_points))
@@ -182,10 +192,17 @@ def load_model(path: Path) -> ProximityModel:
         )
 
     transition = _fixed_object(top["transition"], f"{path}: transition", ("stay",))
-    calibration = _fixed_object(top["calibration"], f"{path}: calibration", ("method",))
-    method = _string(calibration["method"], f"{path}: calibration.method")
-    if method != "none":
-        raise ModelFileError(f'{path}: calibration.method는 "none"만 지원한다 ({method!r})')
+    # 보정 방법마다 키가 정해져 있다. method를 먼저 읽고, 그 방법의 키로 검사한다.
+    calibration = _object(top["calibration"], f"{path}: calibration")
+    method = _string(calibration.get("method"), f"{path}: calibration.method")
+    if method == "none":
+        _fixed_object(calibration, f"{path}: calibration", ("method",))
+        tau = 1.0
+    elif method == "temperature":
+        _fixed_object(calibration, f"{path}: calibration", ("method", "tau"))
+        tau = _number(calibration["tau"], f"{path}: calibration.tau", gt=0.0)
+    else:
+        raise ModelFileError(f'{path}: calibration.method는 "none", "temperature"만 지원한다 ({method!r})')
 
     raw_nodes = _object(top["nodes"], f"{path}: nodes")
     if not raw_nodes:
@@ -213,6 +230,7 @@ def load_model(path: Path) -> ProximityModel:
         stay=_number(transition["stay"], f"{path}: transition.stay", gt=0.0, lt=1.0),
         min_distance_m=_number(top["min_distance_m"], f"{path}: min_distance_m", gt=0.0),
         calibration_method=method,
+        calibration_tau=tau,
         nodes=nodes,
         validation=_object(top.get("validation", {}), f"{path}: validation"),
         none_points=tuple(none_points),

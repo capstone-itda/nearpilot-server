@@ -4,6 +4,23 @@ from nearpilot.core.proximity.filter import (
     ProximityInputError,
     compute_posteriors,
 )
+from nearpilot.core.proximity.fit import (
+    NONE_LABEL,
+    AnchorLayout,
+    FitConfig,
+    FitError,
+    FitResult,
+    GridLoss,
+    LabeledRun,
+    ObservationParams,
+    PlaceLayout,
+    fit_model,
+    fit_observation_params,
+    model_to_dict,
+    run_frames,
+    validation_log_loss,
+    write_model_file,
+)
 from nearpilot.core.proximity.model import (
     ModelFileError,
     ModelMismatchError,
@@ -14,14 +31,29 @@ from nearpilot.core.proximity.model import (
 )
 
 __all__ = [
+    "AnchorLayout",
+    "FitConfig",
+    "FitError",
+    "FitResult",
+    "GridLoss",
     "HmmProximityEstimator",
+    "LabeledRun",
     "ModelFileError",
     "ModelMismatchError",
+    "NONE_LABEL",
     "NONE_STATE",
     "NodeModel",
+    "ObservationParams",
+    "PlaceLayout",
     "ProximityInputError",
     "ProximityModel",
     "compute_posteriors",
+    "fit_model",
+    "fit_observation_params",
     "load_model",
     "load_models",
+    "model_to_dict",
+    "run_frames",
+    "validation_log_loss",
+    "write_model_file",
 ]
