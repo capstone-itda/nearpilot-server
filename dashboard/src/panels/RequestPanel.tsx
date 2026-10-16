@@ -31,7 +31,8 @@ function execText(r: RequestProgress, subject: string): string {
     case 'succeeded': return `${subject} ${ACTION_DONE[r.action]}`;
     case 'failed': return '기기가 실패를 알려 고장 격리했어요 (EXEC_FAILED)';
     case 'unknown': return '응답이 없어 결과를 몰라 고장 격리했어요 (EXEC_UNKNOWN)';
-    default: return '명령을 보냈고 결과를 기다려요';
+    case 'sent': return '명령을 보냈고 결과를 기다려요';
+    default: return '허가했고 명령을 보낼 차례예요';
   }
 }
 

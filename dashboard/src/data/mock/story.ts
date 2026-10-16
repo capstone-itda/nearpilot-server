@@ -97,13 +97,14 @@ function requestEvents(r: RequestScript): StreamEvent[] {
   out.push({ type: 'verdict', at: stamp(tv), requestId: r.id, verdict: r.verdict, reason: r.reason, nodeId: r.nodeId });
   let tr = tv + 0.02;
   if (r.verdict === 'OK' && r.nodeId && r.exec) {
-    out.push({ type: 'transition', at: stamp(tv + 0.005), nodeId: r.nodeId, to: 'RESERVED' });
+    // 판정과 예약은 한 트랜잭션이고, 실행 결과와 전이도 한 번에 온다 (같은 시각이라 같은 묶음)
+    out.push({ type: 'transition', at: stamp(tv), nodeId: r.nodeId, to: 'RESERVED' });
     out.push({ type: 'command', at: stamp(tv + 0.01), requestId: r.id, nodeId: r.nodeId, action: r.action });
     const te = sec(r.exec.at);
     out.push({ type: 'exec_result', at: stamp(te), requestId: r.id, nodeId: r.nodeId, result: r.exec.result });
     out.push(r.exec.result === 'succeeded'
-      ? { type: 'transition', at: stamp(te + 0.005), nodeId: r.nodeId, to: 'ACTIVE' }
-      : { type: 'transition', at: stamp(te + 0.005), nodeId: r.nodeId, to: 'FAULT', fault: { cause: r.exec.result === 'failed' ? 'EXEC_FAILED' : 'EXEC_UNKNOWN', action: r.action } });
+      ? { type: 'transition', at: stamp(te), nodeId: r.nodeId, to: 'ACTIVE' }
+      : { type: 'transition', at: stamp(te), nodeId: r.nodeId, to: 'FAULT', fault: { cause: r.exec.result === 'failed' ? 'EXEC_FAILED' : 'EXEC_UNKNOWN', action: r.action } });
     tr = te + 0.02;
   }
   out.push({ type: 'mcp_result', at: stamp(tr), requestId: r.id });

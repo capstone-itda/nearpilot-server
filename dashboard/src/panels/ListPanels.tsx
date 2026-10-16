@@ -92,15 +92,24 @@ export function AuditPanel({ onClose }: Close) {
 const VERDICTS: Verdict[] = ['OK', 'ASK', 'NEED_APPROVAL', 'BUSY', 'DENY'];
 const HOSTS: HostKind[] = ['claude', 'chatgpt', 'gemini'];
 
+/** 이력 한 쪽의 줄 수. 1366×768에서도 패널 안 스크롤 없이 들어가는 수 */
+const HISTORY_PAGE = 6;
+
 export function HistoryPanel({ onClose, onOpenRequest }: Close & { onOpenRequest: (requestId: string) => void }) {
   const { source, layout, deviceName, personName } = useData();
   const [form, setForm] = useState<HistoryQuery>({ period: '오늘' });
   const [query, setQuery] = useState<HistoryQuery>(form);
   const q = useQuery(() => source.history(query), [query]);
+  // 패널 안에서 스크롤하지 않게 최근 것부터 한 쪽씩 보인다
+  const [page, setPage] = useState(0);
+  const rows = q.data ?? [];
+  const pages = Math.max(1, Math.ceil(rows.length / HISTORY_PAGE));
+  const at = Math.min(page, pages - 1);
+  const shown = rows.slice(at * HISTORY_PAGE, (at + 1) * HISTORY_PAGE);
   return (
     <Panel kind="history" size="wide" cap="패널 · MON-09" title="요청·판정 이력" onClose={onClose}>
       <Section title="찾기">
-        <form className="np-form" data-component="SearchForm" onSubmit={(e) => { e.preventDefault(); setQuery(form); }}>
+        <form className="np-form" data-component="SearchForm" onSubmit={(e) => { e.preventDefault(); setQuery(form); setPage(0); }}>
           <label className="np-field"><span className="np-field__label">기간</span>
             <input className="np-field__input" value={form.period} onChange={(e) => setForm({ ...form, period: e.target.value })} /></label>
           <label className="np-field"><span className="np-field__label">판정</span>
@@ -118,9 +127,15 @@ export function HistoryPanel({ onClose, onOpenRequest }: Close & { onOpenRequest
           <button className="np-btn" type="submit">찾기</button>
         </form>
       </Section>
-      <Section title={q.data ? `결과 ${q.data.length}건` : '결과'}>
+      <Section title={q.data ? `결과 ${rows.length}건${pages > 1 ? ` · ${at * HISTORY_PAGE + 1}–${at * HISTORY_PAGE + shown.length}번째` : ''}` : '결과'}
+        right={pages > 1 ? (
+          <div className="np-actions">
+            <button className="np-btn" data-variant="quiet" type="button" disabled={at === 0} onClick={() => setPage(at - 1)}>최근</button>
+            <button className="np-btn" data-variant="quiet" type="button" disabled={at === pages - 1} onClick={() => setPage(at + 1)}>이전</button>
+          </div>
+        ) : undefined}>
         {q.data ? (
-          <DataTable label="요청·판정 이력" head={['시각', '누가', '요청', '판정', '기기', '결과']} rows={q.data.map((h) => ({
+          <DataTable label="요청·판정 이력" head={['시각', '누가', '요청', '판정', '기기', '결과']} rows={shown.map((h) => ({
             key: h.requestId,
             cells: [
               <TdMono key="t" v={h.at} />,

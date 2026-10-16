@@ -35,14 +35,14 @@ describe('stageView', () => {
     expect(dev(v, 'locker-3').status).toBe('사용 중 · 대여 초과');
     expect(v).toMatchObject({ host: 'claude', server: true, mcp: 'claude', cmd: 'locker-1', fault: null, push: false, rssiOn: true });
     expect(v.rssi['locker-1']).toBe('−52 dBm');
-    expect(v.callout).toMatchObject({ on: true, tone: 'ok', title: '사물함 1 열기 명령', body: '네 가지 확인을 모두 통과해서 open을 보냈어요' });
+    expect(v.callout).toMatchObject({ on: true, tone: 'ok', title: '사물함 1 열기 명령', body: '네 가지 확인을 모두 통과해서 열기 명령을 보냈어요' });
     expect(v.visitors.find((x) => x.personId === 'p-b')!.on).toBe(false);
   });
 
   it('FR12B 공용형 OK: 빈자리 확인이 없어 세 가지 확인이라고 말한다', () => {
     const s = SCENES.approval();
     s.request = { ...s.request!, verdict: 'OK', reason: 'OK', execution: 'sent', steps: s.request!.steps.map((x, i) => (i < 5 ? { result: 'pass' as const } : x)) };
-    expect(stageView(s, LAYOUT, { panelOpen: false }).callout.body).toBe('세 가지 확인을 모두 통과해서 on을 보냈어요');
+    expect(stageView(s, LAYOUT, { panelOpen: false }).callout.body).toBe('세 가지 확인을 모두 통과해서 켜기 명령을 보냈어요');
   });
 
   it('FR12B 고장 격리: 격리 선과 빨간 콜아웃, 패널이 열려 있으면 콜아웃을 왼쪽에', () => {

@@ -11,7 +11,7 @@ afterEach(() => { vi.useRealTimers(); });
 describe('createMockSource', () => {
   it('FR12A 이력 기간에 시각 범위를 쓰면 그 안의 기록만 준다', async () => {
     const s = createMockSource({ scene: 'later' });
-    expect((await s.history({ period: '오늘' })).length).toBe(6);
+    expect((await s.history({ period: '오늘' })).length).toBe(13);
     expect((await s.history({ period: '오늘 14:26~14:29' })).map((h) => h.at)).toEqual(['14:29', '14:28', '14:26']);
   });
   it('FR12B 재생은 마지막 장면에서 멈춘다', () => {
@@ -48,9 +48,10 @@ describe('목 조회는 마지막 이벤트 시각까지만 보인다', () => {
   it('FR12A 신뢰도 실시간 집계는 지금까지 보인 판정만 센다', async () => {
     const idle = (await createMockSource({ scene: 'idle' }).trust()).live;
     const later = (await createMockSource({ scene: 'later' }).trust()).live;
-    expect(idle).toMatchObject({ decisions: 0, latencyMedianSec: null });
-    expect(later.decisions).toBe((await createMockSource({ scene: 'later' }).history({ period: '오늘' })).length);
-    expect(later.counts).toEqual({ OK: 2, ASK: 1, NEED_APPROVAL: 1, BUSY: 1, DENY: 1 });
+    // 시연 세션(14:00부터)의 판정만 센다
+    expect(idle).toMatchObject({ decisions: 2 });
+    expect(later.decisions).toBe((await createMockSource({ scene: 'later' }).history({ period: '오늘 14:00~23:59' })).length);
+    expect(later.counts).toEqual({ OK: 3, ASK: 1, NEED_APPROVAL: 2, BUSY: 1, DENY: 1 });
   });
   it('FR12A 요청 상세는 진행 중이면 모니터 상태 그대로, 아직 생기지 않은 요청은 거절한다', async () => {
     const flow = createMockSource({ scene: 'flow' });
@@ -102,5 +103,22 @@ describe('조회는 판정을 앞서가지 않는다', () => {
     const ask = createMockSource({ scene: 'ask' });
     expect((await ask.history({ period: '오늘' })).map((h) => h.requestId)).toContain('r-1426');
     expect((await ask.audit()).map((a) => a.id)).toContain('a4');
+  });
+});
+
+describe('목 조회 데이터끼리 맞는다', () => {
+  it('FR12A 승인과 대여에 나온 사용은 이력에도 있고, 상세를 열 수 있다', async () => {
+    const s = createMockSource({ scene: 'later' });
+    const ids = (await s.history({ period: '오늘' })).map((h) => h.requestId);
+    expect(ids).toEqual(expect.arrayContaining(['r-1321', 'r-1339', 'r-1342', 'r-1347', 'r-1358', 'r-1401', 'r-1403']));
+    expect(await s.request('r-1358')).toMatchObject({ verdict: 'OK', execution: 'succeeded' });
+  });
+  it('FR12A 승인 신청은 만료 이벤트 시각까지 기다림에 있고, 이력 결과는 승인 이벤트를 따른다', async () => {
+    const at = createMockSource({ scene: 'approval' });
+    expect((await at.approvals()).pending[0].remainingMinutes).toBe(10);
+    expect((await at.history({ period: '오늘' })).find((h) => h.requestId === 'r-1430')?.outcome).toBe('실행 안 함 · 승인 신청');
+    const later = createMockSource({ scene: 'later' });
+    expect((await later.approvals()).pending).toEqual([]);
+    expect((await later.history({ period: '오늘' })).find((h) => h.requestId === 'r-1430')?.outcome).toBe('실행 안 함 · 승인 신청 만료');
   });
 });

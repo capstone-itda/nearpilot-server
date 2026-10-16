@@ -93,3 +93,10 @@ describe('reduce', () => {
     expect(s).toMatchObject({ connected: false, reconnectAttempts: 2, lastReceivedAt: '14:00:00' });
   });
 });
+
+describe('reduce 감사', () => {
+  it('FR12B 감사 로그 줄이 오면 마지막 줄 ID가 바뀐다', () => {
+    const s = reduceAll(s0(), [{ type: 'audit', at: '14:00:05.000', row: { id: 'a9', at: '14:00:05', step: '1', text: '비콘 수신 없음', code: 'BEACON_NOT_SEEN' } }]);
+    expect(s.lastAuditId).toBe('a9');
+  });
+});

@@ -96,8 +96,8 @@ function apply(s0: MonitorState, e: StreamEvent): MonitorState {
       return { ...s0, mockPhones: phones.some((m) => m.personId === e.screen.personId) ? phones.map((m) => (m.personId === e.screen.personId ? e.screen : m)) : [...phones, e.screen] };
     }
     case 'audit':
-      // 감사 로그는 패널이 조회로 읽는다. 수신 시각만 바뀐다.
-      return s;
+      // 감사 로그 줄은 패널이 조회로 읽는다. 새 줄이 왔다는 것만 둔다.
+      return { ...s, lastAuditId: e.row.id };
   }
 }
 

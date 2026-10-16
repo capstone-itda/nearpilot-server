@@ -22,7 +22,7 @@ export function useData(): Ctx {
  */
 export function snapshotKey(s: MonitorState): string {
   const r = s.request;
-  return [s.connected, s.lastReceivedAt.slice(0, 5), r?.id, r?.verdict, r?.execution, r?.respondedAt, r?.accessExpiredAt, s.ownerNotified, ...s.devices.map((d) => `${d.nodeId}:${d.state}`), ...s.people.map((p) => `${p.id}:${p.beaconSeen}`)].join('|');
+  return [s.connected, s.lastReceivedAt.slice(0, 5), r?.id, r?.verdict, r?.execution, r?.respondedAt, r?.accessExpiredAt, s.ownerNotified, s.lastAuditId, ...s.devices.map((d) => `${d.nodeId}:${d.state}`), ...s.people.map((p) => `${p.id}:${p.beaconSeen}`)].join('|');
 }
 
 /**

@@ -125,6 +125,8 @@ export interface MonitorState {
   reconnectAttempts: number;
   devices: DeviceStatus[];
   people: Person[];
+  /** 마지막으로 받은 감사 로그 줄의 ID. 감사 패널이 다시 조회할 때를 안다 */
+  lastAuditId?: string;
   /** 진행 중이거나 막 끝난 요청. 끝나고 FINISHED_HOLD_SEC(data/reduce.ts)가 지나면 내린다 */
   request?: RequestProgress;
   /** 소유자 폰에 승인 알림을 보낸 중이면 true */

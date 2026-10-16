@@ -40,7 +40,19 @@ test('FR12A 이력 찾기는 판정으로 거른다', async ({ page }) => {
   await ready(page, 'scene=later&panel=history');
   await page.locator('label', { hasText: '판정' }).locator('select').selectOption('OK');
   await page.getByRole('button', { name: '찾기' }).click();
-  await expect(page.getByRole('table', { name: '요청·판정 이력' }).locator('tbody tr')).toHaveCount(2);
+  await expect(page.getByRole('table', { name: '요청·판정 이력' }).locator('tbody tr')).toHaveCount(5);
+});
+
+test('FR12A 이력은 한 쪽에 6건씩 최근 것부터 보인다', async ({ page }) => {
+  await ready(page, 'scene=later&panel=history');
+  const rows = page.getByRole('table', { name: '요청·판정 이력' }).locator('tbody tr');
+  await expect(rows).toHaveCount(6);
+  await expect(rows.first()).toContainText('14:30');
+  await page.getByRole('button', { name: '이전' }).click();
+  await expect(rows).toHaveCount(6);
+  await page.getByRole('button', { name: '이전' }).click();
+  await expect(rows).toHaveCount(1);
+  await expect(rows.last()).toContainText('13:21');
 });
 
 test('FR12A 감사 로그는 단계로 거른다', async ({ page }) => {
@@ -85,7 +97,7 @@ test('FR12A D7 설정 화면을 오가고 자동 전환 스위치는 이 PC에�
   await expect(sw).toHaveAttribute('aria-checked', 'false');
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('nearpilot-dashboard')!).follow.followRequester)).toBe(false);
   await page.getByRole('button', { name: /^점검/ }).click();
-  await expect(page.locator('[data-component="ReadyBanner"]')).toContainText('확인할 것 2건');
+  await expect(page.locator('[data-component="ReadyBanner"]')).toContainText('확인할 것 3건');
   await expect(page.locator('.np-crow[data-state="bad"]')).toContainText('사물함 2');
   await page.getByRole('button', { name: '모니터로 돌아가기' }).click();
   await expect(page.locator('[data-component="MonitorLayout"]')).toHaveCount(1);

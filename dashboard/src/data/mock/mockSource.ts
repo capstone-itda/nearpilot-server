@@ -2,7 +2,7 @@
 // 스트림은 story.ts의 이벤트를 보낸다. 조회는 마지막으로 보낸 이벤트 시각까지의 기록만 준다.
 import type { DataSource } from '../source';
 import type { StreamEvent } from '../../model/events';
-import type { HistoryQuery, MonitorState, UseRow } from '../../model/types';
+import type { HistoryQuery, HistoryRow, MonitorState, RequestProgress, UseRow } from '../../model/types';
 import { FINISHED_HOLD_SEC, initialState, reduceAll } from '../reduce';
 import {
   APPROVAL_WAIT_MIN, APPROVALS, AUDIT, HEALTH, HISTORY, PLACE, RENTAL_DUE, RENTALS, TRUST, TRUST_BASE, USES, type Since
@@ -72,6 +72,26 @@ export function liveClock(start = LIVE_START): (elapsedSec: number) => number {
 const RESPONDED: Record<string, string> = Object.fromEntries(STORY.flatMap((e) => (e.type === 'mcp_result' ? [[e.requestId, e.at]] : [])));
 /** 감사 로그 줄이 스트림에 온 시각 */
 const AUDIT_AT: Record<string, string> = Object.fromEntries(STORY.flatMap((e) => (e.type === 'audit' ? [[e.row.id, e.at]] : [])));
+
+/** 스트림 연결 전(14:05 전)의 요청은 이야기에 이벤트가 없다. 이력 줄에서 끝난 요청 상세를 만든다. */
+function earlierRequest(h: HistoryRow): RequestProgress {
+  const shared = PLACE.devices.find((d) => d.nodeId === h.nodeId)?.occupancy === 'shared';
+  const steps: RequestProgress['steps'] = Array.from({ length: 7 }, (_, i) =>
+    h.verdict === 'NEED_APPROVAL' ? { result: i < 4 ? 'pass' : i === 4 ? 'stop' : 'skip' }
+      : { result: shared && i >= 5 ? 'skip' : 'pass' });
+  return {
+    id: h.requestId, personId: h.personId, host: h.host, tool: 'request_use', target: h.target, action: h.action, at: `${h.at}:00`,
+    verdict: h.verdict, reason: h.code ?? 'OK', nodeId: h.nodeId, steps,
+    ...(h.verdict === 'OK' ? { execution: 'succeeded' as const } : {}), respondedAt: `${h.at}:00`
+  };
+}
+
+/** 승인 신청 이벤트가 오면 이력의 결과에 덧붙인다 */
+function withApproval(h: HistoryRow, now: number): HistoryRow {
+  const last = STORY.filter((e) => e.type === 'approval' && e.requestId === h.requestId && sec(e.at) <= now).at(-1);
+  if (!last || last.type !== 'approval') return h;
+  return { ...h, outcome: `${h.outcome} · ${last.kind === 'requested' ? '승인 신청' : '승인 신청 만료'}` };
+}
 
 export function createMockSource(opt: MockOptions): DataSource {
   const listeners = new Set<(events: StreamEvent[]) => void>();
@@ -165,7 +185,8 @@ export function createMockSource(opt: MockOptions): DataSource {
     })),
     // 기다리는 승인의 남은 시간은 신청 시각부터 줄고, 다 되면 대기 만료로 끝난다
     approvals: () => {
-      const left = (since: string) => Math.floor(APPROVAL_WAIT_MIN - (now - sec(since)) / 60);
+      // 만료 이벤트가 오는 때(신청 + 대기 시간)까지 기다림에 둔다. 남은 분은 올림
+      const left = (since: string) => Math.ceil(APPROVAL_WAIT_MIN - (now - sec(since)) / 60);
       const pending = APPROVALS.pending.filter((a) => seen(a.since));
       return copy({
         pending: pending.filter((a) => left(a.since) > 0).map((a) => ({ ...strip(a), remainingMinutes: left(a.since) })),
@@ -178,17 +199,17 @@ export function createMockSource(opt: MockOptions): DataSource {
     },
     audit: () => copy(AUDIT.filter(audited)),
     history: (q: HistoryQuery) => copy(HISTORY.filter((h) => answered(h) &&
-      inPeriod(h.at, q.period) && (!q.verdict || h.verdict === q.verdict) && (!q.nodeId || h.nodeId === q.nodeId) && (!q.host || h.host === q.host)).map(strip)),
+      inPeriod(h.at, q.period) && (!q.verdict || h.verdict === q.verdict) && (!q.nodeId || h.nodeId === q.nodeId) && (!q.host || h.host === q.host)).map((h) => withApproval(strip<HistoryRow>(h), now))),
     // 진행 중인 요청은 지금 상태 그대로, 끝난 요청은 이력에 보인 뒤부터 준다
     request: (id: string) => {
       if (current.request?.id === id) return copy(current.request);
       const h = HISTORY.find((r) => r.requestId === id);
-      const r = h && answered(h) ? finishedRequest(id) : undefined;
+      const r = h && answered(h) ? finishedRequest(id) ?? earlierRequest(strip<HistoryRow>(h)) : undefined;
       return r ? copy(r) : Promise.reject(new Error(`요청 ${id} 없음`));
     },
-    // 집계는 이력 앞의 기준치에 지금까지 보인 이력을 더한다
+    // 집계는 이력 앞의 기준치에 시연 세션 시작(since) 뒤로 지금까지 보인 이력을 더한다
     trust: () => {
-      const rows = HISTORY.filter(answered);
+      const rows = HISTORY.filter((h) => answered(h) && h.at >= TRUST_BASE.since);
       const counts = { ...TRUST_BASE.counts };
       for (const h of rows) counts[h.verdict] += 1;
       const decisions = TRUST_BASE.decisions + rows.length;
