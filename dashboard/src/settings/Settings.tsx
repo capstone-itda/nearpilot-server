@@ -134,11 +134,12 @@ function CheckCard({ title, children }: { title: string; children: ReactNode }) 
 }
 
 export function Check() {
-  const { source, deviceName, personName } = useData();
+  const { source, snapshot, deviceName, personName } = useData();
   const q = useQuery(() => source.health(), []);
   const h = q.data;
+  const faulted = new Set(snapshot.devices.filter((d) => d.state === 'FAULT').map((d) => d.nodeId));
   if (!h) return <SettingsContent title="점검" sub="시연 직전에 한 번에 확인해요."><Loading error={q.error} /></SettingsContent>;
-  const devices = h.devices.map((d) => ({ ...d, state: (!d.connected ? 'bad' : d.trust !== 'trusted' ? 'warn' : 'ok') as 'ok' | 'warn' | 'bad' }));
+  const devices = h.devices.map((d) => ({ ...d, fault: faulted.has(d.nodeId), state: (!d.connected || faulted.has(d.nodeId) ? 'bad' : d.trust !== 'trusted' ? 'warn' : 'ok') as 'ok' | 'warn' | 'bad' }));
   const beacons = h.beacons.filter((b) => b.lastSeenSec !== null).map((b) => ({ ...b, state: (b.note ? 'warn' : 'ok') as 'ok' | 'warn' }));
   const hosts = h.hosts.map((x) => ({ ...x, state: (x.lastToolsList ? 'ok' : 'warn') as 'ok' | 'warn' }));
   const server: [string, boolean, string][] = [['데이터베이스', h.server.database, h.server.database ? '정상' : '응답 없음'], ['MQTT 브로커', h.server.mqtt, h.server.mqtt ? '연결됨' : '연결 끊김'], ['근접 모델 파일', true, h.server.model]];
@@ -150,7 +151,7 @@ export function Check() {
         <span className="np-ready__body">{issues ? '나머지는 모두 정상이에요.' : '시연을 시작해도 돼요.'}</span>
       </div>
       <div className="np-checks">
-        <CheckCard title="기기">{devices.map((d) => <Crow key={d.nodeId} state={d.state} name={deviceName(d.nodeId)} right={`${d.connected ? '연결됨' : '연결 끊김'} · ${d.trust}`} />)}</CheckCard>
+        <CheckCard title="기기">{devices.map((d) => <Crow key={d.nodeId} state={d.state} name={deviceName(d.nodeId)} right={`${d.fault ? '고장 격리 · ' : ''}${d.connected ? '연결됨' : '연결 끊김'} · ${d.trust}`} />)}</CheckCard>
         <CheckCard title="폰 비콘">{beacons.map((b) => <Crow key={b.personId} state={b.state} name={personName(b.personId)} right={`${ago(b.lastSeenSec)}${b.note ? ` · ${b.note}` : ''}`} />)}</CheckCard>
         <CheckCard title="AI 호스트">{hosts.map((x) => <Crow key={x.host} state={x.state} name={HOST_NAME[x.host]} right={x.lastToolsList ? `tools/list ${x.lastToolsList}` : '연결 기록 없음'} />)}</CheckCard>
         <CheckCard title="서버">{server.map(([n, ok, r]) => <Crow key={n} state={ok ? 'ok' : 'bad'} name={n} right={r} />)}</CheckCard>

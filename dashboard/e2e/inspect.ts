@@ -63,7 +63,7 @@ export function inspect(page: Page): Promise<Report> {
         if (fs < 10.95) r.smallFont.push(`${name(el)} ${fs.toFixed(1)}px`);
       }
     }
-    for (const el of document.querySelectorAll('.np-app button, .np-app input, .np-app select, .np-app [role=switch]')) {
+    for (const el of document.querySelectorAll('.np-app button, .np-app input, .np-app select, .np-app [role=switch], .np-app [onclick], .np-app tr[tabindex]')) {
       if (!visible(el)) continue;
       const b = el.getBoundingClientRect();
       if (b.width < 43.5 || b.height < 43.5) r.smallTargets.push(`${name(el)} ${Math.round(b.width)}x${Math.round(b.height)}`);

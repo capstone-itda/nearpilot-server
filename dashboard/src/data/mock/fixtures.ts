@@ -2,7 +2,7 @@
 // 13:21 방문자 C가 사물함 3 대여(14:21:05부터 대여 초과). 14:12 방문자 A가 조명 1 시간 승인(15:12까지).
 // 14:26 A의 ASK, 14:28 A가 사물함 1, 14:29 B의 사물함 2가 결과 불명으로 FAULT, 14:30 B의 조명 1 승인 필요.
 import type {
-  Approvals, AuditRow, DeviceStatus, FloorLayout, Health, HistoryRow, Person, RecoveryReadiness,
+  Approvals, AuditRow, DeviceStatus, FloorLayout, Health, HistoryRow, Person,
   RentalInfo, RequestProgress, Snapshot, TrustReport, UseRow
 } from '../../model/types';
 
@@ -84,7 +84,7 @@ export const SCENES = {
   /** MON-01·05 고장 격리: B의 사물함 2 결과 불명 */
   fault: (): Snapshot => ({
     ...base(), lastReceivedAt: '14:29:40',
-    devices: dev({ 'locker-1': { state: 'ACTIVE' }, 'locker-2': { state: 'FAULT' }, 'locker-3': { state: 'ACTIVE', overdue: true } }),
+    devices: dev({ 'locker-1': { state: 'ACTIVE' }, 'locker-2': { state: 'FAULT', fault: { cause: 'EXEC_UNKNOWN', action: 'open', at: '14:29:40' } }, 'locker-3': { state: 'ACTIVE', overdue: true } }),
     people: people({ position: undefined, beaconSeen: false }, { position: m(610, 260) }),
     request: {
       id: 'r-1429', personId: 'p-b', host: 'gemini', tool: 'request_use', target: { kind: 'nearest', capability: 'locker' }, action: 'open',
@@ -96,7 +96,7 @@ export const SCENES = {
   /** MON-01·04 승인 대기: B의 조명 1 켜기 */
   approval: (): Snapshot => ({
     ...base(), lastReceivedAt: '14:31:02',
-    devices: dev({ 'locker-1': { state: 'ACTIVE' }, 'locker-2': { state: 'FAULT' }, 'locker-3': { state: 'ACTIVE', overdue: true } }),
+    devices: dev({ 'locker-1': { state: 'ACTIVE' }, 'locker-2': { state: 'FAULT', fault: { cause: 'EXEC_UNKNOWN', action: 'open', at: '14:29:40' } }, 'locker-3': { state: 'ACTIVE', overdue: true } }),
     people: people({}, { position: m(555, 560) }),
     request: {
       id: 'r-1430', personId: 'p-b', host: 'chatgpt', tool: 'request_use', target: { kind: 'nearest', capability: 'light' }, action: 'on',
@@ -109,7 +109,7 @@ export const SCENES = {
   /** 패널 화면의 바탕: 요청이 끝난 뒤 */
   later: (): Snapshot => ({
     ...base(),
-    devices: dev({ 'locker-1': { state: 'ACTIVE' }, 'locker-2': { state: 'FAULT' }, 'locker-3': { state: 'ACTIVE', overdue: true } }),
+    devices: dev({ 'locker-1': { state: 'ACTIVE' }, 'locker-2': { state: 'FAULT', fault: { cause: 'EXEC_UNKNOWN', action: 'open', at: '14:29:40' } }, 'locker-3': { state: 'ACTIVE', overdue: true } }),
     mockPhone: { personId: 'p-a', scene: 'idle' }
   }),
   /** CMN-02 연결 끊김 */
@@ -188,7 +188,7 @@ export const TRUST: TrustReport = {
       { id: 5, name: '정책·발견·차단', pass: true, label: '통과', sample: '180' },
       { id: 6, name: '종료·복구', pass: false, label: '✕ 미통과', sample: '120' },
       { id: 7, name: '지연·호환성', pass: true, label: '통과', sample: '250' },
-      { id: 8, name: '근접 모델', pass: null, label: '기준 미결', sample: '5회차' },
+      { id: 8, name: '근접 모델', pass: null, label: '기준 일부 미결', sample: '5회차' },
       { id: 9, name: '전역 할당', pass: null, label: '미측정', sample: '—' }
     ],
     confusion: (() => {
@@ -197,10 +197,6 @@ export const TRUST: TrustReport = {
       return { labels, values: d.map((v, i) => labels.map((_, j) => (i === j ? v : j === (i + 1) % 8 ? 100 - v : 0))) };
     })()
   }
-};
-
-export const RECOVERY: Record<string, RecoveryReadiness> = {
-  'locker-2': { nodeId: 'locker-2', action: 'open', connectedAt: '14:29:52', trust: 'trusted', cause: 'EXEC_UNKNOWN', blockers: ['SAFETY_UNCONFIRMED', 'EXECUTION_UNCONFIRMED', 'PHYSICAL_STATE_UNSYNCED'] }
 };
 
 export const RENTALS: Record<string, RentalInfo> = {

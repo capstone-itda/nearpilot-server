@@ -35,6 +35,12 @@ describe('stageView', () => {
     expect(v.visitors.find((x) => x.personId === 'p-b')!.on).toBe(false);
   });
 
+  it('FR12B 공용형 OK: 빈자리 확인이 없어 세 가지 확인이라고 말한다', () => {
+    const s = SCENES.approval();
+    s.request = { ...s.request!, verdict: 'OK', reason: 'OK', execution: 'sent', steps: s.request!.steps.map((x, i) => (i < 5 ? { result: 'pass' as const } : x)) };
+    expect(stageView(s, LAYOUT, { panelOpen: false }).callout.body).toBe('세 가지 확인을 모두 통과해서 on을 보냈어요');
+  });
+
   it('FR12B 고장 격리: 격리 선과 빨간 콜아웃, 패널이 열려 있으면 콜아웃을 왼쪽에', () => {
     const v = stageView(SCENES.fault(), LAYOUT, { panelOpen: true });
     expect(v.scene).toBe('fault');
@@ -55,7 +61,7 @@ describe('stageView', () => {
     const v = stageView(SCENES.approval(), LAYOUT, { panelOpen: true });
     expect(v).toMatchObject({ scene: 'approval', owner: true, push: true, host: 'chatgpt' });
     expect(dev(v, 'light-1')).toMatchObject({ tone: 'appr', status: '사용 가능', dim: false });
-    expect(v.callout).toMatchObject({ tone: 'appr', title: '소유자에게 승인 요청', body: '조명은 소유자가 승인해야 켤 수 있어요', x: 345, y: 400 });
+    expect(v.callout).toMatchObject({ tone: 'appr', title: '소유자에게 승인 요청', body: '조명 1은 소유자가 승인해야 켤 수 있어요', x: 345, y: 400 });
     const a = v.visitors.find((x) => x.personId === 'p-a')!;
     expect(a).toMatchObject({ active: false, dim: true });
   });

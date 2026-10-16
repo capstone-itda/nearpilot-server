@@ -114,7 +114,7 @@ export function StateStrip({ current, tone }: { current: string; tone: string })
   );
 }
 
-export interface TableRow { key: string; tone?: string; selected?: boolean; onSelect?: () => void; cells: ReactNode[] }
+export interface TableRow { key: string; tone?: string; selected?: boolean; cells: ReactNode[] }
 export function DataTable({ head, rows, label }: { head: string[]; rows: TableRow[]; label: string }) {
   return (
     <div className="np-table-wrap" data-component="DataTable">
@@ -122,7 +122,7 @@ export function DataTable({ head, rows, label }: { head: string[]; rows: TableRo
         <thead><tr>{head.map((h) => <th key={h} scope="col">{h}</th>)}</tr></thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.key} data-tone={r.tone ?? 'none'} data-selected={b(r.selected)} onClick={r.onSelect}>{r.cells}</tr>
+            <tr key={r.key} data-tone={r.tone ?? 'none'} data-selected={b(r.selected)}>{r.cells}</tr>
           ))}
         </tbody>
       </table>

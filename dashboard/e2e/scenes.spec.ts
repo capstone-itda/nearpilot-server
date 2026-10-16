@@ -13,11 +13,13 @@ for (const [title, query] of SCREENS) {
       expect(r).toEqual({ ...r, pageScroll: [], innerScroll: [], textOverflow: [], ellipsized: [], clipped: [], smallTargets: [], inlineStyle: 0, smallFont: [], overlaps: [], lowContrast: [], missingComponent: 0 });
     });
   }
-  test(`${title} · 라이트 1920×1080`, async ({ page }) => {
-    await page.setViewportSize({ width: 1920, height: 1080 });
-    await ready(page, `${query}&theme=light`);
-    const r = await inspect(page);
-    await page.screenshot({ path: `test-results/shots/${query.replace(/[^a-z0-9]+/gi, '_')}-light-1920.png` });
-    expect(r).toEqual({ ...r, pageScroll: [], innerScroll: [], textOverflow: [], ellipsized: [], clipped: [], smallTargets: [], inlineStyle: 0, smallFont: [], overlaps: [], lowContrast: [], missingComponent: 0 });
-  });
+  for (const [w, h] of SIZES) {
+    test(`${title} · 라이트 ${w}×${h}`, async ({ page }) => {
+      await page.setViewportSize({ width: w, height: h });
+      await ready(page, `${query}&theme=light`);
+      const r = await inspect(page);
+      await page.screenshot({ path: `test-results/shots/${query.replace(/[^a-z0-9]+/gi, '_')}-light-${w}.png` });
+      expect(r).toEqual({ ...r, pageScroll: [], innerScroll: [], textOverflow: [], ellipsized: [], clipped: [], smallTargets: [], inlineStyle: 0, smallFont: [], overlaps: [], lowContrast: [], missingComponent: 0 });
+    });
+  }
 }

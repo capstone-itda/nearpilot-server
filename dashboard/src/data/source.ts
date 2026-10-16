@@ -1,6 +1,6 @@
 // 화면이 의존하는 데이터 창구. 읽기 함수만 둔다 (FR-12A: 대시보드는 서버에 쓰지 않는다).
 import type {
-  Approvals, AuditRow, FloorLayout, Health, HistoryQuery, HistoryRow, RecoveryReadiness,
+  Approvals, AuditRow, FloorLayout, Health, HistoryQuery, HistoryRow,
   RentalInfo, RequestProgress, Snapshot, TrustReport, UseRow
 } from '../model/types';
 
@@ -19,7 +19,6 @@ export interface DataSource {
   /** 요청 한 건의 판정 단계별 결과 */
   request(requestId: string): Promise<RequestProgress>;
   trust(): Promise<TrustReport>;
-  recovery(nodeId: string): Promise<RecoveryReadiness>;
   rental(nodeId: string): Promise<RentalInfo>;
   health(): Promise<Health>;
 }

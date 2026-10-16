@@ -12,7 +12,7 @@ const files = (dir: string): string[] => readdirSync(dir).flatMap((f) => {
 describe('쓰기 없음', () => {
   it('FR12A 데이터 소스에는 구독, 다시 연결, 조회 함수만 있다', () => {
     const keys = Object.keys(createMockSource({ scene: 'idle' })).sort();
-    expect(keys).toEqual(['approvals', 'audit', 'health', 'history', 'layout', 'reconnect', 'recovery', 'rental', 'request', 'subscribe', 'trust', 'uses'].sort());
+    expect(keys).toEqual(['approvals', 'audit', 'health', 'history', 'layout', 'reconnect', 'rental', 'request', 'subscribe', 'trust', 'uses'].sort());
   });
   it('FR12A 앱 코드에 쓰기 요청이 없다', () => {
     const src = join(__dirname, '..');

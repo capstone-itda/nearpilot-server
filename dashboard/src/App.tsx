@@ -70,7 +70,10 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     const auto = !(first && initialPanel);
     if (auto && r && key !== s.request && (r.verdict === 'ASK' || r.verdict === 'NEED_APPROVAL')) setPanel({ kind: 'request', request: r, live: true });
     else if (auto && newFaults.length) setPanel({ kind: 'device', nodeId: newFaults[0] });
-    else if (r) setPanel((p) => (p && p.kind === 'request' && p.live && p.request.id === r.id ? { ...p, request: r } : p));
+    else setPanel((p) => {
+      if (!p || p.kind !== 'request' || !p.live) return p;
+      return r && p.request.id === r.id ? { ...p, request: r } : null;
+    });
     s.request = key;
     s.faults = new Set(faults);
   }, [snapshot, initialPanel]);

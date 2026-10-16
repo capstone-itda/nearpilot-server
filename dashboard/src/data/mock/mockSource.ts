@@ -2,7 +2,7 @@
 import type { DataSource } from '../source';
 import type { HistoryQuery, Snapshot } from '../../model/types';
 import {
-  APPROVALS, AUDIT, HEALTH, HISTORY, LAYOUT, PLAY_ORDER, RECOVERY, RENTALS, REQUESTS, SCENES, TRUST, USES,
+  APPROVALS, AUDIT, HEALTH, HISTORY, LAYOUT, PLAY_ORDER, RENTALS, REQUESTS, SCENES, TRUST, USES,
   type SceneName
 } from './fixtures';
 
@@ -58,7 +58,6 @@ export function createMockSource(opt: MockOptions): DataSource {
       (!q.verdict || h.verdict === q.verdict) && (!q.nodeId || h.nodeId === q.nodeId) && (!q.host || h.host === q.host))),
     request: (id: string) => (REQUESTS[id] ? copy(REQUESTS[id]()) : Promise.reject(new Error(`요청 ${id} 없음`))),
     trust: () => copy(TRUST),
-    recovery: (id: string) => (RECOVERY[id] ? copy(RECOVERY[id]) : Promise.reject(new Error(`복구 건 ${id} 없음`))),
     rental: (id: string) => (RENTALS[id] ? copy(RENTALS[id]) : Promise.reject(new Error(`대여 ${id} 없음`))),
     health: () => copy(HEALTH)
   };

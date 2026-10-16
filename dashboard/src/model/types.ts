@@ -51,6 +51,8 @@ export interface DeviceStatus {
   trust: TrustState;
   /** 대여형 점유의 대여 시간 초과 여부 (FR-20) */
   overdue: boolean;
+  /** FAULT의 원인과 결과를 모르는 명령 (현재 상태 조회) */
+  fault?: { cause: ReasonCode; action?: Action; at: string };
 }
 
 export interface Person {
@@ -177,16 +179,6 @@ export interface TrustReport {
     /** 혼동 행렬 (%) 행 = 실제, 열 = 고름. 마지막 칸은 none */
     confusion: { labels: string[]; values: number[][] };
   };
-}
-
-export interface RecoveryReadiness {
-  nodeId: string;
-  /** 결과를 모르는 명령의 동작 */
-  action?: Action;
-  connectedAt?: string;
-  trust: TrustState;
-  blockers: ('SAFETY_UNCONFIRMED' | 'EXECUTION_UNCONFIRMED' | 'PHYSICAL_STATE_UNSYNCED')[];
-  cause: ReasonCode;
 }
 
 export interface RentalInfo { nodeId: string; personId: string; startedAt: string; overdueMinutes: number; timeline: { at: string; text: string; now?: boolean }[] }

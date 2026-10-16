@@ -62,7 +62,7 @@ test('FR12A 점유 현황에서 기기를 누르면 기기 상세를 연다', as
 test('D2 고장 격리 상세에는 복구 버튼이 없다', async ({ page }) => {
   await ready(page, 'scene=fault');
   const panel = page.locator('[data-component="Panel"]');
-  await expect(panel).toContainText('복구 준비');
+  await expect(panel).toContainText('스크립트');
   await expect(panel.getByRole('button')).toHaveCount(1); // 닫기만
 });
 
@@ -85,7 +85,8 @@ test('D7 설정 화면을 오가고 자동 전환 스위치는 이 PC에만 저�
   await expect(sw).toHaveAttribute('aria-checked', 'false');
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('nearpilot-dashboard')!).follow.followRequester)).toBe(false);
   await page.getByRole('button', { name: /^점검/ }).click();
-  await expect(page.locator('[data-component="ReadyBanner"]')).toContainText('확인할 것 1건');
+  await expect(page.locator('[data-component="ReadyBanner"]')).toContainText('확인할 것 2건');
+  await expect(page.locator('.np-crow[data-state="bad"]')).toContainText('사물함 2');
   await page.getByRole('button', { name: '모니터로 돌아가기' }).click();
   await expect(page.locator('[data-component="MonitorLayout"]')).toHaveCount(1);
 });
@@ -114,4 +115,9 @@ test('FR12B 재생 모드는 장면을 차례로 바꾼다', async ({ page }) =>
   await page.clock.runFor(6100);
   await expect(page.locator('.np-rail__title')).toHaveText('방문자 A · 사물함 열기');
   await expect(page.locator('.np-panel__title')).toContainText('ASK');
+  // 다음 요청으로 바뀌면 이전 요청의 패널은 닫힌다
+  await page.clock.runFor(6100);
+  await expect(page.locator('.np-rail__title')).toHaveText('방문자 A · 사물함 열기');
+  await expect(page.locator('.np-rail__meta')).toContainText('14:28:10');
+  await expect(page.locator('[data-component="Panel"]')).toHaveCount(0);
 });

@@ -67,7 +67,6 @@ export function AuditPanel({ onClose }: Close) {
   const { source, deviceName } = useData();
   const q = useQuery(() => source.audit(), []);
   const [filter, setFilter] = useState<AuditStep | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
   const rows = (q.data ?? []).filter((r) => !filter || r.step === filter);
   const range = q.data && q.data.length ? `${q.data[q.data.length - 1].at.slice(0, 5)}~${q.data[0].at.slice(0, 5)}` : '';
   return (
@@ -79,7 +78,7 @@ export function AuditPanel({ onClose }: Close) {
       <Section title="기록" hint={q.data ? `${range} · 새 기록이 위${filter ? ` · ${rows.length}건` : ''}` : undefined}>
         {q.data ? (
           <DataTable label="감사 로그" head={['시각', '단계', '기기', '내용']} rows={rows.map((r) => ({
-            key: r.id, selected: selected === r.id, onSelect: () => setSelected(r.id),
+            key: r.id,
             cells: [<TdMono key="t" v={r.at} />, <TdMono key="s" v={r.step} />, <Td key="d" main={r.nodeId ? deviceName(r.nodeId) : '—'} sub={r.nodeId} />, <Td key="x" main={r.text} sub={r.code} />]
           }))} />
         ) : <Loading error={q.error} />}

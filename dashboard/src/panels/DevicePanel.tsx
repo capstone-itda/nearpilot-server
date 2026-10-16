@@ -1,37 +1,20 @@
 // MON-05 기기 상세: 상태, 고장 격리의 복구 준비, 대여 초과
-import { Checklist, KeyValue, NoteBox, Section, StateStrip, Timeline, VerdictTag } from '../components/common';
+import { KeyValue, NoteBox, Section, StateStrip, Timeline, VerdictTag } from '../components/common';
 import { Loading, Panel } from '../components/Panel';
 import { useData, useQuery } from '../data/context';
 import { ACTION_NAME, DEVICE_STATE_NAME } from '../view/text';
 
-const BLOCKER: Record<string, [string, string]> = {
-  SAFETY_UNCONFIRMED: ['안전 확인 필요', '안전 확인됨'],
-  EXECUTION_UNCONFIRMED: ['명령 결과 확인 필요', '명령 결과 확인됨'],
-  PHYSICAL_STATE_UNSYNCED: ['실제 상태 맞추기 필요', '실제 상태 맞춤']
-};
-
 function FaultBody({ nodeId }: { nodeId: string }) {
-  const { source } = useData();
-  const q = useQuery(() => source.recovery(nodeId), [nodeId]);
-  if (!q.data) return <Loading error={q.error} />;
-  const r = q.data;
-  const act = r.action ? `${r.action} 명령의` : '명령의';
+  const { snapshot } = useData();
+  const f = snapshot.devices.find((d) => d.nodeId === nodeId)?.fault;
+  const why = f ? `${f.action ? `${f.action} 명령의` : '명령의'} 결과를 몰라서(${f.cause}) 후보에서 빼고 격리했어요` : '후보에서 빼고 격리했어요';
   return (
     <>
-      <Section title="상태" hint={`${act} 결과를 몰라서(${r.cause}) 후보에서 빼고 격리했어요`}>
+      <Section title="상태" hint={why}>
         <StateStrip current="FAULT" tone="deny" />
       </Section>
-      <Section title="복구 준비" hint="모두 충족한 뒤 소유자가 승인해야 다시 쓸 수 있어요">
-        <Checklist items={[
-          [r.connectedAt ? 'pass' : 'fail', r.connectedAt ? '기기 연결됨' : '기기 연결 필요', r.connectedAt ? `OFFLINE 아님 · ${r.connectedAt} 확인` : 'OFFLINE'],
-          [r.trust === 'trusted' ? 'pass' : 'fail', r.trust === 'trusted' ? '신뢰 상태 유지' : '신뢰 필요', r.trust],
-          ...(Object.keys(BLOCKER) as (keyof typeof BLOCKER)[]).map((k): ['pass' | 'fail', string, string] => {
-            const blocked = r.blockers.includes(k as never);
-            return [blocked ? 'fail' : 'pass', BLOCKER[k][blocked ? 0 : 1], blocked ? k : ''];
-          })
-        ]} />
-      </Section>
-      <NoteBox text="이 화면은 보기만 해요. 복구 승인은 소유자가 스크립트로 따로 보내요." code="POST /admin/nodes/…/recovery/…/approve" />
+      {f ? <Section title="최근 기록"><Timeline items={[['now', f.at, `격리 · ${f.cause}`, 'deny']]} /></Section> : null}
+      <NoteBox text="다시 쓰려면 소유자가 스크립트로 복구 준비를 확인하고 승인해요. 이 화면은 상태만 보여요." code="FR-12A · NFR-04" />
     </>
   );
 }

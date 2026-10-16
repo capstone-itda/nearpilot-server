@@ -202,7 +202,7 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
           set('ok', atDevice(target), `${name} ${act} 완료`, `${josa(name, '이', '가')} ${ACTION_DONE[r.action]}`);
         } else {
           view.aria = `${who}의 ${cap} ${act} 요청이 실행되는 중`;
-          set('ok', atDevice(target), `${name} ${act} 명령`, `네 가지 확인을 모두 통과해서 ${ACTION_OBJ[r.action]} 보냈어요`);
+          set('ok', atDevice(target), `${name} ${act} 명령`, `${layout.devices.find((d) => d.nodeId === target)?.occupancy === 'shared' ? '세 가지' : '네 가지'} 확인을 모두 통과해서 ${ACTION_OBJ[r.action]} 보냈어요`);
         }
         break;
       case 'fault':
@@ -216,14 +216,14 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
         break;
       case 'ask': {
         const top = Object.entries(r.posteriors ?? {}).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([id]) => devName(id));
-        view.aria = top.length === 2 ? `${who}가 ${josa(top[0], '과', '와')} ${top[1]} 사이에 있어 서버가 다시 묻는 중` : `${who}에게 서버가 다시 묻는 중`;
+        view.aria = top.length === 2 ? `${josa(who, '이', '가')} ${josa(top[0], '과', '와')} ${top[1]} 사이에 있어 서버가 다시 묻는 중` : `${who}에게 서버가 다시 묻는 중`;
         if (r.reason === 'MOVE_CLOSER') set('ask', atVisitor(r.personId), `${devName(r.target.nodeId)} 앞인지 확실하지 않아요`, '조금 더 가까이 가 달라고 해요');
         else set('ask', atVisitor(r.personId), `어느 ${cap} 앞인지 애매해요`, top.length === 2 ? `${josa(top[0], '과', '와')} ${top[1]} 사이라서 다시 물어봐요` : '다시 물어봐요');
         break;
       }
       case 'approval':
         view.aria = `${who}의 ${cap} ${act} 요청이 소유자 승인을 기다리는 중`;
-        if (s.ownerNotified) set('appr', place('owner', 250, 632), '소유자에게 승인 요청', `${josa(cap, '은', '는')} 소유자가 승인해야 ${ACTION_CAN[r.action]} 수 있어요`);
+        if (s.ownerNotified) set('appr', place('owner', 250, 632), '소유자에게 승인 요청', `${josa(name || cap, '은', '는')} 소유자가 승인해야 ${ACTION_CAN[r.action]} 수 있어요`);
         else set('appr', atDevice(target), '소유자 승인이 필요해요', 'AI가 승인을 신청하면 소유자 폰에 알림이 가요');
         break;
       case 'busy':
