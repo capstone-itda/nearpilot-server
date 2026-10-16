@@ -27,7 +27,7 @@
 
 - 대시보드는 서버에 쓰지 않는다. 쓰기 요청을 보내는 버튼과 코드가 없다 (FR-12A).
 - 빌드 결과는 외부 네트워크 없이 동작한다. 글꼴과 모든 자산을 번들에 넣는다 (NFR-12).
-- 사람은 가명(방문자 A, 소유자)으로만 보인다. 사용자 ID를 화면에 쓰지 않는다 (FR-11, NFR-08).
+- 사람은 이름(방문자 A, 소유자)으로만 보인다. 사용자 ID를 화면에 쓰지 않는다 (FR-11, NFR-08).
 - 판정 값, 사유 코드, 단계, 상태 이름은 `server/src/nearpilot/shared/enums.py`에 있는 값만 쓴다.
 - 설정값(임계값, 대여 시간)은 숫자를 지어내지 않고 데이터 소스에서 받거나 "설정값"으로 표시한다.
 - 미결 항목(알림 수단, 평가 기준 등)은 "미결"로 표시한다.
@@ -37,9 +37,10 @@
 
 ### 고치는 곳
 - `dashboard/`
+- `docs/architecture.md`: §2 대시보드 담당, §5 WebSocket의 사람 이름, §8 기술 스택 (2026-10-16 사용자 결정)
 
 ### 고치지 않는 곳
-- 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
+- 항상: `docs/` (위 architecture.md 세 곳은 제외), `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
 - 이 작업: `server/` 전부
 
 ### 다른 영역과 닿는 곳
@@ -99,9 +100,9 @@
 
 ## 7. 가정
 
-- FR-12B 이벤트는 `src/model/events.ts`의 종류로 온다: 도구 호출 도착(`mcp_call`)과 응답(`mcp_result`), 판정 단계(`step`), 후보 확률(`posterior`), 판정(`verdict`), 기기 상태 전이(`transition`, FAULT 원인 포함), MQTT 명령(`command`)과 실행 결과(`exec_result`), 승인 신청과 결정(`approval`), 비콘 수신(`beacon`, 가명 포함)과 RSSI(`rssi`), 감사 로그(`audit`). 모든 이벤트에 서버 시각이 붙는다 — 미결: FR-12B 메시지 형식 (이슈 없음)
+- FR-12B 이벤트는 `src/model/events.ts`의 종류로 온다: 도구 호출 도착(`mcp_call`)과 응답(`mcp_result`), 판정 단계(`step`), 후보 확률(`posterior`), 판정(`verdict`), 기기 상태 전이(`transition`, FAULT 원인 포함), MQTT 명령(`command`)과 실행 결과(`exec_result`), 승인 신청과 결정(`approval`), 비콘 수신(`beacon`, 이름 포함)과 RSSI(`rssi`), 감사 로그(`audit`). 모든 이벤트에 서버 시각이 붙는다 — 미결: FR-12B 메시지 형식 (이슈 없음)
 - 연결하면 서버가 진행 중인 요청과 지금 상태를 이벤트로 다시 보낸다 — 미결: FR-12B 메시지 형식 (이슈 없음)
-- 사람 가명은 서버가 준다 — 미결: 가명 생성 위치 (이슈 없음)
+- 사람 이름(`방문자 A`, `방문자 B`)과 글자는 서버가 붙여 비콘 이벤트와 조회 REST에 같게 준다 (architecture.md §5). 이름을 유지하는 기간은 미결: FR-12B 메시지 형식 (이슈 없음)
 - 조회 REST의 장소 정보는 장소 이름, 근접 모델 버전, 기기 목록(이름, 기능, 점유 방식), 배치 화면의 약한 신호 기준(dBm)을 담는다. 좌표는 없다 — 미결: FR-12A 조회 REST 형식 (이슈 없음)
 
 ## 8. 테스트
