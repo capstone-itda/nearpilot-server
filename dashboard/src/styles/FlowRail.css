@@ -1,0 +1,101 @@
+/* FlowRail: 요청 하나의 다섯 단계. 지금 단계만 밝힌다.
+   FlowStep 상태 data-status: guide | done | current | todo
+   현재 단계 색 data-tone: accent | ok | ask | appr | busy | deny */
+
+.np-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-3) var(--sp-5) var(--sp-4);
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  position: relative;
+  z-index: 4;
+}
+.np-rail__head { display: flex; align-items: baseline; gap: var(--sp-4); min-width: 0; }
+.np-rail__title { font-size: var(--fs-lead); font-weight: 600; white-space: nowrap; }
+.np-rail__meta { font-size: var(--fs-body); color: var(--ink-2); white-space: nowrap; flex: none; }
+.np-rail__code { font-family: var(--font-mono); font-size: var(--fs-cap); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+.np-rail__steps {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--sp-5);
+}
+
+.np-step {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.np-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: calc(-1 * var(--sp-5));
+  width: var(--sp-5);
+  height: 1px;
+  background: var(--line);
+}
+.np-step__head { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.np-step__num {
+  width: 1.6rem;
+  height: 1.6rem;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.np-step__title { font-size: var(--fs-lead); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.np-step__mark { margin-left: auto; font-size: var(--fs-sm); color: var(--ink-3); white-space: nowrap; }
+.np-step__detail { font-size: var(--fs-body); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-step__code { font-family: var(--font-mono); font-size: var(--fs-cap); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.np-step__detail:empty, .np-step__code:empty, .np-step__checks:empty { display: none; }
+.np-step__checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.15rem var(--sp-3); }
+.np-check { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); white-space: nowrap; min-width: 0; }
+.np-check__mark { width: 1rem; flex: none; font-family: var(--font-mono); text-align: center; }
+.np-check[data-result="pass"] .np-check__mark { color: var(--accent-strong); }
+.np-check[data-result="fail"] { color: var(--deny); }
+.np-check[data-result="wait"] { color: var(--appr); }
+.np-check[data-result="unsure"] { color: var(--ask); }
+.np-check[data-result="skip"], .np-check[data-result="none"] { color: var(--ink-3); }
+
+.np-step[data-status="done"] .np-step__num { border-color: var(--accent); color: var(--accent-strong); }
+.np-step[data-status="done"] .np-step__title { color: var(--ink-2); }
+.np-step[data-status="todo"] { border-style: dashed; }
+.np-step[data-status="todo"] .np-step__title, .np-step[data-status="todo"] .np-step__detail, .np-step[data-status="todo"] .np-step__num { color: var(--ink-3); }
+.np-step[data-status="current"] { border-width: 2px; padding: calc(var(--sp-3) - 1px) calc(var(--sp-4) - 1px); }
+.np-step[data-status="current"] .np-step__mark { font-weight: 600; }
+.np-step[data-status="current"][data-tone="accent"] { border-color: var(--accent); background: var(--accent-soft); }
+.np-step[data-status="current"][data-tone="accent"] .np-step__num { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.np-step[data-status="current"][data-tone="accent"] .np-step__mark { color: var(--accent-strong); }
+.np-step[data-status="current"][data-tone="ok"] { border-color: var(--ok); background: var(--ok-soft); }
+.np-step[data-status="current"][data-tone="ok"] .np-step__num { background: var(--ok); border-color: var(--ok); color: var(--on-accent); }
+.np-step[data-status="current"][data-tone="ok"] .np-step__mark { color: var(--ok); }
+.np-step[data-status="current"][data-tone="ask"] { border-color: var(--ask); background: var(--ask-soft); }
+.np-step[data-status="current"][data-tone="ask"] .np-step__num { background: var(--ask); border-color: var(--ask); color: var(--on-accent); }
+.np-step[data-status="current"][data-tone="ask"] .np-step__mark { color: var(--ask); }
+.np-step[data-status="current"][data-tone="appr"] { border-color: var(--appr); background: var(--appr-soft); }
+.np-step[data-status="current"][data-tone="appr"] .np-step__num { background: var(--appr); border-color: var(--appr); color: var(--on-accent); }
+.np-step[data-status="current"][data-tone="appr"] .np-step__mark { color: var(--appr); }
+.np-step[data-status="current"][data-tone="busy"] { border-color: var(--busy); background: var(--busy-soft); }
+.np-step[data-status="current"][data-tone="busy"] .np-step__num { background: var(--busy); border-color: var(--busy); color: var(--on-accent); }
+.np-step[data-status="current"][data-tone="busy"] .np-step__mark { color: var(--busy); }
+.np-step[data-status="current"][data-tone="deny"] { border-color: var(--deny); background: var(--deny-soft); }
+.np-step[data-status="current"][data-tone="deny"] .np-step__num { background: var(--deny); border-color: var(--deny); color: var(--on-accent); }
+.np-step[data-status="current"][data-tone="deny"] .np-step__mark { color: var(--deny); }
+.np-rail[data-mode="guide"] .np-step__detail { color: var(--ink-2); }

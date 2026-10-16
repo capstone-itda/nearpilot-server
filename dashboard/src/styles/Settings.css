@@ -1,0 +1,93 @@
+/* SettingsLayout · SettingsNav · 설정 화면 부품(SignalTable, PhoneCard, Switch, CheckCard, ReadyBanner)
+   설정 화면은 시연 운영자용이고 서버에 쓰지 않는다. */
+
+.np-settings {
+  width: 100%;
+  height: 100vh;
+  min-height: 600px;
+  display: grid;
+  grid-template-columns: var(--nav-w) minmax(0, 1fr);
+  grid-template-rows: var(--topbar-h) minmax(0, 1fr);
+  overflow: hidden;
+}
+.np-settings > .np-topbar { grid-column: 1 / -1; }
+
+.np-snav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-5) var(--sp-3);
+  background: var(--surface);
+  border-right: 1px solid var(--line-soft);
+  min-height: 0;
+}
+.np-snav__back { justify-content: flex-start; margin-bottom: var(--sp-4); }
+.np-snav__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-height: var(--hit);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.np-snav__item:hover { border-color: var(--line-soft); }
+.np-snav__item[aria-current="page"] { border-color: var(--accent); background: var(--accent-soft); }
+.np-snav__name { font-size: var(--fs-body); font-weight: 500; }
+.np-snav__desc { font-size: var(--fs-sm); color: var(--ink-2); }
+.np-snav__note { margin-top: auto; padding: var(--sp-4); font-size: var(--fs-sm); color: var(--ink-3); border-top: 1px solid var(--line-soft); }
+
+.np-scontent { min-height: 0; overflow: auto; padding: var(--sp-6) var(--sp-6) var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-5); }
+.np-scontent__head { display: flex; flex-direction: column; gap: var(--sp-2); }
+.np-scontent__title { font-size: var(--fs-title); font-weight: 500; }
+.np-scontent__sub { font-size: var(--fs-body); color: var(--ink-2); }
+
+.np-card { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4) var(--sp-5); border: 1px solid var(--line-soft); background: var(--surface); min-width: 0; }
+.np-card__head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+.np-card__title { font-size: var(--fs-lead); font-weight: 600; }
+
+/* SET-01 배치 · 신호 점검 */
+.np-layoutcheck { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 30rem; gap: var(--sp-5); }
+.np-layoutcheck__plan { min-height: 0; border: 1px solid var(--line-soft); background: var(--bg); display: flex; }
+.np-layoutcheck__plan > .np-stage { flex: 1; }
+.np-layoutcheck__side { display: flex; flex-direction: column; gap: var(--sp-4); min-height: 0; overflow: auto; }
+.np-signal__value { font-family: var(--font-mono); }
+.np-signal__value[data-tone="weak"] { color: var(--ink); font-weight: 600; text-decoration: underline; text-decoration-style: dashed; text-underline-offset: 0.2em; }
+.np-warn { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-3) var(--sp-4); border: 1px dashed var(--accent); background: var(--accent-soft); }
+.np-warn__title { color: var(--accent-strong); font-weight: 600; }
+
+/* SET-02 폰 연결 */
+.np-phones { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-5); }
+.np-pcard__preview { align-self: center; height: 16rem; aspect-ratio: 9 / 19.5; border: 1.5px solid var(--accent); border-radius: 1.6rem; padding: 0.35rem; }
+.np-pcard__preview-screen { width: 100%; height: 100%; border-radius: 1.3rem; border: 1px solid var(--line); background: var(--surface-2); display: grid; place-items: center; text-align: center; padding: var(--sp-2); font-size: var(--fs-sm); color: var(--ink-2); }
+.np-pcard__preview[data-linked="false"] { border-style: dashed; border-color: var(--line); }
+.np-pcard__status { font-size: var(--fs-sm); color: var(--ink-2); }
+.np-pcard__status[data-linked="true"] { color: var(--accent-strong); }
+.np-switches { display: flex; flex-direction: column; gap: var(--sp-3); }
+.np-switch { display: flex; align-items: center; gap: var(--sp-3); min-height: var(--hit); padding: 0; border: 0; background: transparent; text-align: left; font-size: var(--fs-body); cursor: pointer; }
+.np-switch__track { position: relative; width: 2.75rem; height: 1.5rem; flex: none; border-radius: 999px; background: var(--line-soft); border: 1px solid var(--line); }
+.np-switch__thumb { position: absolute; top: 0.15rem; left: 0.15rem; width: 1.1rem; height: 1.1rem; border-radius: 50%; background: var(--ink-2); }
+.np-switch[aria-checked="true"] .np-switch__track { background: var(--accent-soft); border-color: var(--accent); }
+.np-switch[aria-checked="true"] .np-switch__thumb { left: auto; right: 0.15rem; background: var(--accent); }
+
+/* SET-03 점검 */
+.np-ready { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-4) var(--sp-5); border: 1px dashed var(--accent); background: var(--accent-soft); }
+.np-ready[data-state="ok"] { border-color: var(--accent); background: var(--accent-soft); }
+.np-ready__title { font-size: var(--fs-lead); font-weight: 600; color: var(--accent-strong); }
+.np-ready[data-state="ok"] .np-ready__title { color: var(--accent-strong); }
+.np-ready__body { color: var(--ink-2); }
+.np-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-5); }
+.np-crow { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) 0; border-top: 1px solid var(--line-soft); font-size: var(--fs-body); }
+.np-crow:first-child { border-top: 0; }
+.np-crow__dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; flex: none; background: var(--accent); }
+.np-crow[data-state="warn"] .np-crow__dot { background: transparent; border: 2px solid var(--accent); }
+.np-crow[data-state="bad"] .np-crow__dot { background: var(--deny); }
+.np-crow__right { margin-left: auto; font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--ink-2); text-align: right; }
+.np-crow[data-state="warn"] .np-crow__right { color: var(--accent-strong); font-weight: 600; }
+
+@media (max-width: 900px) {
+  .np-settings { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); }
+  .np-layoutcheck, .np-phones, .np-checks { grid-template-columns: minmax(0, 1fr); }
+}

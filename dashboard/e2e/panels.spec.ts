@@ -1,0 +1,117 @@
+// FR-12A · D1 · D2 · D7: 패널은 무대 위에 겹쳐 열리고 ×로 닫히며, 화면 동작은 서버에 쓰지 않는다
+import { expect, test, type Page, type Request } from '@playwright/test';
+import { ready } from './inspect';
+
+const box = (page: Page, sel: string) => page.locator(sel).evaluate((e) => { const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; });
+const writes: string[] = [];
+const track = (page: Page) => page.on('request', (r: Request) => { if (r.method() !== 'GET') writes.push(`${r.method()} ${r.url()}`); });
+
+test.beforeEach(async ({ page }) => { writes.length = 0; track(page); await page.setViewportSize({ width: 1920, height: 1080 }); });
+test.afterEach(() => { expect(writes, 'GET 말고 다른 요청이 없어야 한다').toEqual([]); });
+
+const PANELS: [string, string][] = [['점유·대여 현황', 'MON-06'], ['승인 현황', 'MON-07'], ['감사 로그', 'MON-08'], ['요청·판정 이력', 'MON-09'], ['신뢰도 지표', 'MON-10']];
+
+test('FR12A D1 메뉴로 패널을 열고 ×로 닫는다. 무대 크기와 위치는 그대로다', async ({ page }) => {
+  await ready(page, 'scene=later');
+  const before = await box(page, '.np-monitor > .np-stage');
+  for (const [label, id] of PANELS) {
+    await page.getByRole('button', { name: '메뉴' }).click();
+    await expect(page.locator('[data-component="PanelMenu"]')).toHaveAttribute('data-open', 'true');
+    await page.getByRole('menuitem', { name: label }).click();
+    await expect(page.locator('[data-component="PanelMenu"]')).toHaveAttribute('data-open', 'false');
+    const panel = page.locator('[data-component="Panel"]');
+    await expect(panel).toContainText(id);
+    expect(await box(page, '.np-monitor > .np-stage')).toEqual(before);
+    await page.getByRole('button', { name: '패널 닫기' }).click();
+    await expect(panel).toHaveCount(0);
+  }
+});
+
+test('FR12A 이력에서 사람을 누르면 그 요청의 판정 단계를 연다', async ({ page }) => {
+  await ready(page, 'scene=later&panel=history');
+  await page.getByRole('row', { name: /14:22/ }).getByRole('button').click();
+  const panel = page.locator('[data-component="Panel"]');
+  await expect(panel).toContainText('MON-04');
+  await expect(panel).toContainText('바쁨');
+  await expect(panel.locator('.np-steps__item[data-result="fail"]')).toHaveCount(1);
+});
+
+test('FR12A 이력 찾기는 판정으로 거른다', async ({ page }) => {
+  await ready(page, 'scene=later&panel=history');
+  await page.locator('label', { hasText: '판정' }).locator('select').selectOption('OK');
+  await page.getByRole('button', { name: '찾기' }).click();
+  await expect(page.getByRole('table', { name: '요청·판정 이력' }).locator('tbody tr')).toHaveCount(2);
+});
+
+test('FR12A 감사 로그는 단계로 거른다', async ({ page }) => {
+  await ready(page, 'scene=later&panel=audit');
+  await page.getByRole('button', { name: 'fault', exact: true }).click();
+  const rows = page.getByRole('table', { name: '감사 로그' }).locator('tbody tr');
+  await expect(rows).toHaveCount(1);
+  await expect(rows).toContainText('EXEC_UNKNOWN');
+});
+
+test('FR12A 점유 현황에서 기기를 누르면 기기 상세를 연다', async ({ page }) => {
+  await ready(page, 'scene=later&panel=uses');
+  await page.getByRole('button', { name: /사물함 3/ }).click();
+  const panel = page.locator('[data-component="Panel"]');
+  await expect(panel).toContainText('MON-05');
+  await expect(panel).toContainText('9분 초과');
+});
+
+test('D2 고장 격리 상세에는 복구 버튼이 없다', async ({ page }) => {
+  await ready(page, 'scene=fault');
+  const panel = page.locator('[data-component="Panel"]');
+  await expect(panel).toContainText('복구 준비');
+  await expect(panel.getByRole('button')).toHaveCount(1); // 닫기만
+});
+
+test('D1 ASK·승인 필요·고장 격리는 상세 패널이 자동으로 열린다', async ({ page }) => {
+  for (const [scene, text] of [['ask', 'ASK'], ['approval', 'NEED_APPROVAL'], ['fault', 'FAULT']]) {
+    await ready(page, `scene=${scene}`);
+    await expect(page.locator('[data-component="Panel"] .np-panel__title')).toContainText(text);
+  }
+  await ready(page, 'scene=flow');
+  await expect(page.locator('[data-component="Panel"]')).toHaveCount(0);
+});
+
+test('D7 설정 화면을 오가고 자동 전환 스위치는 이 PC에만 저장한다', async ({ page }) => {
+  await ready(page, 'scene=later');
+  await page.getByRole('button', { name: '메뉴' }).click();
+  await page.getByRole('menuitem', { name: '폰 연결' }).click();
+  const sw = page.getByRole('switch', { name: /요청한 사람/ });
+  await expect(sw).toHaveAttribute('aria-checked', 'true');
+  await sw.click();
+  await expect(sw).toHaveAttribute('aria-checked', 'false');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('nearpilot-dashboard')!).follow.followRequester)).toBe(false);
+  await page.getByRole('button', { name: /^점검/ }).click();
+  await expect(page.locator('[data-component="ReadyBanner"]')).toContainText('확인할 것 1건');
+  await page.getByRole('button', { name: '모니터로 돌아가기' }).click();
+  await expect(page.locator('[data-component="MonitorLayout"]')).toHaveCount(1);
+});
+
+test('테마를 바꾸고 다시 열어도 유지한다', async ({ page }) => {
+  await ready(page, 'scene=idle');
+  await expect(page.locator('.np-app')).toHaveAttribute('data-theme', 'dark');
+  await page.getByRole('button', { name: '라이트 모드로 바꾸기' }).click();
+  await expect(page.locator('.np-app')).toHaveAttribute('data-theme', 'light');
+  await ready(page, 'scene=idle');
+  await expect(page.locator('.np-app')).toHaveAttribute('data-theme', 'light');
+});
+
+test('연결 끊김에서 다시 연결하면 실시간 화면으로 돌아온다', async ({ page }) => {
+  await ready(page, 'scene=offline');
+  await expect(page.getByRole('status').filter({ hasText: '연결 끊김' })).toBeVisible();
+  await page.getByRole('button', { name: '다시 연결' }).click();
+  await expect(page.locator('[data-component="OfflineBanner"]')).toHaveCount(0);
+  await expect(page.getByText('실시간 연결됨')).toBeVisible();
+});
+
+test('FR12B 재생 모드는 장면을 차례로 바꾼다', async ({ page }) => {
+  await page.clock.install();
+  await ready(page, 'scene=play');
+  await expect(page.locator('.np-rail__title')).toHaveText('요청을 기다리고 있어요');
+  await page.clock.runFor(6100);
+  await expect(page.locator('.np-rail__title')).toHaveText('방문자 A · 사물함 열기');
+  await expect(page.locator('.np-panel__title')).toContainText('ASK');
+});

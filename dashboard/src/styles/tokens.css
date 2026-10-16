@@ -1,0 +1,97 @@
+/* NearPilot 대시보드 디자인 토큰. 구현 때 그대로 복사한다.
+   1920×1080 기준. 루트 글자 크기가 화면 폭을 따라가서 모든 rem 값이 같은 비율로 늘고 준다. */
+
+html { font-size: clamp(12px, 0.8333vw, 32px); }
+
+.np-app {
+  /* 다크 (기본) */
+  --bg: #07101d;
+  --surface: #0b1727;
+  --surface-2: #10203a;
+  --line: rgba(143, 208, 255, 0.32);
+  --line-soft: rgba(143, 208, 255, 0.14);
+  --grid: rgba(143, 208, 255, 0.05);
+  --grid-major: rgba(143, 208, 255, 0.1);
+  --ink: #e8f0fc;
+  --ink-2: #a9bdd8;
+  --ink-3: #8299b8;
+  --accent: #8fd0ff;
+  --accent-strong: #d4ebff;
+  --accent-soft: rgba(143, 208, 255, 0.12);
+  --on-accent: #06101d;
+  --device-fill: rgba(143, 208, 255, 0.07);
+  --room-fill: rgba(9, 20, 36, 0.6);
+
+  --ok: #3ddc97;
+  --ok-soft: rgba(61, 220, 151, 0.12);
+  --ask: #ffd166;
+  --ask-soft: rgba(255, 209, 102, 0.12);
+  --appr: #b49bff;
+  --appr-soft: rgba(180, 155, 255, 0.14);
+  --busy: #ff9f43;
+  --busy-soft: rgba(255, 159, 67, 0.13);
+  --deny: #ff6b78;
+  --deny-soft: rgba(255, 107, 120, 0.13);
+
+  --shadow: 0 1.5rem 3rem rgba(0, 0, 0, 0.45);
+  --dim-opacity: 0.5;
+
+  --font-sans: "IBM Plex Sans KR", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --fs-cap: max(0.75rem, 11px);
+  --fs-sm: max(0.875rem, 12px);
+  --fs-body: 1rem;
+  --fs-lead: 1.25rem;
+  --fs-title: 1.625rem;
+  --fs-hero: 2.25rem;
+
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.5rem;
+  --sp-6: 2rem;
+
+  --topbar-h: max(3.5rem, 52px);
+  --rail-h: 11rem;
+  --phone-w: 24vw;
+  --panel-w: 30vw;
+  --nav-w: 18rem;
+  --hit: max(44px, 2.75rem);
+  --radius: 2px;
+}
+
+.np-app[data-theme="light"] {
+  /* 라이트: 종이 위 설계도 */
+  --bg: #f3f6fa;
+  --surface: #ffffff;
+  --surface-2: #e9eff7;
+  --line: rgba(22, 64, 122, 0.4);
+  --line-soft: rgba(22, 64, 122, 0.16);
+  --grid: rgba(22, 64, 122, 0.05);
+  --grid-major: rgba(22, 64, 122, 0.1);
+  --ink: #0d1b2e;
+  --ink-2: #364e6c;
+  --ink-3: #4f6787;
+  --accent: #1d5ea8;
+  --accent-strong: #0c3c78;
+  --accent-soft: rgba(29, 94, 168, 0.1);
+  --on-accent: #ffffff;
+  --device-fill: rgba(29, 94, 168, 0.06);
+  --room-fill: rgba(255, 255, 255, 0.75);
+
+  --ok: #0f7a55;
+  --ok-soft: rgba(15, 122, 85, 0.1);
+  --ask: #855c00;
+  --ask-soft: rgba(176, 124, 0, 0.12);
+  --appr: #6243c9;
+  --appr-soft: rgba(98, 67, 201, 0.1);
+  --busy: #a64f00;
+  --busy-soft: rgba(166, 79, 0, 0.1);
+  --deny: #c0223a;
+  --deny-soft: rgba(192, 34, 58, 0.09);
+
+  --shadow: 0 1.5rem 3rem rgba(13, 27, 46, 0.16);
+  --dim-opacity: 0.5;
+}
