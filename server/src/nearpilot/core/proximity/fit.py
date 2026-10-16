@@ -1,19 +1,24 @@
-"""근접 모델의 관측 값 적합과 검증 손실 선택 (specs/core-proximity-model-fit/spec.md 6절).
+"""근접 모델의 관측 값 적합, 검증 손실 선택, 모델 파일 쓰기 (specs/core-proximity-model-fit/spec.md 6절).
 
 수집 회차(라벨이 붙은 RSSI 프레임 묶음)로 앵커마다 `A`, `n`, `sigma`, `none_rssi`, `none_sigma`를 구하는 순수 함수다.
 기기 앞 표본은 경로손실 식 `rssi = A − 10·n·log10(d)`에 최소제곱으로 맞추고, `none` 표본은 평균과 표준편차를 낸다.
 최소제곱과 표준편차는 `math.fsum`의 닫힌 식이라서 같은 입력에는 같은 값이 나온다. DB, 현재 시각, 무작위를 쓰지 않는다.
 검증 회차로는 τ, `stay`, `window_sec`의 조합마다 정답 상태의 평균 로그 손실을 `compute_posteriors`로 재고,
 손실이 가장 작은 조합으로 `ProximityModel`을 만든다.
+적합한 모델은 `model_to_dict`로 모델 파일의 JSON 내용으로 바꾸고, `write_model_file`로
+`{모델 루트}/{place_id}/{model_version}.json`에 새로 쓴다. 이 파일 쓰기만 파일 시스템을 건드리고, 같은 버전의 파일은 덮어쓰지 않는다.
 """
 
 from __future__ import annotations
 
+import json
 import math
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
 
 from nearpilot.core.proximity.filter import compute_posteriors
 from nearpilot.core.proximity.model import NodeModel, ProximityModel
@@ -391,3 +396,66 @@ def fit_model(
         "validation_runs": [run.run_id for run in validation],
     }
     return FitResult(model=replace(models[best], validation=report), losses=tuple(losses))
+
+
+def _plain(value: object) -> object:
+    """읽기 전용 매핑은 dict로, list와 tuple은 list로 안쪽까지 되돌려 JSON으로 쓸 수 있는 값으로 만든다."""
+    if isinstance(value, Mapping):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    return value
+
+
+def _node_to_dict(node: NodeModel) -> dict[str, float]:
+    return {
+        "x": node.x,
+        "y": node.y,
+        "front_x": node.front_x,
+        "front_y": node.front_y,
+        "A": node.A,
+        "n": node.n,
+        "sigma": node.sigma,
+        "none_rssi": node.none_rssi,
+        "none_sigma": node.none_sigma,
+    }
+
+
+def model_to_dict(model: ProximityModel) -> dict[str, Any]:
+    """모델을 모델 파일의 JSON 내용으로 바꾼다. `load_model`이 읽는 형식이고, 키 순서는 파일에 쓰는 순서다.
+
+    기기는 node_id 정렬 순이고 `none_points`는 모델의 순서다. `validation`은 읽기 전용 매핑을 dict로, tuple을 list로 되돌린다.
+    `calibration_method`가 "none", "temperature"가 아니면 `ValueError`다.
+    """
+    if model.calibration_method == "none":
+        calibration: dict[str, Any] = {"method": "none"}
+    elif model.calibration_method == "temperature":
+        calibration = {"method": "temperature", "tau": model.calibration_tau}
+    else:
+        raise ValueError(f'calibration_method: "none", "temperature"만 모델 파일에 쓸 수 있다 ({model.calibration_method!r})')
+    return {
+        "place_id": model.place_id,
+        "model_version": model.model_version,
+        "calib_version": model.calib_version,
+        "window_sec": model.window_sec,
+        "transition": {"stay": model.stay},
+        "min_distance_m": model.min_distance_m,
+        "calibration": calibration,
+        "nodes": {node_id: _node_to_dict(model.nodes[node_id]) for node_id in sorted(model.nodes)},
+        "none_points": [{"x": x, "y": y} for x, y in model.none_points],
+        "validation": _plain(model.validation),
+    }
+
+
+def write_model_file(root: Path, model: ProximityModel) -> Path:
+    """모델 파일 `{root}/{place_id}/{model_version}.json`을 새로 쓰고 그 경로를 돌려준다.
+
+    JSON 직렬화를 먼저 한다. 무한대나 NaN이 남아 있어서 `ValueError`가 나면 디렉터리도 파일도 만들지 않는다.
+    같은 버전의 파일이 이미 있으면 `FileExistsError`가 그대로 올라가고, 있는 파일은 바뀌지 않는다 (#40).
+    """
+    path = root / model.place_id / f"{model.model_version}.json"
+    text = json.dumps(model_to_dict(model), ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "x", encoding="utf-8", newline="\n") as file:  # 새로 만들기 모드라서 있는 파일을 덮어쓰지 않는다
+        file.write(text)
+    return path

@@ -16,8 +16,10 @@ from nearpilot.core.proximity.fit import (
     PlaceLayout,
     fit_model,
     fit_observation_params,
+    model_to_dict,
     run_frames,
     validation_log_loss,
+    write_model_file,
 )
 from nearpilot.core.proximity.model import (
     ModelFileError,
@@ -50,6 +52,8 @@ __all__ = [
     "fit_observation_params",
     "load_model",
     "load_models",
+    "model_to_dict",
     "run_frames",
     "validation_log_loss",
+    "write_model_file",
 ]
