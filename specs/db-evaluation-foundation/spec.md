@@ -95,7 +95,7 @@
 
 - `sqlite3.connect("file:<경로>?mode=ro", uri=True)`로 연다 — 요청자 지시. `nearpilot.db.schema.connect`는 마이그레이션(DDL 실행)이 가능한 쓰기 연결이라 쓰지 않는다. `mode=ro` URI 연결은 SQLite 자체가 쓰기 문장을 거부해서, 코드 버그로 인한 실수까지 막는다.
 - 연결 직후 `PRAGMA user_version`을 읽어 이 도구가 기대하는 버전과 비교한다. 다르면 즉시 연결을 닫고 오류를 낸다 — 요청자 지시.
-- 기대하는 버전은 평가 도구 코드의 상수로 둔다(`EXPECTED_SCHEMA_VERSION = 5`) — 요청자 확인. `db/schema/`의 마이그레이션 파일 수를 셀 수도 있지만, 그러면 `db/schema/`의 비공개 내부(`_migration_files()`)에 의존하게 되고 "`db/schema/`를 쓰지 않는다"는 이번 결정과 어긋난다. 상수로 두면 `db/schema/`에 새 마이그레이션이 추가될 때마다 평가 도구 쪽 상수도 같이 올려야 한다는 유지보수 부담이 남는다.
+- 기대하는 버전은 평가 도구 코드의 상수로 둔다(`EXPECTED_SCHEMA_VERSION = 6`) — 요청자 확인. `db/schema/`의 마이그레이션 파일 수를 셀 수도 있지만, 그러면 `db/schema/`의 비공개 내부(`_migration_files()`)에 의존하게 되고 "`db/schema/`를 쓰지 않는다"는 이번 결정과 어긋난다. 상수로 두면 `db/schema/`에 새 마이그레이션이 추가될 때마다 평가 도구 쪽 상수도 같이 올려야 한다는 유지보수 부담이 남는다.
   - 이 어긋남을 자동으로 잡아내는 테스트를 둔다: `nearpilot.db.schema.migrate`로 임시 DB를 만들고, 그 DB의 `PRAGMA user_version`이 `EXPECTED_SCHEMA_VERSION`과 같은지 확인한다(8절 `test_NFR13_expected_schema_version_matches_migrations`). 이 테스트 코드는 `db/schema`를 써도 된다 — 요청자 지시. "이 작업은 `db/schema`를 쓰지 않는다"는 평가 도구 코드 자체의 제약이고, 테스트가 그 상수의 정확성을 검증하는 것은 별개다. `db/schema/`에 마이그레이션이 추가되고 이 상수를 같이 올리지 않으면 이 테스트가 실패해서 바로 드러난다.
 
 ### 결과 형식
@@ -110,7 +110,7 @@
 
 ## 7. 가정
 
-- 이 도구가 기대하는 스키마 버전 상수는 `db-repository` spec이 만든 마이그레이션 파일 수(현재 5)와 같다고 가정한다 — 가정: `db/schema/`에 새 마이그레이션이 머지되면 이 상수를 올리는 작업이 빠질 수 있다. `test_NFR13_expected_schema_version_matches_migrations`(6절·8절)가 그 어긋남을 잡아내므로, 빠져도 조용히 틀린 결과를 내지는 않는다.
+- 이 도구가 기대하는 스키마 버전 상수는 `db-repository` spec이 만든 마이그레이션 파일 수(현재 6)와 같다고 가정한다 — 가정: `db/schema/`에 새 마이그레이션이 머지되면 이 상수를 올리는 작업이 빠질 수 있다. `test_NFR13_expected_schema_version_matches_migrations`(6절·8절)가 그 어긋남을 잡아내므로, 빠져도 조용히 틀린 결과를 내지는 않는다.
 - matplotlib 추가 여부(이슈 초안 5)는 아직 담당자에게 제출되지 않았다 — 가정: 제출·결정 전까지 이 spec의 보고서는 CSV·Markdown만 만든다. 결정이 A든 B든 이 spec의 경계 안에서는 바뀌지 않는다. 결정이 나면 그래프 추가는 후속 feat PR로 한다.
 
 ## 8. 테스트

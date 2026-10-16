@@ -589,7 +589,12 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - 대기 만료의 사유 코드는 `APPROVAL_REQUEST_EXPIRED`다. 승인 유효시간 만료의 `APPROVAL_EXPIRED`, 소유자 거부의 `APPROVAL_REJECTED`와 구분한다.
 - 승인 신청과 결정의 저장 접점은 이 문서의 승인 요청과 소유자 결정 계약을 따른다.
 - 설정 이름은 `requirements.md` §1.2의 표를 따른다.
-- `link_request`는 새 요청을 연결하는 같은 트랜잭션에서 외부 `request_id`가 있는 요청 행 수를 센다(외부 `request_id`를 비운 행, 감사 행은 세지 않는다). `dedup_entry_limit` 이상이면 외부 `request_id` 없이 요청 행을 만들고 `RequestLink(is_new=True, capacity_exceeded=True)`를 반환한다. 이 행은 집계에서 빠지므로 한도를 더 늘리지 않는다. 판정은 이 요청을 `DENY`·`CAPACITY_EXCEEDED`로 저장한다 (#165). 기존 요청의 재전송(`is_new=False`)에는 한도와 관계없이 기존 결과를 돌려준다.
+- `link_request`는 CORE가 정한 `UseRequest.purpose`로 조작(`use`)과 승인 신청(`access`)을 구분한다. 기본값은 `use`다.
+- DB는 새 조작을 연결하는 같은 트랜잭션에서 외부 `request_id`가 있는 조작과 목적 미분류 행을 센다. 승인 신청은 집계에서 뺀다. 한도에 닿으면 만료 ID를 먼저 비우고 다시 센다.
+- 정리 뒤에도 `dedup_entry_limit` 이상이면 새 조작의 외부 ID를 비우고 `RequestLink(is_new=True, capacity_exceeded=True)`를 반환한다. 판정은 `DENY`·`CAPACITY_EXCEEDED`로 저장한다.
+- 승인 신청은 한도에서도 외부 ID를 유지하고 플래그를 거짓으로 반환한다. 기존 재전송은 한도와 관계없이 기존 결과를 돌려준다.
+- 새 행은 목적까지 대조한다. 같은 외부 키의 다른 목적은 충돌이다. 기존 미분류 행은 키와 digest의 재전송 동작을 유지한다.
+- 스키마 6의 nullable `request.purpose`는 기존 행을 NULL로 보존한다. `request_kind`의 방문자·서버 내부 요청 구분은 유지한다.
 - 미결: 명령 중복 방지 항목의 보존기간과 한도 도달 때의 정리 기준. 실제 기기의 명령 기록 저장 방식을 검증한 뒤 정한다.
 
 ### 활성 비콘 조회와 판정

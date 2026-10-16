@@ -13,7 +13,7 @@ spec 규칙
 # FR-18 결정론적 판정 파이프라인 (⓪~⑥)
 
 - 담당: eunji719 (판정)
-- 후속 상태: #165 용량 제한은 구현 전 초안이다. 공동 경계 확인과 구현 뒤에만 같은 fix PR을 머지한다.
+- 후속 상태: #165 용량 거부와 승인 신청 예외를 이 fix PR에서 구현한다.
 - 후속 초안 작성: JM-220이다.
 - 요구사항: FR-03, FR-18, FR-19, FR-21, FR-22, NFR-03
 - 따르는 결정: #15, #23, #24, #25, #26, #27, #33, #34, #35, #39, #42, #165
@@ -82,7 +82,9 @@ spec 규칙
 - #165 후속 검증: `server/tests/integration/`이다.
 
 ### 고치지 않는 곳
-- 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
+- 항상: `server/pyproject.toml`, `.github/`다.
+- 이 fix의 승인된 경계 변경: 요청 목적의 공동 모델·문서·DB 마이그레이션과 기존 승인 신청 호출이다.
+- `AGENTS.md`는 Gotchas만 고친다.
 - 이 작업: `core/proximity/`, `core/policy/`, `core/lifecycle/`, `db/`, `api/`, `iot/`
 
 ### 다른 영역과 닿는 곳
@@ -182,14 +184,16 @@ spec 규칙
 
 ### #165 후속: 요청 용량 제한
 
-- 이 절은 구현 전 초안이다. 기존 판정 구현은 아직 `capacity_exceeded`를 검사하지 않는다.
+- DB가 반환한 `capacity_exceeded`를 ⓪에서 검사한다.
 - 입력은 기존 `RequestLink.capacity_exceeded`다. 별도 용량 조회 접점을 만들지 않는다.
 - 기존 키의 충돌과 재전송 판정은 유지한다.
 - 새 조작 요청의 플래그가 참이면 ⓪에서 `DENY`와 `CAPACITY_EXCEEDED`를 저장한다.
 - 내부 요청 ID는 DB가 만든 값을 쓴다. 호스트의 외부 요청 ID는 응답에 유지한다.
 - 용량 거부도 기존 `save_decision`과 감사 기록 경로를 쓴다.
 - 용량 거부 뒤에는 ①~⑥과 실행 인계를 호출하지 않는다.
-- 반납, 조회, 결과 정산과 복구에는 용량 제한을 붙이지 않는다.
+- 승인 신청, 반납, 조회, 결과 정산과 복구에는 조작 용량 제한을 붙이지 않는다.
+- 승인 신청은 `UseRequest.purpose="access"`로 같은 연결 함수를 쓴다. 일반 조작의 기본값은 `use`다.
+- 요청 목적은 CORE가 정한다. MCP 도구의 새 인자로 받지 않는다.
 - DB의 원자적 집계와 판정의 거부를 같은 fix 작업에서 검증한다.
 - 구현은 기존 spec을 고치는 fix PR에서 한다 — `AGENTS.md`의 머지된 spec 후속 규칙을 따른다.
 
@@ -203,9 +207,8 @@ spec 규칙
 - 외부 요청의 중복 방지 보장기간이 지나면 DB가 외부 `request_id`를 비운다 (FR-22). 그 뒤 같은 `request_id`가 오면 ⓪은 새 요청으로 본다. 판정은 ⓪~⑥을 처음부터 검사한다.
 - 신규 조작 접수 제한은 ⓪에서 새 요청으로 확인한 요청에만 적용한다 (FR-22). 한도 이상이면 `DENY` / `CAPACITY_EXCEEDED`다. 같은 요청의 재전송에는 기존 결과를 반환한다.
 - #165가 접점을 정했다. DB는 외부 `request_id`를 비운 행을 만들고 `capacity_exceeded=True`를 반환한다.
-- 구현 의존: 승인 신청도 `link_request`를 쓴다. 승인 신청을 제한하지 않는 방향은 담당자가 선택했다.
-- 승인 신청의 외부 키와 재전송을 보장하는 공동 계약은 아직 없다. 팀 확인 전 이 경계는 구현하지 않는다.
-- 가득 찬 상태에서 먼저 정리하는 방식은 DB 정리의 보호 기준과 함께 DB 담당자가 확정한다.
+- 담당자가 같은 연결 함수에 요청 목적을 전달하는 안을 승인했다. 승인 신청은 외부 키를 유지하고 조작 한도 집계에서 뺀다.
+- DB는 최신 `db-retention-capacity`의 보호 기준으로 만료 ID를 비운 뒤 한도를 다시 센다.
 - 미결: 후보가 있는데 관측이 없을 때 `posterior()`가 빈 `posteriors`를 반환하는가, 균등 분포를 반환하는가. 판정은 빈 `posteriors`를 `LOW_CONFIDENCE`로 처리하려 한다. 근접 추정 담당에게 확인한다 (#26).
 - 실행 직전 재검사는 판정이 제공하고 상태 관리가 호출한다. 재검사 실패의 미전송 취소도 상태 관리가 시작한다.
 - 미결: 명시 지정 임계값의 수치. 근접 추정 담당이 검증셋으로 실험한 뒤 정한다. 설정 이름은 `threshold_explicit_locker`, `threshold_explicit_light`, `threshold_explicit_speaker`다. 기본값 `None`이면 명시 지정 실행을 허가하지 않는다.
@@ -237,7 +240,6 @@ spec 규칙
 | FR-18, FR-22 | `test_FR22_capacity_keeps_replay_and_conflict` | 기존 재전송과 입력 충돌을 유지한다 |
 | FR-19, NFR-03 | `test_NFR03_capacity_never_reserves_or_sends` | 거부 요청은 예약과 실행을 만들지 않는다 |
 | FR-21, FR-22 | `test_FR22_capacity_keeps_release_status_and_recovery` | 한도에서도 기존 작업을 계속한다 |
-| FR-03, FR-22 | `test_FR03_capacity_keeps_access_request_dedup` | 팀 계약 확인 뒤 승인 신청의 중복 처리를 검증한다 |
+| FR-03, FR-22 | `test_FR03_capacity_keeps_access_request_dedup` | 한도에서도 승인 신청의 키와 기존 판정을 유지한다 |
 
-- 위 테스트는 계획이다. 이 초안은 판정 코드와 새 테스트를 포함하지 않는다.
-- DB 집계 구현과 공동 경계 확인을 마친 뒤에만 후속 작업을 완료로 표시한다.
+- 실제 DB와 승인 신청·조작 파이프라인을 함께 검증한다. 판정 코드와 회귀 테스트를 같은 PR에 둔다.

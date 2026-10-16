@@ -92,3 +92,4 @@ pytest tests/<계층>      # 계층 하나
 - decision PR 본문에 양식에 없는 절을 추가했다. `.github/PULL_REQUEST_TEMPLATE/decision.md`의 절을 따르고, `Closes`는 결정을 모두 반영한 이슈에만 쓴다.
 - worktree의 테스트를 저장소 루트에서 실행해 다른 checkout의 설치 경로를 읽었다. 테스트는 대상 worktree의 `server/`에서 실행한다.
 - 앞 브랜치를 재작성한 뒤 일반 rebase로 뒤 브랜치의 옛 커밋을 중복 적용했다. 이전 앞 브랜치의 HEAD를 기준으로 `rebase --onto`를 써서 뒤 브랜치의 고유 커밋만 옮긴다.
+- Windows에서 `rg` 경로 인자에 와일드카드를 넣어 검색에 실패했다. 실제 폴더를 넘기고 `-g`로 파일을 거른다.

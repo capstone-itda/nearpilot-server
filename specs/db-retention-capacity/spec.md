@@ -125,6 +125,18 @@
 - 외부에 보이는 반환값과 재조작(`REOPERATING`) 경로는 바꾸지 않는다. 내부에서만 "조회 먼저, 그다음 조건부 삽입"으로 바뀐다 — 이유: 한도 세기와 삽입이 같은 트랜잭션 안에 있어야 동시 요청이 한도를 함께 넘지 않는다(#165, NFR-03). 기존처럼 낙관적 `INSERT` 뒤 `IntegrityError`로 분기하면, 그 단일 문장은 자동 커밋이라 한도 세기를 같은 트랜잭션에 넣을 수 없다. 단순한 쪽(항상 `BEGIN IMMEDIATE`)으로 가기로 담당자가 확인했다.
 - 개수 세기가 기존 인덱스를 쓰는지 실제 스키마로 확인했다. `EXPLAIN QUERY PLAN SELECT COUNT(*) FROM request WHERE request_id IS NOT NULL`의 결과는 `SCAN request USING COVERING INDEX request_external_key`다. `request_external_key`는 `(user_id, request_id) WHERE request_id IS NOT NULL` 부분 UNIQUE 인덱스로, 이미 `db-repository` spec이 중복 방지용으로 만들어 뒀다. 새 인덱스 없이 이 커버링 인덱스만으로 테이블 본문을 읽지 않고 개수를 센다 — 요청마다 트랜잭션이 하나 늘어도 개수 세기 자체의 비용은 작다.
 
+### 승인 신청의 요청 목적 보완
+
+- 담당자가 2026-10-16에 요청 목적 구분을 승인했다. 이 변경은 #173 fix에서 반영한다.
+- `UseRequest.purpose`의 기본값은 `use`다. 승인 신청 서비스는 `access`를 전달한다.
+- 새 승인 신청은 외부 ID를 유지한다. `capacity_exceeded`는 거짓이다.
+- 한도 집계는 외부 ID가 있는 `use`와 목적 미분류 행만 센다.
+- 목적 컬럼은 스키마 6에서 추가한다. 기존 행은 NULL로 보존해 잘못 분류하지 않는다.
+- 새 목적이 알려진 행은 목적까지 대조한다. 같은 외부 키의 다른 목적은 충돌이다.
+- 조작 한도에 닿으면 같은 트랜잭션 안에서 기존 완료 기준으로 만료 ID만 비우고 다시 센다.
+- 이 만료 ID 정리는 감사·점유 이력을 지우지 않는다. 주기 정리의 보호 기준을 재사용한다.
+- 3·4절의 기존 `shared`·스키마 변경 금지는 #174의 경계다. #173은 승인된 목적 필드와 스키마 6만 보완한다.
+
 ## 7. 가정
 
 - `node_command.status`의 `pending`/`in_progress`만 "진행 중"으로 본다. `rejected`·`not_sent`는 이미 종결된 상태로 본다 — 가정: `ExecutionStatus` 열거값의 의미가 바뀌면(팀 결정) 이 spec의 완료 조건도 같이 바꾼다.
