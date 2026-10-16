@@ -36,6 +36,7 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 토큰 해시 | 토큰의 SHA-256 해시를 소문자 hex 문자열로 쓴 값. 서버는 토큰 원문 대신 토큰 해시를 저장한다 | `token_hash` | |
 | 방문자 | 기기를 사용하는 계정 | `Role.VISITOR` | |
 | 소유자 | 장소와 기기를 관리하고 접근을 승인하는 계정 | `Role.OWNER` | |
+| 운영자 | 대시보드로 시스템을 지켜보는 사람. 계정 역할이 아니고, 서버에 쓰지 않는다 | | |
 | 장소 | 소유자가 가진 공간. 기기를 배치한다 | `place` | |
 | AI 호스트 | 사용자의 요청을 MCP로 서버에 전달하는 LLM 앱. Claude, ChatGPT, Gemini | `host_kind` | |
 | 판정 | core가 요청에 내리는 결과. `OK`, `BUSY`, `ASK`, `DENY`, `NEED_APPROVAL` | `Verdict` | |

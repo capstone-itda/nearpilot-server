@@ -62,7 +62,7 @@ nearpilot-server/
 │   │   ├── api/
 │   │   │   ├── mcp/            MCP 엔드포인트와 도구 6개 (FR-08~FR-11)
 │   │   │   ├── auth/           토큰으로 계정 식별, 무효 토큰 거부
-│   │   │   ├── rest/           앱(계정, 승인)과 대시보드(신뢰, 정책, 복구)용 API
+│   │   │   ├── rest/           앱(계정, 승인)과 대시보드(조회)용 API, `FAULT` 복구
 │   │   │   └── ws/             실시간 모니터링 (FR-12B)
 │   │   ├── core/
 │   │   │   ├── decision/       ⓪~⑥ 판정 파이프라인 (FR-15, FR-18)
@@ -127,7 +127,7 @@ api  ──▶  core  ──▶  db
 | 승인 저장 인터페이스 | DB | CORE | 접근 승인 요청을 저장한다 (`Repository.create_approval_request`). 소유자의 결정을 조건부로 반영한다 (`Repository.decide_approval`). 요청자·기기의 승인 이력을 조회한다 (`Repository.approvals_in_scope`). `FAULT` 복구의 소유자 승인에는 쓰지 않는다. |
 | 판정 기록 인터페이스 | DB | CORE (판정) | 판정 한 건마다 판정과 `DecisionRecord`를 한 번 저장한다 (`Repository.save_decision`). |
 | 계정 조회 인터페이스 | DB | API (`api/auth`) | `api/auth`가 토큰의 SHA-256 해시를 계산해서 넘긴다. DB는 저장한 해시와 비교해서 계정을 반환한다 (`AccountLookup.account_by_token_hash`). |
-| 관리 쓰기 인터페이스 | DB | 관리 기능 (`AdminService`), 시드 스크립트, 수집 도구 (`tools/data_collection`) | 계정과 비콘 등록, 기기 신뢰 변경, 장소 배치, 정책 변경, 수집 회차 기록을 저장한다 (`AdminRepository`). 관리 API와 `AdminService`는 담당을 배정한 뒤 이 접점 위에 만든다. |
+| 관리 쓰기 인터페이스 | DB | 관리 기능 (`AdminService`), 수집 도구 (`tools/data_collection`) | 계정과 비콘 등록, 기기 신뢰 변경, 장소 배치, 정책 변경, 수집 회차 기록을 저장한다 (`AdminRepository`). 시드 스크립트는 `AdminService`를 거쳐 쓴다. `AdminService`는 담당을 배정한 뒤 이 접점 위에 만든다. 관리 쓰기 REST는 두지 않는다. |
 | 사건별 저장 인터페이스 | DB | CORE | 예약 이후의 명령 연결, 전송 시작, 미전송 취소, 실행 결과, 이상 격리, 종료를 사건마다 원자적으로 반영한다 (`ExecutionStore`). |
 | 복원·복구 저장 인터페이스 | DB | CORE (상태 관리) | 재시작 복원 조회, 복구 건 저장과 조회, 복구 정산을 제공한다 (`restore_pending`, `save_recovery`, `recovery`, `settle_recovery`). |
 | 복구 인터페이스 | CORE (상태 관리) | API | 복구 준비 조회와 복구 승인 요청을 따로 제공한다. 준비 판단, 재검사, 불명 결과 확인은 상태 관리가 맡는다. |
@@ -293,8 +293,9 @@ DB는 승인 이력을 거르지 않고 반환한다. `core/policy`가 승인 �
 | 정책 변경 | `access_policy`, `policy_revision` | 새 `policy_revision` 행 추가와 `access_policy.current_version` 갱신을 한 트랜잭션에서 한다. 과거 리비전은 바꾸지 않는다. |
 | 수집 회차 기록 | `collection_run` | 회차를 진행 중으로 만들고, 끝 시각을 기록한다. 구간 규칙은 아래 "RSSI 수집 회차"를 따른다 ([#131](https://github.com/capstone-itda/nearpilot-server/issues/131)). |
 
-- DB는 `AdminRepository`를 지금 구현한다. 관리 API와 `AdminService`는 담당을 배정한 뒤 `AdminRepository` 위에 만든다.
-- 시드 스크립트도 `AdminRepository`로 시연 데이터와 시험 데이터를 넣는다. 시드 스크립트는 SQL을 직접 실행하지 않는다.
+- DB는 `AdminRepository`를 지금 구현한다. `AdminService`는 담당을 배정한 뒤 `AdminRepository` 위에 만든다.
+- `AdminService`는 행위자와 장소 소유권을 검사한 뒤 `AdminRepository`에 쓴다. 계정과 비콘 등록도 `AdminService`가 맡는다.
+- 시드 스크립트는 `AdminService`를 거쳐 기기 신뢰, 장소 배치, 정책, 시연 데이터와 시험 데이터를 넣는다. 시드 스크립트는 SQL을 직접 실행하지 않는다.
 - `tools/data_collection`도 `AdminRepository`로 수집 회차를 기록한다. 수집 도구는 SQL을 직접 실행하지 않는다 (#131).
 - `AdminRepository`는 반영 결과와 거부 사유를 반환한다. 거부 사유의 예는 비콘 중복과 상태 충돌이다.
 - 계정당 활성 비콘은 하나 이하다. `register_beacon()`은 활성 등록 때 같은 계정의 다른 비콘을 비활성화한다.
@@ -853,7 +854,8 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 
 - REST 경로는 §5에 있다.
 - 복구 준비 조회와 복구 승인의 두 REST 경로는 상태 관리가 `api/rest/`에 구현한다 ([#89](https://github.com/capstone-itda/nearpilot-server/issues/89)). 경로는 토큰으로 계정을 식별해 `RecoveryService`에 넘기고 결과를 바꾸지 않는다 (NFR-07).
-- 미결: 두 복구 경로를 뺀 관리 API의 구현 담당과 화면. 관리 API 담당을 배정한 뒤 정한다.
+- 소유자는 스크립트로 두 경로를 호출한다. 대시보드는 복구 화면을 두지 않는다.
+- 미결: 복구 스크립트의 담당
 
 ### 공동 인터페이스의 후속 반영
 
@@ -1182,7 +1184,8 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 |---|---|---|
 | 계정 | 앱: 계정과 비콘 등록, MCP 연결용 토큰 발급 | FR-01 |
 | 승인 | 앱: 대기 중인 승인 목록, 알림을 누를 때 승인 요청 한 건 조회, 승인 또는 거부 전달. 권한, 상태, 정책 버전은 CORE가 검증한다. | FR-03, FR-14 |
-| 관리 | 대시보드: 기기 목록, 기기 신뢰, 장소 배치, 정책, `FAULT` 복구 | FR-12A |
+| 대시보드 조회 | 대시보드: 현재 상태(기기 목록, 연결, 신뢰), 요청·판정 이력, 판정 단계별 결과, 승인 목록, 감사 로그, 사전 평가 결과. 읽기만 한다. | FR-12A |
+| 복구 | 소유자 스크립트: `FAULT` 복구 준비 조회와 복구 승인 | FR-12A, NFR-04 |
 
 - 복구 준비 조회: `GET /admin/nodes/{node_id}/recovery`
 - 복구 승인: `POST /admin/nodes/{node_id}/recovery/{recovery_id}/approve`
@@ -1194,7 +1197,9 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 
 | 그룹 | 사용처 | 요구사항 |
 |---|---|---|
-| 모니터링 | 대시보드: 판정, 사후확률, 상태 머신, 감사 로그의 스트림 | FR-12B |
+| 모니터링 | 대시보드: 판정, 사후확률, 상태 머신, 감사 로그, 기기별 비콘 RSSI, MCP 도구 호출, 승인 신청과 결정, 폰 비콘 수신 상태의 스트림 | FR-12B |
+
+- 미결: 모니터링 메시지 형식
 
 ## 6. 데이터 계약
 
