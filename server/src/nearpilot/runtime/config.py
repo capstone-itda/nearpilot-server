@@ -82,8 +82,11 @@ _SECTIONS = {"settings", "runtime", "http", "database", "proximity", "mqtt", "de
 _REQUIRED_SECTIONS = _SECTIONS - {"runtime"}
 
 
-def load_config(path: str | Path) -> ServerConfig:
-    """설정 파일을 읽고 검증한다. 잘못되면 `ConfigError` 다."""
+def load_config(path: str | Path, *, require_models: bool = True) -> ServerConfig:
+    """설정 파일을 읽고 검증한다. 잘못되면 `ConfigError` 다.
+
+    `require_models=False` 면 `[proximity.models]` 가 없거나 비어도 된다. 모델 없이 도는 명령이 쓴다.
+    """
     source = Path(path).resolve()
     try:
         raw = tomllib.loads(source.read_text(encoding="utf-8"))
@@ -91,10 +94,11 @@ def load_config(path: str | Path) -> ServerConfig:
         raise ConfigError(f"설정 파일을 읽을 수 없다: {source}") from error
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as error:
         raise ConfigError(f"설정 파일이 TOML 이 아니다: {error}") from None
-    return parse_config(raw, base=source.parent, source=source)
+    return parse_config(raw, base=source.parent, source=source, require_models=require_models)
 
 
-def parse_config(raw: Mapping[str, Any], *, base: Path, source: Path | None = None) -> ServerConfig:
+def parse_config(raw: Mapping[str, Any], *, base: Path, source: Path | None = None,
+                 require_models: bool = True) -> ServerConfig:
     _keys(raw, "", required=_REQUIRED_SECTIONS, allowed=_SECTIONS)
     try:
         return ServerConfig(
@@ -103,7 +107,7 @@ def parse_config(raw: Mapping[str, Any], *, base: Path, source: Path | None = No
             runtime=_runtime(_table(raw, "runtime", optional=True)),
             http=_http(_table(raw, "http")),
             database=_database(_table(raw, "database"), base),
-            proximity=_proximity(_table(raw, "proximity"), base),
+            proximity=_proximity(_table(raw, "proximity"), base, require_models=require_models),
             mqtt=_mqtt(_table(raw, "mqtt"), base),
             delivery=_delivery(_table(raw, "delivery")),
         )
@@ -146,10 +150,12 @@ def _database(table: Mapping[str, Any], base: Path) -> DatabaseConfig:
                           _path(table, "database", "audit_jsonl", base))
 
 
-def _proximity(table: Mapping[str, Any], base: Path) -> ProximityConfig:
-    _keys(table, "proximity", required={"model_root", "models"})
-    models = table["models"]
-    if not isinstance(models, Mapping) or not models:
+def _proximity(table: Mapping[str, Any], base: Path, *, require_models: bool) -> ProximityConfig:
+    # model_root 는 항상 필수다. models 는 있으면 형식을 검사하고, require_models 일 때만 비면 안 된다.
+    _keys(table, "proximity", required={"model_root", "models"} if require_models else {"model_root"},
+          allowed={"model_root", "models"})
+    models = table.get("models", {})
+    if not isinstance(models, Mapping) or (require_models and not models):
         raise ConfigError("proximity.models 는 장소별 모델 버전 표여야 한다")
     for place_id, version in models.items():
         if not isinstance(version, str) or not version.strip():

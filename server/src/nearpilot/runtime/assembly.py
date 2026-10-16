@@ -165,13 +165,17 @@ class _SharedLightSuccess:
 
 
 class Runtime:
-    """서버 한 번의 시작과 종료. 다시 시작하려면 새 객체를 만든다."""
+    """서버 한 번의 시작과 종료. 다시 시작하려면 새 객체를 만든다.
+
+    `collect_only` 는 수집 전용이다. 근접 모델을 읽지 않고, `create_app` 이 MCP 를 열지 않는다.
+    """
 
     def __init__(
         self, config: ServerConfig, *, clock: Callable[[], datetime] = utc_now,
         client_factory: Callable[..., Any] = mqtt.Client,
         proximity_factory: ProximityFactory = HmmProximityEstimator,
         monotonic: Callable[[], float] = time.monotonic,
+        collect_only: bool = False,
     ) -> None:
         self.config = config
         self.settings = config.settings
@@ -179,6 +183,7 @@ class Runtime:
         self._client_factory = client_factory
         self._proximity_factory = proximity_factory
         self._monotonic = monotonic
+        self._collect_only = collect_only
         self.gate = CallGate()
         self.db = ThreadDatabase(
             config.database.path, settings=config.settings, audit_jsonl=config.database.audit_jsonl,
@@ -193,6 +198,10 @@ class Runtime:
     @property
     def clock(self) -> Callable[[], datetime]:
         return self._clock
+
+    @property
+    def collect_only(self) -> bool:
+        return self._collect_only
 
     # ── 시작 ────────────────────────────────────────────────────────
 
@@ -214,8 +223,12 @@ class Runtime:
 
     def _start(self) -> None:
         cfg, s = self.config, self.settings
-        # 1. 모델 — 설정은 load_config 가 이미 검증했다
-        models = load_models(cfg.proximity.model_root, cfg.proximity.versions)
+        # 1. 모델 — 설정은 load_config 가 이미 검증했다. 수집 전용이면 읽지 않고 빈 모델로 만든다
+        if self._collect_only:
+            log.info("수집 전용 모드: 근접 모델을 읽지 않는다. MCP 를 열지 않는다")
+            models: dict[str, ProximityModel] = {}
+        else:
+            models = load_models(cfg.proximity.model_root, cfg.proximity.versions)
         for place_id, model in models.items():
             log.info("근접 모델: place=%s model=%s calib=%s", place_id, model.model_version,
                      model.calib_version)
