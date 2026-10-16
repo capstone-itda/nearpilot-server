@@ -44,6 +44,7 @@ from nearpilot.shared.models import (
     ApprovalRecord,
     AuditEvent,
     BeaconKey,
+    CleanupReport,
     CloseResult,
     CommandRecord,
     CommandResult,
@@ -606,5 +607,22 @@ class AdminRepository(Protocol):
         ended_at 이 started_at 보다 뒤가 아니면 INVALID_INTERVAL 로 거부한다.
         없는 회차는 COLLECTION_NOT_FOUND, 이미 끝난 회차는 STATE_CONFLICT 로 거부한다.
         구간은 started_at <= frame_ts < ended_at 이다. 관측 연결은 save_rssi 가 한다.
+        """
+        ...
+
+
+@runtime_checkable
+class RetentionStore(Protocol):
+    """DB → 서버 조립(상태 관리) 보존기간 정리 접점 (FR-21, FR-22, #164).
+
+    서버 조립이 시작할 때와 settings.retention_cleanup_interval_sec 마다 부른다.
+    """
+
+    def cleanup(self, now: datetime) -> CleanupReport:
+        """보존기간이 지난 종료 이력과 상세 감사 행을 지운다.
+
+        최종 처리 완료 뒤 request_dedup_ttl_sec 가 지난 요청의 외부 request_id 만 비운다.
+        진행 중이거나 미해결인 기록은 기간만으로 지우지 않는다. 요청 행은 지우지 않는다.
+        수집 회차에 연결된 관측은 지우지 않는다. 쓰기 하나는 BEGIN IMMEDIATE 하나다.
         """
         ...

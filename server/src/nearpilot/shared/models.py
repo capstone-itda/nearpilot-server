@@ -229,6 +229,9 @@ class RequestLink:
     is_new: bool
     conflict: bool  # 같은 키, 다른 입력
     previous: Decision | None = None  # 이미 판정이 끝난 요청이면 그 결과
+    # 중복 방지 항목이 dedup_entry_limit 이상이면 True다 (#165). 이 요청은 request_id를
+    # 비운 채 연결돼 한도 집계에서 빠진다. 판정은 DENY·CAPACITY_EXCEEDED로 거부한다.
+    capacity_exceeded: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -666,6 +669,15 @@ class AuditEvent:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "payload", _freeze(self.payload))
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupReport:
+    """`RetentionStore.cleanup()` 결과 (#164). 사용자 ID 필드를 두지 않는다."""
+
+    cleared_requests: int  # 외부 request_id를 비운 요청 수
+    deleted_sessions: int  # 지운 종료 이력(점유 세션) 수
+    deleted_audit_rows: int  # 지운 상세 감사 행 수
 
 
 # ── 복원·복구 (FR-19, NFR-04) ───────────────────────────────────────
