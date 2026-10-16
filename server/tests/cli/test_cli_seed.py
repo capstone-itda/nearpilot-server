@@ -299,6 +299,7 @@ def test_FR12A_seed_is_rerunnable(server_dir, run_cli, announce_nodes):
     assert first_out.splitlines()[-1] == "완료: 반영 14, 변경 없음 0, 거부 0"
     after_first = state(server_dir)
     assert len(after_first["user"]) == 3 and len(after_first["policy_revision"]) == 3
+    audit_first = audit_count(server_dir)
 
     code, out, _ = run_cli(["seed", "demo.toml"], cwd=server_dir)
 
@@ -312,6 +313,15 @@ def test_FR12A_seed_is_rerunnable(server_dir, run_cli, announce_nodes):
     # 비콘, 장소, 기기 신뢰, 종료 정책은 같은 값을 다시 쓴다 (반영으로 센다)
     assert lines[-1] == "완료: 반영 8, 변경 없음 6, 거부 0"
     assert state(server_dir) == after_first  # user(token_hash 포함), policy_revision 행 수와 내용이 같다
+    assert audit_count(server_dir) == audit_first + 8  # 다시 반영한 8개만 감사 행을 남긴다
+
+
+def audit_count(server: Path) -> int:
+    conn = sqlite3.connect(server / "var" / "nearpilot.db")
+    try:
+        return conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+    finally:
+        conn.close()
 
 
 def test_FR12A_seed_dry_run_writes_nothing(server_dir, run_cli, announce_nodes):

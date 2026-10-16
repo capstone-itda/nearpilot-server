@@ -128,12 +128,19 @@ def _call_collection_tool(config: ServerConfig, argv: list[str]) -> int:
 
 def _list(args: argparse.Namespace) -> int:
     config = load_cli_config(args.config)
+    fit_dir = dirs_for(config.source).fit
+    # 직접 준 --fit은 회차를 읽기 전에, 쓰이지 않는 조합이어도 검사한다. 오타가 조용히 넘어가지 않게 한다.
+    fit_path = None
+    if args.fit is not None:
+        if not (args.summary and args.place is not None):
+            raise CliError("--fit은 --summary --place와 함께 쓴다", EXIT_INVALID)
+        fit_path = resolve_input(args.fit, fit_dir, kind="적합 설정")
     runs = [run for run in _read_runs(config) if _selected(run, args)]
     if not runs:
         print("수집 회차가 없다.")
         return EXIT_OK
     if args.summary:
-        _print_summary(runs, args.place, args.fit, dirs_for(config.source).fit)
+        _print_summary(runs, args.place, fit_path, fit_dir)
     else:
         print(_LIST_HEADER)
         for run in runs:
@@ -172,17 +179,16 @@ def _run_line(run: RunInfo) -> str:
     return "  ".join([run.collection_id, run.label, place, started, length, str(run.frame_count), status])
 
 
-def _print_summary(runs: list[RunInfo], place: str | None, fit_arg: str | None, fit_dir: Path) -> None:
+def _print_summary(runs: list[RunInfo], place: str | None, fit_path: Path | None, fit_dir: Path) -> None:
     """라벨별 닫힌 회차 수와 프레임 합을 쓴다. 닫힌 회차는 끝이 있고, 프레임이 1개 이상이고, 장소가 있는 회차다.
 
     장소를 골랐으면 그 장소의 적합 설정으로 라벨마다 분할 가능 여부(닫힌 회차 수 >= `min_runs_per_label`)를 덧붙인다.
     """
     min_runs = None
-    fit_path = None
     if place is not None:
-        # 직접 준 --fit은 다른 명령처럼 없으면 입력 오류다. 기본 파일만 없어도 된다.
-        fit_path = (resolve_input(fit_arg, fit_dir, kind="적합 설정") if fit_arg is not None
-                    else resolve_output(None, fit_dir, f"{place}.toml"))
+        # 직접 준 --fit은 _list가 이미 찾았다. 기본 파일(<장소>.toml)만 없어도 된다.
+        if fit_path is None:
+            fit_path = resolve_output(None, fit_dir, f"{place}.toml")
         if fit_path.is_file():
             try:
                 min_runs = load_fit_file(fit_path).split.min_runs_per_label

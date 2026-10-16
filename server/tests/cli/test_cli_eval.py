@@ -187,12 +187,21 @@ def report_files(server: Path, name: str = REPORT_NAME) -> tuple[Path, Path]:
     return reports / f"{name}.csv", reports / f"{name}.md"
 
 
+PROVENANCE = ("place_id", "model_version", "calib_version", "split_file", "fit_file")
+
+
 def read_report(path: Path) -> tuple[list[str], dict[str, dict[str, str]]]:
-    """보고서 CSV의 머리말 주석 줄과, 지표 이름 → 행 (CSV 순서)."""
+    """보고서 CSV의 머리말 주석 줄과, 지표 이름 → 행 (CSV 순서). 행마다 같은 평가 출처 칸은 `provenance`로 본다."""
     lines = path.read_text(encoding="utf-8").splitlines()
     comments = [line for line in lines if line.startswith("#")]
     rows = list(csv.DictReader(line for line in lines if not line.startswith("#")))
-    return comments, {row["metric"]: row for row in rows}
+    return comments, {row["metric"]: {k: v for k, v in row.items() if k not in PROVENANCE} for row in rows}
+
+
+def provenance(path: Path) -> set[tuple[str, ...]]:
+    """보고서 행들의 평가 출처 칸. 모든 행이 같아야 한다."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return {tuple(row[k] for k in PROVENANCE) for row in csv.DictReader(l for l in lines if not l.startswith("#"))}
 
 
 def schema_version(server: Path) -> int:
@@ -233,6 +242,11 @@ def test_NFR06_eval_writes_report(server_dir, run_cli, fitted):
     assert sorted(p.name for p in csv_path.parent.iterdir()) == [csv_path.name, md_path.name]
     comments, rows = read_report(csv_path)
     assert list(rows) == ["front_misselection_rate", "ece", "switch_time", "flicker"]  # 4행
+    # 무엇을 평가했는지 모든 행에 남는다: 장소, 모델 버전, 보정 버전, 분할·적합 설정 파일
+    model = load_model(server_dir / "var" / "models" / "place-a" / "v1.json")
+    [(place, version, calib, split_file, fit_file)] = provenance(csv_path)
+    assert (place, version, calib) == ("place-a", "v1", model.calib_version)
+    assert split_file.endswith("place-a-seed42.json") and fit_file.endswith("place-a.toml")
     # fit이 쓴 모델이 시험 회차(검증 회차와 같은 환경)를 맞힌다. 회차의 평가 시각 수는 모델이 고른 window_sec에서 나온다.
     per_run = math.floor(20 - load_model(server_dir / "var" / "models" / "place-a" / "v1.json").window_sec) + 1
     assert (rows["front_misselection_rate"]["trials"], rows["front_misselection_rate"]["failures"]) == (

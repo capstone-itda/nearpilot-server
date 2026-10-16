@@ -49,7 +49,7 @@ keepalive, 접속·시작·종료 제한 시간, 재접속 최소·최대 대기
 
 # 운영 명령
 
-`pip install -e .` 뒤 `server/`에서 `nearpilot <명령>`으로 쓴다. `nearpilot serve`는 위의 `python -m nearpilot`과 같은 서버를 띄운다.
+`pip install -e .` 뒤 `server/`에서 `nearpilot <명령>`으로 쓴다. `nearpilot serve`는 위의 `python -m nearpilot`과 같은 서버를 띄운다. 다만 `--config`의 기본값이 있고, DB 폴더(`var/`)를 만들고, 시작에 실패하면 종료 코드 1이다.
 설정 파일은 `--config`로 고르고 기본은 `config/server.toml`이다 (실행 폴더 기준).
 종료 코드는 0 성공, 1 실행 중 거부·실패(서버 시작 실패 포함), 2 입력 오류, 130 Ctrl+C다.
 

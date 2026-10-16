@@ -94,7 +94,10 @@ def _eval(args: argparse.Namespace) -> int:
         metrics = compute_metrics(collect_samples(model, runs, bin_sec=config.settings.rssi_frame_sec))
     except EvaluationError as error:
         raise CliError(f"평가 실패: {error}", EXIT_FAILED) from None
-    rows = metric_rows(metrics, acceptance)
+    # 무엇을 평가했는지 보고서에 남긴다 (requirements.md §4 "입력, 시나리오, 버전, 표본 수를 보존한다")
+    provenance = {"place_id": place, "model_version": model.model_version, "calib_version": model.calib_version,
+                  "split_file": str(split_path), "fit_file": str(fit_path)}
+    rows = [{**row, **provenance} for row in metric_rows(metrics, acceptance)]
 
     try:
         dirs.reports.mkdir(parents=True, exist_ok=True)

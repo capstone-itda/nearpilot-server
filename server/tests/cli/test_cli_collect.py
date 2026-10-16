@@ -735,3 +735,16 @@ def test_FR16_collect_help_and_usage_errors(run_cli, tmp_path):
         assert "usage: nearpilot collect" in err, argv
     code, out, err = run_cli(["collect", "list", "--unknown"], cwd=tmp_path)  # 모르는 옵션은 최상위 파서가 알린다
     assert (code, out) == (EXIT_INVALID, "") and "unrecognized arguments: --unknown" in err
+
+
+def test_FR16_collect_list_checks_fit_option_first(server_dir, run_cli, announce_nodes):
+    announce_nodes(server_dir, "locker-1")  # 회차가 없는 DB
+
+    # 회차가 없어도 직접 준 --fit 파일이 없으면 입력 오류다
+    code, out, err = run_cli(["collect", "list", "--summary", "--place", "place-a", "--fit", "missing.toml"],
+                             cwd=server_dir)
+    assert (code, out) == (EXIT_INVALID, "") and err.startswith("적합 설정 파일이 없다: ")
+    # --fit은 --summary --place와 함께일 때만 쓰인다
+    for extra in ([], ["--summary"], ["--place", "place-a"]):
+        code, out, err = run_cli(["collect", "list", *extra, "--fit", "missing.toml"], cwd=server_dir)
+        assert (code, out, err) == (EXIT_INVALID, "", "--fit은 --summary --place와 함께 쓴다\n"), extra

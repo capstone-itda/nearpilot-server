@@ -410,9 +410,16 @@ def test_FR16_split_help_and_usage_errors(run_cli, tmp_path):
 
 
 def test_FR16_split_cli_place_must_be_a_name(server_dir, run_cli, split_db):
-    for place in ("../evil", "a/b", "a\\b", ".."):
+    for place in ("../evil", "a/b", "a\\b", "..", "."):
         code, out, err = run_cli(["split", place], cwd=server_dir)
 
         assert (code, out) == (EXIT_INVALID, ""), place
         assert err.startswith("장소은(는) 경로 구분자가 없는 이름이어야 한다"), place
     assert not (server_dir / "var" / "splits").exists()
+
+
+def test_FR16_split_cli_checks_place_before_anything_else(server_dir, run_cli):
+    # 설정 파일, 적합 설정, DB가 모두 없어도 장소 이름 오류가 먼저다
+    code, _, err = run_cli(["split", "..", "--config", "missing.toml"], cwd=server_dir)
+
+    assert code == EXIT_INVALID and err.startswith("장소은(는) 경로 구분자가 없는 이름이어야 한다")

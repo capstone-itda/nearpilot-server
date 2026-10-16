@@ -393,7 +393,7 @@ def test_FR16_fit_missing_label_fails(server_dir, run_cli, make_collection_db):
 
 
 def test_FR16_fit_version_must_be_a_file_name(server_dir, run_cli, fit_data):
-    for version in ("../evil", "../../evil", "a/b", "a\\b", ".."):
+    for version in ("../evil", "../../evil", "a/b", "a\\b", "..", "."):
         code, out, err = run_cli(fit_argv(version), cwd=server_dir)
 
         # DB를 읽기 전에 입력 오류로 거부한다
@@ -613,3 +613,11 @@ def test_FR16_fit_help_and_usage_errors(run_cli, tmp_path):
         code, out, err = run_cli(argv, cwd=tmp_path)  # 인자 오류는 argparse가 사용법과 사유를 stderr에 쓰고 2다
         assert (code, out) == (EXIT_INVALID, ""), argv
         assert "nearpilot" in err and "fit" in err, argv
+
+
+def test_FR16_fit_checks_version_before_reading_anything(server_dir, run_cli):
+    # 설정 파일, 배치, 분할, DB가 모두 없어도 --version 오류가 먼저다
+    code, _, err = run_cli(["fit", "x.json", "--split", "s.json", "--version", ".", "--config", "missing.toml"],
+                           cwd=server_dir)
+
+    assert code == EXIT_INVALID and err.startswith("--version은(는) 경로 구분자가 없는 이름이어야 한다")
