@@ -1,6 +1,6 @@
 # 감사 로그 JSONL 내보내기 (`AuditLog` 사본)
 
-- 상태: 작성 중
+- 상태: 완료
 - 담당: paiwhy (DB)
 - 요구사항: FR-22, NFR-13
 - 따르는 결정: #34
@@ -75,7 +75,8 @@
 ## 6. 결정
 
 - 이어 쓸 위치는 JSONL 줄의 `seq`(=`rowid`)다 — 담당자 확인. 각 줄에 `seq`를 넣고, 내보내기 때마다(매번, 캐시하지 않고) 파일의 마지막 줄을 읽어 그 `seq` 다음부터 이어 쓴다. 마지막 줄이 완전한 JSON이 아니면(끊김) 그 줄을 잘라내고 그 앞의 `seq`를 쓴다. 옆 파일이나 DB 테이블에 커서를 두면 새 상태(파일 하나 또는 컬럼 하나)가 생기고 JSONL 파일과의 동기화가 또 다른 원자성 문제가 된다. 매번 파일에서 다시 읽으면 상태를 늘리지 않고, 서로 다른 연결(스레드)의 내보내기 객체가 메모리 커서 없이도 같은 파일을 안전하게 공유할 수 있다.
-- 커밋 뒤 내보내기는 `immediate_transaction`의 `COMMIT` 성공 직후에 연결한다 — 담당자 확인. `_common.py`에 연결(`sqlite3.Connection`)마다 내보내기 객체를 약한 참조로 등록해 두고, `COMMIT` 성공 뒤 등록된 내보내기가 있으면 부른다. 저장소 함수 20여 개 모두가 `immediate_transaction`을 쓰므로(`AGENTS.md` 의존 규칙 5) 여기 한 곳만 고치면 전부 덮인다. 새 쓰기 함수가 생겨도 자동으로 덮인다.
+- 커밋 뒤 내보내기는 `immediate_transaction`의 `COMMIT` 성공 직후에 연결한다 — 담당자 확인. `_common.py`에 연결(`sqlite3.Connection`)마다 내보내기 객체를 등록해 두고, `COMMIT` 성공 뒤 등록된 내보내기가 있으면 부른다. 저장소 함수 20여 개 모두가 `immediate_transaction`을 쓰므로(`AGENTS.md` 의존 규칙 5) 여기 한 곳만 고치면 전부 덮인다. 새 쓰기 함수가 생겨도 자동으로 덮인다.
+  - 등록은 약한 참조가 아니라 평범한 `dict`로 한다 — 구현 중 `sqlite3.Connection`이 약한 참조를 만들 수 없는 C 확장 타입임을 확인했다(`TypeError: cannot create weak reference to 'sqlite3.Connection' object`). `unregister_jsonl_export(conn)`을 따로 두어 연결을 닫을 때 호출자가 명시적으로 해제한다.
 - `SqliteAuditLog.append()`의 `INSERT`는 단일 문장 자동 커밋이라 `immediate_transaction`을 거치지 않는다. `append()` 끝에서 가진 내보내기 객체를 직접 불러 같은 보장을 준다.
 - 경로마다 잠금은 파일 경로 문자열을 키로 하는 모듈 전역 잠금 테이블에 둔다 — 같은 경로를 가리키는 여러 연결의 내보내기 객체가 잠금을 공유해야 "여러 스레드가 같은 파일에 동시에 쓰지 않는다"를 지킨다. 연결 하나에 잠금을 두면 다른 연결이 같은 파일에 동시에 써서 줄이 섞인다.
 
