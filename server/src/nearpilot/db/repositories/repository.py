@@ -36,6 +36,7 @@ from nearpilot.shared.enums import (
     Verdict,
     Visibility,
 )
+from nearpilot.shared.config import Settings
 from nearpilot.shared.errors import StoreError
 from nearpilot.shared.models import (
     Account,
@@ -68,8 +69,9 @@ _EXHAUSTED = object()  # 승인 남은 횟수가 0일 때 _reserve_usage()가 �
 class SqliteRepository:
     """`Repository` Protocol과 `AccountLookup` Protocol을 함께 구현한다."""
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, settings: Settings | None = None) -> None:
         self._conn = conn
+        self._settings = settings or Settings()
 
     # ── 계정 조회 (NFR-08) ──────────────────────────────────────────
 
@@ -285,63 +287,84 @@ class SqliteRepository:
     # ── ⓪ 중복 (FR-22) ──────────────────────────────────────────────
 
     def link_request(self, req: UseRequest, input_digest: str) -> RequestLink:
+        """새 요청을 연결한다. 기존 행 조회와 한도 검사·삽입을 한 트랜잭션으로 묶는다
+
+        (specs/db-retention-capacity/spec.md §6 결정, #165). 예전처럼 낙관적 `INSERT` 뒤
+        `IntegrityError`로 분기하면 그 단일 문장이 자동 커밋이라 한도 세기를 같은
+        트랜잭션에 넣을 수 없다.
+        """
         target_spec = self._serialize_target(req.target)
-        internal_request_id = new_id()
-        try:
-            self._conn.execute(
-                "INSERT INTO request (internal_request_id, user_id, request_id, input_digest, "
-                "parent_internal_request_id, node_id, target_spec, action, host_kind, received_at) "
-                "VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
-                (
-                    internal_request_id, req.user_id, req.request_id, input_digest,
-                    req.parent_internal_request_id, target_spec, req.action.value,
-                    req.host_kind, iso(req.received_at),
-                ),
-            )
-        except sqlite3.IntegrityError:
-            return self._link_existing(req, input_digest)
-        return RequestLink(internal_request_id=internal_request_id, is_new=True, conflict=False)
-
-    def _serialize_target(self, target: TargetSpec) -> str:
-        if target.kind == TargetKind.EXPLICIT and target.node_id:
-            return target.node_id
-        return f"{target.kind.value}:{target.capability.value}"
-
-    def _link_existing(self, req: UseRequest, input_digest: str) -> RequestLink:
         with immediate_transaction(self._conn):
             row = self._conn.execute(
                 "SELECT internal_request_id, input_digest, verdict, reason_code, node_id, p_max, "
                 "policy_ver FROM request WHERE user_id = ? AND request_id = ?",
                 (req.user_id, req.request_id),
             ).fetchone()
-            if row["input_digest"] != input_digest:
-                return RequestLink(internal_request_id=row["internal_request_id"], is_new=False, conflict=True)
+            if row is not None:
+                return self._link_existing_row(req, input_digest, row)
+            return self._insert_new_request(req, input_digest, target_spec)
 
-            internal_request_id = row["internal_request_id"]
-            if row["verdict"] == Verdict.DENY.value and row["reason_code"] == ReasonCode.INTERNAL_ERROR.value:
-                retried = self._retry_internal_error(internal_request_id, input_digest, row)
-                return RequestLink(
-                    internal_request_id=internal_request_id, is_new=retried, conflict=False, previous=None
-                )
+    def _serialize_target(self, target: TargetSpec) -> str:
+        if target.kind == TargetKind.EXPLICIT and target.node_id:
+            return target.node_id
+        return f"{target.kind.value}:{target.capability.value}"
 
-            previous = None
-            if row["verdict"] is not None:
-                use_row = self._conn.execute(
-                    "SELECT use_id FROM use_session WHERE internal_request_id = ?",
-                    (internal_request_id,),
-                ).fetchone()
-                previous = Decision(
-                    internal_request_id=internal_request_id,
-                    request_id=req.request_id,
-                    verdict=Verdict(row["verdict"]),
-                    reason=ReasonCode(row["reason_code"]),
-                    node_id=row["node_id"],
-                    use_id=use_row["use_id"] if use_row else None,
-                    p_max=row["p_max"],
-                )
+    def _insert_new_request(self, req: UseRequest, input_digest: str, target_spec: str) -> RequestLink:
+        """한도(`dedup_entry_limit`) 이상이면 `request_id` 없이 만든다 (#165).
+
+        이 행은 외부 `request_id`가 있는 요청 수 집계에서 빠지므로 한도를 더 늘리지 않는다.
+        `DENY`·`CAPACITY_EXCEEDED`로 바꾸는 판정은 CORE 가 한다.
+        """
+        count_row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM request WHERE request_id IS NOT NULL"
+        ).fetchone()
+        capacity_exceeded = count_row["n"] >= self._settings.dedup_entry_limit
+        internal_request_id = new_id()
+        stored_request_id = None if capacity_exceeded else req.request_id
+        self._conn.execute(
+            "INSERT INTO request (internal_request_id, user_id, request_id, input_digest, "
+            "parent_internal_request_id, node_id, target_spec, action, host_kind, received_at) "
+            "VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
+            (
+                internal_request_id, req.user_id, stored_request_id, input_digest,
+                req.parent_internal_request_id, target_spec, req.action.value,
+                req.host_kind, iso(req.received_at),
+            ),
+        )
+        return RequestLink(
+            internal_request_id=internal_request_id, is_new=True, conflict=False,
+            capacity_exceeded=capacity_exceeded,
+        )
+
+    def _link_existing_row(self, req: UseRequest, input_digest: str, row: sqlite3.Row) -> RequestLink:
+        if row["input_digest"] != input_digest:
+            return RequestLink(internal_request_id=row["internal_request_id"], is_new=False, conflict=True)
+
+        internal_request_id = row["internal_request_id"]
+        if row["verdict"] == Verdict.DENY.value and row["reason_code"] == ReasonCode.INTERNAL_ERROR.value:
+            retried = self._retry_internal_error(internal_request_id, input_digest, row)
             return RequestLink(
-                internal_request_id=internal_request_id, is_new=False, conflict=False, previous=previous
+                internal_request_id=internal_request_id, is_new=retried, conflict=False, previous=None
             )
+
+        previous = None
+        if row["verdict"] is not None:
+            use_row = self._conn.execute(
+                "SELECT use_id FROM use_session WHERE internal_request_id = ?",
+                (internal_request_id,),
+            ).fetchone()
+            previous = Decision(
+                internal_request_id=internal_request_id,
+                request_id=req.request_id,
+                verdict=Verdict(row["verdict"]),
+                reason=ReasonCode(row["reason_code"]),
+                node_id=row["node_id"],
+                use_id=use_row["use_id"] if use_row else None,
+                p_max=row["p_max"],
+            )
+        return RequestLink(
+            internal_request_id=internal_request_id, is_new=False, conflict=False, previous=previous
+        )
 
     def _retry_internal_error(
         self, internal_request_id: str, input_digest: str, row: sqlite3.Row
