@@ -57,7 +57,7 @@ export function PhoneMirror({ who, follow, stream, mock }: PhoneMirrorProps) {
       <div className="np-phone__stage">
         <div className="np-phone__device">
           <span className="np-phone__camera" aria-hidden="true" />
-          <div className="np-phone__screen" data-scene={scene} data-mock={stream ? undefined : 'mirror'}>
+          <div key={stream ? 'video' : JSON.stringify(mock ?? null)} className="np-phone__screen np-flash" data-scene={scene} data-mock={stream ? undefined : 'mirror'}>
             {stream ? <MirrorVideo stream={stream} /> : mock ? <MockScreen mock={mock} /> : <p className="np-phone__idle">미러링 창 없음 · 설정의 폰 연결에서 골라요</p>}
           </div>
         </div>

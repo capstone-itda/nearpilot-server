@@ -124,3 +124,12 @@
 .np-stage__device[data-edit="true"]:focus-visible .np-stage__hit { stroke: var(--accent-strong); stroke-width: 2.5; stroke-dasharray: 6 4; }
 .np-stage__device[data-invalid="true"] .np-stage__device-body { stroke: var(--ink); stroke-dasharray: 2 4; }
 .np-stage[data-scene="layout"] .np-stage__visitor { pointer-events: none; }
+
+/* 흐름 선 위를 이동하는 메시지 점 */
+.np-stage__packet { stroke: var(--surface); stroke-width: 3; }
+.np-stage__packet[data-tone="accent"] { fill: var(--accent-strong); }
+.np-stage__packet[data-tone="ok"] { fill: var(--ok); }
+.np-stage__packet[data-tone="appr"] { fill: var(--appr); }
+.np-stage__packet[data-tone="deny"] { fill: var(--deny); }
+.np-app[data-motion="off"] .np-stage__packet { display: none; }
+@media (prefers-reduced-motion: reduce) { .np-stage__packet { display: none; } }

@@ -7,7 +7,7 @@ const CHECK_MARK = { pass: '✓', fail: '✕', wait: '…', unsure: '?', none: '
 export function FlowStep({ s, i }: { s: RailStep; i: number }) {
   const checks = s.checks ?? [];
   return (
-    <li className="np-step" data-component="FlowStep" data-status={s.status} data-tone={s.tone ?? 'accent'}>
+    <li className={s.status === 'current' ? 'np-step np-flash' : 'np-step'} data-component="FlowStep" data-status={s.status} data-tone={s.tone ?? 'accent'}>
       <div className="np-step__head"><span className="np-step__num">{i + 1}</span><span className="np-step__title">{STEP_TITLES[i]}</span><span className="np-step__mark">{s.mark ?? ''}</span></div>
       <p className="np-step__detail">{s.detail ?? ''}</p>
       <p className="np-step__code">{s.code ?? ''}</p>
@@ -27,7 +27,8 @@ export function FlowRail({ v, onOpen }: { v: RailView; onOpen?: () => void }) {
       <div className="np-rail__head"><h2 className="np-rail__title">{v.title}</h2><span className="np-rail__meta">{v.meta}</span><span className="np-rail__code">{v.code}</span>
         {v.mode === 'live' && onOpen ? <button className="np-btn np-rail__open" data-variant="quiet" type="button" onClick={onOpen}>요청 상세</button> : null}</div>
       <ol className="np-rail__steps">
-        {v.steps.map((s, i) => <FlowStep key={i} s={s} i={i} />)}
+        {/* 내용이 바뀐 단계는 다시 그려져 도착 강조가 한 번 나온다 */}
+        {v.steps.map((s, i) => <FlowStep key={`${i}|${s.status}|${s.mark}|${s.detail}|${s.code}|${JSON.stringify(s.checks)}`} s={s} i={i} />)}
       </ol>
     </section>
   );

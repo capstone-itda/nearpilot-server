@@ -75,7 +75,7 @@ describe('live', () => {
     // 0.2초 안의 단계들이 묶음 하나에 몰리지 않는다
     expect(flow.every((b) => b.types.length === 1)).toBe(true);
     const gaps = flow.slice(1).map((b, i) => b.t - flow[i].t);
-    expect(Math.min(...gaps.slice(0, 9))).toBeGreaterThanOrEqual(700);
+    expect(Math.min(...gaps.slice(0, 9))).toBeGreaterThanOrEqual(1300);
   });
   it('FR12B liveClock은 빠른 이벤트를 늘리고 긴 조용한 구간을 줄인다', () => {
     const clock = liveClock();

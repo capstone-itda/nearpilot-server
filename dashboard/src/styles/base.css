@@ -152,3 +152,25 @@ body { margin: 0; }
   .np-monitor > .np-phone { display: none; }
   .np-monitor > .np-stage { grid-column: 1; }
 }
+
+/* 도착 강조: 바뀐 곳은 점이 선을 따라 오는 동안(0.6초, Stage의 ARRIVE_SEC) 흐리게 있다가 나타나며 한 번 빛난다.
+   처음 그린 화면(data-motion="off")에는 쓰지 않는다. */
+@keyframes np-arrive-svg {
+  0%, 37% { opacity: 0.2; }
+  38% { opacity: 1; filter: drop-shadow(0 0 0 transparent); }
+  55% { opacity: 1; filter: drop-shadow(0 0 10px var(--accent-strong)); }
+  100% { opacity: 1; filter: drop-shadow(0 0 0 transparent); }
+}
+@keyframes np-arrive-box {
+  0%, 37% { opacity: 0.35; }
+  38% { opacity: 1; box-shadow: 0 0 0 0 transparent; }
+  55% { opacity: 1; box-shadow: 0 0 0 3px var(--accent), 0 0 24px var(--accent); }
+  100% { opacity: 1; box-shadow: 0 0 0 0 transparent; }
+}
+.np-app[data-motion="on"] svg .np-flash { animation: np-arrive-svg 1.6s ease-out; }
+.np-app[data-motion="on"] .np-flash:not(g) { animation: np-arrive-box 1.6s ease-out; }
+/* 꺼지는 노드는 강조하지 않는다 */
+.np-app[data-motion="on"] svg .np-stage__node.np-flash[data-active="false"] { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .np-app[data-motion="on"] .np-flash, .np-app[data-motion="on"] svg .np-flash { animation: none; }
+}

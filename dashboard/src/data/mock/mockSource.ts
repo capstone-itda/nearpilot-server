@@ -38,7 +38,7 @@ function inPeriod(at: string, period: string): boolean {
 export const LIVE_START = sec('14:25:50');
 
 /**
- * live의 실제 경과(초) → 이야기 시각. 요청 하나의 이벤트는 0.2초 안에 몰려 있어서 하나씩 약 0.9초 간격으로 늘려 보이고,
+ * live의 실제 경과(초) → 이야기 시각. 요청 하나의 이벤트는 0.2초 안에 몰려 있어서 하나씩 1.5초 간격으로 늘려 보이고 (점이 도착하고 강조가 끝날 시간),
  * 명령 뒤 결과를 기다리는 1초 안쪽의 간격은 2초로 늘려 명령 선이 보이게 하고,
  * 이벤트 사이의 긴 조용한 구간은 빨리 감는다. 마지막 이벤트 뒤에는 실제 속도로 간다.
  */
@@ -51,7 +51,7 @@ export function liveClock(start = LIVE_START): (elapsedSec: number) => number {
   let prev = start;
   for (const t of times) {
     const g = t - prev;
-    real += g < 0.5 ? 0.9 : g <= 5 ? Math.max(g, 2) : Math.min(8, 4 + g / 60);
+    real += g < 0.5 ? 1.5 : g <= 5 ? Math.max(g, 2) : Math.min(8, 4 + g / 60);
     knots.push([real, t]);
     prev = t;
   }

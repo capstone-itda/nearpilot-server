@@ -226,7 +226,7 @@ test('FR12B 실시간 흐름 모드는 이벤트가 도착하는 순서대로 �
   // ASK 결과가 보이는 동안 신호 세기가 계속 들어와 바뀐다
   let askLabels: string[] | undefined;
   let rssiChanged = false;
-  for (let i = 0; i < 200 && !seen.includes('flow'); i++) {
+  for (let i = 0; i < 400 && !seen.includes('flow'); i++) {
     await page.clock.runFor(200);
     const scene = await stage.getAttribute('data-scene');
     if (seen.at(-1) !== scene) seen.push(scene!);
@@ -245,9 +245,9 @@ test('FR12B 실시간 흐름 모드는 이벤트가 도착하는 순서대로 �
   // 대기 → 판정 중 → ASK → (내려감) 대기 → 판정 중 → 실행
   expect(seen).toEqual(['idle', 'judging', 'ask', 'idle', 'judging', 'flow']);
   await expect(page.locator('.np-rail__meta')).toContainText('14:28:10');
-  await page.clock.runFor(60000);
+  await page.clock.runFor(90000);
   await expect(page.locator('.np-rail__title')).toHaveText('방문자 B · 조명 켜기');
-  await expect(page.locator('.np-topbar__recv')).toContainText('수신 14:3');
+  await expect(page.locator('.np-topbar__recv')).toContainText('수신 14:');
   expect(writes).toEqual([]);
 });
 
@@ -262,7 +262,7 @@ test('FR12B 흐름 중에 메뉴로 연 목록 패널은 자동 패널로 바뀌
   await page.clock.install();
   await ready(page, 'scene=live&panel=audit');
   await expect(page.locator('.np-panel__title')).toHaveText('감사 로그');
-  await page.clock.runFor(90000);
+  await page.clock.runFor(130000);
   await expect(page.locator('.np-rail__title')).toHaveText('방문자 B · 조명 켜기');
   await expect(page.locator('.np-panel__title')).toHaveText('감사 로그');
 });

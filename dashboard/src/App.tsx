@@ -47,11 +47,19 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   const [view, setView] = useState<ViewState>(initialView);
   const [panel, setPanel] = useState<PanelState | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  // 처음 그린 화면은 강조하지 않는다. 그 뒤로 바뀌는 곳만 도착 강조를 보인다.
+  const [motion, setMotion] = useState(false);
   const [streams, setStreams] = useState<Record<string, MediaStream>>({});
   const shownPerson = useRef<string>();
   const seen = useRef<{ init?: boolean; request?: string; faults: Set<string> }>({ faults: new Set() });
 
   useEffect(() => { savePrefs({ theme, follow }); }, [theme, follow]);
+  const loaded = !!snapshot;
+  useEffect(() => {
+    if (!loaded) return;
+    const t = setTimeout(() => setMotion(true), 800);
+    return () => clearTimeout(t);
+  }, [loaded]);
   useEffect(() => {
     source.place().then((p) => { setPlace(p); setArrangement(resolveArrangement(p.devices, loadArrangement(p.placeName))); }, () => undefined);
   }, [source]);
@@ -173,7 +181,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
 
   return (
     <DataCtx.Provider value={ctx}>
-      <div className="np-app" data-theme={theme}>{screen}</div>
+      <div className="np-app" data-theme={theme} data-motion={motion ? 'on' : 'off'}>{screen}</div>
     </DataCtx.Provider>
   );
 }

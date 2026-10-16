@@ -1,5 +1,5 @@
 // 무대: 표시용 배치 위의 기기, 사람, 무선 흐름(D5). 배치는 이 PC에서 정한다(D4). 실제 위치·거리가 아니다.
-import { useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import type { HostKind, Spot } from '../model/types';
 import { GRID, facing, frontOf, snap } from '../view/arrange';
 import type { StageDeviceView, StageView, StageVisitorView } from '../view/stage';
@@ -25,6 +25,31 @@ interface DeviceEditProps {
   onKeyDown: (e: KeyboardEvent<SVGGElement>) => void;
 }
 
+/** 메시지 하나: 흐름 선이 켜질 때 점이 출발지에서 도착지까지 한 번 이동한다 (ARRIVE_SEC). 도착지의 바뀐 표시는 그 뒤에 나타난다 (np-flash). */
+export const ARRIVE_SEC = 0.6;
+function Packet({ d, tone }: { d: string; tone: string }) {
+  const move = useRef<SVGAnimationElement>(null);
+  const fade = useRef<SVGAnimationElement>(null);
+  useEffect(() => { move.current?.beginElement?.(); fade.current?.beginElement?.(); }, []);
+  return (
+    <circle className="np-stage__packet" data-tone={tone} r="9" opacity="0">
+      <animateMotion ref={move} dur={`${ARRIVE_SEC}s`} begin="indefinite" fill="freeze" path={d} />
+      <animate ref={fade} attributeName="opacity" values="1;1;0" keyTimes="0;0.8;1" dur={`${ARRIVE_SEC + 0.15}s`} begin="indefinite" fill="freeze" />
+    </circle>
+  );
+}
+
+/** 선과 화살표. 켜지는 순간 점이 이동한다 */
+function Flow({ on, tone, d, arrow }: { on: boolean; tone: string; d: string; arrow: string }) {
+  return (
+    <g data-on={b(on)}>
+      <path className="np-stage__flow" data-tone={tone} d={d} />
+      <polygon className="np-stage__arrow" data-tone={tone} points={arrow} />
+      {on && d ? <Packet d={d} tone={tone} /> : null}
+    </g>
+  );
+}
+
 function Device({ d, edit }: { d: StageDeviceView; edit?: DeviceEditProps }) {
   const ly = d.wall === 'top' ? [50, 72, 92] : [-78, -56, -36];
   const editAttrs = edit ? {
@@ -32,7 +57,7 @@ function Device({ d, edit }: { d: StageDeviceView; edit?: DeviceEditProps }) {
     'data-edit': 'true', 'data-invalid': b(edit.invalid), onPointerDown: edit.onPointerDown, onKeyDown: edit.onKeyDown
   } : {};
   return (
-    <g className="np-stage__device" data-component="StageDevice" data-tone={d.tone} data-dim={b(d.dim)} transform={`translate(${d.x} ${d.y})`} {...editAttrs}>
+    <g className="np-stage__device np-flash" data-component="StageDevice" data-tone={d.tone} data-dim={b(d.dim)} transform={`translate(${d.x} ${d.y})`} {...editAttrs}>
       {edit ? <rect className="np-stage__hit" x="-66" y="-48" width="132" height="96" /> : null}
       <rect className="np-stage__device-body" x="-36" y="-21" width="72" height="42" />
       {GLYPH[d.capability]}
@@ -57,9 +82,10 @@ function Visitor({ v }: { v: StageVisitorView }) {
   );
 }
 
-function Node({ x, y, w, h, label, sub, active, dim }: { x: number; y: number; w: number; h: number; label: string; sub?: string; active: boolean; dim: boolean }) {
+/** flash: 메시지를 받는 쪽(서버, 소유자 폰)이라 켜질 때 도착 강조를 한다. 보내는 쪽(AI 호스트)은 바로 켜진다. */
+function Node({ x, y, w, h, label, sub, active, dim, flash }: { x: number; y: number; w: number; h: number; label: string; sub?: string; active: boolean; dim: boolean; flash?: boolean }) {
   return (
-    <g className="np-stage__node" data-active={b(active)} data-dim={b(dim)}>
+    <g className={flash ? 'np-stage__node np-flash' : 'np-stage__node'} data-active={b(active)} data-dim={b(dim)}>
       <rect className="np-stage__node-box" x={x} y={y} width={w} height={h} />
       <text className="np-stage__label" x={x + 18} y={y + 30}>{label}</text>
       {sub ? <text className="np-stage__sub" x={x + 18} y={y + 52}>{sub}</text> : null}
@@ -150,13 +176,13 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
 
         <g className="np-stage__nodes" data-on={b(v.scene !== 'layout')}>
           <text className="np-stage__cap" x="30" y="150">AI 호스트</text>
-          {HOSTS.map(([k, name, y]) => <Node key={k} x={30} y={y} w={220} h={46} label={name} active={v.host === k} dim={!!v.host && v.host !== k} />)}
+          {HOSTS.map(([k, name, y]) => <Node key={`${k}|${v.host === k}`} x={30} y={y} w={220} h={46} label={name} active={v.host === k} dim={!!v.host && v.host !== k} />)}
           <path className="np-stage__link" d="M250 188H272M250 246H272M250 304H272M272 188V420H250" />
-          <Node x={30} y={370} w={220} h={140} label="NearPilot 서버" sub="누구·어디·정책·빈자리" active={v.server} dim={false} />
+          <Node key={`server|${v.server}`} x={30} y={370} w={220} h={140} flash label="NearPilot 서버" sub="누구·어디·정책·빈자리" active={v.server} dim={false} />
           <path className="np-stage__node-corner" d="M30 386V370H46M234 370H250V386M250 494V510H234M46 510H30V494" />
           <text className="np-stage__code" x="48" y="482">MCP · MQTT</text>
           <path className="np-stage__link" data-dashed="true" d="M140 510V600" />
-          <Node x={30} y={600} w={220} h={64} label="소유자 폰" sub="승인 알림을 받아요" active={v.owner} dim={false} />
+          <Node key={`owner|${v.owner}`} x={30} y={600} w={220} h={64} flash label="소유자 폰" sub="승인 알림을 받아요" active={v.owner} dim={false} />
           <path className="np-stage__bus" d={bus} />
         </g>
 
@@ -170,7 +196,8 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
           </g>
         ))}
 
-        {devices.map((d) => <Device key={d.nodeId} d={d} edit={editFor(d)} />)}
+        {/* 상태가 바뀐 기기는 다시 그려져 도착 강조가 한 번 나온다 */}
+        {devices.map((d) => <Device key={`${d.nodeId}|${d.status}|${d.tone}`} d={d} edit={editFor(d)} />)}
 
         <g className="np-stage__rssi" data-on={b(v.rssiOn)}>
           {devices.map((d) => (
@@ -178,26 +205,16 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
           ))}
         </g>
 
-        {HOSTS.map(([k, , y]) => (
-          <g key={k} data-on={b(v.mcp === k)}>
-            <path className="np-stage__flow" data-tone="accent" d={`M250 ${y + 23}H272V420H262`} />
-            <polygon className="np-stage__arrow" data-tone="accent" points="264,412 250,420 264,428" />
-          </g>
-        ))}
-        {HOSTS.map(([k, , y]) => (
-          <g key={`reply-${k}`} data-on={b(v.reply === k)}>
-            <path className="np-stage__flow" data-tone="ok" d={`M250 420H272V${y + 23}H262`} />
-            <polygon className="np-stage__arrow" data-tone="ok" points={`264,${y + 15} 250,${y + 23} 264,${y + 31}`} />
-          </g>
-        ))}
-        <g data-on={b(v.uplink)}><path className="np-stage__flow" data-tone="accent" d={`M${topEnd} 60H284V470H262`} /><polygon className="np-stage__arrow" data-tone="accent" points="264,462 250,470 264,478" /></g>
-        <g data-on={b(!!v.cmd)}><path className="np-stage__flow" data-tone="ok" d={cmd.path} /><polygon className="np-stage__arrow" data-tone="ok" points={cmd.arrow} /></g>
-        <g data-on={b(v.push)}><path className="np-stage__flow" data-tone="appr" d="M140 510V586" /><polygon className="np-stage__arrow" data-tone="appr" points="132,584 140,598 148,584" /></g>
-        <g data-on={b(!!v.fault)}><path className="np-stage__flow" data-tone="deny" d={fault.path} /><polygon className="np-stage__arrow" data-tone="deny" points={fault.arrow} /></g>
+        {HOSTS.map(([k, , y]) => <Flow key={k} on={v.mcp === k} tone="accent" d={`M250 ${y + 23}H272V420H262`} arrow="264,412 250,420 264,428" />)}
+        {HOSTS.map(([k, , y]) => <Flow key={`reply-${k}`} on={v.reply === k} tone="ok" d={`M250 420H272V${y + 23}H262`} arrow={`264,${y + 15} 250,${y + 23} 264,${y + 31}`} />)}
+        <Flow on={v.uplink} tone="accent" d={`M${topEnd} 60H284V470H262`} arrow="264,462 250,470 264,478" />
+        <Flow key={`cmd-${v.cmd}`} on={!!v.cmd} tone="ok" d={cmd.path} arrow={cmd.arrow} />
+        <Flow on={v.push} tone="appr" d="M140 510V586" arrow="132,584 140,598 148,584" />
+        <Flow key={`fault-${v.fault}`} on={!!v.fault} tone="deny" d={fault.path} arrow={fault.arrow} />
 
         {v.visitors.map((x) => <Visitor key={x.personId} v={x} />)}
 
-        <g className="np-stage__callout" data-component="StageCallout" data-on={b(c.on)} data-tone={c.tone}>
+        <g key={`${c.title}|${c.body}`} className="np-stage__callout np-flash" data-component="StageCallout" data-on={b(c.on)} data-tone={c.tone}>
           <path className="np-stage__callout-leader" d={`M${c.ax} ${c.ay}L${c.lx} ${c.ly}`} />
           <g transform={`translate(${c.x} ${c.y})`}>
             <rect className="np-stage__callout-box" width="390" height="76" />
