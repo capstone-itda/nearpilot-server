@@ -13,8 +13,10 @@ spec 규칙
 # FR-18 결정론적 판정 파이프라인 (⓪~⑥)
 
 - 담당: eunji719 (판정)
-- 요구사항: FR-18
-- 따르는 결정: #15, #23, #24, #25, #26, #27, #33, #34, #35, #39, #42
+- 후속 상태: #165 용량 제한은 구현 전 초안이다. 공동 경계 확인과 구현 뒤에만 같은 fix PR을 머지한다.
+- 후속 초안 작성: JM-220이다.
+- 요구사항: FR-03, FR-18, FR-19, FR-21, FR-22, NFR-03
+- 따르는 결정: #15, #23, #24, #25, #26, #27, #33, #34, #35, #39, #42, #165
 
 ## 1. 왜
 
@@ -77,6 +79,7 @@ spec 규칙
 ### 고치는 곳
 - `server/src/nearpilot/core/decision/`
 - `server/tests/core/`
+- #165 후속 검증: `server/tests/integration/`이다.
 
 ### 고치지 않는 곳
 - 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
@@ -108,7 +111,7 @@ spec 규칙
 | 같은 `(계정, request_id)`에 다른 입력이 온다 | `DENY` / `REQUEST_ID_CONFLICT`를 반환한다 | `test_FR18_같은_키_다른_입력이면_REQUEST_ID_CONFLICT이고_저장하지_않는다` |
 | 다른 계정이 같은 `request_id`를 보낸다 | 다른 계정의 결과를 반환하지 않는다 | `test_FR18_다른_계정의_같은_request_id는_서로_다른_요청으로_판정한다` |
 | 보장기간이 지나 DB가 비운 `request_id`가 다시 온다 | 새 요청으로 판정한다 | `test_FR18_통과한_대여형은_OK이고_RESERVED를_만든다` (DB가 `is_new`로 알리는 새 요청의 정상 경로) |
-| 새 요청인데 중복 방지 항목이 한도 이상이다 | `DENY` / `CAPACITY_EXCEEDED`를 반환한다. 재전송에는 기존 결과를 반환한다 | 미결 (7절). 구현하지 않는다 |
+| 새 요청인데 중복 방지 항목이 한도 이상이다 | `DENY` / `CAPACITY_EXCEEDED`를 저장한다. 재전송에는 기존 결과를 반환한다 | `test_FR22_capacity_exceeded_stops_before_beacon` (후속 구현 계획) |
 | 단계 실행 중 예상하지 못한 예외가 난다 | `DENY` / `INTERNAL_ERROR`를 반환한다. 호스트 응답에 예외 내용을 넣지 않는다 | `test_FR18_단계에서_예외가_나면_INTERNAL_ERROR로_거부한다` |
 | 두 요청이 같은 기기를 동시에 요청한다 | `reserve_if_free()` 결과를 따른다. 실패한 요청은 `BUSY`다 | `test_FR18_FR19_점유_실패는_reserve_if_free_결과를_따른다` |
 | 공용형 제한 기기를 요청한다 | `reserve_if_free()`를 호출한다. `use_id`는 `None`이고 `usage_id`는 사용분 ID다 | `test_FR18_공용형_승인_사용분_ID를_점유_요청에_넘기고_인계에_담는다` |
@@ -177,6 +180,19 @@ spec 규칙
   - `execute()`는 이 작업이 부르지 않는다.
 - `save_decision()`이 충돌(`CONFLICT`)을 반환하면 `OK`가 아니라 `INTERNAL_ERROR`로 거부하고 다시 저장하지 않는다 — 기존 판정 기록을 덮어쓰지 않기 위해서다.
 
+### #165 후속: 요청 용량 제한
+
+- 이 절은 구현 전 초안이다. 기존 판정 구현은 아직 `capacity_exceeded`를 검사하지 않는다.
+- 입력은 기존 `RequestLink.capacity_exceeded`다. 별도 용량 조회 접점을 만들지 않는다.
+- 기존 키의 충돌과 재전송 판정은 유지한다.
+- 새 조작 요청의 플래그가 참이면 ⓪에서 `DENY`와 `CAPACITY_EXCEEDED`를 저장한다.
+- 내부 요청 ID는 DB가 만든 값을 쓴다. 호스트의 외부 요청 ID는 응답에 유지한다.
+- 용량 거부도 기존 `save_decision`과 감사 기록 경로를 쓴다.
+- 용량 거부 뒤에는 ①~⑥과 실행 인계를 호출하지 않는다.
+- 반납, 조회, 결과 정산과 복구에는 용량 제한을 붙이지 않는다.
+- DB의 원자적 집계와 판정의 거부를 같은 fix 작업에서 검증한다.
+- 구현은 기존 spec을 고치는 fix PR에서 한다 — `AGENTS.md`의 머지된 spec 후속 규칙을 따른다.
+
 ## 7. 가정
 
 - ① T의 초기 기준은 3초(`beacon_recent_sec`), ② 온라인 유지 시간의 초기 기준은 15초(`online_ttl_sec`)다 (requirements.md §1.2). 판정은 두 값을 설정에서 받는다.
@@ -186,7 +202,10 @@ spec 규칙
 - `reserve_if_free()`가 예외를 내면 `INTERNAL_ERROR`로 거부한다. 반영 여부가 불명인 예약의 정리는 이 작업 밖이다.
 - 외부 요청의 중복 방지 보장기간이 지나면 DB가 외부 `request_id`를 비운다 (FR-22). 그 뒤 같은 `request_id`가 오면 ⓪은 새 요청으로 본다. 판정은 ⓪~⑥을 처음부터 검사한다.
 - 신규 조작 접수 제한은 ⓪에서 새 요청으로 확인한 요청에만 적용한다 (FR-22). 한도 이상이면 `DENY` / `CAPACITY_EXCEEDED`다. 같은 요청의 재전송에는 기존 결과를 반환한다.
-- 미결: DB가 한도 초과를 판정에 알리는 접점과 거부한 요청을 기록하는 방식. `link_request()`의 반환에 담을지, 별도 조회를 둘지 DB 담당과 정한다. 접점이 정해질 때까지 판정은 용량 부족 거부를 구현하지 않는다.
+- #165가 접점을 정했다. DB는 외부 `request_id`를 비운 행을 만들고 `capacity_exceeded=True`를 반환한다.
+- 구현 의존: 승인 신청도 `link_request`를 쓴다. 승인 신청을 제한하지 않는 방향은 담당자가 선택했다.
+- 승인 신청의 외부 키와 재전송을 보장하는 공동 계약은 아직 없다. 팀 확인 전 이 경계는 구현하지 않는다.
+- 가득 찬 상태에서 먼저 정리하는 방식은 DB 정리의 보호 기준과 함께 DB 담당자가 확정한다.
 - 미결: 후보가 있는데 관측이 없을 때 `posterior()`가 빈 `posteriors`를 반환하는가, 균등 분포를 반환하는가. 판정은 빈 `posteriors`를 `LOW_CONFIDENCE`로 처리하려 한다. 근접 추정 담당에게 확인한다 (#26).
 - 실행 직전 재검사는 판정이 제공하고 상태 관리가 호출한다. 재검사 실패의 미전송 취소도 상태 관리가 시작한다.
 - 미결: 명시 지정 임계값의 수치. 근접 추정 담당이 검증셋으로 실험한 뒤 정한다. 설정 이름은 `threshold_explicit_locker`, `threshold_explicit_light`, `threshold_explicit_speaker`다. 기본값 `None`이면 명시 지정 실행을 허가하지 않는다.
@@ -208,3 +227,17 @@ spec 규칙
 
 - 구현은 `server/tests/core/test_decision_pipeline.py`다.
 - 다른 계층의 구현 없이 fake만으로 확인한다.
+
+### #165 후속 검증 계획
+
+| 요구사항 | 테스트 | 확인하는 것 |
+|---|---|---|
+| FR-18, FR-22 | `test_FR22_capacity_exceeded_stops_before_beacon` | 용량 거부에서 ① 이후를 호출하지 않는다 |
+| FR-22 | `test_FR22_capacity_denial_is_saved_and_audited` | 외부 ID 없는 요청 행에 판정과 감사를 저장한다 |
+| FR-18, FR-22 | `test_FR22_capacity_keeps_replay_and_conflict` | 기존 재전송과 입력 충돌을 유지한다 |
+| FR-19, NFR-03 | `test_NFR03_capacity_never_reserves_or_sends` | 거부 요청은 예약과 실행을 만들지 않는다 |
+| FR-21, FR-22 | `test_FR22_capacity_keeps_release_status_and_recovery` | 한도에서도 기존 작업을 계속한다 |
+| FR-03, FR-22 | `test_FR03_capacity_keeps_access_request_dedup` | 팀 계약 확인 뒤 승인 신청의 중복 처리를 검증한다 |
+
+- 위 테스트는 계획이다. 이 초안은 판정 코드와 새 테스트를 포함하지 않는다.
+- DB 집계 구현과 공동 경계 확인을 마친 뒤에만 후속 작업을 완료로 표시한다.
