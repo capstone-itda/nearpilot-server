@@ -154,6 +154,8 @@ def fit_observation_params(
     기기 앞 회차(라벨이 `NONE_LABEL`이 아닌 회차)로 `A`, `n`, `sigma`를, `none` 회차로 `none_rssi`, `none_sigma`를 구한다.
     입력이 잘못됐거나 값을 정할 수 없으면 `FitError`다. 앵커마다 앞 표본, `n`·`sigma`, none 표본, `none_sigma` 순으로 본다.
     """
+    min_distance_m = _positive_number(min_distance_m, "min_distance_m")
+    _check_layout(layout)
     for run in runs:
         if run.label != NONE_LABEL and run.label not in layout.nodes:
             raise FitError(
@@ -181,14 +183,14 @@ def fit_observation_params(
                 if frame.node_id == anchor_id:
                     distances.append(distance)
                     rssis.append(frame.rssi)
-        if len(rssis) < 3 or len(set(distances)) < 2:
-            raise FitError(
-                f"앵커 {anchor_id!r}: 기기 앞 회차에서 프레임 {len(rssis)}개, 서로 다른 거리 {len(set(distances))}개를 받았다"
-                " (프레임 3개 이상, 서로 다른 거리 2개 이상이어야 한다)"
-            )
-
         # rssi = A + n·u, u = −10·log10(d). 최소제곱의 닫힌 식이다.
         us = [-10.0 * math.log10(distance) for distance in distances]
+        # 서로 다른 거리는 u로 센다. 거리가 달라도 log10 뒤 값이 같으면 최소제곱의 분모가 0이다.
+        if len(rssis) < 3 or len(set(us)) < 2:
+            raise FitError(
+                f"앵커 {anchor_id!r}: 기기 앞 회차에서 프레임 {len(rssis)}개, 서로 다른 거리 {len(set(us))}개를 받았다"
+                " (프레임 3개 이상, 서로 다른 거리 2개 이상이어야 한다)"
+            )
         u_mean = math.fsum(us) / len(us)
         r_mean = math.fsum(rssis) / len(rssis)
         du = [u - u_mean for u in us]
@@ -231,6 +233,32 @@ def _positive_number(value: object, name: str, *, upper: float = math.inf) -> fl
     return number
 
 
+def _bin_sec(value: object) -> float:
+    """시간 칸 길이를 검사한다. `timedelta`로 바꿨을 때 0이 되는 값(0.5 µs 미만)도 거부한다."""
+    bin_sec = _positive_number(value, "bin_sec")
+    if timedelta(seconds=bin_sec) <= timedelta(0):
+        raise FitError(f"bin_sec: 1 마이크로초 단위로 0보다 커야 한다 ({value!r})")
+    return bin_sec
+
+
+def _is_path_component(value: object) -> bool:
+    """경로 조각 하나인가. 모델 파일 경로 `{root}/{place_id}/{model_version}.json`이 루트 밖으로 나가지 않게 한다."""
+    return isinstance(value, str) and value not in ("", ".", "..") and "/" not in value and "\\" not in value
+
+
+def _check_layout(layout: PlaceLayout) -> None:
+    """배치의 장소 ID가 경로 조각이고 좌표가 모두 유한한지 본다. 어기면 `FitError`다."""
+    if not _is_path_component(layout.place_id):
+        raise FitError(f"place_id: 경로 구분자가 없는 비어 있지 않은 이름이어야 한다 ({layout.place_id!r})")
+    for node_id, anchor in layout.nodes.items():
+        for name in ("x", "y", "front_x", "front_y"):
+            if not math.isfinite(getattr(anchor, name)):
+                raise FitError(f"배치 {node_id!r}.{name}: 유한한 수여야 한다 ({getattr(anchor, name)!r})")
+    for i, point in enumerate(layout.none_points):
+        if not all(math.isfinite(v) for v in point):
+            raise FitError(f"배치 none_points[{i}]: 유한한 수여야 한다 ({point!r})")
+
+
 def _candidates(values: Sequence[object], name: str, *, upper: float = math.inf) -> tuple[float, ...]:
     """후보 목록이 비어 있지 않고 값이 모두 범위 안인지 본다. 값은 float로 바꿔 돌려준다."""
     if not values:
@@ -256,7 +284,7 @@ def validation_log_loss(
     회차끼리 평균한다 — 회차가 독립 단위다. 회차가 없거나, 평가 시각이 없는 회차가 있거나,
     라벨이 배치에 없으면 `FitError`다.
     """
-    bin_sec = _positive_number(bin_sec, "bin_sec")
+    bin_sec = _bin_sec(bin_sec)
     if not runs:
         raise FitError("검증 회차가 없다")
     # 근접 추정은 node_id, place_id, trust_state만 읽는다. 나머지 필드는 자리 채움 값이다.
@@ -311,14 +339,16 @@ def fit_model(
     모델 파일은 쓰지 않는다.
     """
     # 설정 검사는 적합보다 먼저 한다. 적합은 min_distance_m를 검사하지 않아서, 0 이하이면 log10(0)에서 막힌다.
-    for name, value in (("model_version", config.model_version), ("calib_version", config.calib_version)):
-        if not isinstance(value, str) or not value:
-            raise FitError(f"{name}: 비어 있지 않은 문자열이어야 한다 ({value!r})")
+    if not _is_path_component(config.model_version):
+        raise FitError(f"model_version: 경로 구분자가 없는 비어 있지 않은 이름이어야 한다 ({config.model_version!r})")
+    if not isinstance(config.calib_version, str) or not config.calib_version:
+        raise FitError(f"calib_version: 비어 있지 않은 문자열이어야 한다 ({config.calib_version!r})")
     min_distance_m = _positive_number(config.min_distance_m, "min_distance_m")
     taus = _candidates(config.taus, "taus")
     stays = _candidates(config.stays, "stays", upper=1.0)
     window_secs = _candidates(config.window_secs, "window_secs")
-    bin_sec = _positive_number(bin_sec, "bin_sec")
+    bin_sec = _bin_sec(bin_sec)
+    _check_layout(layout)
 
     counts = Counter(run.run_id for run in (*train, *validation))
     repeated = sorted(run_id for run_id, count in counts.items() if count > 1)
@@ -425,14 +455,12 @@ def model_to_dict(model: ProximityModel) -> dict[str, Any]:
     """모델을 모델 파일의 JSON 내용으로 바꾼다. `load_model`이 읽는 형식이고, 키 순서는 파일에 쓰는 순서다.
 
     기기는 node_id 정렬 순이고 `none_points`는 모델의 순서다. `validation`은 읽기 전용 매핑을 dict로, tuple을 list로 되돌린다.
-    `calibration_method`가 "none", "temperature"가 아니면 `ValueError`다.
+    보정 방법과 τ가 맞는지는 `ProximityModel`이 만들 때 검사한다.
     """
     if model.calibration_method == "none":
         calibration: dict[str, Any] = {"method": "none"}
-    elif model.calibration_method == "temperature":
-        calibration = {"method": "temperature", "tau": model.calibration_tau}
     else:
-        raise ValueError(f'calibration_method: "none", "temperature"만 모델 파일에 쓸 수 있다 ({model.calibration_method!r})')
+        calibration = {"method": "temperature", "tau": model.calibration_tau}
     return {
         "place_id": model.place_id,
         "model_version": model.model_version,
@@ -450,9 +478,13 @@ def model_to_dict(model: ProximityModel) -> dict[str, Any]:
 def write_model_file(root: Path, model: ProximityModel) -> Path:
     """모델 파일 `{root}/{place_id}/{model_version}.json`을 새로 쓰고 그 경로를 돌려준다.
 
+    `place_id`와 `model_version`이 경로 조각 하나가 아니면(빈 값, `.`, `..`, `/`나 `\\`가 있다) `ValueError`다.
     JSON 직렬화를 먼저 한다. 무한대나 NaN이 남아 있어서 `ValueError`가 나면 디렉터리도 파일도 만들지 않는다.
     같은 버전의 파일이 이미 있으면 `FileExistsError`가 그대로 올라가고, 있는 파일은 바뀌지 않는다 (#40).
     """
+    for name, value in (("place_id", model.place_id), ("model_version", model.model_version)):
+        if not _is_path_component(value):
+            raise ValueError(f"{name}: 경로 구분자가 없는 비어 있지 않은 이름이어야 한다 ({value!r})")
     path = root / model.place_id / f"{model.model_version}.json"
     text = json.dumps(model_to_dict(model), ensure_ascii=False, indent=2, allow_nan=False) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)

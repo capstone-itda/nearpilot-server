@@ -235,15 +235,40 @@ def test_FR22_model_file_text_is_fixed(tmp_path):
     assert load_model(path) == HAND_MODEL
 
 
-@pytest.mark.parametrize("method", ["platt", "", "None", "TEMPERATURE"])
-def test_FR16_model_to_dict_rejects_unknown_calibration(tmp_path, method):
-    model = replace(MODEL_A, calibration_method=method)
+@pytest.mark.parametrize(
+    ("method", "tau", "expected"),
+    [
+        pytest.param("platt", 1.0, "calibration_method", id="unknown_method"),
+        pytest.param("", 1.0, "calibration_method", id="empty_method"),
+        pytest.param("TEMPERATURE", 2.0, "calibration_method", id="method_case"),
+        pytest.param("none", 2.0, "calibration_tau", id="none_with_tau"),
+        pytest.param("temperature", 0.0, "calibration_tau", id="tau_zero"),
+        pytest.param("temperature", -1.0, "calibration_tau", id="tau_negative"),
+        pytest.param("temperature", math.inf, "calibration_tau", id="tau_inf"),
+        pytest.param("temperature", math.nan, "calibration_tau", id="tau_nan"),
+    ],
+)
+def test_FR16_model_rejects_inconsistent_calibration(method, tau, expected):
+    # 계산은 τ만 읽고 모델 파일은 방법을 쓴다. 어긋난 모델은 만들 수 없어서 쓴 파일과 계산이 다를 수 없다
+    with pytest.raises(ValueError, match=expected):
+        replace(MODEL_A, calibration_method=method, calibration_tau=tau)
 
-    with pytest.raises(ValueError, match="calibration_method"):
-        model_to_dict(model)
-    with pytest.raises(ValueError, match="calibration_method"):
-        write_model_file(tmp_path, model)
-    assert list(tmp_path.iterdir()) == []  # 디렉터리도 파일도 만들지 않는다
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        pytest.param({"model_version": name}, id=f"model_version_{i}") for i, name in enumerate(["", ".", "..", "sub/v1", "../../escaped", "a\\b"])
+    ]
+    + [pytest.param({"place_id": name}, id=f"place_id_{i}") for i, name in enumerate(["", ".", "..", "x/y", "../escaped", "a\\b"])],
+)
+def test_FR16_write_rejects_non_component_names(tmp_path, overrides):
+    root = tmp_path / "root"
+    root.mkdir()
+
+    with pytest.raises(ValueError, match=next(iter(overrides))):
+        write_model_file(root, replace(MODEL_A, **overrides))
+
+    assert sorted(tmp_path.rglob("*")) == [root]  # 루트 안에도 밖에도 아무것도 만들지 않는다
 
 
 # ── 쓴 파일 읽기 ─────────────────────────────────────────────────────
@@ -360,7 +385,6 @@ def test_FR16_write_places_file_by_place_and_version(tmp_path):
         pytest.param({"validation": {"grid": ({"tau": 1.0, "loss": -math.inf},)}}, id="validation_nested_negative_inf"),
         pytest.param({"window_sec": math.inf}, id="window_sec_inf"),
         pytest.param({"stay": math.nan}, id="stay_nan"),
-        pytest.param({"calibration_method": "temperature", "calibration_tau": math.inf}, id="tau_inf"),
         pytest.param({"none_points": ((math.nan, 0.0),)}, id="none_point_nan"),
         pytest.param(
             {"nodes": {**MODEL_A.nodes, "locker-1": replace(MODEL_A.nodes["locker-1"], sigma=math.inf)}},

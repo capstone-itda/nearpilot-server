@@ -89,6 +89,15 @@ class ProximityModel:
     calibration_tau: float = 1.0  # 우도 온도 τ. 증거의 로그우도를 나누는 값이다. calibration_method가 "none"이면 1.0이다
 
     def __post_init__(self) -> None:
+        # 계산은 τ만 읽고 모델 파일은 방법을 쓴다. 둘이 어긋난 모델은 쓴 파일과 계산이 달라서 만들지 않는다.
+        if self.calibration_method == "none":
+            if self.calibration_tau != 1.0:
+                raise ValueError(f'calibration_method가 "none"이면 calibration_tau는 1.0이어야 한다 ({self.calibration_tau!r})')
+        elif self.calibration_method == "temperature":
+            if not 0.0 < self.calibration_tau < inf:
+                raise ValueError(f"calibration_tau는 0보다 큰 유한한 수여야 한다 ({self.calibration_tau!r})")
+        else:
+            raise ValueError(f'calibration_method는 "none", "temperature" 중 하나여야 한다 ({self.calibration_method!r})')
         object.__setattr__(self, "nodes", _freeze(self.nodes))
         object.__setattr__(self, "validation", _freeze(self.validation))
         object.__setattr__(self, "none_points", tuple((float(x), float(y)) for x, y in self.none_points))

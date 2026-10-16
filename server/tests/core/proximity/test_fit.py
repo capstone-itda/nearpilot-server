@@ -892,3 +892,85 @@ def test_FR16_fit_config_is_normalized():
     model, grid = result.model, result.losses[0]
     assert all(type(v) is float for v in (model.calibration_tau, model.stay, model.window_sec, model.min_distance_m))
     assert all(type(v) is float for v in (grid.tau, grid.stay, grid.window_sec))
+
+
+# ── 검토 반영: 프레임 선택, 칸 길이, 이름과 배치 검사 ─────────────────
+
+
+def test_FR16_run_frames_keys_by_node_and_session():
+    run = hand_run("r", "a", {})
+    frames = [
+        # 같은 앵커가 다시 연결해서 seq가 1부터 다시 시작한다. 연결 ID가 달라서 둘 다 쓴다
+        make_frame("a", -60.0, T0 + timedelta(seconds=1), seq=1, session_id="s-old"),
+        make_frame("a", -61.0, T0 + timedelta(seconds=2), seq=1, session_id="s-new"),
+        # 서로 다른 앵커의 연결 ID와 seq가 같다. 앵커가 달라서 둘 다 쓴다
+        make_frame("a", -62.0, T0 + timedelta(seconds=3), seq=7, session_id="s-same"),
+        make_frame("b", -63.0, T0 + timedelta(seconds=3), seq=7, session_id="s-same"),
+    ]
+
+    assert run_frames(with_frames(run, frames), EXACT_LAYOUT) == frames
+
+
+@pytest.mark.parametrize("rssi", [math.inf, -math.inf, math.nan])
+def test_FR16_run_frames_drops_non_finite_rssi(rssi):
+    run = hand_run("r", "a", {"a": [-60.0]})
+    bad = make_frame("a", rssi, T0 + timedelta(seconds=5), seq=99)
+
+    assert run_frames(with_frames(run, (*run.frames, bad)), EXACT_LAYOUT) == list(run.frames)
+
+
+def test_FR16_fit_model_uses_given_bin_sec():
+    config = replace(BASE_CONFIG, taus=(1.0, 2.0))
+    result = run_fit(config=config, bin_sec=0.5)
+
+    for grid in result.losses:
+        direct = replace(result.model, calibration_tau=grid.tau, stay=grid.stay, window_sec=grid.window_sec)
+        assert grid.loss == validation_log_loss(direct, LAYOUT, VALIDATION_RUNS[:1], bin_sec=0.5)
+        # 칸 길이가 다르면 평가 시각과 칸이 달라서 손실도 다르다. 받은 값을 그대로 넘겼는지 드러난다
+        assert grid.loss != validation_log_loss(direct, LAYOUT, VALIDATION_RUNS[:1], bin_sec=1.0)
+
+
+NON_COMPONENT_NAMES = ["", ".", "..", "sub/v1", "../../escaped", "a\\b"]
+
+
+@pytest.mark.parametrize("name", NON_COMPONENT_NAMES)
+def test_FR16_fit_rejects_non_component_names(name):
+    with pytest.raises(FitError, match="model_version"):
+        run_fit(config=replace(BASE_CONFIG, model_version=name))
+    with pytest.raises(FitError, match="place_id"):
+        fit_model(replace(LAYOUT, place_id=name), TRAIN_RUNS, VALIDATION_RUNS[:1], BASE_CONFIG, bin_sec=BIN_SEC)
+
+
+@pytest.mark.parametrize("min_distance_m", [0.0, -1.0, math.nan, math.inf])
+def test_FR16_fit_observation_params_checks_min_distance(min_distance_m):
+    with pytest.raises(FitError, match="min_distance_m"):
+        fit(MINIMUM_RUNS, layout=EXACT_LAYOUT, min_distance_m=min_distance_m)
+
+
+@pytest.mark.parametrize("field", ["x", "y", "front_x", "front_y"])
+def test_FR16_fit_rejects_non_finite_layout(field):
+    nodes = {**EXACT_LAYOUT.nodes, "a": replace(EXACT_LAYOUT.nodes["a"], **{field: math.nan})}
+
+    with pytest.raises(FitError, match=f"'a'.{field}"):
+        fit(MINIMUM_RUNS, layout=replace(EXACT_LAYOUT, nodes=nodes))
+    with pytest.raises(FitError, match="none_points"):
+        fit(MINIMUM_RUNS, layout=replace(EXACT_LAYOUT, none_points=((0.0, math.inf),)))
+
+
+def test_FR16_fit_rejects_bin_sec_below_timedelta_resolution():
+    with pytest.raises(FitError, match="bin_sec"):
+        run_fit(bin_sec=1e-7)
+    with pytest.raises(FitError, match="bin_sec"):
+        validation_log_loss(MODEL_W5, LAYOUT, VALIDATION_RUNS[:1], bin_sec=1e-7)
+
+
+def test_FR16_fit_counts_distances_after_log():
+    # 두 앞 위치의 거리는 다르지만(5.0과 그보다 한 ulp 큰 값) log10 뒤 값이 같다. 최소제곱의 분모가 0이 된다
+    far = math.nextafter(5.0, math.inf)
+    layout = PlaceLayout(
+        "place-x", {"a": AnchorLayout(0.0, 0.0, 5.0, 0.0), "b": AnchorLayout(0.0, 0.0, far, 0.0)},
+    )
+    assert -10.0 * math.log10(5.0) == -10.0 * math.log10(far)  # 전제
+
+    with pytest.raises(FitError, match="'a'.*서로 다른 거리 1개"):
+        fit(MINIMUM_RUNS, layout=layout)

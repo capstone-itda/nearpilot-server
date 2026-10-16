@@ -2,14 +2,14 @@
 
 - 담당: dnnals (근접 추정)
 - 요구사항: FR-16, FR-22
-- 따르는 결정: #40, #41
+- 따르는 결정: #39, #40, #41
 
 ## 1. 왜
 
 - 근접 추정기는 모델 파일의 값으로만 계산한다. 그런데 모델 파일을 만드는 코드가 없다. 지금 있는 모델 파일은 손으로 쓴 테스트용 합성 파일뿐이다.
 - 수집 회차가 붙은 관측이 생겨도 경로손실 값, 머무를 확률, 관측 구간을 고르는 방법이 정해져 있지 않다. 그러면 지표 8을 평가할 모델을 만들 수 없다.
 - 모델 파일은 `calibration.method`로 `none`만 받는다. 공개 데이터 점검에서 HMM은 같은 위치 오차를 칸마다 새 증거처럼 쌓아 과신했다. 보정 방법을 넣을 자리가 없으면 지표 8의 ECE 기준(≤ 0.05)을 맞출 방법이 없다.
-- requirements는 관측 처리, 보정, HMM을 교체할 수 있는 인터페이스로 분리하라고 요구한다 (FR-16).
+- requirements는 관측 처리, 보정, HMM을 교체할 수 있는 인터페이스로 분리하라고 요구한다 (requirements.md §1.2).
 
 ## 2. 무엇
 
@@ -78,16 +78,22 @@
 | 같은 회차 ID가 학습과 검증에 함께 있거나, 한쪽에 두 번 있다 | `FitError`. 아무것도 쓰지 않는다 | `test_FR16_fit_rejects_shared_run` |
 | 라벨이 배치에 없는 기기다 (`none`이 아니다) | `FitError` | `test_FR16_fit_rejects_unknown_label` |
 | 학습 회차에 기기 앞 회차나 `none` 회차가 없다 | `FitError` | `test_FR16_fit_rejects_missing_label_kind` |
-| 앵커 하나가 기기 앞 회차에서 프레임을 세 개 이상 받지 못했거나, 서로 다른 거리 두 개 이상을 받지 못했다 | `FitError`. 앵커 ID를 쓴다 | `test_FR16_fit_rejects_underdetermined_anchor` |
+| 앵커 하나가 기기 앞 회차에서 프레임을 세 개 이상 받지 못했거나, 서로 다른 거리 두 개 이상을 받지 못했다. 거리는 log10 뒤의 값으로 센다 | `FitError`. 앵커 ID를 쓴다 | `test_FR16_fit_rejects_underdetermined_anchor`, `test_FR16_fit_counts_distances_after_log` |
 | 앵커 하나가 `none` 회차에서 프레임을 두 개 이상 받지 못했다 | `FitError`. 앵커 ID를 쓴다 | `test_FR16_fit_rejects_underdetermined_anchor` |
 | 적합한 `n`이 0 이하이거나, `sigma` 또는 `none_sigma`가 0이다 | `FitError`. 앵커 ID와 값을 쓴다. 모델 파일이 받지 않는 값이다 | `test_FR16_fit_rejects_nonpositive_n` |
 | 후보 목록이 비었거나 범위 밖이다 (τ ≤ 0, `stay`가 (0, 1) 밖, `window_sec` ≤ 0, 유한하지 않은 값). 버전이 빈 문자열이거나 `min_distance_m` ≤ 0이다 | `FitError` | `test_FR16_fit_rejects_invalid_grid` |
+| `model_version`이나 배치의 `place_id`가 경로 조각 하나가 아니다 (빈 값, `.`, `..`, `/`나 `\`가 있다) | `FitError`. 모델 루트 밖에 쓰거나 `load_model`이 읽지 못하는 파일을 만들지 않는다 | `test_FR16_fit_rejects_non_component_names` |
+| 배치의 좌표나 `none_points`가 유한하지 않다 | `FitError` | `test_FR16_fit_rejects_non_finite_layout` |
+| `fit_observation_params`를 직접 부를 때 `min_distance_m`이 0 이하이거나 유한하지 않다 | `FitError` | `test_FR16_fit_observation_params_checks_min_distance` |
+| `bin_sec`가 1 마이크로초 단위로 0이 된다 (0.5 µs 미만) | `FitError` | `test_FR16_fit_rejects_bin_sec_below_timedelta_resolution` |
 | 검증 회차가 가장 긴 후보 `window_sec`보다 짧아 평가 시각이 없다 | `FitError`. 회차 ID를 쓴다 | `test_FR16_fit_rejects_short_validation_run` |
 | 검증 회차가 없다 | `FitError` | `test_FR16_fit_rejects_short_validation_run` |
 | 프레임의 비콘이 회차의 비콘과 다르거나, 앵커가 배치에 없거나, `frame_ts`가 구간 밖이다 | 그 프레임을 쓰지 않는다 | `test_FR16_fit_ignores_foreign_frames` |
 | 정답 상태의 확률이 0으로 내려간다 | 그 조합의 손실은 무한대다. 다른 조합을 고른다. 모든 조합이 무한대이면 `FitError` | `test_FR16_zero_probability_loses` |
 | 쓸 모델 파일이 이미 있다 | `FileExistsError`. 있는 파일을 바꾸지 않는다 | `test_FR16_write_refuses_overwrite` |
-| 모델의 `calibration_method`가 `none`, `temperature`가 아니거나, 무한대·NaN 값이 남아 있다 | `ValueError`. 디렉터리도 파일도 만들지 않는다 | `test_FR16_model_to_dict_rejects_unknown_calibration`, `test_FR16_write_rejects_non_finite_values` |
+| `ProximityModel`을 만들 때 `calibration_method`가 `none`, `temperature`가 아니거나, `none`인데 τ ≠ 1.0이거나, `temperature`인데 τ가 0 이하·유한하지 않다 | `ValueError`. 계산(τ)과 파일(방법)이 어긋난 모델을 만들지 않는다 | `test_FR16_model_rejects_inconsistent_calibration` |
+| 쓸 모델에 무한대·NaN 값이 남아 있다 | `ValueError`. 디렉터리도 파일도 만들지 않는다 | `test_FR16_write_rejects_non_finite_values` |
+| `write_model_file`에 넘긴 모델의 `place_id`나 `model_version`이 경로 조각 하나가 아니다 | `ValueError`. 루트 안에도 밖에도 아무것도 만들지 않는다 | `test_FR16_write_rejects_non_component_names` |
 | `validation_log_loss`를 직접 부를 때 회차가 없거나, `bin_sec`가 0 이하·유한하지 않거나, 라벨이 배치에 없다 | `FitError` (`fit_model`과 같은 조건이다) | `test_FR16_validation_log_loss_rejects_invalid_input` |
 
 ## 6. 결정
@@ -98,6 +104,7 @@
 - 모델 파일의 `calibration`은 `{"method": "none"}` 또는 `{"method": "temperature", "tau": τ}`다. τ > 0이다. 방법마다 키를 고정하고 모르는 키를 거부한다 — 지금 읽는 규칙과 같다.
 - τ = 1인 `temperature`는 `none`과 같은 결과를 낸다.
 - `ProximityModel`에 `calibration_tau`를 더한다. `none`일 때는 1.0이다 — 계산 식 하나로 두 방법을 다룬다.
+- `ProximityModel`은 만들 때 방법과 τ가 맞는지 검사한다 — 계산은 τ만 읽고 모델 파일은 방법을 쓴다. `replace`로 방법만 바꾼 모델(예: 단계별 제거 실험)이 파일과 다른 계산을 하지 않는다.
 
 ### 적합
 
@@ -123,7 +130,9 @@
 
 ### 파일 쓰기
 
-- 공개 함수는 `fit_observation_params`(관측 값 적합), `validation_log_loss`(검증 손실), `fit_model`(적합과 선택), `model_to_dict`, `write_model_file`이다 — 회차 조회가 정해지면 `tools/evaluation`이 손실 함수를 시험셋 평가에도 쓸 수 있다.
+- 공개 함수는 `run_frames`(회차 프레임 선택), `fit_observation_params`(관측 값 적합), `validation_log_loss`(검증 손실), `fit_model`(적합과 선택), `model_to_dict`, `write_model_file`이다 — 회차 조회가 정해지면 `tools/evaluation`이 손실 함수를 시험셋 평가에도 쓸 수 있다.
+- 공개 자료형은 입력 `LabeledRun`(회차), `PlaceLayout`·`AnchorLayout`(배치), `FitConfig`(적합 설정), 출력 `ObservationParams`(앵커별 적합 값), `GridLoss`(조합별 손실), `FitResult`, 상수 `NONE_LABEL`(`"none"`), 예외 `FitError`(`ValueError`)다.
+- 검사 순서는 설정 → 회차(ID 중복, 검증 라벨, 빈 검증, 검증 길이) → 적합이다. 앵커 하나 안에서는 앞 표본 → `n`·`sigma` → none 표본 → `none_sigma`다 — 잘못된 입력에서 계산을 시작하지 않고, 오류 메시지가 입력마다 하나로 정해진다.
 - 모델 파일 JSON의 키 순서는 `place_id`, `model_version`, `calib_version`, `window_sec`, `transition`, `min_distance_m`, `calibration`, `nodes`(node_id 순), `none_points`, `validation`이다. 들여쓰기 2칸이다.
 - 모델 파일은 새로 만들기 모드로 연다. 디렉터리는 없으면 만든다 — 같은 버전을 덮어쓰지 않는다 (#40).
 - JSON은 키 순서를 고정하고 UTF-8로 쓴다 — 같은 입력에서 같은 바이트가 나오고 diff로 검토할 수 있다.
