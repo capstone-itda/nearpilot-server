@@ -1,6 +1,6 @@
 # MCP 기능 여섯 개의 CORE 서비스
 
-- 상태: 구현 전 초안. 구현과 같은 feat PR에서만 main에 반영한다.
+- 상태: 완료
 - 담당: JM-220 (판정, 서버 조립)
 - 요구사항: FR-09, FR-11, FR-18, FR-21, NFR-03, NFR-07, NFR-08
 - 따르는 결정: #88. 내부 구성은 담당자가 2026-10-16 대화에서 선택했다.
@@ -37,9 +37,9 @@
 ### 고치는 곳
 
 - `server/src/nearpilot/core/decision/core_service.py`
-- `server/src/nearpilot/core/decision/__init__.py`
 - `server/tests/core/`
 - `server/tests/api/`의 기존 MCP 연결 검증이다.
+- `server/tests/integration/`의 실제 SQLite 연결 검증이다.
 
 ### 고치지 않는 곳
 
@@ -68,7 +68,7 @@
 | 여섯 기능을 호출한다 | 계정과 인자를 맞는 서비스에 한 번 넘긴다 | `test_FR09_core_service_delegates_six_methods` |
 | 사용 요청이 거부되거나 실행이 불명이다 | 기존 판정과 사유를 그대로 반환한다 | `test_FR18_core_service_keeps_decision` |
 | 다른 계정의 사용을 조회하거나 반납한다 | 기존 `USE_NOT_FOUND` 결과를 유지한다 | `test_FR21_core_service_keeps_ownership_check` |
-| 위임한 서비스가 예외를 낸다 | 기존 API 오류 변환을 거친다. 새 허가를 만들지 않는다 | `test_FR09_core_service_exception_reaches_mcp_guard` |
+| 위임한 서비스가 예외를 낸다 | 기존 API 오류 변환을 거친다. 새 허가를 만들지 않는다 | `test_FR09_core_service_exception_propagates`, `test_FR09_core_service_exception_reaches_mcp_guard` |
 | 서로 다른 요청이 동시에 온다 | 같은 서비스 객체를 쓰고 요청 인자를 섞지 않는다 | `test_NFR03_core_service_concurrent_calls` |
 | MCP 응답을 만든다 | 내부 식별자와 점유 주체를 내보내지 않는다 | `test_FR11_core_service_mcp_response_allowlist` |
 
@@ -79,6 +79,10 @@
 - 서비스 생성 접점도 같은 모듈에서 제공한다 — 서버 조립은 생성한 CORE 서비스를 MCP에 연결한다.
 - 상태를 가진 서비스와 할당 대기창은 프로세스에서 공유한다 — 호출마다 실행 상태를 잃지 않는다.
 - 실제 구현체의 최종 생성과 순환 콜백 연결은 `runtime/`이 맡는다 — 판정 모듈은 외부 계층 구현을 불러오지 않는다.
+- 위임 객체는 `DelegatingCoreService(use, access, query, release)`다. 각 인자는 모듈 안의 구조적 Protocol로 받는다 — 상태 관리의 `ReleaseService`를 직접 불러오지 않는다.
+- 생성 접점은 `build_core_service(...)`다. `shared` 계약의 구현체, 공유할 `release`와 할당 대기창 `window`를 받는다. 판정 서비스 세 개는 이 함수 안에서 만든다. 파이프라인 하나를 사용 요청에서만 쓴다.
+- 위임 객체는 예외를 잡지 않는다 — 오류 변환은 기존 MCP 도구의 거부 처리가 한다.
+- `core/decision/__init__.py`는 비워 둔다 — 같은 패키지의 다른 모듈과 같은 방식이다.
 
 ## 7. 가정
 
@@ -89,12 +93,12 @@
 
 | 요구사항 | 테스트 | 확인하는 것 |
 |---|---|---|
-| FR-09 | `test_FR09_core_service_*` | 여섯 기능 위임과 예외 전달이다 |
+| FR-09 | `test_FR09_core_service_*` | Protocol 충족, 여섯 기능 위임, 예외 전달과 실제 SQLite 위의 생성 접점이다 |
 | FR-11 | `test_FR11_core_service_mcp_response_allowlist` | 호스트 응답의 허용 필드다 |
 | FR-18 | `test_FR18_core_service_keeps_decision` | 판정과 사유를 바꾸지 않는다 |
 | FR-21 | `test_FR21_core_service_keeps_ownership_check` | 반납과 조회의 본인 제한이다 |
 | NFR-03 | `test_NFR03_core_service_concurrent_calls` | 서비스 공유와 요청 분리다 |
 | NFR-07, NFR-08 | 기존 MCP 회귀 검사와 위 테스트 | API의 인가 분리와 정보 최소화다 |
 
-- 위 테스트 이름은 구현할 검증 계획이다. 이 초안 PR은 테스트 구현을 포함하지 않는다.
+- 단위 검증은 `tests/core/test_core_service.py`, MCP 연결은 `tests/api/test_mcp_core_service.py`, 생성 접점은 `tests/integration/test_core_service_real_db.py`에 있다.
 - 커밋 전 대상 작업 공간의 `server/`에서 전체 `pytest`를 실행한다.
