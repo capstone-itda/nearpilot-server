@@ -278,9 +278,11 @@ def run_cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str])
 
 @pytest.fixture
 def served(monkeypatch: pytest.MonkeyPatch) -> list:
-    """`nearpilot serve`가 서버를 띄우려고 부른 `(설정, collect_only)`. 실제 uvicorn 은 띄우지 않는다."""
+    """`nearpilot serve`가 서버를 띄우려고 만든 `(설정, collect_only)`. `run_server`는 그대로 지나고
+    (`var/` 만들기 포함) 실제 uvicorn 만 띄우지 않는다."""
     calls: list = []
-    monkeypatch.setattr(serve_cli, "run_server", lambda config, *, collect_only: calls.append((config, collect_only)) or 0)
+    monkeypatch.setattr(serve_cli.uvicorn, "run", lambda app, **kwargs: calls.append(
+        (app.state.runtime.config, app.state.runtime.collect_only)))
     return calls
 
 
@@ -288,7 +290,6 @@ def test_FR16_ops_pipeline_end_to_end(tmp_path, monkeypatch, run_cli, served):
     server = tmp_path / "server"
     write_server(server)
     write_inputs(server)
-    (server / "var").mkdir()  # `serve`는 DB 파일의 부모 폴더를 만들지 않으므로 사람이 먼저 만든 것으로 둔다
     db = server / "var" / "nearpilot.db"
     clock = FakeClock(datetime.now(timezone.utc).replace(microsecond=0))
     broker = SimBroker(tmp_path, DEVICES, beacons={node_id: () for node_id in DEVICES})

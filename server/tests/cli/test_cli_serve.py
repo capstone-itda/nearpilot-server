@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from nearpilot.cli import EXIT_INVALID, EXIT_OK, serve
-from nearpilot.cli.common import load_cli_config
+from nearpilot.cli import EXIT_FAILED, EXIT_INVALID, EXIT_OK, serve
+from nearpilot.cli.common import CliError, load_cli_config
 from nearpilot.runtime import ConfigError, load_config
 
 MODEL_ROOT = "../var/models"
@@ -89,4 +89,17 @@ def test_FR16_serve_runs_one_worker_on_configured_address(server_dir, write_conf
     assert kwargs == {"host": "192.0.2.7", "port": 8765, "workers": 1, "lifespan": "on",
                       "log_config": None, "timeout_graceful_shutdown": 12}
     assert app.state.runtime.config is config and app.state.runtime.collect_only is collect_only
-    assert not (server_dir / "var").exists()  # 앱을 만들 뿐 DB를 열지 않는다
+    # DB와 감사 JSONL의 폴더만 만들고 DB 파일은 열지 않는다 (Runtime이 시작할 때 만든다)
+    assert (server_dir / "var").is_dir() and not config.database.path.exists()
+
+
+def test_FR16_serve_startup_failure_exits_1(server_dir, write_config, monkeypatch):
+    config = load_cli_config(str(write_config(server_dir)))
+
+    def fail(app, **kwargs):
+        raise SystemExit(3)  # uvicorn의 시작 실패
+
+    monkeypatch.setattr(serve.uvicorn, "run", fail)
+    with pytest.raises(CliError) as error:
+        serve.run_server(config, collect_only=True)
+    assert error.value.exit_code == EXIT_FAILED
