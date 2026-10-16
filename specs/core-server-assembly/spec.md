@@ -1,10 +1,10 @@
 # 서버 진입점과 서비스 조립
 
-- 상태: 구현 전 초안. 선행 구현과 실제 연결 검증 뒤에만 같은 feat PR을 머지한다.
+- 상태: 구현 중. 실제 Mosquitto·SQLite·시뮬레이터 연결 검증을 통과했다. 전체 `pytest`를 통과한 뒤에만 같은 feat PR을 머지한다.
 - 담당: JM-220 (상태 관리, 판정)
 - 요구사항: FR-05, FR-06, FR-07, FR-08, FR-09, FR-11, FR-19, FR-20, FR-21, FR-22, FR-23, NFR-03, NFR-04, NFR-08, NFR-12, NFR-13
 - 따르는 결정: #34, #40, #82, #83, #88, #140, #164, #165
-- 내부 선택: 담당자가 2026-10-16 대화에서 경로, 실행 방식, 설정, 주기와 실패 정책을 선택했다.
+- 내부 선택: 담당자가 2026-10-16 대화에서 경로, 실행 방식, 설정, 주기와 실패 정책, 근접 복원의 관측 조회를 선택했다.
 
 ## 1. 왜
 
@@ -95,7 +95,9 @@
 - 진입점은 `nearpilot/__main__.py`다. 조립은 `nearpilot/runtime/`에 둔다 — 담당자가 선택했다.
 - FastAPI 수명주기가 자원을 관리한다 — 시작과 종료의 책임을 한 곳에 둔다.
 - 기존 MCP 앱의 수명주기도 연결한다 — 마운트만 하고 초기화를 생략하지 않는다.
-- 외부 MCP 경로는 기존 `/mcp`를 유지한다 — 마운트로 경로를 중복하지 않는다.
+- 외부 MCP 경로는 기존 `/mcp`를 유지한다 — MCP 앱을 루트에 마운트해서 경로를 중복하지 않는다.
+- HTTP 주소와 포트는 TOML `[http]`로 받는다. uvicorn은 수명주기 시작이 끝난 뒤에만 요청을 받는다.
+- 설정이 잘못되면 진입점은 HTTP 서버를 시작하지 않고 종료 코드 2로 끝난다.
 
 ### 설정과 모델
 
@@ -108,6 +110,11 @@
 - 설정 변경은 재시작으로 적용한다. 기존 요청과 점유의 설정 스냅샷은 유지한다.
 - MQTT와 보고 설정의 필수 값에는 임의 기본값을 넣지 않는다.
 - 같은 PC의 시뮬레이터에만 검증된 시각 오차 0을 명시한다.
+- TOML 절은 `[settings]`, `[runtime]`, `[http]`, `[database]`, `[proximity]`, `[mqtt]`, `[delivery]`다. `[runtime]`만 선택이다.
+- `[settings]`는 `version`만 필수다. 빠진 키는 `Settings`의 초기값을 쓴다. 미설정 임계값은 TOML에 쓰지 않는다.
+- `[runtime]`의 빠진 키는 이 spec의 초기값을 쓴다. `[mqtt]`와 `[delivery]`는 모든 키가 필수다.
+- 근접 복원은 runtime의 읽기 전용 조회로 활성 비콘을 읽고, 기존 `Repository.rssi_since`로 최근 관측을 읽는다 — 담당자가 선택했다. `shared`에 전체 비콘 조회 계약이 없다.
+- 복원 구간은 장소 모델의 가장 긴 `window_sec`에 `rssi_frame_sec`를 더한 값이다.
 
 ### DB와 서비스 연결
 
@@ -124,6 +131,9 @@
 - 내부 꺼짐은 기존 실행 경로와 전송 직전 `can_request_off`에 연결한다.
 - MQTT 연결 상실은 명령 대기자에게 통지한다.
 - 모든 연결의 JSONL 경로를 같은 절대 경로로 정규화한다.
+- 서비스에는 `shared` Protocol 모양의 위임 객체를 넘긴다. 위임 객체는 호출마다 현재 스레드 범위의 DB 구현을 쓴다.
+- MCP에 넘기는 CORE 서비스는 요청 접수 문을 지난다. 접수 전과 종료 중의 호출은 거부한다. MCP 도구는 이 거부를 기존 내부 오류 응답으로 바꾼다.
+- 사용자 요청의 공용 조명 성공은 판정에 넘기는 실행 객체가 `SharedLightService.on_execution_result`에 넘긴다. 결과와 응답은 바꾸지 않는다.
 
 ### 시작 순서
 
@@ -174,8 +184,8 @@
 
 ## 7. 가정
 
-- `core-service`, `db-retention`과 요청 용량 제한 fix는 실제 완료 검증의 선행 작업이다.
-- 선행 구현 전에는 fake로 조립 계약을 검증할 수 있다. 실제 연결 완료로 표시하지 않는다.
+- 선행 작업인 `core-service`, `db-retention-capacity`와 요청 용량 제한 fix는 main에 있다. 조립은 그 구현을 쓴다.
+- 조립 계약은 fake Paho 위의 시뮬레이터로 검증하고, 실제 연결은 localhost 임시 Mosquitto로 검증한다.
 - DB 정리의 세부 보호 기준과 JSONL 커서 방식은 DB 담당자가 먼저 확정한다.
 - 승인 신청의 용량 제한 예외는 팀 계약 확인 전 구현하지 않는다.
 - 실제 MQTT 주소·자격정보·제한 시간·보고 용량은 배포 설정으로 공급한다.
@@ -188,15 +198,17 @@
 |---|---|---|
 | FR-05, FR-06 | `test_FR05_runtime_buffers_startup_reports`, `test_FR06_runtime_requires_suback` | 보고 수신과 실행 접수의 순서다 |
 | FR-07 | `test_FR07_runtime_shutdown_timeout_keeps_unknown` | 종료 불명과 재시작 복원이다 |
-| FR-08, FR-09, FR-11 | MCP 실제 앱 연결 검사 | 인증, 여섯 도구와 응답 정보 제한이다 |
+| FR-08, FR-09, FR-11 | `test_FR08_runtime_mcp_real_app_tools`, `test_FR09_runtime_unset_threshold_stays_blocked` | 인증, 여섯 도구와 응답 정보 제한, 미설정 임계값 차단이다 |
+| FR-16 | `test_FR16_runtime_restores_recent_observations` | 최근 관측만 실제 HMM의 복원 접점으로 넣는다 |
 | FR-19 | `test_FR19_runtime_startup_restore_cleanup_failure` | 복원·정리 전에는 접수하지 않는다 |
-| FR-20 | 실제 반납·이탈 주기 호출 검사 | 반납 재검사와 내부 꺼짐의 연결이다 |
+| FR-20 | `test_FR20_runtime_release_and_leave_off` | 반납 재검사와 내부 꺼짐의 주기 호출 연결이다 |
 | FR-21 | `test_FR21_runtime_mcp_ownership` | 본인 사용 조회 제한이다 |
-| FR-22 | `test_FR22_runtime_*` | 설정 검증, 정리 재시도와 JSONL 실패 격리다 |
+| FR-22 | `test_FR22_runtime_*` | 설정 검증, 진입점 종료, 정리 재시도, JSONL 내보내기와 실패 격리다 |
 | FR-23 | `test_FR23_runtime_shares_allocation_window` | 동시 할당 요청을 함께 배정한다 |
 | NFR-03, NFR-04 | `test_NFR03_runtime_*`, `test_NFR04_runtime_*` | 연결 소유권, 기기 차단과 자원 정리다 |
-| NFR-08, NFR-12, NFR-13 | 실제 MQTT·SQLite·시뮬레이터 연결 검사 | 비밀 비노출, 폐쇄망 연결과 재시작 재현이다 |
+| NFR-08 | `test_NFR08_runtime_config_keeps_secret_out` | 설정 오류와 설정 객체에 비밀이 없다 |
+| NFR-08, NFR-12, NFR-13 | `test_NFR12_runtime_real_broker_restart` | 실제 MQTT·SQLite·시뮬레이터 연결, 비밀 비노출과 재시작 재현이다. Mosquitto가 없으면 건너뛴다 |
 
-- 테스트 이름은 구현 계획이다. 초안 PR은 실행 코드와 새 테스트를 포함하지 않는다.
 - 단위 검증은 fake로 실패를 주입한다. 실제 연결 검증은 `server/tests/integration/`에 둔다.
+- 조립 검증은 실제 SQLite와 runtime 조립 위에서 `tools.node_sim`의 시뮬레이터를 fake Paho로 연결한다. 근접 추정은 고정값 fake다.
 - 전체 `pytest`와 실제 MQTT·SQLite 연결 검증을 통과한 뒤에만 구현 완료로 바꾼다.
