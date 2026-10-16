@@ -58,6 +58,7 @@ class Settings:
     audit_retention_days: int = 30  # 상세 실행·감사 기록 보존. 진행 중·미해결 기록은 지우지 않는다
     request_dedup_ttl_sec: int = 1200  # 외부 요청의 중복 방지 보장기간: 최종 처리 완료 뒤부터
     dedup_entry_limit: int = 100_000  # 신규 조작 접수 제한: 서버 전체 중복 방지 항목 수
+    retention_cleanup_interval_sec: int = 60  # 정리 주기: 서버 조립이 시작할 때와 이 간격마다 부른다 (#164)
 
     def __post_init__(self) -> None:
         for name in (
@@ -69,7 +70,7 @@ class Settings:
             "safety_report_max_age_sec", "safety_check_timeout_sec",
             "safety_check_retry_sec", "safety_unconfirmed_limit_sec",
             "use_history_retention_days", "audit_retention_days",
-            "request_dedup_ttl_sec", "dedup_entry_limit",
+            "request_dedup_ttl_sec", "dedup_entry_limit", "retention_cleanup_interval_sec",
         ):
             v = getattr(self, name)
             if isinstance(v, bool) or not isinstance(v, (int, float)):
@@ -79,7 +80,7 @@ class Settings:
             if name in (
                 "allocation_window_ms", "approval_ttl_sec", "approval_pending_ttl_sec",
                 "use_history_retention_days", "audit_retention_days",
-                "request_dedup_ttl_sec", "dedup_entry_limit",
+                "request_dedup_ttl_sec", "dedup_entry_limit", "retention_cleanup_interval_sec",
             ) and not isinstance(v, int):
                 raise ValueError(f"{name} 는 정수여야 한다: {v}")
         v = self.threshold_speaker
@@ -125,6 +126,7 @@ class Settings:
             "audit_retention_days",
             "request_dedup_ttl_sec",
             "dedup_entry_limit",
+            "retention_cleanup_interval_sec",
         ):
             v = getattr(self, name)
             if v <= 0:
