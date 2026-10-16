@@ -1,5 +1,5 @@
 // 왼쪽 폰 미러링에 누구의 폰을 보일지 고른다 (D3 자동 따라가기).
-import type { Snapshot } from '../model/types';
+import type { MonitorState } from '../model/types';
 
 export interface FollowSettings {
   /** 요청한 사람의 폰을 자동으로 보인다 */
@@ -11,7 +11,7 @@ export interface FollowSettings {
 export interface PhoneChoice { personId: string | undefined; who: string; follow: string }
 
 /** previous: 직전에 보이던 사람. 자동 전환이 꺼져 있으면 그대로 둔다. */
-export function choosePhone(s: Snapshot, f: FollowSettings, previous: string | undefined): PhoneChoice {
+export function choosePhone(s: MonitorState, f: FollowSettings, previous: string | undefined): PhoneChoice {
   const name = (id?: string) => s.people.find((p) => p.id === id)?.pseudonym ?? '—';
   const owner = s.people.find((p) => p.role === 'owner');
   const r = s.request;

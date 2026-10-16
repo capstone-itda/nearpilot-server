@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DataSource } from './data/source';
 import { DataCtx, type Ctx } from './data/context';
-import type { PlaceInfo, RequestProgress, Snapshot } from './model/types';
+import { initialState, reduceAll } from './data/reduce';
+import type { PlaceInfo, RequestProgress, MonitorState } from './model/types';
 import { OfflineBanner } from './components/common';
 import { FlowRail } from './components/FlowRail';
 import { PhoneMirror } from './components/PhoneMirror';
@@ -42,7 +43,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   const [follow, setFollow] = useState<FollowSettings>(prefs.follow);
   const [place, setPlace] = useState<PlaceInfo>();
   const [arrangement, setArrangement] = useState<Arrangement>({});
-  const [snapshot, setSnapshot] = useState<Snapshot>();
+  const [snapshot, setSnapshot] = useState<MonitorState>();
   const [view, setView] = useState<ViewState>(initialView);
   const [panel, setPanel] = useState<PanelState | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -55,7 +56,11 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     source.place().then((p) => { setPlace(p); setArrangement(resolveArrangement(p.devices, loadArrangement(p.placeName))); }, () => undefined);
   }, [source]);
   const layout = useMemo(() => (place ? withArrangement(place, arrangement) : undefined), [place, arrangement]);
-  useEffect(() => source.subscribe(setSnapshot), [source]);
+  // 받은 이벤트 묶음을 차례로 쌓는다. 기기 목록이 있어야 처음 상태를 만들 수 있어서 장소를 받은 뒤 구독한다.
+  useEffect(() => {
+    if (!place) return;
+    return source.subscribe((events) => setSnapshot((s) => reduceAll(s ?? initialState(place), events)));
+  }, [source, place]);
 
   // 처음 화면의 패널
   useEffect(() => {
@@ -65,7 +70,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   }, [source, initialPanel]);
 
   // 새 ASK·NEED_APPROVAL 판정과 새 고장 격리는 상세 패널을 자동으로 연다.
-  // 첫 스냅숏에서는 주소로 연 패널이 없을 때, 진행 중인 요청에 딸린 것만 연다.
+  // 첫 상태에서는 주소로 연 패널이 없을 때, 진행 중인 요청에 딸린 것만 연다.
   useEffect(() => {
     if (!snapshot) return;
     const s = seen.current;
@@ -82,7 +87,9 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     else if (auto && newFaults.length) setPanel(keepList({ kind: 'device', nodeId: newFaults[0] }));
     else setPanel((p) => {
       if (!p || p.kind !== 'request' || !p.live) return p;
-      return r && p.request.id === r.id ? { ...p, request: r } : null;
+      // 다음 요청이 오면 닫는다. 요청이 화면에서 내려가기만 하면 마지막 내용으로 남긴다.
+      if (!r) return { ...p, live: false };
+      return p.request.id === r.id ? { ...p, request: r } : null;
     });
     s.request = key;
     s.faults = new Set(faults);
@@ -134,7 +141,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
 
   const current: MenuKey | null = view !== 'monitor' ? view : panel && panel.kind !== 'request' && panel.kind !== 'device' ? panel.kind : null;
   const topBar = (
-    <TopBar theme={theme} live={snapshot.connected} receivedAt={snapshot.lastReceivedAt} placeName={layout.placeName} menuOpen={menuOpen} current={current}
+    <TopBar theme={theme} live={snapshot.connected} receivedAt={snapshot.lastReceivedAt} mock={source.mock} placeName={layout.placeName} menuOpen={menuOpen} current={current}
       onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))} onToggleMenu={() => setMenuOpen((o) => !o)} onPick={pick} />
   );
 

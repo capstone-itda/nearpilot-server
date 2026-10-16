@@ -2,19 +2,20 @@
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DataCtx, useQuery } from './context';
-import { LAYOUT, SCENES } from './mock/fixtures';
+import { LAYOUT } from './mock/fixtures';
+import { SCENES } from './mock/story';
 import { createMockSource } from './mock/mockSource';
-import type { Snapshot } from '../model/types';
+import type { MonitorState } from '../model/types';
 
 afterEach(cleanup);
 
 describe('useQuery', () => {
-  it('FR12A 스냅숏의 판정 흐름이 바뀌면 다시 조회하고, 신호 세기만 바뀌면 다시 부르지 않는다', async () => {
+  it('FR12A 모니터 상태의 판정 흐름이 바뀌면 다시 조회하고, 신호 세기만 바뀌면 다시 부르지 않는다', async () => {
     let calls = 0;
     let release: (v: number) => void = () => {};
     const fetch = () => new Promise<number>((res) => { calls += 1; release = res; });
     function Probe() { const q = useQuery(fetch, []); return <p>{q.data === undefined ? '없음' : `값 ${q.data}`}</p>; }
-    const ui = (snapshot: Snapshot) => (
+    const ui = (snapshot: MonitorState) => (
       <DataCtx.Provider value={{ source: createMockSource({ scene: 'idle' }), layout: LAYOUT, snapshot, personName: (id) => id, deviceName: (id) => id }}>
         <Probe />
       </DataCtx.Provider>

@@ -1,16 +1,21 @@
-// 스냅숏 → 무대(평면도) 표시값. 장면별 고정 값 없이 규칙으로 계산한다.
-import type { DeviceStatus, FloorLayout, HostKind, LayoutDevice, Person, RequestProgress, Snapshot, Spot } from '../model/types';
+// 모니터 상태 → 무대(평면도) 표시값. 장면별 고정 값 없이 규칙으로 계산한다.
+import type { DeviceStatus, FloorLayout, HostKind, LayoutDevice, Person, RequestProgress, MonitorState, Spot } from '../model/types';
 import { ROOM, facing, frontOf, type Facing } from './arrange';
 import { calloutSpot, chooseLabel, deviceTextBox, freePersonSpot, frontBox, labelBox, leaderEnd, personBox, ringBox, rssiBox, placeRssi, type Rect } from './placement';
 import {
   ACTION_DID, ACTION_DOING, ACTION_CAN, ACTION_DONE, ACTION_NAME, ACTION_OBJ, CAPABILITY_NAME,
-  DEVICE_STATE_NAME, approvalText, josa, reasonText
+  CIRCLED, DEVICE_STATE_NAME, STEP_SHORT, approvalText, josa, reasonText
 } from './text';
+import { isDecided } from '../model/types';
+
+/** 응답 선을 보이는 시간 (초). 표시용 값이라 설정이 아니다. */
+const REPLY_SHOW_SEC = 3;
+const secOf = (t: string) => { const [h, m, x = '0'] = t.split(':'); return Number(h) * 3600 + Number(m) * 60 + Number(x); };
 
 export { ROOM };
 
 export type Tone = 'none' | 'active' | 'ok' | 'ask' | 'appr' | 'busy' | 'deny' | 'accent';
-export type StageScene = 'idle' | 'flow' | 'fault' | 'ask' | 'approval' | 'busy' | 'deny' | 'layout';
+export type StageScene = 'idle' | 'judging' | 'flow' | 'fault' | 'ask' | 'approval' | 'busy' | 'deny' | 'layout';
 
 export interface StageDeviceView {
   nodeId: string; name: string; capability: LayoutDevice['capability'];
@@ -39,7 +44,10 @@ export interface StageView {
   signals: { personId: string; x: number; y: number; on: boolean }[];
   rssiOn: boolean;
   rssi: Record<string, string>;
+  /** AI 호스트 → 서버: 도구 호출이 도착했고 아직 응답하지 않음 */
   mcp: HostKind | null;
+  /** 서버 → AI 호스트: 방금 도구 호출의 결과를 돌려줌 */
+  reply: HostKind | null;
   uplink: boolean;
   /** 실행 명령 선의 대상 기기 */
   cmd: string | null;
@@ -73,7 +81,7 @@ export function focusDevices(r: RequestProgress, layout: FloorLayout): string[] 
  * 그 밖의 사람: 신호가 가장 센 기기 앞. 신호가 없으면 그리지 않는다.
  * 기기 글자나 다른 사람과 겹치면 기기 앞 방향(방 안쪽)으로 비켜 선다.
  */
-export function personAnchors(s: Snapshot, devices: StageDeviceView[], visitors: Person[]): Map<string, Spot> {
+export function personAnchors(s: MonitorState, devices: StageDeviceView[], visitors: Person[]): Map<string, Spot> {
   const byId = new Map(devices.map((d) => [d.nodeId, d]));
   const dirOf = (d: StageDeviceView): 1 | -1 => (d.wall === 'top' ? 1 : -1);
   const obstacles = devices.map(deviceTextBox);
@@ -116,7 +124,7 @@ export interface StageOptions {
   layoutCheck?: boolean;
 }
 
-export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): StageView {
+export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOptions): StageView {
   const r = s.request;
   const byId = new Map(s.devices.map((d) => [d.nodeId, d]));
   const devName = (id?: string) => layout.devices.find((d) => d.nodeId === id)?.name ?? id ?? '';
@@ -128,7 +136,8 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
   let scene: StageScene = 'idle';
   if (opt.layoutCheck) scene = 'layout';
   else if (r) {
-    if (r.verdict === 'OK') scene = r.execution === 'unknown' || r.execution === 'failed' ? 'fault' : 'flow';
+    if (!isDecided(r)) scene = 'judging';
+    else if (r.verdict === 'OK') scene = r.execution === 'unknown' || r.execution === 'failed' ? 'fault' : 'flow';
     else scene = ({ ASK: 'ask', NEED_APPROVAL: 'approval', BUSY: 'busy', DENY: 'deny' } as const)[r.verdict];
   }
 
@@ -173,7 +182,7 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
   const idleShow = !r && s.connected && !opt.panelOpen && !opt.layoutCheck;
   const idlePerson = idleShow ? visitors.find((p) => p.beaconSeen && anchors.has(p.id)) : undefined;
   // 실행이 끝난 요청은 신호와 호출 선을 끈다
-  const inFlight = !!r && ((scene === 'flow' && r.execution !== 'succeeded') || scene === 'ask');
+  const inFlight = !!r && (scene === 'judging' || (scene === 'flow' && r.execution !== 'succeeded') || scene === 'ask');
   const signalPerson: Person | undefined = opt.layoutCheck ? undefined : inFlight ? requester : idlePerson;
   const signals = vis.map((v) => ({ personId: v.personId, x: v.x, y: v.y, on: !!signalPerson && signalPerson.id === v.personId }));
   const rssiPerson = !opt.layoutCheck && inFlight ? requester : undefined;
@@ -194,8 +203,9 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
     signals,
     rssiOn: !!rssiPerson,
     rssi,
-    mcp: scene === 'flow' && inFlight ? r!.host : null,
-    uplink: scene === 'ask' || !!idlePerson,
+    mcp: r && !opt.layoutCheck && !r.respondedAt ? r.host : null,
+    reply: r && !opt.layoutCheck && r.respondedAt && secOf(s.lastReceivedAt) - secOf(r.respondedAt) <= REPLY_SHOW_SEC ? r.host : null,
+    uplink: scene === 'judging' || scene === 'ask' || !!idlePerson,
     cmd: scene === 'flow' && r!.execution === 'sent' ? target : null,
     push: scene === 'approval' && s.ownerNotified,
     fault: scene === 'fault' ? target : null,
@@ -233,12 +243,23 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
     view.aria = `${layout.placeName}의 표시용 기기 배치`;
   } else if (!r) {
     view.aria = s.connected ? `대기 중인 ${layout.placeName}` : `연결이 끊긴 ${layout.placeName}의 마지막 화면`;
-    if (idlePerson) set('accent', atVisitor(idlePerson.id), '폰이 비콘 신호를 보내는 중', '기기가 신호 세기를 재서 서버로 보내요');
+    // 대기 안내는 글자를 가리지 않을 자리가 있을 때만 보인다
+    const spot = idlePerson && atVisitor(idlePerson.id);
+    if (spot?.clean) set('accent', spot, '폰이 비콘 신호를 보내는 중', '기기가 신호 세기를 재서 서버로 보내요');
   } else {
     const name = devName(target ?? undefined);
     const cap = CAPABILITY_NAME[r.target.capability ?? layout.devices.find((d) => d.nodeId === target)?.capability ?? 'locker'];
     const act = ACTION_NAME[r.action];
     switch (scene) {
+      case 'judging': {
+        // 도착한 단계 중 마지막 것을 말한다
+        const last = r.steps.reduce((k, x, i) => (x.result === 'pending' ? k : i), -1);
+        view.aria = `${who}의 ${cap} ${act} 요청을 서버가 확인하는 중`;
+        if (last === -1) set('accent', place(250, 440), `${who}의 요청이 도착했어요`, `서버가 ⓪부터 차례로 확인해요`);
+        else if (r.steps[last].result === 'stop') set('accent', place(250, 440), `${CIRCLED[last]} ${STEP_SHORT[last]}에서 멈췄어요`, '판정을 정해 AI에 돌려줘요');
+        else set('accent', place(250, 440), `${CIRCLED[last]} ${STEP_SHORT[last]} 통과`, last < 6 ? `다음은 ${CIRCLED[last + 1]} ${STEP_SHORT[last + 1]}` : '판정을 정해요');
+        break;
+      }
       case 'flow':
         if (r.execution === 'succeeded') {
           view.aria = `${who}의 요청으로 ${josa(name, '이', '가')} ${ACTION_DONE[r.action]}`;
@@ -267,16 +288,17 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
       }
       case 'approval':
         view.aria = s.ownerNotified ? `${who}의 ${cap} ${act} 요청이 소유자 승인을 기다리는 중`
-          : `${who}의 ${cap} ${act} 요청을 실행하지 않음: ${approvalText(r.reason).title}`;
-        if (s.ownerNotified) set('appr', place(250, 632), '소유자에게 승인 요청', `${josa(name || cap, '은', '는')} 소유자가 승인해야 ${ACTION_CAN[r.action]} 수 있어요`);
+          : `${who}의 ${cap} ${act} 요청을 실행하지 않음: ${approvalText(r.reason!).title}`;
+        if (r.accessExpiredAt) set('appr', place(250, 632), '승인 신청이 만료됐어요', `소유자가 응답하지 않아 ${josa(name || cap, '은', '는')} 실행하지 않았어요`);
+        else if (s.ownerNotified) set('appr', place(250, 632), '소유자에게 승인 요청', `${josa(name || cap, '은', '는')} 소유자가 승인해야 ${ACTION_CAN[r.action]} 수 있어요`);
         else if (r.reason === 'APPROVAL_REQUIRED') set('appr', atDevice(target), '소유자 승인이 필요해요', 'AI가 승인을 신청하면 소유자가 승인 여부를 정해요');
-        else set('appr', atDevice(target), approvalText(r.reason).title, approvalText(r.reason).detail);
+        else set('appr', atDevice(target), approvalText(r.reason!).title, approvalText(r.reason!).detail);
         break;
       case 'busy':
         view.aria = `${who}의 ${cap} ${act} 요청이 바빠서 실행되지 않음`;
         if (target) set('busy', atDevice(target), r.reason === 'USER_BUSY' ? '이미 다른 기기를 쓰는 중' : r.reason === 'COMMAND_IN_PROGRESS' ? `${name} 명령 실행 중` : `${name} 사용 중`,
           r.reason === 'USER_BUSY' ? '쓰던 기기를 먼저 반납해야 해요' : r.reason === 'COMMAND_IN_PROGRESS' ? '다른 명령을 실행하는 중이라 기다려야 해요' : '이미 점유된 기기라 실행하지 않았어요');
-        else set('busy', atVisitor(r.personId), reasonText(r.reason), '지금은 쓸 수 없어서 실행하지 않았어요');
+        else set('busy', atVisitor(r.personId), reasonText(r.reason!), '지금은 쓸 수 없어서 실행하지 않았어요');
         break;
       case 'deny': {
         view.aria = `${who}의 ${cap} ${act} 요청을 거부함`;
@@ -291,7 +313,7 @@ export function stageView(s: Snapshot, layout: FloorLayout, opt: StageOptions): 
           INVALID_INPUT: ['요청 형식이 맞지 않아요', 'AI가 보낸 값을 읽을 수 없어요'],
           INVALID_TOKEN: ['인증하지 못했어요', 'AI 호스트의 토큰이 맞지 않아요'],
           REQUEST_ID_CONFLICT: ['같은 요청 번호가 이미 있어요', '내용이 다른 요청이라 받지 않았어요']
-        } as Record<string, [string, string]>)[r.reason] ?? ['요청을 거부했어요', '실행하지 않았어요'];
+        } as Record<string, [string, string]>)[r.reason!] ?? ['요청을 거부했어요', '실행하지 않았어요'];
         const pos = target ? atDevice(target) : atVisitor(r.personId);
         set('deny', pos, t[0], t[1]);
         break;

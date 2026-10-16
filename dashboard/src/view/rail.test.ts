@@ -1,6 +1,7 @@
 // FR-12B: 흐름 레일 다섯 단계를 쉬운 말로 계산한다
 import { describe, expect, it } from 'vitest';
-import { LAYOUT, SCENES } from '../data/mock/fixtures';
+import { LAYOUT } from '../data/mock/fixtures';
+import { SCENES, sec, stateAt } from '../data/mock/story';
 import { railView } from './rail';
 
 describe('railView', () => {
@@ -104,5 +105,24 @@ describe('railView 단계 밖 판정', () => {
     const steps = s.request!.steps.map((x, i) => (i === 4 ? { result: 'stop' as const } : i > 4 ? { result: 'skip' as const } : x));
     s.request = { ...s.request!, verdict: 'DENY', reason: 'INTERNAL_ERROR', execution: undefined, steps };
     expect(railView(s, LAYOUT, 'p-a').steps[2].checks![2]).toEqual(['fail', '서버 오류']);
+  });
+});
+
+describe('railView 판정 전', () => {
+  it('FR12B 단계 결과가 도착하는 동안 3단계가 지금 단계이고 통과한 칸만 채운다', () => {
+    const early = railView(stateAt(sec('14:28:10.05')), LAYOUT, 'p-a');
+    expect(early.steps.map((s) => s.status)).toEqual(['done', 'done', 'current', 'todo', 'todo']);
+    expect(early.steps[2]).toMatchObject({ mark: '확인 중', checks: [['pass', '누구인지'], ['none'], ['none'], ['none']] });
+    // ③ 근접까지 통과
+    const mid = railView(stateAt(sec('14:28:10.09')), LAYOUT, 'p-a');
+    expect(mid.steps[2].checks![1][0]).toBe('pass');
+  });
+  it('FR12B 멈춘 단계가 왔지만 판정 전이면 그 칸을 판정 중으로 보인다', () => {
+    const v = railView(stateAt(sec('14:26:12.09')), LAYOUT, 'p-a');
+    expect(v.steps[2].checks![1]).toEqual(['unsure', '여기서 멈춤 · 판정 중']);
+  });
+  it('FR12B 승인 신청이 만료되면 5단계가 만료를 말한다', () => {
+    const s = stateAt(sec('14:41:01'));
+    expect(railView(s, LAYOUT, 'p-b').steps[4]).toMatchObject({ mark: '신청 만료', code: 'APPROVAL_REQUEST_EXPIRED' });
   });
 });

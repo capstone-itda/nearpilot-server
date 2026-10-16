@@ -46,8 +46,9 @@
 .np-steps__item[data-result="ask"] .np-steps__result, .np-steps__item[data-result="ask"] .np-steps__name { color: var(--ask); }
 .np-steps__item[data-result="appr"] .np-steps__n { border-color: var(--appr); color: var(--appr); background: var(--appr-soft); }
 .np-steps__item[data-result="appr"] .np-steps__result, .np-steps__item[data-result="appr"] .np-steps__name { color: var(--appr); }
-.np-steps__item[data-result="skip"] .np-steps__n { border-style: dashed; color: var(--ink-3); }
-.np-steps__item[data-result="skip"] .np-steps__name, .np-steps__item[data-result="skip"] .np-steps__result { color: var(--ink-3); }
+.np-steps__item[data-result="skip"] .np-steps__n, .np-steps__item[data-result="pending"] .np-steps__n { border-style: dashed; color: var(--ink-3); }
+.np-steps__item[data-result="skip"] .np-steps__name, .np-steps__item[data-result="skip"] .np-steps__result,
+.np-steps__item[data-result="pending"] .np-steps__name, .np-steps__item[data-result="pending"] .np-steps__result { color: var(--ink-3); }
 
 /* ProbBars: 위치 확률 */
 .np-bars { display: flex; flex-direction: column; gap: var(--sp-3); }

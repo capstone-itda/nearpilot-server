@@ -2,7 +2,8 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DataCtx } from '../data/context';
-import { LAYOUT, SCENES } from '../data/mock/fixtures';
+import { LAYOUT } from '../data/mock/fixtures';
+import { SCENES } from '../data/mock/story';
 import { createMockSource } from '../data/mock/mockSource';
 import type { ReasonCode } from '../model/types';
 import { DevicePanel } from './DevicePanel';

@@ -56,10 +56,13 @@ export function LayoutCheck({ arrangement, canPlace, onChange, onReset }: Layout
   const [status, setStatus] = useState('');
   const weakDbm = layout.weakRssiDbm;
   const visitors = snapshot.people.filter((p) => p.role === 'visitor' && p.beaconSeen);
+  // 사람별로 묶어서 한 문장으로 쓴다
+  let weakCount = 0;
   const weak: string[] = [];
-  for (const d of layout.devices) for (const p of visitors) {
-    const v = p.rssi[d.nodeId];
-    if (v !== undefined && v < weakDbm) weak.push(`${d.name}에서 ${p.pseudonym}의 신호가 약해요.`);
+  for (const p of visitors) {
+    const names = layout.devices.filter((d) => p.rssi[d.nodeId] !== undefined && p.rssi[d.nodeId] < weakDbm).map((d) => d.name);
+    weakCount += names.length;
+    if (names.length) weak.push(`${p.pseudonym}의 신호가 ${names.join(', ')}에서 약해요.`);
   }
   const exportFile = () => {
     const blob = new Blob([JSON.stringify(toFile(layout.placeName, arrangement), null, 2)], { type: 'application/json' });
@@ -121,7 +124,7 @@ export function LayoutCheck({ arrangement, canPlace, onChange, onReset }: Layout
           </section>
           {weak.length ? (
             <div className="np-warn" data-component="Warning" role="note">
-              <span className="np-warn__title">확인할 것 {weak.length}건</span>
+              <span className="np-warn__title">확인할 것 {weakCount}건</span>
               <span>{weak.join(' ')} 기기 위치나 폰 방향을 확인해 주세요.</span>
             </div>
           ) : null}

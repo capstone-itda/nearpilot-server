@@ -41,7 +41,7 @@ export function KeyValue({ rows }: { rows: [string, ReactNode, boolean?][] }) {
   );
 }
 
-export type StepRowResult = 'pass' | 'ask' | 'appr' | 'fail' | 'skip';
+export type StepRowResult = 'pass' | 'ask' | 'appr' | 'fail' | 'skip' | 'pending';
 export function StepList({ items }: { items: [StepRowResult, string, string][] }) {
   return (
     <ol className="np-steps" data-component="StepList">

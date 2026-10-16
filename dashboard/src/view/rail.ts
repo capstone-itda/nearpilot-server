@@ -1,5 +1,5 @@
-// 스냅숏 → 흐름 레일 다섯 단계. 쉬운 말이 크게, 코드는 보조 글자로.
-import type { FloorLayout, RequestProgress, Snapshot } from '../model/types';
+// 모니터 상태 → 흐름 레일 다섯 단계. 쉬운 말이 크게, 코드는 보조 글자로.
+import { isDecided, type FloorLayout, type RequestProgress, type MonitorState } from '../model/types';
 import { ACTION_DONE, ACTION_NAME, HOST_NAME, approvalText, josa, reasonText, requestTitle, toolCall } from './text';
 
 export type CheckResult = 'pass' | 'fail' | 'wait' | 'unsure' | 'none' | 'skip';
@@ -32,6 +32,14 @@ function checks(r: RequestProgress, name: string, shared: boolean): [CheckResult
   // 서버 오류로 멈추면 그 단계의 거절 이유가 아니므로 사유를 그대로 쓴다
   const fail = (text: string): [CheckResult, string] => ['fail', r.reason === 'INTERNAL_ERROR' ? reasonText(r.reason) : text];
 
+  // 멈춘 단계가 왔지만 판정은 아직이면 그 칸만 표시한다
+  if (stopAt !== -1 && !isDecided(r)) {
+    const col = [-1, 0, 1, 1, 2, 3, 3][stopAt];
+    for (let i = 1; i < stopAt; i++) if (passed(i)) out[[-1, 0, 1, 1, 2, 3, 3][i]] = ['pass'];
+    if (col >= 0) out[col] = ['unsure', '여기서 멈춤 · 판정 중'];
+    return out;
+  }
+
   // ① 누구인지
   if (stopAt === 1) out[0] = fail('폰 신호 없음');
   else if (passed(1)) out[0] = ['pass', '누구인지'];
@@ -50,7 +58,7 @@ function checks(r: RequestProgress, name: string, shared: boolean): [CheckResult
   return out;
 }
 
-export function railView(s: Snapshot, layout: FloorLayout, mirroredPersonId: string | undefined): RailView {
+export function railView(s: MonitorState, layout: FloorLayout, mirroredPersonId: string | undefined): RailView {
   const r = s.request;
   if (!r) {
     return s.connected
@@ -71,6 +79,12 @@ export function railView(s: Snapshot, layout: FloorLayout, mirroredPersonId: str
   let s4: RailStep;
   let s5: RailStep;
 
+  if (!isDecided(r)) {
+    // 판정 전: 단계 결과가 도착하는 대로 3단계 칸이 채워진다
+    const steps = [s1, s2, { ...s3, status: 'current' as const, tone: 'accent' as const, mark: '확인 중' },
+      { status: 'todo' as const, detail: '판정을 기다려요', code: '' }, { status: 'todo' as const, detail: '판정을 기다려요', code: '' }];
+    return { mode: 'live', title: `${who} · ${requestTitle(r, (id) => layout.devices.find((d) => d.nodeId === id)?.name ?? id)}`, meta: `${host} · ${r.at}`, code: toolCall(r), steps };
+  }
   switch (r.verdict) {
     case 'OK':
       if (r.execution === 'sent' || !r.execution) {
@@ -91,7 +105,9 @@ export function railView(s: Snapshot, layout: FloorLayout, mirroredPersonId: str
       break;
     case 'NEED_APPROVAL':
       s4 = { status: 'todo', detail: `아직 ${r.action === 'open' ? '열지' : r.action === 'on' ? '켜지' : '끄지'} 않았어요`, code: '승인 뒤 request_use 다시 호출' };
-      s5 = r.accessRequestedAt
+      s5 = r.accessExpiredAt
+        ? { status: 'current', tone: 'appr', mark: '신청 만료', detail: '소유자가 응답하지 않아 승인 신청이 끝났어요', code: 'APPROVAL_REQUEST_EXPIRED' }
+        : r.accessRequestedAt
         ? { status: 'current', tone: 'appr', mark: '승인 기다림', detail: 'AI가 승인을 신청했어요', code: 'NEED_APPROVAL → request_access' }
         : { status: 'current', tone: 'appr', mark: approvalText(r.reason).mark, detail: approvalText(r.reason).detail, code: `NEED_APPROVAL · ${r.reason}` };
       break;

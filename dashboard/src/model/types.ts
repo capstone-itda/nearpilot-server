@@ -1,5 +1,5 @@
-// 데이터 소스가 화면에 주는 값. 이름과 값은 server/src/nearpilot/shared/enums.py를 따른다.
-// 서버 메시지 형식은 미결이다 (FR-12A, FR-12B). 서버 어댑터가 이 형태로 바꿔 넘긴다.
+// 화면이 쓰는 값. 이름과 값은 server/src/nearpilot/shared/enums.py를 따른다.
+// 서버 메시지 형식은 미결이다 (FR-12A, FR-12B). 스트림 이벤트는 events.ts, 조회 결과는 아래 형태로 어댑터가 바꿔 넘긴다.
 
 export type Verdict = 'OK' | 'BUSY' | 'ASK' | 'DENY' | 'NEED_APPROVAL';
 export type DeviceState = 'AVAILABLE' | 'RESERVED' | 'ACTIVE' | 'CLOSING' | 'FAULT';
@@ -68,9 +68,9 @@ export interface Person {
   rssi: Record<string, number>;
 }
 
-/** 판정 단계 ⓪~⑥ 하나의 결과 */
+/** 판정 단계 ⓪~⑥ 하나의 결과. pending은 아직 이벤트가 오지 않은 단계 */
 export interface StepOutcome {
-  result: 'pass' | 'stop' | 'skip';
+  result: 'pending' | 'pass' | 'stop' | 'skip';
   detail?: string;
 }
 
@@ -83,9 +83,10 @@ export interface RequestProgress {
   action: Action;
   /** 요청 시각 (HH:MM:SS) */
   at: string;
-  verdict: Verdict;
-  reason: ReasonCode;
-  /** ⓪~⑥ 일곱 칸. 멈춘 단계 뒤는 skip */
+  /** 판정. 판정 이벤트가 오기 전에는 없다 */
+  verdict?: Verdict;
+  reason?: ReasonCode;
+  /** ⓪~⑥ 일곱 칸. 오지 않은 단계는 pending, 판정 뒤 멈춘 단계 뒤는 skip */
   steps: StepOutcome[];
   /** 판정이 고른 기기 */
   nodeId?: string;
@@ -97,7 +98,15 @@ export interface RequestProgress {
   execution?: 'sent' | 'succeeded' | 'failed' | 'unknown';
   /** NEED_APPROVAL 뒤 AI가 request_access로 신청한 시각 */
   accessRequestedAt?: string;
+  /** 승인 신청이 소유자 응답 없이 만료된 시각 */
+  accessExpiredAt?: string;
+  /** 서버가 AI 호스트에 결과를 돌려준 시각 */
+  respondedAt?: string;
 }
+
+/** 판정이 난 요청 (조회 REST의 판정 단계별 결과) */
+export type DecidedRequest = RequestProgress & { verdict: Verdict; reason: ReasonCode };
+export const isDecided = (r: RequestProgress): r is DecidedRequest => r.verdict !== undefined;
 
 /** 폰 화면을 흉내 낸 목 데이터. 실제 화면은 미러링 영상이다. */
 export interface MockPhoneScreen {
@@ -108,18 +117,19 @@ export interface MockPhoneScreen {
   notice?: { title: string; body: string; clock: string };
 }
 
-/** 모니터링 스트림이 유지하는 장소 상태 (FR-12B) */
-export interface Snapshot {
+/** 대시보드가 받은 이벤트를 차례로 쌓아 만든 모니터 상태 (FR-12B). data/reduce.ts가 만든다. */
+export interface MonitorState {
   connected: boolean;
-  /** 마지막 수신 시각 (HH:MM:SS) */
+  /** 마지막 이벤트의 서버 시각 (HH:MM:SS) */
   lastReceivedAt: string;
   reconnectAttempts: number;
   devices: DeviceStatus[];
   people: Person[];
+  /** 진행 중이거나 막 끝난 요청. 끝나고 FINISHED_HOLD_SEC(data/reduce.ts)가 지나면 내린다 */
   request?: RequestProgress;
   /** 소유자 폰에 승인 알림을 보낸 중이면 true */
   ownerNotified: boolean;
-  /** 목 어댑터 전용: 사람별 가짜 폰 화면. 서버 어댑터는 비워 두고 미러링 영상을 쓴다. */
+  /** 목 어댑터 전용: 사람별 가짜 폰 화면 (mock_phone 이벤트). 서버 어댑터는 비워 두고 미러링 영상을 쓴다. */
   mockPhones?: MockPhoneScreen[];
 }
 

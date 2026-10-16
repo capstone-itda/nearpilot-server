@@ -184,6 +184,12 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
             <polygon className="np-stage__arrow" data-tone="accent" points="264,412 250,420 264,428" />
           </g>
         ))}
+        {HOSTS.map(([k, , y]) => (
+          <g key={`reply-${k}`} data-on={b(v.reply === k)}>
+            <path className="np-stage__flow" data-tone="ok" d={`M250 420H272V${y + 23}H262`} />
+            <polygon className="np-stage__arrow" data-tone="ok" points={`264,${y + 15} 250,${y + 23} 264,${y + 31}`} />
+          </g>
+        ))}
         <g data-on={b(v.uplink)}><path className="np-stage__flow" data-tone="accent" d={`M${topEnd} 60H284V470H262`} /><polygon className="np-stage__arrow" data-tone="accent" points="264,462 250,470 264,478" /></g>
         <g data-on={b(!!v.cmd)}><path className="np-stage__flow" data-tone="ok" d={cmd.path} /><polygon className="np-stage__arrow" data-tone="ok" points={cmd.arrow} /></g>
         <g data-on={b(v.push)}><path className="np-stage__flow" data-tone="appr" d="M140 510V586" /><polygon className="np-stage__arrow" data-tone="appr" points="132,584 140,598 148,584" /></g>

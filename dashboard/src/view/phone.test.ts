@@ -1,6 +1,6 @@
 // D3: 폰 미러링 자동 따라가기
 import { describe, expect, it } from 'vitest';
-import { SCENES } from '../data/mock/fixtures';
+import { SCENES } from '../data/mock/story';
 import { choosePhone } from './phone';
 
 const ON = { followRequester: true, followApprover: true };

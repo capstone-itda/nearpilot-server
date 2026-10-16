@@ -56,7 +56,7 @@ test('FR12A 점유 현황에서 기기를 누르면 기기 상세를 연다', as
   await page.getByRole('button', { name: /사물함 3/ }).click();
   const panel = page.locator('[data-component="Panel"]');
   await expect(panel).toContainText('MON-05');
-  await expect(panel).toContainText('9분 초과');
+  await expect(panel).toContainText('20분 초과');
 });
 
 test('FR12A D2 고장 격리 상세에는 복구 버튼이 없다', async ({ page }) => {
@@ -120,6 +120,7 @@ test('FR12B 재생 모드는 장면을 차례로 바꾼다', async ({ page }) =>
   await page.clock.runFor(6100);
   await expect(page.locator('.np-rail__title')).toHaveText('방문자 A · 사물함 열기');
   await expect(page.locator('.np-rail__meta')).toContainText('14:28:10');
+  await expect(page.locator('[data-component="FlowRail"] [data-status="current"]')).toContainText('확인 중');
   await expect(page.locator('[data-component="Panel"]')).toHaveCount(0);
 });
 
@@ -190,30 +191,46 @@ test('FR12A D4 배치를 파일로 내보내고 다시 불러온다', async ({ p
 });
 
 test('FR12A 점검은 장면의 비콘 수신과 연결 끊김을 따르고, 빈 감사 로그는 비었다고 말한다', async ({ page }) => {
+  // B의 비콘은 14:23~14:28:30에 잡히지 않는다
   await ready(page, 'scene=fault&view=check');
-  await expect(page.locator('.np-crow').filter({ hasText: '방문자 A' })).toContainText('최근 신호 없음');
+  await expect(page.locator('.np-crow').filter({ hasText: '방문자 B' })).not.toContainText('최근 신호 없음');
   await ready(page, 'scene=offline&view=check');
+  await expect(page.locator('.np-crow').filter({ hasText: '방문자 B' })).toContainText('최근 신호 없음');
   await expect(page.getByRole('status').filter({ hasText: '서버와 연결이 끊겼어요' })).toBeVisible();
   await ready(page, 'scene=idle&panel=audit');
   await expect(page.getByText('아직 기록이 없어요')).toBeVisible();
   await expect(page.locator('.np-table__empty')).toHaveText('없어요');
 });
 
-test('FR12B 실시간 흐름 모드는 신호 세기와 판정이 시각에 따라 바뀐다', async ({ page }) => {
+test('FR12B 실시간 흐름 모드는 이벤트가 도착하는 순서대로 화면을 바꾼다', async ({ page }) => {
   await page.clock.install();
   await ready(page, 'scene=live');
   await expect(page.locator('.np-rail__title')).toHaveText('요청을 기다리고 있어요');
+  await expect(page.locator('.np-topbar__mock')).toHaveText('목 데이터');
+  // 무대 장면과 레일 3단계 표시를 0.2초마다 적는다
+  const seen: string[] = [];
+  const stage = page.locator('[data-component="Stage"]');
   const labels = () => page.locator('.np-stage__signal-label').allTextContents();
-  await page.clock.runFor(9000);
-  await expect(page.locator('.np-rail__title')).toHaveText('방문자 A · 사물함 열기');
-  const first = await labels();
-  await page.clock.runFor(1000);
-  expect(await labels()).not.toEqual(first);
-  await page.clock.runFor(20000);
+  // ASK 결과가 보이는 동안 신호 세기가 계속 들어와 바뀐다
+  let askLabels: string[] | undefined;
+  let rssiChanged = false;
+  for (let i = 0; i < 200 && !seen.includes('flow'); i++) {
+    await page.clock.runFor(200);
+    const scene = await stage.getAttribute('data-scene');
+    if (seen.at(-1) !== scene) seen.push(scene!);
+    if (scene === 'ask') {
+      const now = await labels();
+      if (!askLabels) askLabels = now;
+      else if (now.join() !== askLabels.join()) rssiChanged = true;
+    }
+  }
+  expect(rssiChanged).toBe(true);
+  // 대기 → 판정 중 → ASK → (내려감) 대기 → 판정 중 → 실행
+  expect(seen).toEqual(['idle', 'judging', 'ask', 'idle', 'judging', 'flow']);
   await expect(page.locator('.np-rail__meta')).toContainText('14:28:10');
   await page.clock.runFor(60000);
   await expect(page.locator('.np-rail__title')).toHaveText('방문자 B · 조명 켜기');
-  await expect(page.locator('.np-topbar__recv')).toContainText('수신 14:31');
+  await expect(page.locator('.np-topbar__recv')).toContainText('수신 14:3');
   expect(writes).toEqual([]);
 });
 

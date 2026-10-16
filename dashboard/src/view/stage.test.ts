@@ -1,6 +1,7 @@
-// FR-12B: 스냅숏에서 무대 표시를 규칙으로 계산한다
+// FR-12B: 모니터 상태에서 무대 표시를 규칙으로 계산한다
 import { describe, expect, it } from 'vitest';
-import { LAYOUT, SCENES } from '../data/mock/fixtures';
+import { LAYOUT } from '../data/mock/fixtures';
+import { SCENES, sec, stateAt } from '../data/mock/story';
 import { stageView } from './stage';
 import { PLACE } from '../data/mock/fixtures';
 import { resolveArrangement, withArrangement } from './arrange';
@@ -226,4 +227,25 @@ describe('바꾼 배치에서도 무대 글자가 겹치지 않는다', () => {
       }
     }
   }
+});
+
+describe('stageView 이벤트 흐름', () => {
+  it('FR12B 판정 전: 호스트→서버 선과 요청자 신호, 마지막 단계를 말하는 콜아웃', () => {
+    const v = stageView(stateAt(sec('14:28:10.05')), LAYOUT, { panelOpen: false });
+    expect(v).toMatchObject({ scene: 'judging', mcp: 'claude', reply: null, server: true, uplink: true, rssiOn: true, cmd: null });
+    expect(v.callout.title).toBe('① 비콘 통과');
+  });
+  it('FR12B 명령을 보내면 명령 선, 결과가 오고 응답하면 호스트로 돌아가는 선', () => {
+    expect(stageView(SCENES.flow(), LAYOUT, { panelOpen: false })).toMatchObject({ cmd: 'locker-1', mcp: 'claude', reply: null });
+    expect(stageView(SCENES.done(), LAYOUT, { panelOpen: false })).toMatchObject({ cmd: null, mcp: null, reply: 'claude' });
+  });
+  it('FR12B 끝난 요청이 내려가면 대기 화면으로 돌아간다', () => {
+    const v = stageView(stateAt(sec('14:28:40')), LAYOUT, { panelOpen: false });
+    expect(v).toMatchObject({ scene: 'idle', mcp: null, reply: null });
+  });
+  it('FR12B 승인 신청 만료: 소유자 알림 선을 끄고 만료를 말한다', () => {
+    const v = stageView(stateAt(sec('14:41:01')), LAYOUT, { panelOpen: false });
+    expect(v).toMatchObject({ scene: 'approval', push: false, owner: false });
+    expect(v.callout.title).toBe('승인 신청이 만료됐어요');
+  });
 });

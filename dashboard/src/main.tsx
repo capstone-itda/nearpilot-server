@@ -17,7 +17,7 @@ import './styles/Settings.css';
 import { App, type AppProps } from './App';
 import { createMockSource, isSceneName } from './data/mock/mockSource';
 
-// 주소 값: ?scene=idle|ask|flow|done|fault|approval|later|offline|play|live (목 데이터 장면, live는 시각에 따라 흐름)
+// 주소 값: ?scene=idle|ask|judging|flow|done|fault|approval|later|offline|play|live (목 데이터 장면, live는 이벤트가 시각 순서대로 흐름)
 //          &view=layout|phones|check  &panel=uses|approvals|audit|history|trust|device:<id>|request:<id>  &theme=dark|light
 const q = new URLSearchParams(location.search);
 const scene = q.get('scene');

@@ -27,8 +27,10 @@ export function PanelMenu({ open, current, onPick }: { open: boolean; current: M
 export interface TopBarProps {
   theme: 'dark' | 'light';
   live: boolean;
-  /** 마지막 스냅숏 수신 시각. 스트림이 들어올 때마다 바뀐다. */
+  /** 마지막 이벤트 수신 시각. 스트림이 들어올 때마다 바뀐다. */
   receivedAt: string;
+  /** 목 어댑터의 데이터다 */
+  mock?: boolean;
   placeName: string;
   menuOpen: boolean;
   current: MenuKey | null;
@@ -37,7 +39,7 @@ export interface TopBarProps {
   onPick: (k: MenuKey) => void;
 }
 
-export function TopBar({ theme, live, receivedAt, placeName, menuOpen, current, onToggleTheme, onToggleMenu, onPick }: TopBarProps) {
+export function TopBar({ theme, live, receivedAt, mock, placeName, menuOpen, current, onToggleTheme, onToggleMenu, onPick }: TopBarProps) {
   const toLight = theme === 'dark';
   return (
     <header className="np-topbar" data-component="TopBar">
@@ -55,6 +57,7 @@ export function TopBar({ theme, live, receivedAt, placeName, menuOpen, current, 
       <div className="np-topbar__live" data-live={live ? 'true' : 'false'} role="status">
         <span className="np-topbar__live-dot" aria-hidden="true" /><span>{live ? '실시간 연결됨' : '연결 끊김'}</span>
       </div>
+      {mock ? <span className="np-topbar__mock np-cap">목 데이터</span> : null}
       <span className="np-topbar__recv" aria-hidden="true">수신 {receivedAt}</span>
       <div className="np-topbar__actions">
         <button className="np-btn" data-variant="quiet" type="button" aria-label={toLight ? '라이트 모드로 바꾸기' : '다크 모드로 바꾸기'} onClick={onToggleTheme}>

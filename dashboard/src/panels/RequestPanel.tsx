@@ -1,13 +1,14 @@
 // MON-04 요청 상세: 판정 단계 ⓪~⑥, 근접 확률, 승인 진행
-import type { RequestProgress } from '../model/types';
+import { isDecided, type DecidedRequest, type RequestProgress, type Verdict } from '../model/types';
 import { KeyValue, ProbBars, Section, StepList, Timeline, VerdictTag, type StepRowResult } from '../components/common';
 import { Panel } from '../components/Panel';
 import { useData } from '../data/context';
 import { ACTION_DONE, ACTION_NAME, ACTION_VERB, CAPABILITY_NAME, CIRCLED, HOST_NAME, STEP_SHORT, VERDICT_LABEL, approvalText, josa, reasonText, requestTitle, toolCall } from '../view/text';
 
-const STOP_RESULT: Record<RequestProgress['verdict'], StepRowResult> = { OK: 'pass', ASK: 'ask', NEED_APPROVAL: 'appr', BUSY: 'fail', DENY: 'fail' };
+const STOP_RESULT: Record<Verdict, StepRowResult> = { OK: 'pass', ASK: 'ask', NEED_APPROVAL: 'appr', BUSY: 'fail', DENY: 'fail' };
 
 function stopHint(r: RequestProgress, cap: string): string {
+  if (!isDecided(r)) return '단계 결과가 도착하는 대로 채워져요';
   const i = r.steps.findIndex((s) => s.result === 'stop');
   if (i === -1) return r.verdict === 'OK' ? '모든 단계를 통과했어요' : `단계 확인 밖에서 멈췄어요 · ${reasonText(r.reason)}`;
   const why: Record<string, string> = {
@@ -37,15 +38,17 @@ function execText(r: RequestProgress, subject: string): string {
 export function RequestPanel({ r, onClose }: { r: RequestProgress; onClose: () => void }) {
   const { personName, deviceName, layout, snapshot } = useData();
   const cap = CAPABILITY_NAME[r.target.capability ?? layout.devices.find((d) => d.nodeId === r.nodeId)?.capability ?? 'locker'];
+  const d: DecidedRequest | undefined = isDecided(r) ? r : undefined;
   const rows: [StepRowResult, string, string][] = r.steps.map((s) =>
     s.result === 'pass' ? ['pass', '통과', s.detail ?? '']
-      : s.result === 'stop' ? [STOP_RESULT[r.verdict], VERDICT_LABEL[r.verdict], s.detail ?? r.reason]
-        : ['skip', '확인 안 함', s.detail ?? '']);
+      : s.result === 'stop' ? (d ? [STOP_RESULT[d.verdict], VERDICT_LABEL[d.verdict], s.detail ?? d.reason] : ['fail', '멈춤', s.detail ?? ''])
+        : s.result === 'pending' ? ['pending', '기다림', '']
+          : ['skip', '확인 안 함', s.detail ?? '']);
   const post = Object.entries(r.posteriors ?? {}).sort((a, b) => b[1] - a[1]);
   const showBars = r.verdict === 'ASK' && post.length > 0 && r.threshold !== undefined;
 
   return (
-    <Panel kind="request" cap="요청 상세 · MON-04" title={`${requestTitle(r, deviceName)} 요청`} tag={<VerdictTag verdict={r.verdict} />} onClose={onClose}>
+    <Panel kind="request" cap="요청 상세 · MON-04" title={`${requestTitle(r, deviceName)} 요청`} tag={d ? <VerdictTag verdict={d.verdict} /> : <VerdictTag verdict="WAIT" code="…" label="판정 중" />} onClose={onClose}>
       <Section title="요청">
         <KeyValue rows={[['누가', `${personName(r.personId)} · ${HOST_NAME[r.host]}`], ['도구', toolCall(r), true]]} />
       </Section>
@@ -62,14 +65,16 @@ export function RequestPanel({ r, onClose }: { r: RequestProgress; onClose: () =
           <ProbBars rows={layout.devices.filter((d) => r.posteriors![d.nodeId] !== undefined).map((d) => [d.name, r.posteriors![d.nodeId], d.nodeId === post[0][0] ? 'ask' : 'muted'])} threshold={r.threshold!} />
         </Section>
       ) : null}
-      {r.verdict === 'NEED_APPROVAL' ? (
+      {d?.verdict === 'NEED_APPROVAL' ? (
         <Section title="승인 진행">
-          <Timeline items={r.accessRequestedAt
-            ? [['done', r.accessRequestedAt, 'request_access로 승인 신청 → 소유자 폰에 알림 (알림 수단 미결)'],
-              ...(snapshot.request?.id === r.id ? [['now', snapshot.lastReceivedAt, '소유자 응답 기다림 · 실행 허가 아님', 'appr'] as ['now', string, string, string]] : [])]
-            : [['now', r.at, r.reason === 'APPROVAL_REQUIRED'
+          <Timeline items={d.accessRequestedAt
+            ? [['done', d.accessRequestedAt, 'request_access로 승인 신청 → 소유자 폰에 알림 (알림 수단 미결)'],
+              ...(d.accessExpiredAt
+                ? [['now', d.accessExpiredAt, `소유자 응답 없이 신청 만료 · ${josa(cap, '은', '는')} 실행하지 않음`, 'appr'] as ['now', string, string, string]]
+                : snapshot.request?.id === d.id ? [['now', snapshot.lastReceivedAt, '소유자 응답 기다림 · 실행 허가 아님', 'appr'] as ['now', string, string, string]] : [])]
+            : [['now', d.at, d.reason === 'APPROVAL_REQUIRED'
               ? `AI가 request_access로 신청하기를 기다림 · ${josa(cap, '은', '는')} 아직 실행하지 않음`
-              : `${approvalText(r.reason).detail} · ${josa(cap, '은', '는')} 아직 실행하지 않음`, 'appr']]} />
+              : `${approvalText(d.reason).detail} · ${josa(cap, '은', '는')} 아직 실행하지 않음`, 'appr']]} />
         </Section>
       ) : null}
     </Panel>
