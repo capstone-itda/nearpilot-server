@@ -69,6 +69,11 @@ def _edit(dotted: str, value: Any) -> Callable[[Path], Path]:
     return partial(_write, content=json.dumps(raw))
 
 
+def _temperature(tau: Any) -> Callable[[Path], Path]:
+    """합성 place-a 모델의 calibration을 `{"method": "temperature", "tau": tau}`로 바꾼 파일을 만드는 함수."""
+    return _edit("calibration", {"method": "temperature", "tau": tau})
+
+
 def test_FR16_load_fixture_models():
     model_a = load_model(PLACE_A_FILE)
     model_b = load_model(PLACE_B_FILE)
@@ -144,6 +149,13 @@ INVALID_FILES = [
     pytest.param(_edit("nodes.locker-1.sigma", _DROP), "locker-1", id="missing_node_key"),
     pytest.param(_edit("transition.leave", 0.1), "leave", id="unknown_transition_key"),
     pytest.param(_edit("calibration.params", {}), "params", id="unknown_calibration_key"),
+    pytest.param(_edit("calibration", {"method": "none", "tau": 2.0}), "모르는 키 ['tau']", id="none_with_tau"),
+    pytest.param(_edit("calibration", {"method": "temperature"}), "빠진 키 ['tau']", id="temperature_missing_tau"),
+    pytest.param(
+        _edit("calibration", {"method": "temperature", "tau": 2.0, "params": {}}),
+        "params",
+        id="temperature_unknown_key",
+    ),
     pytest.param(_edit("nodes", []), "nodes", id="nodes_not_object"),
     pytest.param(_edit("nodes.locker-1", 1), "locker-1", id="node_entry_not_object"),
     pytest.param(_edit("validation", []), "validation", id="validation_not_object"),
@@ -173,6 +185,12 @@ INVALID_FILES = [
     pytest.param(_edit("nodes.locker-1.sigma", "4.0"), "locker-1.sigma", id="string_number"),
     pytest.param(_edit("nodes", {}), "nodes", id="empty_nodes"),
     pytest.param(_edit("calibration.method", "linear"), "calibration.method", id="unsupported_calibration"),
+    pytest.param(_edit("calibration.method", "linear"), "temperature", id="unsupported_calibration_lists_accepted"),
+    pytest.param(_temperature(0), "calibration.tau", id="tau_zero"),
+    pytest.param(_temperature(-1.0), "calibration.tau", id="tau_negative"),
+    pytest.param(_temperature(float("nan")), "calibration.tau", id="tau_nan"),
+    pytest.param(_temperature(True), "calibration.tau", id="tau_bool"),
+    pytest.param(_temperature("2.0"), "calibration.tau", id="tau_string"),
     pytest.param(_edit("calib_version", ""), "calib_version", id="empty_string"),
     pytest.param(_edit("model_version", 1), "model_version", id="string_field_not_string"),
     pytest.param(_edit("nodes.", json.loads(PLACE_A_TEXT)["nodes"]["locker-1"]), "nodes.", id="empty_node_id"),
@@ -321,3 +339,16 @@ def test_FR16_none_points_are_read_as_float_pairs(tmp_path):
     assert load_model(_write(tmp_path, content=json.dumps(raw))).none_points == ((1.0, 2.0),)
     raw["none_points"] = []
     assert load_model(_write(tmp_path, content=json.dumps(raw))).none_points == ()
+
+
+def test_FR16_temperature_model_file_is_read(tmp_path):
+    fixture = load_model(PLACE_A_FILE)
+    assert (fixture.calibration_method, fixture.calibration_tau) == ("none", 1.0)  # none의 τ는 1.0이다
+    assert type(fixture.calibration_tau) is float
+
+    for written, expected in ((2.5, 2.5), (2, 2.0)):  # 정수 tau도 float로 읽는다
+        model = load_model(_temperature(written)(tmp_path))
+
+        assert model.calibration_method == "temperature"
+        assert model.calibration_tau == expected
+        assert type(model.calibration_tau) is float

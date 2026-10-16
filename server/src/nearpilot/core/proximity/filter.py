@@ -3,6 +3,7 @@
 프레임 목록, 모델, 비콘, 후보, 장소 전체 기기, 시각만으로 `ProximityResult`를 만드는 순수 함수다.
 판정, 재현, 평가가 모두 이 함수를 쓴다. 메모리 상태, 현재 시각, 무작위를 쓰지 않는다.
 `(at − window_sec, at]`의 프레임으로 처음 분포부터 HMM forward를 매번 다시 돌린다.
+보정은 우도 온도다. 칸마다 증거의 로그우도를 `model.calibration_tau`로 나눈다.
 """
 
 from __future__ import annotations
@@ -211,11 +212,12 @@ def compute_posteriors(
                 math.fsum(_log_normal(rssi, *nones[anchor_id][c]) for anchor_id, rssi in evidence)
                 for c in range(len(model.none_points) + 1)
             ]) - log_n_components
-            belief = [b + e for b, e in zip(belief, [*front_log, none_log])]
+            # 보정: 증거의 로그우도를 τ로 나눠 더한다. "none"은 τ = 1.0이라 나눠도 값이 그대로다.
+            belief = [b + e / model.calibration_tau for b, e in zip(belief, [*front_log, none_log])]
         total = _logsumexp(belief)
         belief = [b - total for b in belief]
 
-    # 보정: 모델 파일이 지원하는 방법은 "none"뿐이다 (`load_model`이 다른 값을 거부한다). 확률을 그대로 쓴다.
+    # 보정은 칸마다 증거를 더할 때 이미 반영했다. 확률을 그대로 쓴다.
     probability = {state: math.exp(b) for state, b in zip(states, belief)}
     return ProximityResult(
         posteriors={candidate.node_id: probability[candidate.node_id] for candidate in candidates},
