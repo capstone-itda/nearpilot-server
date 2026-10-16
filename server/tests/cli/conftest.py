@@ -9,18 +9,29 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
-from datetime import datetime, timezone
+from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from nearpilot.cli import main, serve
+from nearpilot.core.proximity.fit import PlaceLayout
+from nearpilot.db.repositories.admin_repository import SqliteAdminRepository
 from nearpilot.db.repositories.repository import SqliteRepository
 from nearpilot.db.schema import connect
-from nearpilot.shared.enums import Capability, Occupancy
-from nearpilot.shared.models import NodeAnnounce
+from nearpilot.shared.enums import AdminWriteOutcome, Capability, Occupancy, Role
+from nearpilot.shared.models import (
+    AccountRegistration,
+    AdminWriteResult,
+    BeaconKey,
+    BeaconRegistration,
+    NodeAnnounce,
+    PlaceAssignment,
+    RssiFrame,
+)
+from nearpilot.shared.tokens import hash_token
 
 # 유효한 최소 설정. 절 하나를 통째로 바꾸려면 `write_config(server_dir, proximity={...})`처럼 넘긴다.
 BASE_SECTIONS: dict[str, dict[str, Any]] = {
@@ -131,3 +142,93 @@ def announce_nodes() -> Callable[..., None]:
             conn.close()
 
     return announce
+
+
+# `make_collection_db`가 등록하는 활성 비콘. 수집 계획 파일의 `beacon`에 쓴다 (`collect_beacon` fixture).
+COLLECT_BEACON = BeaconKey("11111111-2222-3333-4444-555555555555", 1, 1)
+
+
+@pytest.fixture
+def collect_beacon() -> BeaconKey:
+    """`make_collection_db`가 등록하는 활성 비콘."""
+    return COLLECT_BEACON
+
+
+def _applied(result: AdminWriteResult, what: str) -> None:
+    """관리 쓰기가 반영되지 않았으면 테스트 준비가 틀린 것이다. 사유를 담아 바로 실패시킨다."""
+    if result.outcome != AdminWriteOutcome.APPLIED:
+        raise AssertionError(f"{what}: DB가 거부했다 ({result.outcome}, {result.reason})")
+
+
+@pytest.fixture
+def make_collection_db() -> Callable[..., list[str]]:
+    """`make_collection_db(server_dir, layout, runs, *, unplaced=())`: 설정의 DB에 수집 회차와 프레임을 만든다.
+
+    `announce_nodes`처럼 기본 설정의 DB인 `var/nearpilot.db`에 쓰고 폴더가 없으면 만든다. 한 DB에 한 번만 부른다.
+    모두 실제 경로로 만든다. 기기는 `upsert_announced_node`, 계정·비콘·장소 배치는 `AdminRepository`,
+    회차는 `start_collection`/`end_collection`, 프레임은 `Repository.save_rssi`다 (회차에 연결되는 것까지 같다).
+
+    - `layout`: `PlaceLayout` 하나 또는 그 목록. 배치의 기기를 발표하고 그 장소에 놓는다. 좌표는 쓰지 않는다.
+      장소의 소유자는 계정 `collector`다. 계정에 활성 비콘 `collect_beacon` 하나를 등록한다.
+    - `unplaced`: 발표만 하고 장소에 놓지 않는 기기 ID. 장소 없는 기기를 만들 때 쓴다.
+    - `runs`: `(label, started_at, seconds, {node_id: [rssi, …]})`의 목록이다. 모든 회차가 비콘 하나를 쓰므로
+      시작 시각이 이른 순서이고 구간이 겹치지 않아야 한다. `seconds`가 None이면 끝 시각이 없는 진행 중 회차다
+      (그 뒤에 회차를 둘 수 없다). 기기마다 `started_at`부터 1초 간격으로 `rssi`를 차례로 저장하고,
+      값 개수는 `seconds`를 넘을 수 없다. `{}`이면 프레임이 없는 회차다.
+    - 돌려주는 값: 입력 순서대로 회차 ID 목록 (`col-001`, `col-002`, …).
+
+    배치·`unplaced`에 없는 기기를 라벨이나 프레임에 쓰면 `ValueError`다 (DB가 조용히 버리기 때문이다).
+    """
+
+    def make(server: Path, layout: PlaceLayout | Sequence[PlaceLayout],
+             runs: Sequence[tuple[str, datetime, float | None, Mapping[str, Sequence[float]]]],
+             *, unplaced: Sequence[str] = ()) -> list[str]:
+        layouts = [layout] if isinstance(layout, PlaceLayout) else list(layout)
+        node_ids = [node_id for placed in layouts for node_id in placed.nodes] + list(unplaced)
+        for label, _, _, frames in runs:
+            unknown = sorted(({label} - {"none"} | set(frames)) - set(node_ids))
+            if unknown:
+                raise ValueError(f"배치와 unplaced에 없는 기기를 썼다: {unknown}")
+
+        db_file = server / "var" / "nearpilot.db"
+        db_file.parent.mkdir(parents=True, exist_ok=True)
+        announced_at = datetime(2026, 10, 17, 8, 0, tzinfo=timezone.utc)
+        conn = connect(str(db_file))
+        try:
+            repository = SqliteRepository(conn)
+            admin = SqliteAdminRepository(conn)
+            for seq, node_id in enumerate(node_ids, start=1):
+                repository.upsert_announced_node(NodeAnnounce(
+                    node_id=node_id, capability=Capability.LOCKER, occupancy=Occupancy.RENTAL,
+                    received_at=announced_at, session_id=f"session-{node_id}", seq=seq, sent_at=announced_at))
+            _applied(admin.register_account(AccountRegistration(
+                "collector", "수집 담당", Role.OWNER, hash_token("collector-token"))), "계정 등록")
+            _applied(admin.register_beacon(
+                BeaconRegistration("beacon-collect", "collector", COLLECT_BEACON)), "비콘 등록")
+            for placed in layouts:
+                _applied(admin.assign_place(PlaceAssignment(
+                    placed.place_id, "collector", placed.place_id, tuple(placed.nodes))), f"장소 {placed.place_id} 배치")
+
+            collection_ids = []
+            for index, (label, started_at, seconds, frames) in enumerate(runs, start=1):
+                collection_id = f"col-{index:03d}"
+                collection_ids.append(collection_id)
+                _applied(admin.start_collection(collection_id, COLLECT_BEACON, label, started_at),
+                         f"회차 {collection_id} 시작")
+                for node_id, rssis in frames.items():
+                    if seconds is not None and len(rssis) > seconds:
+                        raise ValueError(f"{collection_id}: {node_id}의 프레임 {len(rssis)}개가 {seconds}초 구간을 넘는다")
+                    for k, rssi in enumerate(rssis):
+                        at = started_at + timedelta(seconds=k)
+                        repository.save_rssi(RssiFrame(
+                            node_id=node_id, beacon=COLLECT_BEACON, rssi=rssi, frame_ts=at,
+                            session_id=f"{collection_id}-{node_id}", seq=k + 1, sent_at=at,
+                            received_at=at + timedelta(milliseconds=50)))
+                if seconds is not None:
+                    _applied(admin.end_collection(collection_id, started_at + timedelta(seconds=seconds)),
+                             f"회차 {collection_id} 끝")
+        finally:
+            conn.close()
+        return collection_ids
+
+    return make
