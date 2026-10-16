@@ -968,3 +968,14 @@ def test_FR18_재판정이_진행_중이면_같은_키는_다시_판정하지_�
     assert state["in_progress"]
     d = pipe.decide(request())  # 동시에 온 두 번째 재전송
     assert d.verdict is Verdict.DENY and len(repo.reserved) == 0
+
+def test_FR22_capacity_stops_before_beacon_and_saves_record():
+    pipe, repo, prox, policy, audit = build()
+    repo.link = RequestLink("full", True, False, capacity_exceeded=True)
+    decision, context = pipe.decide_for_execution(request())
+    assert decision.reason is ReasonCode.CAPACITY_EXCEEDED
+    assert decision.verdict is Verdict.DENY and context is None
+    assert repo.calls == ["link_request", "save_decision"]
+    assert repo.saved == [decision] and not repo.reserved
+    assert repo.records[0].model_version is None
+    assert [event.step for event in audit.events] == [Step.DEDUP]

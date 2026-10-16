@@ -151,6 +151,8 @@ class DecisionPipeline:
     def decide_for_execution(self, req: UseRequest) -> tuple[Decision, ExecutionContext | None]:
         """판정과 실행 인계 context 를 반환한다. context 는 이번에 새로 OK 가 난 요청에만 있다 (#16, #35)."""
         internal_id = ""
+        if req.purpose != "use":
+            return self._decision(req, internal_id, Verdict.DENY, ReasonCode.INVALID_INPUT), None
         try:
             link = self._repo.link_request(req, input_digest(req))
             internal_id = link.internal_request_id
@@ -170,7 +172,12 @@ class DecisionPipeline:
         applied = _Applied()
         try:
             try:
-                decision, step, detail = self._run(req, internal_id, applied)
+                if link.capacity_exceeded:
+                    decision = self._decision(
+                        req, internal_id, Verdict.DENY, ReasonCode.CAPACITY_EXCEEDED)
+                    step, detail = Step.DEDUP, {"capacity_exceeded": True}
+                else:
+                    decision, step, detail = self._run(req, internal_id, applied)
             except _Stop as stop:
                 decision, step, detail = stop.decision, stop.step, {}
             self._audit_step(step, internal_id, {

@@ -105,6 +105,8 @@ class Repository(Protocol):
 
         input_digest 는 판정이 정규화 입력(대상 지정, 동작, 원 요청 연결 ID)으로 계산해서 넘긴다 (#24).
         DB 는 값을 저장하고 비교만 한다.
+        req.purpose는 CORE가 정한다. access는 조작 한도에서 제외하고 외부 키를 보존한다.
+        use와 기존 미분류 행만 집계한다. 기존 외부 키의 재전송 보장은 유지한다.
         """
         ...
 

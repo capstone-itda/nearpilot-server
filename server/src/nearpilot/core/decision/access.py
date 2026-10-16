@@ -66,7 +66,7 @@ class AccessRequestService:
             return make_decision(request_id, "", Verdict.DENY, ReasonCode.INVALID_INPUT)
         if target.kind is not TargetKind.EXPLICIT:  # nearest:·any: 는 기기를 지정하지 않는다
             return make_decision(request_id, "", Verdict.DENY, ReasonCode.INVALID_INPUT)
-        req = UseRequest(user_id, request_id, target, action, None, now)
+        req = UseRequest(user_id, request_id, target, action, None, now, purpose="access")
 
         iid = ""
         try:

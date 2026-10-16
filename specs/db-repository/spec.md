@@ -167,6 +167,14 @@
 - `rssi_observation`은 `collection_id`로 수집 회차를 연결한다. 회차는 `collection_run` 테이블(`collection_id`, `beacon_id`, `label`, `started_at`, `ended_at`)에 둔다. `label`은 관측이 아니라 회차에 있다 (#41, PR #54).
 - 계정당 활성 비콘은 하나다. DB는 `(user_id) WHERE is_active=1` 부분 UNIQUE 인덱스로 막는다. `beacons_of()`는 활성 비콘 0개 또는 1개만 반환한다 (#42, PR #54).
 
+### #173에서 승인한 변경 경계
+
+- 요청 목적 필드는 `shared/models.py`와 기존 `Repository.link_request` 문서에 반영한다.
+- `db/schema/sql/0006_request_purpose.sql`에서 목적 컬럼만 추가한다. 기존 FK와 외부 키 범위는 유지한다.
+- 평가 도구의 기대 스키마 버전은 같은 PR에서 6으로 올린다.
+- 공동 계약 문서와 관련 기존 spec을 같은 PR에서 맞춘다.
+- 위 목록은 4절의 기존 고치지 않는 곳에서 이 fix에만 허용한 예외다.
+
 ### #165 후속: 요청 용량의 원자적 집계
 
 - #174가 DB 한도 집계를 구현했다. 이 fix는 승인 신청의 외부 키 보존과 목적별 집계를 보완한다.
@@ -191,7 +199,7 @@
 ## 7. 가정
 
 - `request.request_id`는 NULL을 허용한다. 보장기간 뒤 외부 ID를 비우는 구현은 `db-retention-capacity`가 맡는다 — #15, #164.
-- #165 구현은 DB 정리의 최종 완료·보호 관계 기준을 따른다. 기준 선택 전 정리를 추측으로 추가하지 않는다.
+- #165 구현은 DB 정리의 최종 완료·보호 관계 기준을 따른다. 기준은 머지된 `db-retention-capacity`를 그대로 재사용한다.
 - 담당자가 같은 요청 연결 함수에 목적을 전달하는 안을 승인했다. `UseRequest.purpose`는 `use` 또는 `access`다.
 - 마이그레이션 전 행은 목적을 복원할 근거가 없다. NULL을 유지하고 기존 키와 digest의 재전송 보장을 유지한다.
 - `recovery` 테이블은 복구 건 ID, 기기와 명령·세션 연결, 근거 참조, 승인 기록, 정산 결과, 정산 내용 요약값을 담는다 — #17, #20

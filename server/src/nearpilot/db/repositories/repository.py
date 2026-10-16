@@ -10,6 +10,7 @@ import sqlite3
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 
+from nearpilot.db.repositories.retention import SqliteRetentionStore
 from nearpilot.db.repositories._common import (
     from_json, immediate_transaction, iso, new_id, parse_iso, settings_to_json, to_json,
 )
@@ -293,14 +294,19 @@ class SqliteRepository:
         `IntegrityError`로 분기하면 그 단일 문장이 자동 커밋이라 한도 세기를 같은
         트랜잭션에 넣을 수 없다.
         """
+        if req.purpose not in ("use", "access"):
+            raise ValueError("Unknown internal request purpose")
         target_spec = self._serialize_target(req.target)
         with immediate_transaction(self._conn):
             row = self._conn.execute(
                 "SELECT internal_request_id, input_digest, verdict, reason_code, node_id, p_max, "
-                "policy_ver FROM request WHERE user_id = ? AND request_id = ?",
+                "policy_ver, purpose FROM request WHERE user_id = ? AND request_id = ?",
                 (req.user_id, req.request_id),
             ).fetchone()
             if row is not None:
+                # 구형 행의 목적은 추측하지 않는다. 알려진 목적만 대조한다.
+                if row["purpose"] is not None and row["purpose"] != req.purpose:
+                    return RequestLink(row["internal_request_id"], is_new=False, conflict=True)
                 return self._link_existing_row(req, input_digest, row)
             return self._insert_new_request(req, input_digest, target_spec)
 
@@ -310,31 +316,42 @@ class SqliteRepository:
         return f"{target.kind.value}:{target.capability.value}"
 
     def _insert_new_request(self, req: UseRequest, input_digest: str, target_spec: str) -> RequestLink:
-        """한도(`dedup_entry_limit`) 이상이면 `request_id` 없이 만든다 (#165).
+        """조작 한도 이상이면 외부 ID를 비운다. 승인 신청은 외부 키를 유지한다.
 
         이 행은 외부 `request_id`가 있는 요청 수 집계에서 빠지므로 한도를 더 늘리지 않는다.
         `DENY`·`CAPACITY_EXCEEDED`로 바꾸는 판정은 CORE 가 한다.
         """
-        count_row = self._conn.execute(
-            "SELECT COUNT(*) AS n FROM request WHERE request_id IS NOT NULL"
-        ).fetchone()
-        capacity_exceeded = count_row["n"] >= self._settings.dedup_entry_limit
+        capacity_exceeded = False
+        if req.purpose == "use":
+            count = self._use_request_count()
+            if count >= self._settings.dedup_entry_limit:
+                # 같은 DB 트랜잭션에서 ID만 정리한다. 이력·감사는 지우지 않는다.
+                SqliteRetentionStore(self._conn, self._settings).clear_expired_request_ids(
+                    req.received_at)
+                count = self._use_request_count()
+            capacity_exceeded = count >= self._settings.dedup_entry_limit
         internal_request_id = new_id()
         stored_request_id = None if capacity_exceeded else req.request_id
         self._conn.execute(
             "INSERT INTO request (internal_request_id, user_id, request_id, input_digest, "
-            "parent_internal_request_id, node_id, target_spec, action, host_kind, received_at) "
-            "VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
+            "parent_internal_request_id, node_id, target_spec, action, host_kind, received_at, purpose) "
+            "VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
             (
                 internal_request_id, req.user_id, stored_request_id, input_digest,
                 req.parent_internal_request_id, target_spec, req.action.value,
-                req.host_kind, iso(req.received_at),
+                req.host_kind, iso(req.received_at), req.purpose,
             ),
         )
         return RequestLink(
             internal_request_id=internal_request_id, is_new=True, conflict=False,
             capacity_exceeded=capacity_exceeded,
         )
+
+    def _use_request_count(self) -> int:
+        return self._conn.execute(
+            "SELECT COUNT(*) AS n FROM request WHERE request_id IS NOT NULL "
+            "AND (purpose = 'use' OR purpose IS NULL)"
+        ).fetchone()["n"]
 
     def _link_existing_row(self, req: UseRequest, input_digest: str, row: sqlite3.Row) -> RequestLink:
         if row["input_digest"] != input_digest:
