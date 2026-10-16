@@ -151,8 +151,6 @@ class DecisionPipeline:
     def decide_for_execution(self, req: UseRequest) -> tuple[Decision, ExecutionContext | None]:
         """판정과 실행 인계 context 를 반환한다. context 는 이번에 새로 OK 가 난 요청에만 있다 (#16, #35)."""
         internal_id = ""
-        if req.purpose != "use":
-            return self._decision(req, internal_id, Verdict.DENY, ReasonCode.INVALID_INPUT), None
         try:
             link = self._repo.link_request(req, input_digest(req))
             internal_id = link.internal_request_id

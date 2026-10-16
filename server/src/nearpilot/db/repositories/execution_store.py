@@ -951,7 +951,6 @@ class SqliteExecutionStore:
             target=TargetSpec.parse(row["target_spec"]), action=Action(row["action"]),
             host_kind=row["host_kind"], received_at=parse_iso(row["received_at"]),
             parent_internal_request_id=row["parent_internal_request_id"],
-            purpose=row["purpose"] or "use",
         )
 
     @staticmethod

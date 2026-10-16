@@ -12,7 +12,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from math import fsum, isclose, isfinite
-from typing import Any, Literal
+from typing import Any
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
@@ -219,8 +219,6 @@ class UseRequest:
     host_kind: str | None
     received_at: datetime
     parent_internal_request_id: str | None = None  # 재질문·승인 후 재요청 연결
-    # CORE가 정하는 내부 목적이다. 호스트 도구 인자로 받지 않는다.
-    purpose: Literal["use", "access"] = "use"
 
 
 @dataclass(frozen=True, slots=True)

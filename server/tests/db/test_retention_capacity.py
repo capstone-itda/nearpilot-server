@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -383,6 +384,37 @@ def test_FR22_link_request_capacity_exceeded_omits_request_id(conn):
     assert row["request_id"] is None
     count = conn.execute("SELECT COUNT(*) AS n FROM request WHERE request_id IS NOT NULL").fetchone()["n"]
     assert count == 1  # 기존 1건에서 늘지 않았다
+
+
+def test_FR22_link_request_clears_expired_ids_before_capacity_check(conn):
+    insert_user(conn)
+    insert_request(conn, verdict="DENY", reason_code="BEACON_NOT_SEEN")
+    insert_audit_log(conn, internal_request_id="req1", created_at="2026-01-01T00:00:00+00:00")
+    repo = SqliteRepository(conn, settings=Settings(dedup_entry_limit=1, request_dedup_ttl_sec=60))
+    later = replace(_use_request(request_id="fresh"),
+                    received_at=datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=61))
+
+    result = repo.link_request(later, "fresh")
+
+    assert result.capacity_exceeded is False
+    old = conn.execute("SELECT request_id FROM request WHERE internal_request_id = 'req1'").fetchone()
+    assert old["request_id"] is None  # 행과 감사는 남기고 외부 ID만 비운다
+    assert conn.execute("SELECT COUNT(*) AS n FROM request").fetchone()["n"] == 2
+    assert conn.execute("SELECT COUNT(*) AS n FROM audit_log").fetchone()["n"] == 1
+
+
+def test_FR22_link_request_capacity_keeps_unfinished_request_key(conn):
+    insert_user(conn)
+    insert_request(conn, request_id="pending", verdict=None)
+    repo = SqliteRepository(conn, settings=Settings(dedup_entry_limit=1, request_dedup_ttl_sec=1))
+    later = replace(_use_request(request_id="new"),
+                    received_at=datetime(2026, 1, 2, tzinfo=timezone.utc))
+
+    result = repo.link_request(later, "new")
+
+    assert result.capacity_exceeded is True
+    old = conn.execute("SELECT request_id FROM request WHERE internal_request_id = 'req1'").fetchone()
+    assert old["request_id"] == "pending"
 
 
 def test_FR18_link_request_retransmission_ignores_limit(conn):

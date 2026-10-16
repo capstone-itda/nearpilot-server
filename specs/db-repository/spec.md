@@ -1,10 +1,8 @@
 # DB 스키마와 저장소 (`Repository`, `AccountLookup`, `AuditLog`)
 
 - 담당: paiwhy (DB)
-- 후속 상태: #165 용량 집계와 승인 신청 예외를 이 fix PR에서 구현한다.
-- 후속 초안 작성: JM-220이다.
 - 요구사항: FR-01, FR-03, FR-05, FR-13, FR-14, FR-15, FR-19, FR-21, FR-22, NFR-03, NFR-08
-- 따르는 결정: #15, #17, #20, #24, #27, #28, #29, #31, #32, #33, #34, #39, #40, #41, #42, #44, #54, #165
+- 따르는 결정: #15, #17, #20, #24, #27, #28, #29, #31, #32, #33, #34, #39, #40, #41, #42, #44, #54
 
 ## 1. 왜
 
@@ -77,7 +75,6 @@
 - `server/src/nearpilot/db/repositories/`
 - `server/src/nearpilot/db/audit/`
 - `server/tests/db/`
-- #165 후속 검증: `server/tests/integration/`이다.
 
 ### 고치지 않는 곳
 - 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
@@ -167,41 +164,9 @@
 - `rssi_observation`은 `collection_id`로 수집 회차를 연결한다. 회차는 `collection_run` 테이블(`collection_id`, `beacon_id`, `label`, `started_at`, `ended_at`)에 둔다. `label`은 관측이 아니라 회차에 있다 (#41, PR #54).
 - 계정당 활성 비콘은 하나다. DB는 `(user_id) WHERE is_active=1` 부분 UNIQUE 인덱스로 막는다. `beacons_of()`는 활성 비콘 0개 또는 1개만 반환한다 (#42, PR #54).
 
-### #173에서 승인한 변경 경계
-
-- 요청 목적 필드는 `shared/models.py`와 기존 `Repository.link_request` 문서에 반영한다.
-- `db/schema/sql/0006_request_purpose.sql`에서 목적 컬럼만 추가한다. 기존 FK와 외부 키 범위는 유지한다.
-- 평가 도구의 기대 스키마 버전은 같은 PR에서 6으로 올린다.
-- 공동 계약 문서와 관련 기존 spec을 같은 PR에서 맞춘다.
-- 위 목록은 4절의 기존 고치지 않는 곳에서 이 fix에만 허용한 예외다.
-
-### #165 후속: 요청 용량의 원자적 집계
-
-- #174가 DB 한도 집계를 구현했다. 이 fix는 승인 신청의 외부 키 보존과 목적별 집계를 보완한다.
-- 입력과 출력은 기존 `UseRequest`, `input_digest`와 `RequestLink`를 유지한다.
-- 기존 요청을 먼저 식별한다. 재전송에는 한도와 관계없이 기존 연결과 판정을 반환한다.
-- 새 조작 요청의 집계와 연결은 같은 `BEGIN IMMEDIATE` 트랜잭션에서 한다.
-- DB는 외부 `request_id`가 있고 목적이 `use` 또는 미분류인 요청 행을 센다.
-- 승인 신청의 `purpose="access"`는 한도 검사와 집계에서 제외한다. 외부 키는 유지한다.
-- 외부 ID를 비운 요청 행과 감사 행은 집계하지 않는다.
-- 한도 이상이면 외부 `request_id`가 NULL인 요청 행을 만든다.
-- 반환값은 `RequestLink(is_new=True, capacity_exceeded=True)`다. 새 내부 요청 ID도 반환한다.
-- 한도 미만이면 기존 요청 연결을 만들고 플래그는 거짓으로 반환한다.
-- 정규화 입력과 판정·감사의 내부 참조를 유지한다. DB가 거부 판정을 대신 만들지 않는다.
-- 가득 찼을 때 만료 항목을 먼저 정리한다 — 담당자가 2026-10-16에 선택했다.
-- 정리는 기존 `db-retention-capacity`의 만료 ID 보호 기준을 재사용한다.
-- `request.purpose`를 nullable 컬럼으로 추가한다. 기존 행은 NULL로 남겨 목적을 추측하지 않는다.
-- 기존 미분류 행은 집계에 포함하고 기존 재전송은 그대로 반환한다.
-- 새 행의 목적이 다른 같은 외부 키는 입력 충돌이다. 외부 키의 유일성 범위를 나누지 않는다.
-- 기존 오류 거부 재판정과 예약의 멱등성을 유지한다.
-- 명령 항목의 새 삭제·한도 정책은 넣지 않는다.
-
 ## 7. 가정
 
-- `request.request_id`는 NULL을 허용한다. 보장기간 뒤 외부 ID를 비우는 구현은 `db-retention-capacity`가 맡는다 — #15, #164.
-- #165 구현은 DB 정리의 최종 완료·보호 관계 기준을 따른다. 기준은 머지된 `db-retention-capacity`를 그대로 재사용한다.
-- 담당자가 같은 요청 연결 함수에 목적을 전달하는 안을 승인했다. `UseRequest.purpose`는 `use` 또는 `access`다.
-- 마이그레이션 전 행은 목적을 복원할 근거가 없다. NULL을 유지하고 기존 키와 digest의 재전송 보장을 유지한다.
+- `request.request_id`는 NULL을 허용한다. 완료 후 20분이 지나면 후속 작업이 값을 비운다. 이 작업은 비우는 처리를 만들지 않는다 — #15
 - `recovery` 테이블은 복구 건 ID, 기기와 명령·세션 연결, 근거 참조, 승인 기록, 정산 결과, 정산 내용 요약값을 담는다 — #17, #20
 
 ## 8. 테스트
@@ -221,18 +186,3 @@
 
 - 다른 계층의 구현 없이 SQLite 임시 파일만으로 확인한다.
 - NFR-03의 2,000회 측정은 `tools/evaluation/`이 맡는다. 이 작업의 테스트는 원자성만 확인한다.
-
-### #165 후속 검증 계획
-
-| 요구사항 | 테스트 | 확인하는 것 |
-|---|---|---|
-| FR-22 | `test_FR22_capacity_link_counts_only_external_ids` | 집계 대상과 제외 대상이다 |
-| FR-22 | `test_FR22_capacity_link_creates_unkeyed_request` | 한도 거부도 내부 요청 행을 가진다 |
-| FR-22 | `test_FR22_capacity_cleanup_before_rejection` | 만료 항목을 정리한 뒤 한도를 판정한다 |
-| NFR-03 | `test_NFR03_capacity_count_and_link_are_atomic` | 동시 새 요청이 한도 경계를 넘지 않는다 |
-| FR-18, FR-22 | `test_FR22_capacity_link_keeps_existing_replay` | 한도에서 재전송과 입력 충돌을 유지한다 |
-| FR-19 | `test_FR19_capacity_retry_keeps_single_reservation` | 기존 오류 재판정이 예약을 중복하지 않는다 |
-| FR-03, FR-22 | `test_FR03_capacity_link_keeps_access_request_key` | 한도에서도 승인 신청의 키와 재전송을 유지한다 |
-
-- CORE의 플래그 검사와 승인 신청의 실제 DB 통합 검증을 같은 fix 작업에서 마친다.
-- 스키마 5에서 목적이 미분류인 기존 요청을 보존하는 마이그레이션을 검증한다.
