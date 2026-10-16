@@ -42,7 +42,7 @@ describe('railView', () => {
     const v = railView(SCENES.ask(), LAYOUT, 'p-a');
     expect(v.steps[2].checks).toEqual([['pass', '누구인지'], ['unsure', '어디 앞인지 애매함'], ['none'], ['none']]);
     expect(v.steps[3]).toMatchObject({ status: 'todo', detail: '실행하지 않음' });
-    expect(v.steps[4]).toMatchObject({ tone: 'ask', code: 'ASK · LOW_CONFIDENCE' });
+    expect(v.steps[4]).toMatchObject({ tone: 'ask', code: '③ 근접에서 멈춤 · LOW_CONFIDENCE' });
   });
 
   it('FR12B 승인 대기: 폰은 소유자를 보여서 대화는 요청자 폰에 있다고 안내', () => {
@@ -65,7 +65,7 @@ describe('railView', () => {
       steps: [{ result: 'pass' }, { result: 'stop' }, ...[0, 1, 2, 3, 4].map(() => ({ result: 'skip' as const }))] };
     const d = railView(deny, LAYOUT, 'p-a');
     expect(d.steps[2].checks![0]).toEqual(['fail', '폰 신호 없음']);
-    expect(d.steps[4]).toMatchObject({ tone: 'deny', code: 'DENY · BEACON_NOT_SEEN' });
+    expect(d.steps[4]).toMatchObject({ tone: 'deny', code: '① 비콘에서 멈춤 · BEACON_NOT_SEEN' });
   });
 });
 
@@ -98,7 +98,7 @@ describe('railView 단계 밖 판정', () => {
   it('FR12B 승인 필요 사유를 구분해서 보인다', () => {
     const s = SCENES.approval();
     s.request = { ...s.request!, reason: 'APPROVAL_PENDING', accessRequestedAt: undefined };
-    expect(railView(s, LAYOUT, 'p-b').steps[4]).toMatchObject({ mark: '승인 기다림', code: 'NEED_APPROVAL · APPROVAL_PENDING' });
+    expect(railView(s, LAYOUT, 'p-b').steps[4]).toMatchObject({ mark: '승인 기다림', code: '④ 정책에서 멈춤 · APPROVAL_PENDING' });
   });
   it('FR12B 서버 오류로 멈춘 칸은 단계 이유 대신 서버 오류라고 쓴다', () => {
     const s = SCENES.flow();
@@ -109,17 +109,17 @@ describe('railView 단계 밖 판정', () => {
 });
 
 describe('railView 판정 전', () => {
-  it('FR12B 단계 결과가 도착하는 동안 3단계가 지금 단계이고 통과한 칸만 채운다', () => {
-    const early = railView(stateAt(sec('14:28:10.05')), LAYOUT, 'p-a');
-    expect(early.steps.map((s) => s.status)).toEqual(['done', 'done', 'current', 'todo', 'todo']);
-    expect(early.steps[2]).toMatchObject({ mark: '확인 중', checks: [['pass', '누구인지'], ['none'], ['none'], ['none']] });
-    // ③ 근접까지 통과
-    const mid = railView(stateAt(sec('14:28:10.09')), LAYOUT, 'p-a');
-    expect(mid.steps[2].checks![1][0]).toBe('pass');
+  it('FR12B 판정 전에는 3단계가 판정 게이지를 채우고, 도착한 단계를 하나씩 보이지 않는다', () => {
+    for (const t of ['14:28:10.01', '14:28:10.09', '14:26:12.09']) {
+      const v = railView(stateAt(sec(t)), LAYOUT, 'p-a');
+      expect(v.steps.map((s) => s.status)).toEqual(['done', 'done', 'current', 'todo', 'todo']);
+      expect(v.steps[2]).toMatchObject({ mark: '판정 중', gauge: true, checks: [['none'], ['none'], ['none'], ['none']] });
+    }
   });
-  it('FR12B 멈춘 단계가 왔지만 판정 전이면 그 칸을 판정 중으로 보인다', () => {
-    const v = railView(stateAt(sec('14:26:12.09')), LAYOUT, 'p-a');
-    expect(v.steps[2].checks![1]).toEqual(['unsure', '여기서 멈춤 · 판정 중']);
+  it('FR12B 판정이 나면 결과에 멈춘 단계를 적는다', () => {
+    expect(railView(stateAt(sec('14:26:12.5')), LAYOUT, 'p-a').steps[4].code).toBe('③ 근접에서 멈춤 · LOW_CONFIDENCE');
+    // OK는 멈추지 않았다
+    expect(railView(stateAt(sec('14:28:10.5')), LAYOUT, 'p-a').steps[4].code).toBe('');
   });
   it('FR12B 승인 신청이 만료되면 5단계가 만료를 말한다', () => {
     const s = stateAt(sec('14:41:01'));

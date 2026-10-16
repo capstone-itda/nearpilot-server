@@ -63,7 +63,7 @@ describe('목 조회는 마지막 이벤트 시각까지만 보인다', () => {
 });
 
 describe('live', () => {
-  it('FR12B 요청 하나의 이벤트가 도착 순서대로, 한 묶음에 하나씩 느리게 온다', () => {
+  it('FR12B 요청 하나의 이벤트가 도착 순서대로 오고, 판정은 실제처럼 빨리, 실행 결과는 기다린 뒤 온다', () => {
     vi.useFakeTimers();
     const batches: { t: number; types: string[] }[] = [];
     const s = createMockSource({ scene: 'live' });
@@ -71,13 +71,15 @@ describe('live', () => {
     s.subscribe((x) => batches.push({ t, types: x.filter((e) => e.type !== 'rssi' && e.type !== 'mock_phone' && 'requestId' in e && e.requestId === 'r-1428').map((e) => e.type) }));
     for (; t < 120_000; t += 100) vi.advanceTimersByTime(100);
     const flow = batches.filter((b) => b.types.length);
-    expect(flow.flatMap((b) => b.types)).toEqual(['mcp_call', 'step', 'step', 'step', 'posterior', 'step', 'step', 'step', 'step', 'verdict', 'command', 'exec_result', 'mcp_result']);
-    // 0.2초 안의 단계들이 묶음 하나에 몰리지 않는다
-    expect(flow.every((b) => b.types.length === 1)).toBe(true);
-    const gaps = flow.slice(1).map((b, i) => b.t - flow[i].t);
-    expect(Math.min(...gaps.slice(0, 9))).toBeGreaterThanOrEqual(1300);
+    const types = flow.flatMap((b) => b.types);
+    expect(types).toEqual(['mcp_call', 'step', 'step', 'step', 'posterior', 'step', 'step', 'step', 'step', 'verdict', 'command', 'exec_result', 'mcp_result']);
+    const at = (type: string) => flow.find((b) => b.types.includes(type))!.t;
+    // 도구 호출부터 판정까지 1초 안
+    expect(at('verdict') - at('mcp_call')).toBeLessThan(1000);
+    // 명령 뒤 결과는 2초 이상 기다린다
+    expect(at('exec_result') - at('command')).toBeGreaterThanOrEqual(1900);
   });
-  it('FR12B liveClock은 빠른 이벤트를 늘리고 긴 조용한 구간을 줄인다', () => {
+  it('FR12B liveClock은 긴 조용한 구간을 줄인다', () => {
     const clock = liveClock();
     expect(clock(0)).toBe(LIVE_START);
     // 14:26:12의 ASK 요청은 25초 안쪽에 시작한다 (실제로는 22초 뒤)

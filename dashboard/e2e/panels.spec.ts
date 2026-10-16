@@ -132,7 +132,6 @@ test('FR12B 재생 모드는 장면을 차례로 바꾼다', async ({ page }) =>
   await page.clock.runFor(6100);
   await expect(page.locator('.np-rail__title')).toHaveText('방문자 A · 사물함 열기');
   await expect(page.locator('.np-rail__meta')).toContainText('14:28:10');
-  await expect(page.locator('[data-component="FlowRail"] [data-status="current"]')).toContainText('확인 중');
   await expect(page.locator('[data-component="Panel"]')).toHaveCount(0);
 });
 
@@ -245,24 +244,30 @@ test('FR12B 실시간 흐름 모드는 이벤트가 도착하는 순서대로 �
   // 대기 → 판정 중 → ASK → (내려감) 대기 → 판정 중 → 실행
   expect(seen).toEqual(['idle', 'judging', 'ask', 'idle', 'judging', 'flow']);
   await expect(page.locator('.np-rail__meta')).toContainText('14:28:10');
-  await page.clock.runFor(90000);
-  await expect(page.locator('.np-rail__title')).toHaveText('방문자 B · 조명 켜기');
+  await untilTitle(page, '방문자 B · 조명 켜기');
   await expect(page.locator('.np-topbar__recv')).toContainText('수신 14:');
   expect(writes).toEqual([]);
 });
 
-test('FR12B 판정 중 요청 상세는 단계가 도착하는 대로 채워진다', async ({ page }) => {
+/** 흐름 모드에서 레일 제목이 나올 때까지 시계를 1초씩 돌린다 */
+async function untilTitle(page: Page, title: string) {
+  const rail = page.locator('.np-rail__title');
+  for (let i = 0; i < 200 && (await rail.textContent()) !== title; i++) await page.clock.runFor(1000);
+  await expect(rail).toHaveText(title);
+}
+
+test('FR12B 판정 중 요청 상세는 판정 중이고 단계는 기다림이다', async ({ page }) => {
   await ready(page, 'scene=judging');
   await page.getByRole('button', { name: '요청 상세' }).click();
   await expect(page.locator('[data-component="Panel"] [data-component="VerdictTag"]')).toContainText('판정 중');
-  await expect(page.locator('.np-steps__item[data-result="pending"]')).toHaveCount(5);
+  await expect(page.locator('.np-steps__item[data-result="pending"]')).toHaveCount(7);
+  await expect(page.locator('.np-step__gauge')).toHaveCount(1);
 });
 
 test('FR12B 흐름 중에 메뉴로 연 목록 패널은 자동 패널로 바뀌지 않는다', async ({ page }) => {
   await page.clock.install();
   await ready(page, 'scene=live&panel=audit');
   await expect(page.locator('.np-panel__title')).toHaveText('감사 로그');
-  await page.clock.runFor(130000);
-  await expect(page.locator('.np-rail__title')).toHaveText('방문자 B · 조명 켜기');
+  await untilTitle(page, '방문자 B · 조명 켜기');
   await expect(page.locator('.np-panel__title')).toHaveText('감사 로그');
 });

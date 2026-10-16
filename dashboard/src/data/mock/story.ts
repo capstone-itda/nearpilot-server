@@ -190,7 +190,7 @@ export const SCENE_TIME = {
   /** MON-04 ASK: A가 사물함 1과 2 사이 */
   ask: '14:26:13',
   /** MON-01·02 판정 중: A의 요청이 도착해 ① 비콘까지 통과 */
-  judging: '14:28:10.05',
+  judging: '14:28:10.01',
   /** MON-01·02·03 요청 진행: A의 사물함 1 열기 명령을 보내고 결과를 기다림 */
   flow: '14:28:10.5',
   /** 요청 진행의 끝: 사물함 1이 열리고 AI에 결과를 돌려줌 */
@@ -204,7 +204,7 @@ export const SCENE_TIME = {
 } as const;
 export type SceneName = keyof typeof SCENE_TIME;
 /** 재생 순서 (시각순) */
-export const PLAY_ORDER: SceneName[] = ['idle', 'ask', 'judging', 'flow', 'done', 'fault', 'approval'];
+export const PLAY_ORDER: SceneName[] = ['idle', 'ask', 'flow', 'done', 'fault', 'approval'];
 
 /** 그 장면 시각까지 이벤트를 쌓은 모니터 상태 (테스트와 고정 장면) */
 export const stateAt = (t: number): MonitorState => reduceAll(initialState(PLACE), storyUntil(t));

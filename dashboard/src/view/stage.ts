@@ -4,7 +4,7 @@ import { ROOM, facing, frontOf, type Facing } from './arrange';
 import { calloutSpot, chooseLabel, deviceTextBox, freePersonSpot, frontBox, labelBox, leaderEnd, personBox, ringBox, rssiBox, placeRssi, type Rect } from './placement';
 import {
   ACTION_DID, ACTION_DOING, ACTION_CAN, ACTION_DONE, ACTION_NAME, ACTION_OBJ, CAPABILITY_NAME,
-  CIRCLED, DEVICE_STATE_NAME, STEP_SHORT, approvalText, josa, reasonText
+  DEVICE_STATE_NAME, approvalText, josa, reasonText
 } from './text';
 import { isDecided } from '../model/types';
 
@@ -251,15 +251,11 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     const cap = CAPABILITY_NAME[r.target.capability ?? layout.devices.find((d) => d.nodeId === target)?.capability ?? 'locker'];
     const act = ACTION_NAME[r.action];
     switch (scene) {
-      case 'judging': {
-        // 도착한 단계 중 마지막 것을 말한다
-        const last = r.steps.reduce((k, x, i) => (x.result === 'pending' ? k : i), -1);
-        view.aria = `${who}의 ${cap} ${act} 요청을 서버가 확인하는 중`;
-        if (last === -1) set('accent', place(250, 440), `${who}의 요청이 도착했어요`, `서버가 ⓪부터 차례로 확인해요`);
-        else if (r.steps[last].result === 'stop') set('accent', place(250, 440), `${CIRCLED[last]} ${STEP_SHORT[last]}에서 멈췄어요`, '판정을 정해 AI에 돌려줘요');
-        else set('accent', place(250, 440), `${CIRCLED[last]} ${STEP_SHORT[last]} 통과`, last < 6 ? `다음은 ${CIRCLED[last + 1]} ${STEP_SHORT[last + 1]}` : '판정을 정해요');
+      case 'judging':
+        // 판정은 1초 안에 끝난다. 단계를 하나씩 말하지 않는다.
+        view.aria = `${who}의 ${cap} ${act} 요청을 서버가 판정하는 중`;
+        set('accent', place(250, 440), `${who}의 요청이 도착했어요`, '서버가 판정하는 중');
         break;
-      }
       case 'flow':
         if (r.execution === 'succeeded') {
           view.aria = `${who}의 요청으로 ${josa(name, '이', '가')} ${ACTION_DONE[r.action]}`;

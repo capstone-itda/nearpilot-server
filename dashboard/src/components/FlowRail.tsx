@@ -11,16 +11,18 @@ export function FlowStep({ s, i }: { s: RailStep; i: number }) {
       <div className="np-step__head"><span className="np-step__num">{i + 1}</span><span className="np-step__title">{STEP_TITLES[i]}</span><span className="np-step__mark">{s.mark ?? ''}</span></div>
       <p className="np-step__detail">{s.detail ?? ''}</p>
       <p className="np-step__code">{s.code ?? ''}</p>
+      {s.gauge ? <span className="np-step__gauge" aria-hidden="true"><span className="np-step__gauge-fill" /></span> : null}
       <ul className="np-step__checks">
+        {/* 판정이 나면 멈춘 칸이 한 번 빛난다 */}
         {checks.map(([res, text], k) => (
-          <li key={k} className="np-check" data-result={res}><span className="np-check__mark" aria-hidden="true">{CHECK_MARK[res]}</span>{text ?? CHECK_NAMES[k]}</li>
+          <li key={k} className={res === 'fail' || res === 'unsure' || res === 'wait' ? 'np-check np-flash' : 'np-check'} data-result={res}><span className="np-check__mark" aria-hidden="true">{CHECK_MARK[res]}</span>{text ?? CHECK_NAMES[k]}</li>
         ))}
       </ul>
     </li>
   );
 }
 
-/** onOpen: 진행 중인 요청의 상세를 연다 (판정 단계가 도착하는 대로 바뀐다) */
+/** onOpen: 진행 중인 요청의 상세를 연다 */
 export function FlowRail({ v, onOpen }: { v: RailView; onOpen?: () => void }) {
   return (
     <section className="np-rail" data-component="FlowRail" data-mode={v.mode} aria-label="요청 흐름">

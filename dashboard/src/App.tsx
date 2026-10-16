@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DataSource } from './data/source';
 import { DataCtx, type Ctx } from './data/context';
 import { initialState, reduceAll } from './data/reduce';
+import { paceJudging } from './data/pace';
 import type { PlaceInfo, RequestProgress, MonitorState } from './model/types';
 import { OfflineBanner } from './components/common';
 import { FlowRail } from './components/FlowRail';
@@ -67,7 +68,10 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   // 받은 이벤트 묶음을 차례로 쌓는다. 기기 목록이 있어야 처음 상태를 만들 수 있어서 장소를 받은 뒤 구독한다.
   useEffect(() => {
     if (!place) return;
-    return source.subscribe((events) => setSnapshot((s) => reduceAll(s ?? initialState(place), events)));
+    // 판정 결과는 판정 게이지가 찬 뒤에 넘긴다
+    const pacer = paceJudging((events) => setSnapshot((s) => reduceAll(s ?? initialState(place), events)));
+    const off = source.subscribe(pacer.push);
+    return () => { off(); pacer.stop(); };
   }, [source, place]);
 
   // 처음 화면의 패널

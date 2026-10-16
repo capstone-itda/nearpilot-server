@@ -1,6 +1,6 @@
 // 모니터 상태 → 흐름 레일 다섯 단계. 쉬운 말이 크게, 코드는 보조 글자로.
 import { isDecided, type FloorLayout, type RequestProgress, type MonitorState } from '../model/types';
-import { ACTION_DONE, ACTION_NAME, HOST_NAME, approvalText, josa, reasonText, requestTitle, toolCall } from './text';
+import { ACTION_DONE, ACTION_NAME, CIRCLED, HOST_NAME, STEP_SHORT, approvalText, josa, reasonText, requestTitle, toolCall } from './text';
 
 export type CheckResult = 'pass' | 'fail' | 'wait' | 'unsure' | 'none' | 'skip';
 export type StepTone = 'accent' | 'ok' | 'ask' | 'appr' | 'busy' | 'deny';
@@ -12,6 +12,8 @@ export interface RailStep {
   code?: string;
   /** 3단계의 네 가지 확인: [결과, 문구]. 문구가 없으면 기본 이름 */
   checks?: [CheckResult, string?][];
+  /** 판정 전: 판정 게이지를 채운다 */
+  gauge?: boolean;
 }
 export interface RailView { mode: 'guide' | 'live'; title: string; meta: string; code: string; steps: RailStep[] }
 
@@ -32,13 +34,8 @@ function checks(r: RequestProgress, name: string, shared: boolean): [CheckResult
   // 서버 오류로 멈추면 그 단계의 거절 이유가 아니므로 사유를 그대로 쓴다
   const fail = (text: string): [CheckResult, string] => ['fail', r.reason === 'INTERNAL_ERROR' ? reasonText(r.reason) : text];
 
-  // 멈춘 단계가 왔지만 판정은 아직이면 그 칸만 표시한다
-  if (stopAt !== -1 && !isDecided(r)) {
-    const col = [-1, 0, 1, 1, 2, 3, 3][stopAt];
-    for (let i = 1; i < stopAt; i++) if (passed(i)) out[[-1, 0, 1, 1, 2, 3, 3][i]] = ['pass'];
-    if (col >= 0) out[col] = ['unsure', '여기서 멈춤 · 판정 중'];
-    return out;
-  }
+  // 판정 전에는 단계를 하나씩 보이지 않는다. 판정이 나면 한 번에 채운다.
+  if (!isDecided(r)) return out;
 
   // ① 누구인지
   if (stopAt === 1) out[0] = fail('폰 신호 없음');
@@ -80,8 +77,8 @@ export function railView(s: MonitorState, layout: FloorLayout, mirroredPersonId:
   let s5: RailStep;
 
   if (!isDecided(r)) {
-    // 판정 전: 단계 결과가 도착하는 대로 3단계 칸이 채워진다
-    const steps = [s1, s2, { ...s3, status: 'current' as const, tone: 'accent' as const, mark: '확인 중' },
+    // 판정 전: 판정 게이지가 차는 동안 결과를 기다린다
+    const steps = [s1, s2, { ...s3, status: 'current' as const, tone: 'accent' as const, mark: '판정 중', gauge: true },
       { status: 'todo' as const, detail: '판정을 기다려요', code: '' }, { status: 'todo' as const, detail: '판정을 기다려요', code: '' }];
     return { mode: 'live', title: `${who} · ${requestTitle(r, (id) => layout.devices.find((d) => d.nodeId === id)?.name ?? id)}`, meta: `${host} · ${r.at}`, code: toolCall(r), steps };
   }
@@ -123,6 +120,10 @@ export function railView(s: MonitorState, layout: FloorLayout, mirroredPersonId:
       s4 = { status: 'todo', detail: '실행하지 않음', code: '' };
       s5 = { status: 'current', tone: 'deny', mark: '거부', detail: '쓸 수 없다고 안내', code: `DENY · ${r.reason}` };
   }
+
+  // 판정 단계에서 멈췄으면 결과에 멈춘 단계를 적는다
+  const stopAt = r.steps.findIndex((x) => x.result === 'stop');
+  if (stopAt !== -1 && r.verdict !== 'OK' && !r.accessRequestedAt) s5 = { ...s5, code: `${CIRCLED[stopAt]} ${STEP_SHORT[stopAt]}에서 멈춤 · ${r.reason}` };
 
   return {
     mode: 'live',

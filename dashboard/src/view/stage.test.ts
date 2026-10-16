@@ -230,10 +230,10 @@ describe('바꾼 배치에서도 무대 글자가 겹치지 않는다', () => {
 });
 
 describe('stageView 이벤트 흐름', () => {
-  it('FR12B 판정 전: 호스트→서버 선과 요청자 신호, 마지막 단계를 말하는 콜아웃', () => {
+  it('FR12B 판정 전: 호스트→서버 선과 요청자 신호, 판정 중 콜아웃', () => {
     const v = stageView(stateAt(sec('14:28:10.05')), LAYOUT, { panelOpen: false });
     expect(v).toMatchObject({ scene: 'judging', mcp: 'claude', reply: null, server: true, uplink: true, rssiOn: true, cmd: null });
-    expect(v.callout.title).toBe('① 비콘 통과');
+    expect(v.callout).toMatchObject({ title: '방문자 A의 요청이 도착했어요', body: '서버가 판정하는 중' });
   });
   it('FR12B 명령을 보내면 명령 선, 결과가 오고 응답하면 호스트로 돌아가는 선', () => {
     expect(stageView(SCENES.flow(), LAYOUT, { panelOpen: false })).toMatchObject({ cmd: 'locker-1', mcp: 'claude', reply: null });
