@@ -5,8 +5,11 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from nearpilot.db.repositories._common import new_id
 from nearpilot.db.repositories.admin_repository import SqliteAdminRepository
 from nearpilot.db.repositories.execution_store import SqliteExecutionStore
 from nearpilot.db.repositories.repository import SqliteRepository
@@ -204,4 +207,73 @@ def insert_use_session(
         "INSERT INTO use_session (use_id, internal_request_id, user_id, node_id, state, end_reason, "
         "rental_due_at, closed_at, release_policy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}')",
         (use_id, internal_request_id, user_id, node_id, state, end_reason, rental_due_at, closed_at),
+    )
+
+
+def insert_node_command(
+    conn,
+    command_id="cmd1",
+    internal_request_id="req1",
+    node_id="node1",
+    action="open",
+    status="succeeded",
+    execution_kind="rental",
+    use_id=None,
+    usage_id=None,
+    reserved_at=None,
+    send_started_at=None,
+    send_attempted=0,
+    outcome=None,
+    occurred_at=None,
+):
+    conn.execute(
+        "INSERT INTO node_command (command_id, internal_request_id, node_id, action, status, "
+        "execution_kind, use_id, usage_id, reserved_at, send_started_at, send_attempted, outcome, "
+        "occurred_at, evidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')",
+        (
+            command_id, internal_request_id, node_id, action, status, execution_kind, use_id, usage_id,
+            reserved_at, send_started_at, send_attempted, outcome, occurred_at,
+        ),
+    )
+
+
+def insert_recovery(
+    conn,
+    recovery_id="recovery1",
+    node_id="node1",
+    use_id=None,
+    internal_request_ids=(),
+    command_ids=(),
+    created_at="2026-01-01T00:00:00+00:00",
+    status="not_ready",
+    evidence=(),
+    completed_at=None,
+):
+    conn.execute(
+        "INSERT INTO recovery (recovery_id, node_id, use_id, internal_request_ids, command_ids, "
+        "created_at, status, evidence, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            recovery_id, node_id, use_id, json.dumps(list(internal_request_ids)),
+            json.dumps(list(command_ids)), created_at, status, json.dumps(list(evidence)), completed_at,
+        ),
+    )
+
+
+def insert_audit_log(
+    conn,
+    log_id=None,
+    event_id=None,
+    internal_request_id=None,
+    command_id=None,
+    step="exec",
+    payload=None,
+    created_at="2026-01-01T00:00:00+00:00",
+):
+    conn.execute(
+        "INSERT INTO audit_log (log_id, event_id, internal_request_id, command_id, step, "
+        "payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            log_id or new_id(), event_id or new_id(), internal_request_id, command_id, step,
+            json.dumps(payload or {}), created_at,
+        ),
     )
