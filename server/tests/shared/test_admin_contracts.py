@@ -95,6 +95,7 @@ def test_FR12A_fake_admin_repository_and_conflict_result():
         def set_node_trust(self, node_id, trust_state): return result
         def assign_place(self, req): return result
         def set_policy(self, revision, expected_version): return result
+        def set_release_policy(self, node_id, release_policy): return result
         def start_collection(self, collection_id, beacon, label, started_at): return result
         def end_collection(self, collection_id, ended_at): return result
 

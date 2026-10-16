@@ -226,6 +226,28 @@ class SqliteAdminRepository:
             )
             return AdminWriteResult(outcome=AdminWriteOutcome.APPLIED, reason=AdminWriteReason.OK)
 
+    def set_release_policy(self, node_id: str, release_policy: Mapping[str, Any]) -> AdminWriteResult:
+        """`node.release_policy`만 바꾼다. 점유 세션은 생성 당시 값을 보존하므로 소급하지 않는다.
+
+        `Mapping`이 아니면 `TypeError`다 — `to_json`은 빈 값을 `{}`로 바꾸므로 `None`이나 빈 목록이
+        조용히 빈 종료 정책이 되지 않게 먼저 막는다.
+        """
+        if not isinstance(release_policy, Mapping):
+            raise TypeError(f"release_policy 는 Mapping 이어야 한다: {type(release_policy).__name__}")
+        value = to_json(release_policy)
+        with immediate_transaction(self._conn):
+            updated = self._conn.execute(
+                "UPDATE node SET release_policy = ? WHERE node_id = ?", (value, node_id)
+            )
+            if updated.rowcount == 0:
+                return AdminWriteResult(
+                    outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.NODE_NOT_FOUND
+                )
+            self._append_audit(
+                {"event": "set_release_policy", "node_id": node_id, "release_policy": dict(release_policy)}
+            )
+            return AdminWriteResult(outcome=AdminWriteOutcome.APPLIED, reason=AdminWriteReason.OK)
+
     def start_collection(
         self, collection_id: str, beacon: BeaconKey, label: str, started_at: datetime
     ) -> AdminWriteResult:
