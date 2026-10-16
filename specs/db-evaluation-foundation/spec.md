@@ -1,6 +1,6 @@
 # 평가 기반 (`tools/evaluation`) — 읽기 전용 DB 연결과 결과 형식
 
-- 상태: 작성 중
+- 상태: 완료
 - 담당: paiwhy (DB)
 - 요구사항: FR-22, NFR-13
 - 따르는 결정: 없음
@@ -73,8 +73,8 @@
 
 | 상황 | 기대 동작 | 테스트 |
 |---|---|---|
-| DB 파일이 없거나 열 수 없다 | 보고서를 만들지 않는다. 오류를 쓰고 종료 코드 1로 끝낸다 | `test_NFR13_missing_db_file_is_rejected` |
-| `PRAGMA user_version`이 기대하는 버전과 다르다 | 연결을 닫는다. 쿼리를 보내지 않는다. 오류를 쓰고 종료 코드 1로 끝낸다 | `test_NFR13_schema_version_mismatch_is_rejected` |
+| DB 파일이 없거나 열 수 없다 | 연결 함수가 `sqlite3.OperationalError`를 그대로 올린다. 호출 쪽(지표 스크립트)이 처리를 정한다 | `test_NFR13_missing_db_file_is_rejected` |
+| `PRAGMA user_version`이 기대하는 버전과 다르다 | 연결을 닫는다. 그 뒤로 쿼리를 보내지 않는다. `SchemaVersionMismatch`를 올린다 | `test_NFR13_schema_version_mismatch_is_rejected` |
 | 읽기 전용 연결에 쓰기를 시도한다(방어 확인) | SQLite가 `sqlite3.OperationalError`로 거부한다. DB 파일은 바뀌지 않는다 | `test_NFR13_readonly_connection_rejects_writes` |
 | `db/schema/`의 마이그레이션 파일 수가 `EXPECTED_SCHEMA_VERSION`과 어긋난다 | `nearpilot.db.schema.migrate`로 만든 DB의 `PRAGMA user_version`과 상수가 달라 테스트가 실패한다(코드 버그가 아니라 둘 다 고쳐야 한다는 신호) | `test_NFR13_expected_schema_version_matches_migrations` |
 | 지표 행의 표본 중 실패가 0건이다 | 그 행에 `1 - (0.025)^(1/n)` 식으로 Clopper-Pearson 95% 신뢰구간 상한을 적는다 | `test_NFR13_zero_failure_reports_confidence_bound` |
@@ -82,8 +82,8 @@
 | 지표 행의 실패가 1건 이상이다 | 신뢰구간을 계산하지 않는다(범위 밖, 4절) | `test_NFR13_nonzero_failure_omits_confidence_bound` |
 | git 작업 디렉터리에 커밋되지 않은 변경이 있다(`git status --porcelain`이 비어 있지 않다) | 머리말의 git 커밋 값 뒤에 `-dirty`를 붙인다 | `test_NFR13_report_header_marks_dirty_working_tree` |
 | git 커밋을 확인할 수 없다(`.git` 없음, `git` 명령 없음 등) | 보고서 생성을 막지 않는다. 머리말의 git 커밋 칸에 "unknown"을 적고 경고를 남긴다 | `test_NFR13_report_header_falls_back_when_git_unavailable` |
-| 보고서 출력 경로에 이미 파일이 있다 | `--force`를 주지 않으면 덮어쓰지 않고 오류로 끝낸다 | `test_NFR13_existing_output_requires_force` |
-| 출력 디렉터리에 쓰지 못한다(권한) | DB 조회 전에 먼저 확인한다. 쓰지 못하면 아무 파일도 만들지 않고 종료 코드 1로 끝낸다 | `test_NFR13_unwritable_output_dir_is_rejected_before_any_write` |
+| 보고서 출력 경로(CSV·Markdown)에 이미 파일이 있다 | `force=True`를 주지 않으면 `FileExistsError`를 올린다. 아무 파일도 쓰지 않는다 | `test_NFR13_existing_output_requires_force` |
+| 출력 디렉터리에 쓰지 못한다(권한) | CSV·Markdown을 쓰기 전에 두 경로 모두 먼저 확인한다. 쓰지 못하면 `PermissionError`를 올리고 아무 파일도 만들지 않는다 | `test_NFR13_unwritable_output_dir_is_rejected_before_any_write` |
 
 - 권한 없는 호출: 해당 없음. 이 도구는 DB 파일이 있는 서버 PC에서 실행하고 인증하지 않는다(`tools/data_collection`과 같다).
 - 동시 요청: 해당 없음. 평가 스크립트는 읽기 전용 연결 하나로 한 번 실행한다. 운영 중인 서버의 쓰기와 동시에 실행해도 읽기 전용이라 충돌하지 않는다.
