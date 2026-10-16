@@ -6,16 +6,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.errors import StoreNotApplied, StoreOutcomeUnknown
+
+logger = logging.getLogger(__name__)
 
 
 def new_id() -> str:
@@ -61,6 +64,35 @@ def settings_from_json(value: str) -> Settings:
     return Settings(**json.loads(value))
 
 
+class _JsonlExporter(Protocol):
+    def flush(self) -> None: ...
+
+
+# sqlite3.Connection은 약한 참조를 만들 수 없다(C 확장 타입). 강한 참조로 등록하고
+# unregister_jsonl_export()로 명시적으로 해제한다 (#34, spec 6절 결정 — 구현 중 발견).
+_jsonl_exporters: dict[sqlite3.Connection, _JsonlExporter] = {}
+
+
+def register_jsonl_export(conn: sqlite3.Connection, exporter: _JsonlExporter) -> None:
+    """이 연결의 커밋마다 `exporter.flush()`를 부르게 등록한다 (#34)."""
+    _jsonl_exporters[conn] = exporter
+
+
+def unregister_jsonl_export(conn: sqlite3.Connection) -> None:
+    """등록을 해제한다. 연결을 닫을 때 호출자가 부른다 (#34)."""
+    _jsonl_exporters.pop(conn, None)
+
+
+def _export_after_commit(conn: sqlite3.Connection) -> None:
+    exporter = _jsonl_exporters.get(conn)
+    if exporter is None:
+        return
+    try:
+        exporter.flush()
+    except Exception as error:  # noqa: BLE001 - 내보내기 실패가 저장을 막지 않는다 (#34)
+        logger.warning("감사 로그 JSONL 내보내기 실패: %s", error)
+
+
 @contextmanager
 def immediate_transaction(conn: sqlite3.Connection):
     """`BEGIN IMMEDIATE` 트랜잭션 하나로 여러 문장을 원자적으로 묶는다 (FR-19).
@@ -68,6 +100,7 @@ def immediate_transaction(conn: sqlite3.Connection):
     저장 장애는 `StoreNotApplied`(변경 없음 확실)와 `StoreOutcomeUnknown`(반영 여부 불명)으로
     구분한다 (`ExecutionStore` 전체의 약속). 쓰기 잠금을 얻지 못했거나 롤백까지 끝났으면
     아무것도 바뀌지 않은 것이 확실하다. `COMMIT` 자체가 실패하면 반영 여부를 알 수 없다.
+    `COMMIT` 성공 뒤에는 이 연결에 등록된 JSONL 내보내기가 있으면 부른다 (#34).
     """
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -86,6 +119,7 @@ def immediate_transaction(conn: sqlite3.Connection):
             conn.execute("COMMIT")
         except sqlite3.OperationalError as error:
             raise StoreOutcomeUnknown(str(error)) from error
+        _export_after_commit(conn)
 
 
 @contextmanager
