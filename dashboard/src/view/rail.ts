@@ -11,8 +11,6 @@ export interface RailStep {
   mark?: string;
   detail?: string;
   code?: string;
-  /** 판정 전: 판정 게이지를 채운다 */
-  gauge?: boolean;
 }
 export interface RailView { mode: 'guide' | 'live'; title: string; meta: string; code: string; steps: RailStep[] }
 
@@ -85,8 +83,8 @@ export function railView(s: MonitorState, layout: FloorLayout, mirroredPersonId:
   const s2: RailStep = { status: 'done', detail: `${josa(host, '이', '가')} 요청함`, code: r.tool };
 
   if (!isDecided(r)) {
-    // 판정 전: 판정 게이지가 차는 동안 결과를 기다린다
-    return { ...head, steps: [s1, s2, { status: 'current', tone: 'accent', mark: '판정 중', gauge: true }, { status: 'todo' }, { status: 'todo' }] };
+    // 판정 전: 판정 게이지는 무대의 서버 상자에만 둔다
+    return { ...head, steps: [s1, s2, { status: 'current', tone: 'accent', mark: '판정 중' }, { status: 'todo' }, { status: 'todo' }] };
   }
   const s3: RailStep = { status: 'done', detail: judgeSummary(r) };
   let s4: RailStep = { status: 'todo', detail: '실행하지 않음' };

@@ -68,12 +68,26 @@ function Device({ d, edit }: { d: StageDeviceView; edit?: DeviceEditProps }) {
   );
 }
 
+/** 사람 점이 다른 기기 앞으로 옮길 때 미끄러지는 시간 (초). 표시용 값이다. */
+const SLIDE_SEC = 0.6;
+
 function Visitor({ v }: { v: StageVisitorView }) {
+  // 자리가 바뀌면 지난 자리에서 새 자리로 미끄러진다 (순간 이동하면 눈이 따라가지 못한다)
+  const at = `${v.x} ${v.y}`;
+  const shown = useRef(at);
+  const slide = useRef<{ from: string; to: string } | null>(null);
+  if (shown.current !== at) { slide.current = { from: shown.current, to: at }; shown.current = at; }
+  const anim = useRef<SVGAnimateTransformElement>(null);
+  useEffect(() => {
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    anim.current?.beginElement?.();
+  }, [at]);
   const lx = v.label === 'left' ? -56 : v.label === 'above' ? 0 : 56;
   const ly = v.label === 'above' ? -54 : 7;
   const anchor = v.label === 'left' ? 'end' : v.label === 'above' ? 'middle' : 'start';
   return (
     <g className="np-stage__visitor" data-component="StageVisitor" data-active={b(v.active)} data-dim={b(v.dim)} data-on={b(v.on)} transform={`translate(${v.x} ${v.y})`}>
+      {slide.current ? <animateTransform key={slide.current.to} ref={anim} attributeName="transform" type="translate" from={slide.current.from} to={slide.current.to} dur={`${SLIDE_SEC}s`} begin="indefinite" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.4 0 0.2 1" /> : null}
       <circle className="np-stage__ring" r="24" /><circle className="np-stage__ring" r="35" /><circle className="np-stage__ring" r="46" />
       <circle className="np-stage__visitor-dot" r="14" />
       <text className="np-stage__visitor-letter" y="6" data-anchor="middle">{v.letter}</text>

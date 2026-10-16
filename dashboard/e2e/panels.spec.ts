@@ -261,7 +261,7 @@ test('FR12B 판정 중 요청 상세는 판정 중이고 단계는 기다림이�
   await page.getByRole('button', { name: '요청 상세' }).click();
   await expect(page.locator('[data-component="Panel"] [data-component="VerdictTag"]')).toContainText('판정 중');
   await expect(page.locator('.np-steps__item[data-result="pending"]')).toHaveCount(7);
-  await expect(page.locator('.np-step__gauge')).toHaveCount(1);
+  await expect(page.locator('.np-stage__gauge-fill')).toHaveCount(1);
 });
 
 test('FR12B 흐름 중에 메뉴로 연 목록 패널은 자동 패널로 바뀌지 않는다', async ({ page }) => {

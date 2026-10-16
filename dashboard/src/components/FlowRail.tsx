@@ -8,7 +8,6 @@ export function FlowStep({ s, i }: { s: RailStep; i: number }) {
       <div className="np-step__head"><span className="np-step__num">{i + 1}</span><span className="np-step__title">{STEP_TITLES[i]}</span><span className="np-step__mark">{s.mark ?? ''}</span></div>
       <p className="np-step__detail">{s.detail ?? ''}</p>
       <p className="np-step__code">{s.code ?? ''}</p>
-      {s.gauge ? <span className="np-step__gauge" aria-hidden="true"><span className="np-step__gauge-fill" /></span> : null}
     </li>
   );
 }

@@ -68,14 +68,6 @@
 .np-step__detail:empty, .np-step__code:empty { display: none; }
 
 
-/* 판정 게이지: 요청 점이 서버에 닿은 뒤(0.6초) 1초 동안 찬다 (pace.ts의 JUDGE_GAUGE_MS). 처음 그린 화면과 움직임 줄이기에서는 찬 채로 둔다. */
-/* 카드 윗변에 겹쳐 그려 단계 높이를 바꾸지 않는다 */
-.np-step__gauge { position: absolute; top: 0; left: 0; right: 0; height: 5px; border-radius: var(--radius) var(--radius) 0 0; background: var(--line-soft); overflow: hidden; }
-.np-step__gauge-fill { display: block; height: 100%; width: 100%; background: var(--accent); transform-origin: left; }
-.np-app[data-motion="on"] .np-step__gauge-fill { animation: np-gauge 1s linear 0.6s backwards; }
-@media (prefers-reduced-motion: reduce) {
-  .np-app[data-motion="on"] .np-step__gauge-fill { animation: none; }
-}
 
 .np-step[data-status="done"] .np-step__num { border-color: var(--accent); color: var(--accent-strong); }
 .np-step[data-status="done"] .np-step__title { color: var(--ink-2); }

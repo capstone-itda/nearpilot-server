@@ -110,7 +110,8 @@ export function personAnchors(s: MonitorState, devices: StageDeviceView[], visit
       } else if (ranked[0]) { base = { x: ranked[0].fx, y: ranked[0].fy }; dir = dirOf(ranked[0]); }
     }
     if (!base) {
-      const d = byId.get(Object.entries(p.rssi).filter(([id]) => byId.has(id)).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '');
+      // 신호가 흔들려도 바로 옮기지 않는 기기(near). 배치에 없으면 신호가 가장 센 기기.
+      const d = byId.get(p.near ?? '') ?? byId.get(Object.entries(p.rssi).filter(([id]) => byId.has(id)).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '');
       if (d) { base = { x: d.fx, y: d.fy }; dir = dirOf(d); }
     }
     if (!base) continue;

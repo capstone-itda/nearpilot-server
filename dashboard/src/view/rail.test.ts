@@ -118,12 +118,12 @@ describe('railView 단계 밖 판정', () => {
 });
 
 describe('railView 판정 전', () => {
-  it('FR12B 판정 전에는 3단계가 판정 게이지를 채우고, 확인 칸은 비어 있다', () => {
+  it('FR12B 판정 전에는 3단계가 판정 중이고, 확인 칸은 비어 있다', () => {
     for (const t of ['14:28:10.01', '14:28:10.09', '14:26:12.09']) {
       const s = stateAt(sec(t));
       const v = railView(s, LAYOUT, 'p-a');
       expect(v.steps.map((x) => x.status)).toEqual(['done', 'done', 'current', 'todo', 'todo']);
-      expect(v.steps[2]).toMatchObject({ mark: '판정 중', gauge: true });
+      expect(v.steps[2]).toEqual({ status: 'current', tone: 'accent', mark: '판정 중' });
       expect(checksOf(s).every(([c]) => c === 'none')).toBe(true);
     }
   });

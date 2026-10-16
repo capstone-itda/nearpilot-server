@@ -1,6 +1,7 @@
 // 목 어댑터: 기간 거르기와 한 번 재생
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StreamEvent } from '../../model/events';
+import type { MonitorState } from '../../model/types';
 import { initialState, reduceAll } from '../reduce';
 import { PLACE } from './fixtures';
 import { PLAY_ORDER, SCENES, sec } from './story';
@@ -24,7 +25,9 @@ describe('createMockSource', () => {
     expect(batches.length).toBe(PLAY_ORDER.length);
     const flat = batches.flat();
     expect(flat.some((e) => e.type === 'exec_result' && e.result === 'succeeded')).toBe(true);
-    expect(reduceAll(initialState(PLACE), flat)).toEqual(SCENES[PLAY_ORDER.at(-1)!]());
+    // 무대에 세우는 기기(near)는 받은 RSSI 순서에 따라 늦게 바뀌므로 비교에서 뺀다
+    const strip = (m: MonitorState) => ({ ...m, people: m.people.map(({ near: _n, nearCandidate: _c, ...p }) => p) });
+    expect(strip(reduceAll(initialState(PLACE), flat))).toEqual(strip(SCENES[PLAY_ORDER.at(-1)!]()));
   });
 });
 

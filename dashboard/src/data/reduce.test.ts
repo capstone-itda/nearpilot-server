@@ -12,9 +12,23 @@ const call: StreamEvent = { type: 'mcp_call', at: '14:00:01.000', requestId: 'r-
 
 describe('reduce', () => {
   it('FR12B 비콘과 RSSI가 사람을 만든다', () => {
-    expect(s0().people).toEqual([{ id: 'p-a', pseudonym: '방문자 A', letter: 'A', role: 'visitor', beaconSeen: true, rssi: { 'locker-1': -52 } }]);
+    expect(s0().people).toEqual([{ id: 'p-a', pseudonym: '방문자 A', letter: 'A', role: 'visitor', beaconSeen: true, rssi: { 'locker-1': -52 }, near: 'locker-1', nearCandidate: undefined }]);
     const gone = reduceAll(s0(), [{ type: 'beacon', at: '14:00:02.000', personId: 'p-a', pseudonym: '방문자 A', letter: 'A', role: 'visitor', seen: false }]);
-    expect(gone.people[0]).toMatchObject({ beaconSeen: false, rssi: {} });
+    expect(gone.people[0]).toMatchObject({ beaconSeen: false, rssi: {}, near: undefined });
+  });
+
+  it('FR12B 무대에 세우는 기기는 다른 기기 신호가 4dB 이상 센 상태가 2초 이어질 때만 바뀐다', () => {
+    const at = (t: string, rssi: Record<string, number>): StreamEvent => ({ type: 'rssi', at: t, personId: 'p-a', rssi });
+    const near = (events: StreamEvent[]) => reduceAll(s0(), events).people[0].near;
+    // 3dB 차이는 흔들림으로 본다
+    expect(near([at('14:00:01.000', { 'locker-1': -55, 'locker-2': -52 }), at('14:00:05.000', { 'locker-1': -55, 'locker-2': -52 })])).toBe('locker-1');
+    // 4dB 이상이어도 2초가 안 되면 그대로
+    expect(near([at('14:00:01.000', { 'locker-1': -56, 'locker-2': -50 }), at('14:00:02.500', { 'locker-1': -56, 'locker-2': -50 })])).toBe('locker-1');
+    // 2초 이어지면 옮긴다
+    expect(near([at('14:00:01.000', { 'locker-1': -56, 'locker-2': -50 }), at('14:00:03.000', { 'locker-1': -56, 'locker-2': -50 })])).toBe('locker-2');
+    // 중간에 차이가 줄면 처음부터 다시 잰다
+    expect(near([at('14:00:01.000', { 'locker-1': -56, 'locker-2': -50 }), at('14:00:02.000', { 'locker-1': -53, 'locker-2': -52 }),
+      at('14:00:03.500', { 'locker-1': -56, 'locker-2': -50 })])).toBe('locker-1');
   });
 
   it('FR12B 도구 호출이 오면 판정 전 요청이 생기고 단계는 기다림이다', () => {

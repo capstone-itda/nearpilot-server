@@ -1,6 +1,6 @@
 // FR-12B 이벤트를 차례로 쌓아 모니터 상태를 만든다. 화면은 이 상태만 보고 그린다.
 import type { StreamEvent } from '../model/events';
-import type { MonitorState, PlaceInfo, RequestProgress } from '../model/types';
+import type { MonitorState, Person, PlaceInfo, RequestProgress } from '../model/types';
 
 /** HH:MM:SS.mmm → HH:MM:SS */
 export const clockOf = (at: string) => at.slice(0, 8);
@@ -14,6 +14,24 @@ export function finishedAt(r: RequestProgress): string | undefined {
   if (r.accessExpiredAt) return r.accessExpiredAt;
   if (r.accessRequestedAt) return undefined;
   return r.respondedAt;
+}
+
+/**
+ * 무대에서 사람을 다른 기기 앞으로 옮기는 기준: 새 기기의 신호가 지금 기기보다 이만큼(dB) 세고, 그 상태가 이 시간(초) 이어질 때.
+ * 표시용 값이라 서버 설정이 아니다. 판정에는 쓰지 않는다 — RSSI가 흔들려도 점이 두 기기 앞을 오가지 않게 한다.
+ */
+export const NEAR_MARGIN_DB = 4;
+export const NEAR_DWELL_SEC = 2;
+
+function nearOf(p: Person, rssi: Record<string, number>, at: string): Pick<Person, 'near' | 'nearCandidate'> {
+  const best = Object.entries(rssi).sort((a, b) => b[1] - a[1])[0]?.[0];
+  if (!best) return { near: undefined, nearCandidate: undefined };
+  const cur = p.near;
+  // 처음 받았거나 지금 기기의 신호가 없으면 바로 정한다
+  if (!cur || rssi[cur] === undefined) return { near: best, nearCandidate: undefined };
+  if (best === cur || rssi[best] - rssi[cur] < NEAR_MARGIN_DB) return { near: cur, nearCandidate: undefined };
+  const c = p.nearCandidate?.nodeId === best ? p.nearCandidate : { nodeId: best, since: at };
+  return secOf(at) - secOf(c.since) >= NEAR_DWELL_SEC ? { near: best, nearCandidate: undefined } : { near: cur, nearCandidate: c };
 }
 
 /** 연결 직후의 빈 상태: 장소의 기기는 모두 사용 가능, 사람은 비콘 이벤트가 오면 생긴다 */
@@ -46,12 +64,12 @@ function apply(s0: MonitorState, e: StreamEvent): MonitorState {
       return {
         ...s,
         people: known
-          ? s.people.map((p) => (p.id === e.personId ? { ...p, ...person, rssi: e.seen ? p.rssi : {} } : p))
+          ? s.people.map((p) => (p.id === e.personId ? { ...p, ...person, ...(e.seen ? {} : { rssi: {}, near: undefined, nearCandidate: undefined }) } : p))
           : [...s.people, { ...person, rssi: {} }]
       };
     }
     case 'rssi':
-      return { ...s, people: s.people.map((p) => (p.id === e.personId ? { ...p, rssi: e.rssi } : p)) };
+      return { ...s, people: s.people.map((p) => (p.id === e.personId ? { ...p, rssi: e.rssi, ...nearOf(p, e.rssi, e.at) } : p)) };
     case 'mcp_call':
       return {
         ...s,

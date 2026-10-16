@@ -66,6 +66,10 @@ export interface Person {
   beaconSeen: boolean;
   /** 기기별 비콘 신호 세기 (dBm) */
   rssi: Record<string, number>;
+  /** 무대에서 이 사람을 세우는 기기. 신호가 흔들려도 바로 바꾸지 않는다 (reduce.ts의 NEAR_MARGIN_DB, NEAR_DWELL_SEC) */
+  near?: string;
+  /** near보다 신호가 센 기기와 그렇게 된 시각 */
+  nearCandidate?: { nodeId: string; since: string };
 }
 
 /** 판정 단계 ⓪~⑥ 하나의 결과. pending은 아직 이벤트가 오지 않은 단계 */
