@@ -100,7 +100,7 @@ def test_NFR13_existing_output_requires_force(tmp_path):
         _rows(), db_path="eval.db", schema_version=5, sample_count=60, generated_at=GENERATED_AT,
         csv_path=str(csv_path), md_path=str(md_path), git_commit="abc123", force=True,
     )
-    assert "지표 5" in csv_path.read_text()
+    assert "지표 5" in csv_path.read_text(encoding="utf-8")
 
 
 def test_NFR13_unwritable_output_dir_is_rejected_before_any_write(tmp_path):
