@@ -101,9 +101,10 @@ def _fit(args: argparse.Namespace) -> int:
 
     try:
         written = write_model_file(config.proximity.model_root, result.model)
-    except FileExistsError:  # 위의 확인 뒤에 다른 곳에서 만들었다
-        raise CliError(f"모델 파일이 이미 있다: {model_path}. 다른 --version을 쓴다", EXIT_FAILED) from None
     except OSError as error:
+        # Windows는 폴더 자리에 파일이 있어도 mkdir가 FileExistsError다. 모델 파일이 있을 때만 이미 있다로 본다
+        if isinstance(error, FileExistsError) and model_path.exists():  # 위의 확인 뒤에 다른 곳에서 만들었다
+            raise CliError(f"모델 파일이 이미 있다: {model_path}. 다른 --version을 쓴다", EXIT_FAILED) from None
         raise CliError(f"모델 파일을 쓸 수 없다: {model_path} ({error.strerror or error})", EXIT_INVALID) from error
     print(f"작성: {written}")
     print(f'서버에서 쓰려면 설정의 [proximity.models]에 {layout.place_id} = "{args.version}"을 넣는다.')
