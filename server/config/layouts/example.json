@@ -1,0 +1,8 @@
+{
+  "place_id": "place-a",
+  "nodes": {
+    "locker-1": {"x": 0.0, "y": 0.0, "front_x": 0.0, "front_y": 0.5},
+    "locker-2": {"x": 4.0, "y": 0.0, "front_x": 4.0, "front_y": 0.5}
+  },
+  "none_points": [[2.0, 3.0]]
+}

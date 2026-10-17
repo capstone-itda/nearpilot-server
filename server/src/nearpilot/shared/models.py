@@ -933,3 +933,36 @@ class PlaceAssignment:
 class AdminWriteResult:
     outcome: AdminWriteOutcome
     reason: AdminWriteReason
+
+
+@dataclass(frozen=True, slots=True)
+class AccountIssue:
+    """`AdminService.register_account` 결과 (FR-01, #29). 토큰 원문은 발급한 이 호출에서만 받는다.
+
+    로그나 오류 출력에 원문이 실리지 않게 token 은 repr 에서 뺀다.
+    """
+
+    result: AdminWriteResult
+    token: str | None = field(repr=False)  # APPLIED 일 때만 토큰 원문. 그 밖에는 None
+
+
+@dataclass(frozen=True, slots=True)
+class PolicySettings:
+    """`AdminService.set_policy` 입력 (FR-14). 정책 ID 와 버전은 서비스가 정한다."""
+
+    node_id: str
+    visibility: Visibility
+    mode: AccessMode
+    approver_user_id: str | None
+    approval_mode: ApprovalMode
+    approval_ttl_sec: int | None
+    max_uses: int | None  # 기간형 무제한이면 None
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyWriteResult:
+    """`AdminService.set_policy` 결과 (FR-14). 내용이 같아 쓰지 않은 호출은 APPLIED 와 changed=False 다."""
+
+    result: AdminWriteResult
+    version: int | None  # 호출 뒤 현재 정책 버전. 정책이 없으면 None
+    changed: bool  # 새 리비전을 추가했으면 True
