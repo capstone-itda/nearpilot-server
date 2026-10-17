@@ -49,7 +49,7 @@
 - `server/config/`: 예시 파일(`seed/`, `plans/`, `layouts/`, `fit/`), README, `server.example.toml`의 실행 안내 줄
 - `docs/architecture.md`, `AGENTS.md`: 진입점, AdminService 담당, 디렉터리 표, 실행 명령
 - `specs/core-server-assembly/spec.md`, `specs/core-proximity-data-collection/spec.md`: 이 작업이 바꾼 진입점·수집 전용·기록 경로 문장
-- 테스트: `server/tests/cli/`, `server/tests/core/admin/`, `server/tests/core/proximity/`, `server/tests/db/`, `server/tests/shared/`(Protocol에 메서드를 더해 기존 fake 한 줄), `server/tests/tools/`, `server/tests/integration/`
+- 테스트: `server/tests/cli/`, `server/tests/core/proximity/`, `server/tests/db/`, `server/tests/shared/`(Protocol에 메서드를 더해 기존 fake 한 줄), `server/tests/tools/`, `server/tests/integration/`
 
 ### 고치지 않는 곳
 
@@ -104,7 +104,7 @@
 | `collect run`에 `--record`가 없다 | `var/records/<계획 파일 이름>-<UTC 날짜>.jsonl`에 덧붙인다 | `test_FR16_collect_default_record_path` |
 | `collect close` | 진행 중 회차의 끝 시각을 기록한다 | `test_FR16_collect_close_ends_open_run` |
 | `collect list --open` | 끝 시각이 없는 회차만 쓴다 | `test_FR16_collect_list_open_only` |
-| `collect list --summary` | 라벨별 닫힌 회차 수, 프레임 수, 분할 가능 여부(최소 회차 수 이상)를 쓴다 | `test_FR16_collect_list_summary` |
+| `collect list --summary` | 라벨별 닫힌 회차 수, 프레임 수, 분할 가능 여부(최소 회차 수 이상)를 쓴다. 닫힌 회차는 split 대상과 같게 센다 | `test_FR16_collect_list_summary` |
 | 분할: 진행 중이거나 프레임이 없거나 장소를 정할 수 없는 회차 | 분할에서 뺀다. 뺀 회차 ID와 사유를 쓴다 | `test_NFR13_split_excludes_open_and_empty_runs` |
 | 분할: 같은 시드 | 같은 결과 파일 내용 | `test_NFR13_split_deterministic_by_seed` |
 | 분할: 라벨의 회차가 최소 회차 수보다 적다 | 분할하지 않고 부족한 라벨을 쓴다. 종료 코드 1 | `test_NFR13_split_rejects_too_few_runs` |
@@ -122,6 +122,8 @@
 | `eval`: 모델 파일이나 분할 결과의 장소가 `PLACE`와 다르다 | 종료 코드 2 | `test_NFR06_eval_rejects_model_of_another_place`, `test_NFR06_eval_split_place_mismatch_rejected` |
 | `eval`: 시험셋만 쓴다 | 학습·검증 회차의 프레임을 읽지 않는다 | `test_NFR06_eval_uses_test_runs_only` |
 | `eval`: 오선택률과 ECE | 합성 데이터에서 손으로 계산한 값과 같다 | `test_NFR06_eval_misselection_and_ece` |
+| `eval`: 확률이 같은 상태 | 상태 이름이 사전순으로 앞선 쪽을 예측으로 고른다 | `test_NFR06_eval_ece_ties_pick_the_first_state`, `test_NFR06_eval_misselection_ties_pick_the_first_node_id` |
+| `eval`: 시험 회차가 없거나, 라벨의 기기가 모델에 없거나, 회차가 `window_sec`보다 짧다 | `평가 실패: …`를 쓰고 종료 코드 1. 보고서를 만들지 않는다 | `test_NFR06_eval_without_test_runs_fails`, `test_NFR06_eval_collect_samples_rejects_unknown_label`, `test_NFR06_eval_run_without_evaluation_times_fails` |
 | `eval`: 측정하지 않는 항목 | 보고서에 "미측정"으로 쓴다 | `test_NFR06_eval_reports_unmeasured_items` |
 | `eval`: 보고서가 이미 있다 | `--force` 없이는 쓰지 않는다 | `test_NFR13_eval_report_requires_force` |
 | DB 경로의 폴더 이름에 공백, `#`, `%`, `?`가 있다 | 읽기 전용 연결이 같은 파일을 연다 | `test_FR16_cli_read_db_path_with_special_characters` |
@@ -148,7 +150,7 @@
 ### serve
 
 - `nearpilot serve`는 기존 `python -m nearpilot`과 같은 서버를 띄운다. 다른 점은 아래 세 가지다: `--config` 기본값, `var/` 폴더 만들기, 시작 실패의 종료 코드 1. `python -m nearpilot`은 그대로 둔다.
-- `--collect-only`는 설정의 `[proximity.models]`를 읽지 않고 빈 모델로 근접 추정기를 만든다. FastAPI 앱에 MCP 앱을 마운트하지 않는다. 나머지 시작 순서(DB, 복원, MQTT, 정리, 주기 작업)는 같다 — 판정 코드를 건드리지 않고, 새 실행 요청이 도달하지 않는다. 이전 일반 모드에서 남은 점유 세션의 반납 검사와 공용 조명 재개는 복원이 평소처럼 이어서 처리하므로 기기에 메시지를 보낼 수 있다.
+- `--collect-only`는 모델 파일을 읽지 않고 빈 모델로 근접 추정기를 만든다. `[proximity.models]` 표가 있으면 형식은 검사하고, 틀리면 종료 코드 2다. FastAPI 앱에 MCP 앱을 마운트하지 않는다. 나머지 시작 순서(DB, 복원, MQTT, 정리, 주기 작업)는 같다 — 판정 코드를 건드리지 않고, 새 실행 요청이 도달하지 않는다. 이전 일반 모드에서 남은 점유 세션의 반납 검사와 공용 조명 재개는 복원이 평소처럼 이어서 처리하므로 기기에 메시지를 보낼 수 있다.
 - `--collect-only`는 명령 옵션으로만 켠다. 설정 파일에 두지 않는다 — 운영 서버가 실수로 수집 모드로 뜨지 않게 한다.
 - `--collect-only`가 아니면 `[proximity.models]`가 비었을 때 기존처럼 시작하지 않는다.
 - `serve`는 DB와 감사 JSONL의 부모 폴더를 만든다 — 새로 받은 `server/`에서 첫 명령이 `serve`여도 시작한다.
@@ -176,7 +178,7 @@
 - `--record`가 없으면 `var/records/<계획 파일 이름(확장자 제외)>-<UTC YYYYMMDD>.jsonl`이다. `nearpilot collect`가 이 경로를 계산해 기존 `tools/data_collection/cli.main`에 넘긴다. 수집 도구 코드는 바꾸지 않는다.
 - `collect run`과 `collect close`는 DB 파일이 없으면 수집 도구를 부르지 않는다. `collect run`은 계획 파일을 찾은 뒤, 기록 폴더를 만들기 전에 확인한다.
 - `--fit`은 `--summary --place`와 함께일 때만 받고, 회차를 읽기 전에 찾는다.
-- `collect list`는 읽기 전용 연결로 `collection_run`과 연결된 관측 수를 읽는다. `--place`, `--label`, `--open`, `--summary`, `--fit`을 받는다. `--summary --place`는 적합 설정의 `min_runs_per_label`과 비교한 분할 가능 여부를 쓴다. 기본 적합 설정(`<장소>.toml`)이 없으면 그 칸을 `-`로 쓰고 안내한다. `--fit`으로 직접 준 파일이 없으면 다른 명령처럼 종료 코드 2다.
+- `collect list`는 읽기 전용 연결로 `collection_run`과 연결된 관측 수를 읽는다. `--place`, `--label`, `--open`, `--summary`, `--fit`을 받는다. `--summary`의 닫힌 회차는 split 대상과 같다 — 끝 시각이 있고, 연결된 관측이 1개 이상이고, 장소를 정할 수 있는 회차다. `--summary --place`는 적합 설정의 `min_runs_per_label`과 비교한 분할 가능 여부를 쓴다. 기본 적합 설정(`<장소>.toml`)이 없으면 그 칸을 `-`로 쓰고 안내한다. `--fit`으로 직접 준 파일이 없으면 다른 명령처럼 종료 코드 2다.
 - 적합 설정 검사 하한: `[split].min_runs_per_label`은 3 이상(학습·검증·시험에 하나씩), 비율 합의 허용 오차는 1e-9다.
 - 회차의 장소: 라벨이 기기면 그 기기의 `place_id`다. 라벨이 `none`이면 회차에 연결된 관측의 기기들이 속한 장소다. 여러 장소의 기기가 섞이면 장소를 정할 수 없는 회차로 보고 분할에서 뺀다.
 
@@ -204,8 +206,8 @@
 
 - `nearpilot eval PLACE/VERSION --split FILE [--fit FILE] [--out NAME] [--force]`. 모델 파일과 분할 결과의 장소가 `PLACE`와 다르면 입력 오류(2)다.
 - 시험 회차만 읽는다. 평가 시각은 `validation_log_loss`와 같다(`started_at + window_sec`부터 `bin_sec` 간격, `ended_at` 이하). 시각마다 `compute_posteriors`에 모델 파일의 모든 기기를 후보로 넘긴다 — 명령이 배치 파일을 받지 않는다.
-- 정면 오선택률: 기기 라벨 회차의 평가 시각 중, 기기 상태 중 사후확률이 가장 큰 기기가 라벨과 다른 시각의 비율.
-- ECE: 모든 시험 회차의 평가 시각에서 전체 상태(기기들과 none = 1 − 합) 중 최대 확률을 신뢰도로, 그 상태가 라벨과 같은지를 정답으로 둔다. 신뢰도 [0, 1]을 같은 폭 10구간으로 나눠 `Σ (구간 표본 수 / 전체) × |구간 정확도 − 구간 평균 신뢰도|`.
+- 정면 오선택률: 기기 라벨 회차의 평가 시각 중, 기기 상태 중 사후확률이 가장 큰 기기가 라벨과 다른 시각의 비율. 확률이 같으면 상태 이름이 사전순으로 앞선 쪽을 고른다(ECE의 최대 확률 상태도 같다).
+- ECE: 모든 시험 회차의 평가 시각에서 전체 상태(기기들과 none = max(0, 1 − 합)) 중 최대 확률을 신뢰도로, 그 상태가 라벨과 같은지를 정답으로 둔다. 신뢰도 [0, 1]을 같은 폭 10구간으로 나눠 `Σ (구간 표본 수 / 전체) × |구간 정확도 − 구간 평균 신뢰도|`.
 - 통과 기준은 적합 설정 TOML `[acceptance]`(`max_misselection`, `max_ece`)에서 받는다.
 - 보고서 행: `metric`, `value`, `limit`, `passed`, `trials`, `failures`(오선택률만), `note`. 전환 시간과 깜빡임 행은 `value`를 비우고 `note = "미측정"`이다. 기기 라벨 시험 회차가 없으면 오선택률 행의 `value`, `passed`, `failures`를 비우고 `note = "기기 라벨 시험 회차 없음"`이다 — `write_report`가 `trials = 0`에서 신뢰구간을 계산하지 않게 한다.
 - 보고서의 모든 행에 `place_id`, `model_version`, `calib_version`, `split_file`, `fit_file`을 남긴다 (requirements.md §4 "입력, 시나리오, 버전, 표본 수를 보존한다").

@@ -36,6 +36,7 @@ from nearpilot.runtime import Runtime
 from nearpilot.shared.models import BeaconKey
 from nearpilot.shared.tokens import hash_token
 from tools.data_collection.session import SessionIO
+from tools.evaluation import report as report_module
 from tools.node_sim.node import SimNode
 
 CONFIG = Path(__file__).resolve().parents[2] / "config"
@@ -287,6 +288,7 @@ def served(monkeypatch: pytest.MonkeyPatch) -> list:
 
 
 def test_FR16_ops_pipeline_end_to_end(tmp_path, monkeypatch, run_cli, served):
+    monkeypatch.setattr(report_module, "resolve_git_commit", lambda: "test-commit")  # git 프로세스를 띄우지 않는다
     server = tmp_path / "server"
     write_server(server)
     write_inputs(server)

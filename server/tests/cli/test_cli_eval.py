@@ -28,6 +28,7 @@ from nearpilot.cli import EXIT_FAILED, EXIT_INVALID, EXIT_OK
 from nearpilot.cli import eval as eval_cli
 from nearpilot.core.proximity.fit import AnchorLayout, PlaceLayout, model_to_dict, write_model_file
 from nearpilot.core.proximity.model import NodeModel, ProximityModel, load_model
+from tools.evaluation import report as report_module
 from tools.evaluation.split import SplitResult, split_to_json
 
 T0 = datetime(2026, 10, 17, 9, 0, 0, tzinfo=timezone.utc)
@@ -215,6 +216,7 @@ def schema_version(server: Path) -> int:
 @pytest.fixture(autouse=True)
 def _fixed_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(eval_cli, "now_utc", lambda: NOW)
+    monkeypatch.setattr(report_module, "resolve_git_commit", lambda: "test-commit")  # git 프로세스를 띄우지 않는다
 
 
 @pytest.fixture

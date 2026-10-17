@@ -933,6 +933,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | `AdminRepository.set_node_trust` | 기기 ID, `TrustState` | `AdminWriteResult` |
 | `AdminRepository.assign_place` | `PlaceAssignment` | `AdminWriteResult` |
 | `AdminRepository.set_policy` | `PolicyRevision`, 예상 현재 버전 | `AdminWriteResult` |
+| `AdminRepository.set_release_policy` | 기기 ID, 종료 정책 | `AdminWriteResult` |
 | `AdminRepository.start_collection` | 회차 ID, `BeaconKey`, 라벨, 시작 시각 | `AdminWriteResult` |
 | `AdminRepository.end_collection` | 회차 ID, 끝 시각 | `AdminWriteResult` |
 

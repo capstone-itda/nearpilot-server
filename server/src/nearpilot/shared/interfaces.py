@@ -526,7 +526,7 @@ class CoreService(Protocol):
 
     user_id 는 API 가 토큰으로 식별해 넘긴다. 반환값에는 user_id·점유 주체가 없다.
     관리 기능(계정 등록·노드 신뢰·정책·승인 처리·FAULT 복구)은 여기에 넣지 않는다.
-    관리 기능은 `AdminService` 가 맡는다.
+    계정·비콘 등록, 장소 배치, 기기 신뢰, 정책, 종료 정책은 `AdminService` 가 맡는다.
     """
 
     def find_available_devices(self, user_id: str) -> Sequence[Mapping[str, Any]]: ...
