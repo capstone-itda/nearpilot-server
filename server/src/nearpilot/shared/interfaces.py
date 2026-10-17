@@ -593,6 +593,7 @@ class AdminRepository(Protocol):
 
     def set_release_policy(self, node_id: str, release_policy: Mapping[str, Any]) -> AdminWriteResult:
         """node.release_policy 만 바꾼다. 감사와 한 트랜잭션이다. 없는 기기는 NODE_NOT_FOUND 다.
+        release_policy 가 Mapping 이 아니면 TypeError 다.
 
         점유 세션은 생성 당시 값을 보존하므로 소급하지 않는다.
         """

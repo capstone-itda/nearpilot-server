@@ -291,7 +291,7 @@ def test_FR16_ops_pipeline_end_to_end(tmp_path, monkeypatch, run_cli, served):
     write_server(server)
     write_inputs(server)
     db = server / "var" / "nearpilot.db"
-    clock = FakeClock(datetime.now(timezone.utc).replace(microsecond=0))
+    clock = FakeClock(datetime(2025, 1, 6, 9, 0, 0, tzinfo=timezone.utc))
     broker = SimBroker(tmp_path, DEVICES, beacons={node_id: () for node_id in DEVICES})
     use_clock(broker, clock)
     collector = Collector(broker, clock, db)

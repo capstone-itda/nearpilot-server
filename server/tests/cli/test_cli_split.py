@@ -216,6 +216,26 @@ def test_NFR13_split_does_not_overwrite(server_dir, run_cli, split_db, fixed_now
     assert split_path(server_dir, "place-a-seed43.json").is_file() and path.read_bytes() == before
 
 
+def test_NFR13_split_file_created_during_split_is_not_overwritten(server_dir, run_cli, split_db, monkeypatch):
+    write_fit(server_dir)
+    path = split_path(server_dir)
+    real = split_cli.split_runs
+
+    def split_then_other_process_writes(*args, **kwargs):
+        result = real(*args, **kwargs)
+        path.parent.mkdir(parents=True)
+        path.write_text("다른 곳에서 만든 파일", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(split_cli, "split_runs", split_then_other_process_writes)
+
+    code, out, err = run_cli(["split", "place-a"], cwd=server_dir)
+
+    assert (code, out) == (EXIT_FAILED, "")
+    assert err == f"분할 결과가 이미 있다: {path}. 다른 --seed나 --out을 쓴다\n"
+    assert path.read_text(encoding="utf-8") == "다른 곳에서 만든 파일"
+
+
 # ── 입력 오류 (종료 코드 2) ───────────────────────────────────────────
 
 

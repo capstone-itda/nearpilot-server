@@ -1,7 +1,7 @@
 # 운영 CLI (`nearpilot`)
 
 - 담당: dnnals (근접 추정)
-- 요구사항: FR-01, FR-05, FR-12A, FR-13, FR-14, FR-16, FR-22, NFR-06, NFR-13
+- 요구사항: FR-01, FR-05, FR-06, FR-12A, FR-13, FR-14, FR-16, FR-22, NFR-06, NFR-13
 - 따르는 결정: #29, #30, #40, #41, #88, #131, #138
 - 예외: 담당자가 2026-10-17 대화에서 이 작업에 한해 AGENTS.md의 PR 분리 규칙을 무시하기로 했다. 머지된 spec(서버 조립, 수집 도구)의 동작 변경, `shared` 계약 추가, `docs/` 수정을 이 feat PR 하나에 넣는다.
 
@@ -96,8 +96,9 @@
 | 시드 `--dry-run` | DB에 쓰지 않고 반영할 항목만 쓴다 | `test_FR12A_seed_dry_run_writes_nothing` |
 | 다른 계정에 등록된 비콘 | `BEACON_ALREADY_REGISTERED`를 쓴다. 기존 활성 비콘을 유지한다 | `test_FR01_seed_duplicate_beacon_rejected` |
 | AdminService에 장소 소유자가 아닌 행위자가 기기 신뢰·정책·종료 정책을 쓴다 | 쓰지 않고 거부한다 | `test_FR12A_admin_rejects_non_owner` |
+| 장소 배치가 다른 소유자의 장소에 있는 기기를 옮긴다 | `NOT_PLACE_OWNER`로 거부한다 | `test_FR12A_admin_rejects_non_owner`, `test_FR12A_seed_rejects_taking_over_another_owners_node` |
 | 정책이 바뀌었다 | 현재 버전을 기대값으로 새 리비전을 추가한다. 내용이 같으면 쓰지 않는다 | `test_FR14_admin_policy_new_revision_only_when_changed` |
-| `set_release_policy` | `release_policy`만 바꾸고 감사와 한 트랜잭션. 없는 기기는 `NODE_NOT_FOUND` | `test_FR22_set_release_policy_audited`, `test_FR13_set_release_policy_unknown_node` |
+| `set_release_policy` | `release_policy`만 바꾸고 감사와 한 트랜잭션. 없는 기기는 `NODE_NOT_FOUND`. `Mapping`이 아닌 값은 `TypeError` | `test_FR22_set_release_policy_audited`, `test_FR13_set_release_policy_unknown_node` |
 | 토큰 발급 | 원문은 한 번만 출력하고 DB에는 해시만 있다 | `test_FR01_seed_token_printed_once_hash_stored` |
 | `collect run`, `collect close`, `collect list`에서 DB 파일이 없다 | DB와 폴더를 만들지 않고 종료 코드 2 | `test_FR16_collect_requires_existing_db`, `test_FR16_collect_list_without_database_is_input_error` |
 | `collect run`에 `--record`가 없다 | `var/records/<계획 파일 이름>-<UTC 날짜>.jsonl`에 덧붙인다 | `test_FR16_collect_default_record_path` |
@@ -108,12 +109,17 @@
 | 분할: 같은 시드 | 같은 결과 파일 내용 | `test_NFR13_split_deterministic_by_seed` |
 | 분할: 라벨의 회차가 최소 회차 수보다 적다 | 분할하지 않고 부족한 라벨을 쓴다. 종료 코드 1 | `test_NFR13_split_rejects_too_few_runs` |
 | 분할: 결과 파일이 이미 있다 | 덮어쓰지 않는다. 종료 코드 1 | `test_NFR13_split_does_not_overwrite` |
+| 분할: 확인 뒤 쓰기 전에 결과 파일이 생겼다 | 덮어쓰지 않는다. 종료 코드 1 | `test_NFR13_split_file_created_during_split_is_not_overwritten` |
+| `split --out FILE` | 결과 파일을 그 이름(`var/splits/`)이나 경로에 쓴다 | `test_FR16_split_cli_seed_and_out_options` |
 | 분할: 회차 하나가 두 분할에 들어간다 | 생길 수 없다. 모든 회차는 정확히 한 분할에 있다 | `test_FR16_split_run_in_exactly_one_part` |
 | `fit`: 분할 결과의 장소와 배치의 장소가 다르다 | 쓰지 않고 종료 코드 2 | `test_FR16_fit_place_mismatch_rejected` |
 | `fit`: 같은 버전 모델 파일이 있다 | 쓰지 않고 종료 코드 1 | `test_FR16_fit_existing_version_not_overwritten` |
 | `fit`: `FitError` | 사유를 쓰고 종료 코드 1. 파일을 만들지 않는다 | `test_FR16_fit_error_writes_nothing` |
 | `fit`: 배치의 기기 중 학습 회차에 라벨이 없는 기기가 있다 | 적합하지 않고 그 기기를 쓴다. 종료 코드 1 | `test_FR16_fit_missing_label_fails` |
 | `fit --dry-run` | 앵커 값과 격자 손실을 쓰고 파일은 만들지 않는다 | `test_FR16_fit_dry_run_writes_nothing` |
+| `fit --dry-run`인데 같은 버전 모델 파일이 있다 | 파일을 쓰지 않으므로 거부하지 않는다. 종료 코드 0 | `test_FR16_fit_dry_run_ignores_existing_version` |
+| `fit`, `eval`: 분할 파일의 회차가 DB에 없거나 진행 중이다 | 사유를 쓰고 종료 코드 1 | `test_FR16_fit_unreadable_runs_fail`, `test_NFR06_eval_unreadable_runs_fail` |
+| `eval`: 모델 파일이나 분할 결과의 장소가 `PLACE`와 다르다 | 종료 코드 2 | `test_NFR06_eval_rejects_model_of_another_place`, `test_NFR06_eval_split_place_mismatch_rejected` |
 | `eval`: 시험셋만 쓴다 | 학습·검증 회차의 프레임을 읽지 않는다 | `test_NFR06_eval_uses_test_runs_only` |
 | `eval`: 오선택률과 ECE | 합성 데이터에서 손으로 계산한 값과 같다 | `test_NFR06_eval_misselection_and_ece` |
 | `eval`: 측정하지 않는 항목 | 보고서에 "미측정"으로 쓴다 | `test_NFR06_eval_reports_unmeasured_items` |
@@ -142,7 +148,7 @@
 ### serve
 
 - `nearpilot serve`는 기존 `python -m nearpilot`과 같은 서버를 띄운다. 다른 점은 아래 세 가지다: `--config` 기본값, `var/` 폴더 만들기, 시작 실패의 종료 코드 1. `python -m nearpilot`은 그대로 둔다.
-- `--collect-only`는 설정의 `[proximity.models]`를 읽지 않고 빈 모델로 근접 추정기를 만든다. FastAPI 앱에 MCP 앱을 마운트하지 않는다. 나머지 시작 순서(DB, 복원, MQTT, 정리, 주기 작업)는 같다 — 판정 코드를 건드리지 않고, 요청이 도달하지 않으므로 실행이 일어날 수 없다.
+- `--collect-only`는 설정의 `[proximity.models]`를 읽지 않고 빈 모델로 근접 추정기를 만든다. FastAPI 앱에 MCP 앱을 마운트하지 않는다. 나머지 시작 순서(DB, 복원, MQTT, 정리, 주기 작업)는 같다 — 판정 코드를 건드리지 않고, 새 실행 요청이 도달하지 않는다. 이전 일반 모드에서 남은 점유 세션의 반납 검사와 공용 조명 재개는 복원이 평소처럼 이어서 처리하므로 기기에 메시지를 보낼 수 있다.
 - `--collect-only`는 명령 옵션으로만 켠다. 설정 파일에 두지 않는다 — 운영 서버가 실수로 수집 모드로 뜨지 않게 한다.
 - `--collect-only`가 아니면 `[proximity.models]`가 비었을 때 기존처럼 시작하지 않는다.
 - `serve`는 DB와 감사 JSONL의 부모 폴더를 만든다 — 새로 받은 `server/`에서 첫 명령이 `serve`여도 시작한다.
@@ -153,7 +159,7 @@
 - `AdminService` Protocol을 `shared/interfaces.py`에 두고 구현은 `core/admin/service.py`에 둔다. 읽기는 `Repository`, 쓰기는 `AdminRepository`로 한다.
 - 계정 등록(`register_account`)은 토큰을 만들어 해시로 저장하고 원문을 돌려준다. 계정과 비콘 등록은 행위자 검사가 없다 — 첫 소유자를 만드는 부트스트랩이다 (FR-01 "서버가 한 번 등록").
 - 행위자 검사에 걸리면 `AdminWriteReason.NOT_PLACE_OWNER`(새 값, `REJECTED`)로 거부한다.
-- 장소 배치는 행위자가 그 장소의 소유자여야 한다. 기기 신뢰, 정책, 종료 정책은 행위자가 기기 장소의 소유자여야 한다 (`is_place_owner`). 그래서 시드는 계정 → 비콘 → 장소 배치 → 기기마다 신뢰·종료 정책 → 정책 순으로 반영한다(신뢰·종료 정책·정책 모두 장소 배치 뒤다).
+- 장소 배치는 행위자가 그 장소의 소유자여야 한다. 배치할 기기가 이미 다른 장소에 있으면 행위자가 그 장소의 소유자이기도 해야 한다 — 다른 소유자의 기기를 가져가지 못하게 한다. 기기 신뢰, 정책, 종료 정책은 행위자가 기기 장소의 소유자여야 한다 (`is_place_owner`). 그래서 시드는 계정 → 비콘 → 장소 배치 → 기기마다 신뢰·종료 정책 → 정책 순으로 반영한다(신뢰·종료 정책·정책 모두 장소 배치 뒤다).
 - 이미 있는 장소를 다른 소유자로 다시 배치하는 요청은 서비스 검사를 지나 DB가 `CONFLICT`/`STATE_CONFLICT`로 거부한다. 쓰기는 일어나지 않는다.
 - `AdminRepository.set_release_policy(node_id, release_policy)`를 추가한다. `node.release_policy`만 바꾸고 `Step.ADMIN` 감사와 한 트랜잭션이다. 진행 중 점유 세션은 생성 당시 값을 보존하므로 소급하지 않는다.
 - 정책은 `current_policy`와 내용이 같으면 쓰지 않는다. 다르면 현재 버전을 `expected_version`으로 새 리비전을 추가한다. 정책이 없으면 버전 1로 등록한다. `policy_id`는 `pol-<node_id>`다.
@@ -181,7 +187,8 @@
 - 라벨마다 회차 ID를 정렬하고 `random.Random(f"{seed}:{label}")`로 섞은 뒤 학습·검증·시험 비율로 나눈다 — 회차 수가 같은 라벨이 같은 순열로 섞이지 않고, 라벨이 늘어도 다른 라벨의 배정이 바뀌지 않는다. 각 몫은 `floor(n × 비율)`이고(비율은 파일에 쓴 십진수 그대로 `Fraction`으로 계산) 남는 회차는 학습 → 검증 → 시험 순으로 하나씩 더한다. 검증과 시험은 최소 1개다(모자라면 학습에서 옮긴다).
 - 비율과 라벨별 최소 회차 수는 적합 설정 TOML의 `[split]`(`ratios = [0.6, 0.2, 0.2]`, `min_runs_per_label = 5`)에서 받는다. 지표 8의 "위치별 독립 수집 ≥ 5회"가 기본 예시 값이다.
 - 결과 JSON: `place_id`, `seed`, `ratios`, `created_at`, `db_path`, `train`/`validation`/`test`(회차 ID 목록), `excluded`(회차 ID와 사유), `labels`(라벨 → 학습·검증·시험 회차 수). 같은 입력·시드면 `created_at` 줄 말고 바이트까지 같다. 기본 파일 이름은 `<장소>-seed<시드>.json`이다.
-- `split`은 적합 설정 파일 이름을 `--fit FILE`로 받는다. 기본은 `<장소>.toml`이다. `--seed` 기본값은 42다.
+- `split`은 적합 설정 파일 이름을 `--fit FILE`로 받는다. 기본은 `<장소>.toml`이다. `--seed` 기본값은 42다. `--out FILE`로 결과 파일을 바꾼다.
+- 결과 파일은 없을 때만 만든다(배타 생성). 먼저 확인해 DB를 읽기 전에 거부하고, 확인 뒤에 생긴 파일도 덮어쓰지 않는다.
 
 ### fit
 
@@ -195,7 +202,7 @@
 
 ### eval
 
-- `nearpilot eval PLACE/VERSION --split FILE [--fit FILE] [--out NAME] [--force]`.
+- `nearpilot eval PLACE/VERSION --split FILE [--fit FILE] [--out NAME] [--force]`. 모델 파일과 분할 결과의 장소가 `PLACE`와 다르면 입력 오류(2)다.
 - 시험 회차만 읽는다. 평가 시각은 `validation_log_loss`와 같다(`started_at + window_sec`부터 `bin_sec` 간격, `ended_at` 이하). 시각마다 `compute_posteriors`에 모델 파일의 모든 기기를 후보로 넘긴다 — 명령이 배치 파일을 받지 않는다.
 - 정면 오선택률: 기기 라벨 회차의 평가 시각 중, 기기 상태 중 사후확률이 가장 큰 기기가 라벨과 다른 시각의 비율.
 - ECE: 모든 시험 회차의 평가 시각에서 전체 상태(기기들과 none = 1 − 합) 중 최대 확률을 신뢰도로, 그 상태가 라벨과 같은지를 정답으로 둔다. 신뢰도 [0, 1]을 같은 폭 10구간으로 나눠 `Σ (구간 표본 수 / 전체) × |구간 정확도 − 구간 평균 신뢰도|`.

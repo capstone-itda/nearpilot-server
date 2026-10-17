@@ -67,7 +67,13 @@ def _split(args: argparse.Namespace) -> int:
     text = split_to_json(result, created_at=now_utc(), db_path=str(config.database.path))
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(text, encoding="utf-8", newline="\n")
+        # 확인 뒤에 다른 곳에서 같은 파일을 만들었어도 덮어쓰지 않는다
+        try:
+            file = out.open("x", encoding="utf-8", newline="\n")
+        except FileExistsError:
+            raise CliError(f"분할 결과가 이미 있다: {out}. 다른 --seed나 --out을 쓴다", EXIT_FAILED) from None
+        with file:
+            file.write(text)
     except OSError as error:
         raise CliError(f"분할 결과를 쓸 수 없다: {out} ({error.strerror or error})", EXIT_INVALID) from error
 

@@ -737,8 +737,13 @@ def test_FR16_collect_help_and_usage_errors(run_cli, tmp_path):
     assert (code, out) == (EXIT_INVALID, "") and "unrecognized arguments: --unknown" in err
 
 
-def test_FR16_collect_list_checks_fit_option_first(server_dir, run_cli, announce_nodes):
+def test_FR16_collect_list_checks_fit_option_first(server_dir, run_cli, announce_nodes, monkeypatch):
     announce_nodes(server_dir, "locker-1")  # 회차가 없는 DB
+
+    def must_not_read_runs(config):
+        raise AssertionError("--fit은 회차를 읽기 전에 검사한다")
+
+    monkeypatch.setattr(collect_cli, "_read_runs", must_not_read_runs)
 
     # 회차가 없어도 직접 준 --fit 파일이 없으면 입력 오류다
     code, out, err = run_cli(["collect", "list", "--summary", "--place", "place-a", "--fit", "missing.toml"],
