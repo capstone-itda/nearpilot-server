@@ -52,7 +52,7 @@ pytest tests/<계층>      # 계층 하나
 ```
 
 - 커밋하기 전에 전체 `pytest`를 통과시킨다.
-- 서버 실행 진입점: 상태 관리 담당이 만든다 (#88). 경로와 실행 명령은 미결
+- 서버 실행 진입점: `nearpilot serve`. 운영 명령과 설정 파일은 `server/config/README.md`
 - Mosquitto 기동 방법: `server/`에서 `mosquitto -c config/mosquitto.conf`. IOT 구현자가 설정 파일을 만든다. 비밀번호 파일은 저장소에 넣지 않는다.
 
 ## 문서 갱신 조건

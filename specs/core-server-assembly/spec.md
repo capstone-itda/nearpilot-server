@@ -92,7 +92,8 @@
 
 ### 경로와 실행
 
-- 진입점은 `nearpilot/__main__.py`다. 조립은 `nearpilot/runtime/`에 둔다 — 담당자가 선택했다.
+- 진입점은 `nearpilot/__main__.py`와 `nearpilot serve`(`specs/core-ops-cli`)다. 조립은 `nearpilot/runtime/`에 둔다 — 담당자가 선택했다.
+- `Runtime(collect_only=True)`는 모델을 읽지 않고, `create_app`은 MCP 앱을 만들지 않는다. `load_config(require_models=False)`는 `[proximity.models]`가 없거나 비어도 받는다 (`specs/core-ops-cli`).
 - FastAPI 수명주기가 자원을 관리한다 — 시작과 종료의 책임을 한 곳에 둔다.
 - 기존 MCP 앱의 수명주기도 연결한다 — 마운트만 하고 초기화를 생략하지 않는다.
 - 외부 MCP 경로는 기존 `/mcp`를 유지한다 — MCP 앱을 루트에 마운트해서 경로를 중복하지 않는다.
@@ -137,7 +138,7 @@
 
 ### 시작 순서
 
-1. 설정과 모델을 검증한다.
+1. 설정과 모델을 검증한다. 수집 전용이면 모델을 읽지 않는다.
 2. DB를 준비한다.
 3. 근접 추정에 최근 관측을 복원한다.
 4. 서비스와 콜백을 연결한다.

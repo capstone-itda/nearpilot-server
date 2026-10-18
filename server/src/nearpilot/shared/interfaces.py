@@ -22,6 +22,7 @@ from nearpilot.shared.enums import (
     EndReason,
     ExecutionStatus,
     ReasonCode,
+    Role,
     TrustState,
 )
 from nearpilot.shared.models import (
@@ -39,6 +40,9 @@ from nearpilot.shared.models import (
     BeaconRegistration,
     PlaceAssignment,
     AdminWriteResult,
+    AccountIssue,
+    PolicySettings,
+    PolicyWriteResult,
     Account,
     Approval,
     ApprovalRecord,
@@ -521,8 +525,8 @@ class CoreService(Protocol):
     """CORE → API 기능 (FR-09). MCP 도구 6개에 대응한다.
 
     user_id 는 API 가 토큰으로 식별해 넘긴다. 반환값에는 user_id·점유 주체가 없다.
-    관리 기능(계정 등록·노드 신뢰·정책·승인 처리·FAULT 복구)은 여기에 넣지 않고,
-    API 담당 배정 후 별도 `AdminService` Protocol 로 추가한다.
+    관리 기능(계정 등록·노드 신뢰·정책·승인 처리·FAULT 복구)은 여기에 넣지 않는다.
+    계정·비콘 등록, 장소 배치, 기기 신뢰, 정책, 종료 정책은 `AdminService` 가 맡는다.
     """
 
     def find_available_devices(self, user_id: str) -> Sequence[Mapping[str, Any]]: ...
@@ -587,6 +591,14 @@ class AdminRepository(Protocol):
         """
         ...
 
+    def set_release_policy(self, node_id: str, release_policy: Mapping[str, Any]) -> AdminWriteResult:
+        """node.release_policy 만 바꾼다. 감사와 한 트랜잭션이다. 없는 기기는 NODE_NOT_FOUND 다.
+        release_policy 가 Mapping 이 아니면 TypeError 다.
+
+        점유 세션은 생성 당시 값을 보존하므로 소급하지 않는다.
+        """
+        ...
+
     def start_collection(
         self, collection_id: str, beacon: BeaconKey, label: str, started_at: datetime
     ) -> AdminWriteResult:
@@ -609,6 +621,36 @@ class AdminRepository(Protocol):
         구간은 started_at <= frame_ts < ended_at 이다. 관측 연결은 save_rssi 가 한다.
         """
         ...
+
+
+@runtime_checkable
+class AdminService(Protocol):
+    """관리 기능 (FR-01, FR-12A, FR-13, FR-14). 읽기는 `Repository`, 쓰기는 `AdminRepository` 로 한다.
+
+    계정·비콘 등록은 행위자 검사가 없다 — 첫 소유자를 만드는 부트스트랩이다.
+    장소·신뢰·정책·종료 정책은 행위자가 장소 소유자여야 한다. 아니면 아무것도 쓰지 않고
+    `AdminWriteReason.NOT_PLACE_OWNER` 로 거부한다.
+    """
+
+    def register_account(self, user_id: str, name: str, role: Role) -> AccountIssue:
+        """토큰을 만들어 해시로 저장하고 원문을 돌려준다. 원문은 APPLIED 일 때만 있다 (FR-01, #29)."""
+        ...
+
+    def register_beacon(self, req: BeaconRegistration) -> AdminWriteResult: ...
+
+    def assign_place(self, actor_user_id: str, req: PlaceAssignment) -> AdminWriteResult: ...
+
+    def set_node_trust(
+        self, actor_user_id: str, node_id: str, trust_state: TrustState
+    ) -> AdminWriteResult: ...
+
+    def set_policy(self, actor_user_id: str, settings: PolicySettings) -> PolicyWriteResult:
+        """현재 정책과 내용이 같으면 쓰지 않는다. 다르면 새 리비전을 추가한다 (FR-14)."""
+        ...
+
+    def set_release_policy(
+        self, actor_user_id: str, node_id: str, release_policy: Mapping[str, Any]
+    ) -> AdminWriteResult: ...
 
 
 @runtime_checkable

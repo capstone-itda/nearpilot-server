@@ -61,7 +61,7 @@
 ### 만들지 않는 것
 | 후속 작업 | 내용 | 근거 |
 |---|---|---|
-| (서버 실행 진입점 뒤) | `python -m tools.data_collection` 진입점에서 DB 경로로 `SqliteAdminRepository`(#136)를 만드는 배선 | #88 |
+| (서버 실행 진입점 뒤) | `python -m tools.data_collection` 진입점에서 DB 경로로 `SqliteAdminRepository`(#136)를 만드는 배선. `nearpilot collect`(`specs/core-ops-cli`)는 이 배선을 한다 | #88 |
 | `feat/core-proximity-calibration` | 수집한 관측으로 모델 적합, 운영 모델 파일의 `none_points` | FR-16, 지표 8 |
 | DB의 `tools/evaluation` | 회차 단위 분할, 평가, 중단된 회차를 평가에서 빼는 규칙 | FR-16, 지표 8 |
 
@@ -136,7 +136,7 @@
 - 회차 기록 파일은 JSONL이다. 한 줄은 `index`, `collection_id`, `place_id`, `beacon`, `label`, `spot`, `started_at`, `ended_at`, `status`를 담는다. `status`는 `done`, `aborted`, `end_failed` 중 하나다. `end_failed`면 `ended_at`은 `null`이다 — `collection_run`에는 서는 위치 안내가 없다. 위치별 분석과 중단 회차 확인에 기록 파일을 쓴다.
 - 회차를 시작하기 전에 기록 파일을 덧붙이기 모드로 연다 — 열지 못하면 DB에 회차를 만들기 전에 멈춘다.
 - `--start-at N`으로 N번째 회차부터 실행한다. N은 1부터 센다 — 중단한 세션을 이어서 수집한다. 범위는 `AdminRepository`를 만들기 전에 검사한다 — 잘못된 인자로 DB 파일을 만들지 않는다.
-- 명령은 `run PLAN --record PATH [--start-at N]`과 `close --collection-id ID` 두 개다. `--record`는 기본값이 없다 — 기록 파일을 어디에 둘지 수집하는 사람이 정한다.
+- 명령은 `run PLAN --record PATH [--start-at N]`과 `close --collection-id ID` 두 개다. `--record`는 기본값이 없다 — 기록 파일을 어디에 둘지 수집하는 사람이 정한다. `nearpilot collect run`은 기본 경로를 계산해 넘긴다 (`specs/core-ops-cli`).
 - Ctrl+C로 중단한 회차의 `end_collection`이 실패하면 `status`는 `end_failed`, 종료 코드는 130이다.
 - `close --collection-id ID` 명령은 현재 시각으로 `end_collection`을 부른다 — 끝 시각을 기록하지 못한 회차가 남으면 같은 비콘의 다음 회차가 모두 겹침으로 거부된다.
 - CLI는 표준 라이브러리 `argparse`로 만든다 — 운영체제에 의존하지 않는다.
