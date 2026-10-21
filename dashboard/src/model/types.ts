@@ -7,7 +7,6 @@ export type Capability = 'locker' | 'light' | 'speaker';
 export type Occupancy = 'rental' | 'shared';
 export type Action = 'open' | 'on' | 'off';
 export type TargetKind = 'nearest' | 'explicit' | 'any';
-export type HostKind = 'claude' | 'chatgpt' | 'gemini';
 export type TrustState = 'discovered' | 'trusted' | 'revoked';
 export type AuditStep = 'auth' | '0' | '1' | '2' | '3' | '4' | '5' | '6' | 'exec' | 'close' | 'fault' | 'announce' | 'admin';
 export type ApprovalMode = 'one_time' | 'time_window';
@@ -81,7 +80,6 @@ export interface StepOutcome {
 export interface RequestProgress {
   id: string;
   personId: string;
-  host: HostKind;
   tool: 'request_use';
   target: { kind: TargetKind; capability?: Capability; nodeId?: string };
   action: Action;
@@ -176,7 +174,6 @@ export interface HistoryRow {
   requestId: string;
   at: string;
   personId: string;
-  host: HostKind;
   target: { kind: TargetKind; capability?: Capability; nodeId?: string };
   action: Action;
   verdict: Verdict;
@@ -184,7 +181,7 @@ export interface HistoryRow {
   outcome: string;
   code?: ReasonCode;
 }
-export interface HistoryQuery { period: string; verdict?: Verdict; nodeId?: string; host?: HostKind }
+export interface HistoryQuery { period: string; verdict?: Verdict; nodeId?: string }
 
 export interface TrustReport {
   live: { since: string; decisions: number; doubleOccupancy: number; latencyMedianSec: number | null; latencyP95Sec: number | null; counts: Record<Verdict, number> };
@@ -201,6 +198,5 @@ export interface RentalInfo { nodeId: string; personId: string; startedAt: strin
 export interface Health {
   devices: { nodeId: string; connected: boolean; trust: TrustState }[];
   beacons: { personId: string; label: string; lastSeenSec: number | null; note?: string }[];
-  hosts: { host: HostKind; lastToolsList?: string }[];
   server: { database: boolean; mqtt: boolean; model: string };
 }

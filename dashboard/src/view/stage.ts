@@ -1,5 +1,5 @@
 // 모니터 상태 → 무대(평면도) 표시값. 장면별 고정 값 없이 규칙으로 계산한다.
-import type { DeviceStatus, FloorLayout, HostKind, LayoutDevice, Person, RequestProgress, MonitorState, Spot } from '../model/types';
+import type { DeviceStatus, FloorLayout, LayoutDevice, Person, RequestProgress, MonitorState, Spot } from '../model/types';
 import { ROOM, facing, frontOf, type Facing } from './arrange';
 import { calloutSpot, chooseLabel, deviceTextBox, freePersonSpot, frontBox, labelBox, leaderEnd, personBox, ringBox, rssiBox, placeRssi, type Rect } from './placement';
 import {
@@ -37,7 +37,8 @@ export interface StageView {
   aria: string;
   placeName: string;
   modelVersion: string;
-  host: HostKind | null;
+  /** 요청을 보낸 AI 호스트를 밝힌다. 호스트 종류는 구분하지 않는다 (2026-10-21 사용자 결정) */
+  host: boolean;
   server: boolean;
   /** 서버 상자: 판정 표시, 판정 게이지, 확인 네 칸 */
   judge: { mark: string; tone: Tone; gauge: boolean; checks: [CheckResult, string][] };
@@ -49,9 +50,9 @@ export interface StageView {
   rssiOn: boolean;
   rssi: Record<string, string>;
   /** AI 호스트 → 서버: 도구 호출이 도착했고 아직 응답하지 않음 */
-  mcp: HostKind | null;
+  mcp: boolean;
   /** 서버 → AI 호스트: 방금 도구 호출의 결과를 돌려줌 */
-  reply: HostKind | null;
+  reply: boolean;
   uplink: boolean;
   /** 실행 명령 선의 대상 기기 */
   cmd: string | null;
@@ -202,7 +203,7 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     aria: '',
     placeName: layout.placeName,
     modelVersion: layout.modelVersion,
-    host: opt.layoutCheck ? null : r?.host ?? null,
+    host: !opt.layoutCheck && !!r,
     server: !opt.layoutCheck && !!r,
     judge: !r || opt.layoutCheck
       ? { mark: '', tone: 'none', gauge: false, checks: CHECK_NAMES.map((n) => ['none', n] as [CheckResult, string]) }
@@ -215,8 +216,8 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     signals,
     rssiOn: !!rssiPerson,
     rssi,
-    mcp: r && !opt.layoutCheck && !r.respondedAt ? r.host : null,
-    reply: r && !opt.layoutCheck && r.respondedAt && secOf(s.lastReceivedAt) - secOf(r.respondedAt) <= REPLY_SHOW_SEC ? r.host : null,
+    mcp: !!r && !opt.layoutCheck && !r.respondedAt,
+    reply: !!r && !opt.layoutCheck && !!r.respondedAt && secOf(s.lastReceivedAt) - secOf(r.respondedAt) <= REPLY_SHOW_SEC,
     uplink: scene === 'judging' || scene === 'ask' || !!idlePerson,
     cmd: scene === 'flow' && r!.execution === 'sent' ? target : null,
     push: scene === 'approval' && s.ownerNotified,

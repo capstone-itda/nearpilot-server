@@ -81,7 +81,7 @@ function earlierRequest(h: HistoryRow): RequestProgress {
     h.verdict === 'NEED_APPROVAL' ? { result: i < 4 ? 'pass' : i === 4 ? 'stop' : 'skip' }
       : { result: shared && i >= 5 ? 'skip' : 'pass' });
   return {
-    id: h.requestId, personId: h.personId, host: h.host, tool: 'request_use', target: h.target, action: h.action, at: `${h.at}:00`,
+    id: h.requestId, personId: h.personId, tool: 'request_use', target: h.target, action: h.action, at: `${h.at}:00`,
     verdict: h.verdict, reason: h.code ?? 'OK', nodeId: h.nodeId, steps,
     ...(h.verdict === 'OK' ? { execution: 'succeeded' as const } : {}), respondedAt: `${h.at}:00`
   };
@@ -200,7 +200,7 @@ export function createMockSource(opt: MockOptions): DataSource {
     },
     audit: () => copy(AUDIT.filter(audited)),
     history: (q: HistoryQuery) => copy(HISTORY.filter((h) => answered(h) &&
-      inPeriod(h.at, q.period) && (!q.verdict || h.verdict === q.verdict) && (!q.nodeId || h.nodeId === q.nodeId) && (!q.host || h.host === q.host)).map((h) => withApproval(strip<HistoryRow>(h), now))),
+      inPeriod(h.at, q.period) && (!q.verdict || h.verdict === q.verdict) && (!q.nodeId || h.nodeId === q.nodeId)).map((h) => withApproval(strip<HistoryRow>(h), now))),
     // 진행 중인 요청은 지금 상태 그대로, 끝난 요청은 이력에 보인 뒤부터 준다
     request: (id: string) => {
       if (current.request?.id === id) return copy(current.request);

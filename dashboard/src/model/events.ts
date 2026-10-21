@@ -1,7 +1,7 @@
 // FR-12B 모니터링 스트림의 이벤트. 메시지 형식은 미결이라 이 형태는 가정이다 (spec 7절).
 // 서버 어댑터는 WebSocket 메시지를 이 형태로 바꿔 넘긴다. 시각은 서버 시각 (HH:MM:SS.mmm).
 import type {
-  Action, AuditRow, DeviceState, HostKind, MockPhoneScreen, Person, ReasonCode, RequestProgress, Verdict
+  Action, AuditRow, DeviceState, MockPhoneScreen, Person, ReasonCode, RequestProgress, Verdict
 } from './types';
 
 interface At { at: string }
@@ -12,7 +12,7 @@ export type StreamEvent = At & (
   /** 기기별 비콘 RSSI (dBm) */
   | { type: 'rssi'; personId: string; rssi: Record<string, number> }
   /** AI 호스트의 MCP 도구 호출이 서버에 도착함 */
-  | { type: 'mcp_call'; requestId: string; personId: string; host: HostKind; tool: RequestProgress['tool']; target: RequestProgress['target']; action: Action }
+  | { type: 'mcp_call'; requestId: string; personId: string; tool: RequestProgress['tool']; target: RequestProgress['target']; action: Action }
   /** 판정 단계 ⓪~⑥ 하나의 결과 */
   | { type: 'step'; requestId: string; step: number; result: 'pass' | 'stop'; detail?: string }
   /** ③ 근접의 후보 확률과 이 요청에 적용한 임계값 */

@@ -1,10 +1,10 @@
 // MON-06~10 메뉴로 여는 패널. 모두 조회만 한다 (FR-12A).
 import { useState } from 'react';
-import type { AuditStep, HistoryQuery, HostKind, Verdict } from '../model/types';
+import type { AuditStep, HistoryQuery, Verdict } from '../model/types';
 import { DataTable, FilterBar, NoteBox, Section, Td, TdLink, TdMono, VerdictTag, Zone } from '../components/common';
 import { Loading, Panel } from '../components/Panel';
 import { useData, useQuery } from '../data/context';
-import { ACTION_NAME, CAPABILITY_NAME, HOST_NAME, REASON_TEXT, VERDICT_LABEL, targetCode } from '../view/text';
+import { ACTION_NAME, CAPABILITY_NAME, REASON_TEXT, VERDICT_LABEL, targetCode } from '../view/text';
 
 type Close = { onClose: () => void };
 
@@ -90,7 +90,6 @@ export function AuditPanel({ onClose }: Close) {
 }
 
 const VERDICTS: Verdict[] = ['OK', 'ASK', 'NEED_APPROVAL', 'BUSY', 'DENY'];
-const HOSTS: HostKind[] = ['claude', 'chatgpt', 'gemini'];
 
 /** 이력 한 쪽의 줄 수. 1366×768에서도 패널 안 스크롤 없이 들어가는 수 */
 const HISTORY_PAGE = 6;
@@ -120,10 +119,6 @@ export function HistoryPanel({ onClose, onOpenRequest }: Close & { onOpenRequest
             <select className="np-field__input" value={form.nodeId ?? ''} onChange={(e) => setForm({ ...form, nodeId: e.target.value || undefined })}>
               <option value="">전체</option>{layout.devices.map((d) => <option key={d.nodeId} value={d.nodeId}>{d.name}</option>)}
             </select></label>
-          <label className="np-field"><span className="np-field__label">AI</span>
-            <select className="np-field__input" value={form.host ?? ''} onChange={(e) => setForm({ ...form, host: (e.target.value || undefined) as HostKind | undefined })}>
-              <option value="">전체</option>{HOSTS.map((h) => <option key={h} value={h}>{HOST_NAME[h]}</option>)}
-            </select></label>
           <button className="np-btn" type="submit">찾기</button>
         </form>
       </Section>
@@ -139,7 +134,7 @@ export function HistoryPanel({ onClose, onOpenRequest }: Close & { onOpenRequest
             key: h.requestId,
             cells: [
               <TdMono key="t" v={h.at} />,
-              <TdLink key="p" main={personName(h.personId)} sub={HOST_NAME[h.host]} onClick={() => onOpenRequest(h.requestId)} />,
+              <TdLink key="p" main={personName(h.personId)} onClick={() => onOpenRequest(h.requestId)} />,
               <Td key="r" main={`${h.target.kind === 'explicit' && h.target.nodeId ? deviceName(h.target.nodeId) : CAPABILITY_NAME[h.target.capability ?? 'locker']} ${ACTION_NAME[h.action]}`} sub={`${targetCode(h.target)} · ${h.action}`} />,
               <td key="v"><VerdictTag verdict={h.verdict} /></td>,
               <Td key="d" main={h.nodeId ? deviceName(h.nodeId) : '—'} sub={h.nodeId ?? '대상 없음'} />,

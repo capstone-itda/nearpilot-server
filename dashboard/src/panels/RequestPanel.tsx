@@ -3,7 +3,7 @@ import { isDecided, type DecidedRequest, type RequestProgress, type Verdict } fr
 import { KeyValue, ProbBars, Section, StepList, Timeline, VerdictTag, type StepRowResult } from '../components/common';
 import { Panel } from '../components/Panel';
 import { useData } from '../data/context';
-import { ACTION_DONE, ACTION_NAME, ACTION_VERB, CAPABILITY_NAME, CIRCLED, HOST_NAME, STEP_SHORT, VERDICT_LABEL, approvalText, josa, reasonText, requestTitle, toolCall } from '../view/text';
+import { ACTION_DONE, ACTION_NAME, ACTION_VERB, CAPABILITY_NAME, CIRCLED, STEP_SHORT, VERDICT_LABEL, approvalText, josa, reasonText, requestTitle, toolCall } from '../view/text';
 
 const STOP_RESULT: Record<Verdict, StepRowResult> = { OK: 'pass', ASK: 'ask', NEED_APPROVAL: 'appr', BUSY: 'fail', DENY: 'fail' };
 
@@ -51,7 +51,7 @@ export function RequestPanel({ r, onClose }: { r: RequestProgress; onClose: () =
   return (
     <Panel kind="request" cap="요청 상세 · MON-04" title={`${requestTitle(r, deviceName)} 요청`} tag={d ? <VerdictTag verdict={d.verdict} /> : <VerdictTag verdict="WAIT" code="…" label="판정 중" />} onClose={onClose}>
       <Section title="요청">
-        <KeyValue rows={[['누가', `${personName(r.personId)} · ${HOST_NAME[r.host]}`], ['도구', toolCall(r), true]]} />
+        <KeyValue rows={[['누가', personName(r.personId)], ['도구', toolCall(r), true]]} />
       </Section>
       <Section title="서버가 확인한 순서" hint={stopHint(r, cap)}>
         <StepList items={rows} />

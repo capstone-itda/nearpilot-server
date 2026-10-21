@@ -61,19 +61,19 @@ export const AUDIT: AuditRow[] = [
 ];
 
 export const HISTORY: Since<HistoryRow>[] = [
-  { requestId: 'r-1430', at: '14:30', personId: 'p-b', host: 'chatgpt', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함', code: 'APPROVAL_REQUIRED', since: '14:30:58' },
-  { requestId: 'r-1429', at: '14:29', personId: 'p-b', host: 'gemini', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-2', outcome: '결과 불명 → 고장 격리', code: 'EXEC_UNKNOWN', since: '14:29:40' },
-  { requestId: 'r-1428', at: '14:28', personId: 'p-a', host: 'claude', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-1', outcome: '열림', since: '14:28:11' },
-  { requestId: 'r-1426', at: '14:26', personId: 'p-a', host: 'claude', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'ASK', outcome: '다시 질문', code: 'LOW_CONFIDENCE', since: '14:26:12' },
-  { requestId: 'r-1422', at: '14:22', personId: 'p-b', host: 'gemini', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'BUSY', nodeId: 'locker-3', outcome: '실행 안 함', code: 'DEVICE_BUSY', since: '14:22:05' },
-  { requestId: 'r-1420', at: '14:20', personId: 'p-c', host: 'claude', target: { kind: 'nearest', capability: 'speaker' }, action: 'on', verdict: 'DENY', outcome: '실행 안 함', code: 'BEACON_NOT_SEEN', since: '14:20:41' },
-  { requestId: 'r-1403', at: '14:03', personId: 'p-a', host: 'claude', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'OK', nodeId: 'light-1', outcome: '켜짐 · 시간 승인 사용', since: '14:03:00' },
-  { requestId: 'r-1401', at: '14:01', personId: 'p-a', host: 'claude', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함 · 시간 승인됨', code: 'APPROVAL_REQUIRED', since: '14:01:00' },
-  { requestId: 'r-1358', at: '13:58', personId: 'p-a', host: 'claude', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'OK', nodeId: 'light-2', outcome: '켜짐 · 1회 승인 소진', since: '13:58:00' },
-  { requestId: 'r-1347', at: '13:47', personId: 'p-a', host: 'claude', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-2', outcome: '실행 안 함 · 1회 승인됨', code: 'APPROVAL_REQUIRED', since: '13:47:00' },
-  { requestId: 'r-1342', at: '13:42', personId: 'p-c', host: 'chatgpt', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-2', outcome: '실행 안 함 · 승인 신청 만료', code: 'APPROVAL_REQUIRED', since: '13:42:00' },
-  { requestId: 'r-1339', at: '13:39', personId: 'p-c', host: 'chatgpt', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함 · 소유자 거절', code: 'APPROVAL_REQUIRED', since: '13:39:00' },
-  { requestId: 'r-1321', at: '13:21', personId: 'p-c', host: 'claude', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-3', outcome: '열림 · 대여 시작', since: '13:21:05' }
+  { requestId: 'r-1430', at: '14:30', personId: 'p-b', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함', code: 'APPROVAL_REQUIRED', since: '14:30:58' },
+  { requestId: 'r-1429', at: '14:29', personId: 'p-b', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-2', outcome: '결과 불명 → 고장 격리', code: 'EXEC_UNKNOWN', since: '14:29:40' },
+  { requestId: 'r-1428', at: '14:28', personId: 'p-a', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-1', outcome: '열림', since: '14:28:11' },
+  { requestId: 'r-1426', at: '14:26', personId: 'p-a', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'ASK', outcome: '다시 질문', code: 'LOW_CONFIDENCE', since: '14:26:12' },
+  { requestId: 'r-1422', at: '14:22', personId: 'p-b', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'BUSY', nodeId: 'locker-3', outcome: '실행 안 함', code: 'DEVICE_BUSY', since: '14:22:05' },
+  { requestId: 'r-1420', at: '14:20', personId: 'p-c', target: { kind: 'nearest', capability: 'speaker' }, action: 'on', verdict: 'DENY', outcome: '실행 안 함', code: 'BEACON_NOT_SEEN', since: '14:20:41' },
+  { requestId: 'r-1403', at: '14:03', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'OK', nodeId: 'light-1', outcome: '켜짐 · 시간 승인 사용', since: '14:03:00' },
+  { requestId: 'r-1401', at: '14:01', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함 · 시간 승인됨', code: 'APPROVAL_REQUIRED', since: '14:01:00' },
+  { requestId: 'r-1358', at: '13:58', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'OK', nodeId: 'light-2', outcome: '켜짐 · 1회 승인 소진', since: '13:58:00' },
+  { requestId: 'r-1347', at: '13:47', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-2', outcome: '실행 안 함 · 1회 승인됨', code: 'APPROVAL_REQUIRED', since: '13:47:00' },
+  { requestId: 'r-1342', at: '13:42', personId: 'p-c', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-2', outcome: '실행 안 함 · 승인 신청 만료', code: 'APPROVAL_REQUIRED', since: '13:42:00' },
+  { requestId: 'r-1339', at: '13:39', personId: 'p-c', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함 · 소유자 거절', code: 'APPROVAL_REQUIRED', since: '13:39:00' },
+  { requestId: 'r-1321', at: '13:21', personId: 'p-c', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-3', outcome: '열림 · 대여 시작', since: '13:21:05' }
 ];
 
 /** 실시간 집계의 바탕. 목 어댑터가 지금까지 보인 HISTORY를 센다. 이력 "오늘"과 같은 수가 된다. */
@@ -122,6 +122,5 @@ export const HEALTH: Health = {
     { personId: 'p-c', label: 'minor 103', lastSeenSec: 1 },
     { personId: 'p-owner', label: '—', lastSeenSec: null, note: '비콘 없음 · 승인만 함' }
   ],
-  hosts: [{ host: 'claude', lastToolsList: '14:02' }, { host: 'chatgpt', lastToolsList: '14:03' }, { host: 'gemini', lastToolsList: '14:03' }],
   server: { database: true, mqtt: true, model: 'v3 · cal-2' }
 };

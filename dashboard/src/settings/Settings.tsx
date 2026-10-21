@@ -10,7 +10,6 @@ import { applyFile, parseFile, toFile, type Arrangement } from '../view/arrange'
 import { useData, useQuery } from '../data/context';
 import type { FollowSettings } from '../view/phone';
 import { stageView } from '../view/stage';
-import { HOST_NAME } from '../view/text';
 
 const NAV: [SettingsKey, string, string][] = [
   ['layout', '배치', '무대 배치와 실시간 신호'],
@@ -194,9 +193,8 @@ export function Check() {
   // 방문자 비콘만 본다. 소유자는 비콘 없이 승인만 한다.
   const visitorIds = new Set(snapshot.people.filter((p) => p.role === 'visitor').map((p) => p.id));
   const beacons = h.beacons.filter((b) => visitorIds.has(b.personId)).map((b) => ({ ...b, state: (b.note || b.lastSeenSec === null ? 'warn' : 'ok') as 'ok' | 'warn' }));
-  const hosts = h.hosts.map((x) => ({ ...x, state: (x.lastToolsList ? 'ok' : 'warn') as 'ok' | 'warn' }));
   const server: [string, boolean, string][] = [['데이터베이스', h.server.database, h.server.database ? '정상' : '응답 없음'], ['MQTT 브로커', h.server.mqtt, h.server.mqtt ? '연결됨' : '연결 끊김'], ['근접 모델 파일', true, h.server.model]];
-  const issues = [...devices, ...beacons, ...hosts].filter((x) => x.state !== 'ok').length + server.filter(([, ok]) => !ok).length;
+  const issues = [...devices, ...beacons].filter((x) => x.state !== 'ok').length + server.filter(([, ok]) => !ok).length;
   return (
     <SettingsContent title="점검" sub="시연 직전에 한 번에 확인해요.">
       {snapshot.connected ? (
@@ -213,7 +211,6 @@ export function Check() {
       <div className="np-checks">
         <CheckCard title="기기">{devices.map((d) => <Crow key={d.nodeId} state={d.state} name={deviceName(d.nodeId)} right={`${d.fault ? '고장 격리 · ' : ''}${d.connected ? '연결됨' : '연결 끊김'} · ${d.trust}`} />)}</CheckCard>
         <CheckCard title="폰 비콘">{beacons.map((b) => <Crow key={b.personId} state={b.state} name={personName(b.personId)} right={b.lastSeenSec === null ? b.note ?? '신호 없음' : `${ago(b.lastSeenSec)}${b.note ? ` · ${b.note}` : ''}`} />)}</CheckCard>
-        <CheckCard title="AI 호스트">{hosts.map((x) => <Crow key={x.host} state={x.state} name={HOST_NAME[x.host]} right={x.lastToolsList ? `tools/list ${x.lastToolsList}` : '연결 기록 없음'} />)}</CheckCard>
         <CheckCard title="서버">{server.map(([n, ok, r]) => <Crow key={n} state={ok ? 'ok' : 'warn'} name={n} right={r} />)}</CheckCard>
       </div>
     </SettingsContent>

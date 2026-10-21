@@ -4,7 +4,7 @@
 // 14:30 B의 조명 1 승인 필요 → 14:31 승인 신청 → 14:41 응답 없이 만료.
 // 고정 장면은 그 시각까지의 이벤트를 한꺼번에 보낸 결과다. 조회 데이터(fixtures.ts)의 시각과 같다.
 import type { StreamEvent } from '../../model/events';
-import type { Action, HostKind, MockPhoneScreen, MonitorState, Person, ReasonCode, RequestProgress, Verdict } from '../../model/types';
+import type { Action, MockPhoneScreen, MonitorState, Person, ReasonCode, RequestProgress, Verdict } from '../../model/types';
 import { initialState, reduceAll } from '../reduce';
 import { AUDIT, PLACE } from './fixtures';
 
@@ -72,7 +72,7 @@ const beacon = (t: number, id: string, seen: boolean): StreamEvent => {
 const phone = (t: number, screen: MockPhoneScreen): StreamEvent => ({ type: 'mock_phone', at: stamp(t), screen });
 
 interface RequestScript {
-  id: string; at: string; personId: string; host: HostKind; target: RequestProgress['target']; action: Action;
+  id: string; at: string; personId: string; target: RequestProgress['target']; action: Action;
   /** 단계 ⓪부터 차례로. 마지막이 stop이면 거기서 멈춘다 */
   steps: [('pass' | 'stop'), string?][];
   posterior?: { at: number; posteriors: Record<string, number>; threshold: number };
@@ -87,7 +87,7 @@ function requestEvents(r: RequestScript): StreamEvent[] {
   const t0 = sec(r.at);
   const out: StreamEvent[] = [
     phone(t0 - 0.6, { personId: r.personId, scene: 'chat', said: r.said, reply: '서버 응답을 기다리는 중…' }),
-    { type: 'mcp_call', at: stamp(t0), requestId: r.id, personId: r.personId, host: r.host, tool: 'request_use', target: r.target, action: r.action }
+    { type: 'mcp_call', at: stamp(t0), requestId: r.id, personId: r.personId, tool: 'request_use', target: r.target, action: r.action }
   ];
   r.steps.forEach(([result, detail], i) => {
     if (r.posterior && r.posterior.at === i) out.push({ type: 'posterior', at: stamp(t0 + 0.02 * i + 0.01), requestId: r.id, posteriors: r.posterior.posteriors, threshold: r.posterior.threshold });
@@ -116,26 +116,26 @@ const LOCKER = { kind: 'nearest' as const, capability: 'locker' as const };
 const ALL_PASS = (details: string[]): RequestScript['steps'] => details.map((d) => ['pass', d]);
 
 const REQUEST_SCRIPTS: RequestScript[] = [
-  { id: 'r-1420', at: '14:20:41', personId: 'p-c', host: 'claude', target: { kind: 'nearest', capability: 'speaker' }, action: 'on',
+  { id: 'r-1420', at: '14:20:41', personId: 'p-c', target: { kind: 'nearest', capability: 'speaker' }, action: 'on',
     steps: [['pass', '새 요청'], ['stop']], verdict: 'DENY', reason: 'BEACON_NOT_SEEN', said: '스피커 켜 줘', reply: '폰 신호가 잡히지 않아 켤 수 없어요.' },
-  { id: 'r-1422', at: '14:22:05', personId: 'p-b', host: 'gemini', target: LOCKER, action: 'open',
+  { id: 'r-1422', at: '14:22:05', personId: 'p-b', target: LOCKER, action: 'open',
     steps: [...ALL_PASS(['새 요청', '비콘 최근 수신', '사물함 3대', 'P(locker-3) 0.96 ≥ 0.95 (설정값)', '열림 정책']), ['stop']],
     posterior: { at: 3, posteriors: { 'locker-3': 0.96, 'locker-2': 0.03, 'locker-1': 0.01 }, threshold: 0.95 },
     verdict: 'BUSY', reason: 'DEVICE_BUSY', nodeId: 'locker-3', said: '내 앞 사물함 열어 줘', reply: '사물함 3은 다른 사람이 쓰고 있어요.' },
-  { id: 'r-1426', at: '14:26:12', personId: 'p-a', host: 'claude', target: LOCKER, action: 'open',
+  { id: 'r-1426', at: '14:26:12', personId: 'p-a', target: LOCKER, action: 'open',
     steps: [['pass', '새 요청'], ['pass', '비콘 최근 수신'], ['pass', '사물함 3대'], ['stop']],
     posterior: { at: 3, posteriors: { 'locker-1': 0.58, 'locker-2': 0.31, 'locker-3': 0.02 }, threshold: 0.95 },
     verdict: 'ASK', reason: 'LOW_CONFIDENCE', said: '사물함 열어 줘', reply: '어느 사물함 앞인지 확실하지 않아요. 사물함 1과 2 중 어느 쪽인가요?' },
-  { id: 'r-1428', at: '14:28:10', personId: 'p-a', host: 'claude', target: LOCKER, action: 'open',
+  { id: 'r-1428', at: '14:28:10', personId: 'p-a', target: LOCKER, action: 'open',
     steps: ALL_PASS(['새 요청', '비콘 최근 수신', '사물함 3대', 'P(locker-1) 0.97 ≥ 0.95 (설정값)', '열림 정책', '비어 있음', '다른 점유 없음']),
     posterior: { at: 3, posteriors: { 'locker-1': 0.97, 'locker-2': 0.02, 'locker-3': 0.01 }, threshold: 0.95 },
     verdict: 'OK', reason: 'OK', nodeId: 'locker-1', exec: { at: '14:28:11', result: 'succeeded' }, said: '내 앞 사물함 열어 줘', reply: '사물함 1을 열었어요.' },
-  { id: 'r-1429', at: '14:29:37', personId: 'p-b', host: 'gemini', target: LOCKER, action: 'open',
+  { id: 'r-1429', at: '14:29:37', personId: 'p-b', target: LOCKER, action: 'open',
     steps: ALL_PASS(['새 요청', '비콘 최근 수신', '사물함 3대', 'P(locker-2) 0.96 ≥ 0.95 (설정값)', '열림 정책', '비어 있음', '다른 점유 없음']),
     posterior: { at: 3, posteriors: { 'locker-2': 0.96, 'locker-3': 0.03, 'locker-1': 0.01 }, threshold: 0.95 },
     verdict: 'OK', reason: 'OK', nodeId: 'locker-2', exec: { at: '14:29:40', result: 'unknown' }, said: '내 앞 사물함 열어 줘',
     reply: '사물함 2가 열렸는지 확인되지 않아 사용을 멈췄어요. 소유자에게 알려 주세요.' },
-  { id: 'r-1430', at: '14:30:58', personId: 'p-b', host: 'chatgpt', target: { kind: 'nearest', capability: 'light' }, action: 'on',
+  { id: 'r-1430', at: '14:30:58', personId: 'p-b', target: { kind: 'nearest', capability: 'light' }, action: 'on',
     steps: [...ALL_PASS(['새 요청', '비콘 최근 수신', '조명 3대', 'P(light-1) 0.91 ≥ 0.75 (설정값)']), ['stop']],
     posterior: { at: 3, posteriors: { 'light-1': 0.91, 'light-2': 0.06, 'light-3': 0.03 }, threshold: 0.75 },
     verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED', nodeId: 'light-1', said: '조명 켜 줘', reply: '조명 1은 소유자 승인이 필요해요. 승인을 신청할게요.' }

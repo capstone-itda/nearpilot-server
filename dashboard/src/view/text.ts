@@ -1,12 +1,11 @@
 // 화면에 쓰는 쉬운 말. 코드 값은 enums.py 그대로 두고 옆에 보조 글자로 붙인다.
-import type { Action, Capability, HostKind, ReasonCode, RequestProgress, Verdict } from '../model/types';
+import type { Action, Capability, ReasonCode, RequestProgress, Verdict } from '../model/types';
 
 export const VERDICT_LABEL: Record<string, string> = {
   OK: '허가', ASK: '다시 질문', NEED_APPROVAL: '승인 필요', BUSY: '바쁨', DENY: '거부',
   FAULT: '고장 격리', QUERY: '조회', WAIT: '대기', INFO: '정보'
 };
 
-export const HOST_NAME: Record<HostKind, string> = { claude: 'Claude', chatgpt: 'ChatGPT', gemini: 'Gemini' };
 export const CAPABILITY_NAME: Record<Capability, string> = { locker: '사물함', light: '조명', speaker: '스피커' };
 export const ACTION_NAME: Record<Action, string> = { open: '열기', on: '켜기', off: '끄기' };
 export const ACTION_DOING: Record<Action, string> = { open: '여는 중', on: '켜는 중', off: '끄는 중' };

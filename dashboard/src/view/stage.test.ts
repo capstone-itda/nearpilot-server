@@ -33,7 +33,7 @@ describe('stageView', () => {
     expect(dev(v, 'locker-1')).toMatchObject({ status: '여는 중', code: 'RESERVED', tone: 'ok', dim: false });
     expect(v.devices.filter((d) => d.nodeId !== 'locker-1').every((d) => d.dim)).toBe(true);
     expect(dev(v, 'locker-3').status).toBe('사용 중 · 대여 초과');
-    expect(v).toMatchObject({ host: 'claude', server: true, mcp: 'claude', cmd: 'locker-1', fault: null, push: false, rssiOn: true });
+    expect(v).toMatchObject({ host: true, server: true, mcp: true, cmd: 'locker-1', fault: null, push: false, rssiOn: true });
     expect(v.rssi['locker-1']).toBe('−52 dBm');
     expect(v.callout).toMatchObject({ on: true, tone: 'ok', title: '사물함 1에 열기 명령', body: '' });
     expect(v.judge).toEqual({ mark: '허가', tone: 'ok', gauge: false, checks: [['pass', '누구인지'], ['pass', '사물함 1 앞'], ['pass', '정책 통과'], ['pass', '비어 있음']] });
@@ -50,7 +50,7 @@ describe('stageView', () => {
     const v = stageView(SCENES.fault(), LAYOUT, { panelOpen: true });
     expect(v.scene).toBe('fault');
     expect(dev(v, 'locker-2')).toMatchObject({ status: '고장 격리', tone: 'deny', dim: false });
-    expect(v).toMatchObject({ fault: 'locker-2', cmd: null, mcp: null });
+    expect(v).toMatchObject({ fault: 'locker-2', cmd: null, mcp: false });
     expect(v.callout).toMatchObject({ tone: 'deny', title: '사물함 2 격리', body: '열었는지 몰라 사용을 막음' });
     expect(v.callout.x).toBeLessThanOrEqual(440);
   });
@@ -66,7 +66,7 @@ describe('stageView', () => {
 
   it('FR12B 승인 대기: 소유자 폰 알림 선과 보라 콜아웃, 대상 조명은 승인 색', () => {
     const v = stageView(SCENES.approval(), LAYOUT, { panelOpen: true });
-    expect(v).toMatchObject({ scene: 'approval', owner: true, push: true, host: 'chatgpt' });
+    expect(v).toMatchObject({ scene: 'approval', owner: true, push: true, host: true });
     expect(dev(v, 'light-1')).toMatchObject({ tone: 'appr', status: '사용 가능', dim: false });
     expect(v.callout).toMatchObject({ tone: 'appr', title: '소유자에게 승인 요청', body: '' });
     expect(v.callout.x).toBeLessThanOrEqual(440);
@@ -89,7 +89,7 @@ describe('stageView', () => {
 
   it('FR12B D4 배치 화면: 흐름과 콜아웃을 숨긴다', () => {
     const v = stageView(SCENES.later(), LAYOUT, { panelOpen: false, layoutCheck: true });
-    expect(v).toMatchObject({ scene: 'layout', host: null, server: false, uplink: false, rssiOn: false });
+    expect(v).toMatchObject({ scene: 'layout', host: false, server: false, uplink: false, rssiOn: false });
     expect(v.callout.on).toBe(false);
   });
 
@@ -147,7 +147,7 @@ describe('무대의 사람 자리 (표시용)', () => {
   });
   it('FR12B 실행이 끝난 요청은 호출·신호 선을 끈다', () => {
     const v = stageView(SCENES.done(), LAYOUT, { panelOpen: false });
-    expect(v).toMatchObject({ mcp: null, rssiOn: false, cmd: null });
+    expect(v).toMatchObject({ mcp: false, rssiOn: false, cmd: null });
     expect(v.callout.title).toBe('사물함 1 열기 완료');
   });
   it('FR12B 예약된 기기는 사용 중이 아니라 예약으로 보인다', () => {
@@ -235,17 +235,17 @@ describe('바꾼 배치에서도 무대 글자가 겹치지 않는다', () => {
 describe('stageView 이벤트 흐름', () => {
   it('FR12B 판정 전: 호스트→서버 선과 요청자 신호, 서버 상자는 판정 게이지, 콜아웃 없음', () => {
     const v = stageView(stateAt(sec('14:28:10.05')), LAYOUT, { panelOpen: false });
-    expect(v).toMatchObject({ scene: 'judging', mcp: 'claude', reply: null, server: true, uplink: true, rssiOn: true, cmd: null });
+    expect(v).toMatchObject({ scene: 'judging', mcp: true, reply: false, server: true, uplink: true, rssiOn: true, cmd: null });
     expect(v.judge).toMatchObject({ mark: '판정 중', tone: 'accent', gauge: true });
     expect(v.callout.on).toBe(false);
   });
   it('FR12B 명령을 보내면 명령 선, 결과가 오고 응답하면 호스트로 돌아가는 선', () => {
-    expect(stageView(SCENES.flow(), LAYOUT, { panelOpen: false })).toMatchObject({ cmd: 'locker-1', mcp: 'claude', reply: null });
-    expect(stageView(SCENES.done(), LAYOUT, { panelOpen: false })).toMatchObject({ cmd: null, mcp: null, reply: 'claude' });
+    expect(stageView(SCENES.flow(), LAYOUT, { panelOpen: false })).toMatchObject({ cmd: 'locker-1', mcp: true, reply: false });
+    expect(stageView(SCENES.done(), LAYOUT, { panelOpen: false })).toMatchObject({ cmd: null, mcp: false, reply: true });
   });
   it('FR12B 끝난 요청이 내려가면 대기 화면으로 돌아간다', () => {
     const v = stageView(stateAt(sec('14:28:40')), LAYOUT, { panelOpen: false });
-    expect(v).toMatchObject({ scene: 'idle', mcp: null, reply: null });
+    expect(v).toMatchObject({ scene: 'idle', mcp: false, reply: false });
   });
   it('FR12B 승인 신청 만료: 소유자 알림 선을 끄고 만료를 말한다', () => {
     const v = stageView(stateAt(sec('14:41:01')), LAYOUT, { panelOpen: false });

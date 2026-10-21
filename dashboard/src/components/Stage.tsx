@@ -1,6 +1,6 @@
 // 무대: 표시용 배치 위의 기기, 사람, 무선 흐름(D5). 배치는 이 PC에서 정한다(D4). 실제 위치·거리가 아니다.
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import type { HostKind, Spot } from '../model/types';
+import type { Spot } from '../model/types';
 import { GRID, facing, frontOf, snap } from '../view/arrange';
 import type { StageDeviceView, StageView, StageVisitorView } from '../view/stage';
 import { ROOM } from '../view/stage';
@@ -135,7 +135,8 @@ function routeTo(d: StageDeviceView | undefined): { path: string; arrow: string 
   return { path: `M250 470H284V775H${d.x}V${bottom + 12}`, arrow: `${d.x - 8},${bottom + 14} ${d.x},${bottom} ${d.x + 8},${bottom + 14}` };
 }
 
-const HOSTS: [HostKind, string, number][] = [['claude', 'Claude', 165], ['chatgpt', 'ChatGPT', 223], ['gemini', 'Gemini', 281]];
+/** AI 호스트 상자의 세로 가운데. 호스트 종류는 구분하지 않는다. */
+const HOST_Y = 246;
 
 const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-GRID, 0], ArrowRight: [GRID, 0], ArrowUp: [0, -GRID], ArrowDown: [0, GRID] };
 
@@ -206,9 +207,8 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
         <text className="np-stage__note" x={ROOM.x} y="40">표시용 배치 · 실제 거리와 다름</text>
 
         <g className="np-stage__nodes" data-on={b(v.scene !== 'layout')}>
-          <text className="np-stage__cap" x="30" y="150">AI 호스트</text>
-          {HOSTS.map(([k, name, y]) => <Node key={`${k}|${v.host === k}`} x={30} y={y} w={220} h={46} label={name} active={v.host === k} dim={!!v.host && v.host !== k} />)}
-          <path className="np-stage__link" d="M250 188H272M250 246H272M250 304H272M272 188V420H250" />
+          <Node key={`host|${v.host}`} x={30} y={HOST_Y - 23} w={220} h={46} label="AI 호스트" active={v.host} dim={false} />
+          <path className="np-stage__link" d={`M250 ${HOST_Y}H272V420H250`} />
           <ServerNode key={`server|${v.server}|${JSON.stringify(v.judge)}`} on={v.server} j={v.judge} />
           <path className="np-stage__node-corner" d="M30 386V370H46M234 370H250V386M250 494V510H234M46 510H30V494" />
           <path className="np-stage__link" data-dashed="true" d="M140 510V600" />
@@ -235,8 +235,8 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
           ))}
         </g>
 
-        {HOSTS.map(([k, , y]) => <Flow key={k} on={v.mcp === k} tone="accent" d={`M250 ${y + 23}H272V420H262`} arrow="264,412 250,420 264,428" />)}
-        {HOSTS.map(([k, , y]) => <Flow key={`reply-${k}`} on={v.reply === k} tone="ok" d={`M250 420H272V${y + 23}H262`} arrow={`264,${y + 15} 250,${y + 23} 264,${y + 31}`} />)}
+        <Flow on={v.mcp} tone="accent" d={`M250 ${HOST_Y}H272V420H262`} arrow="264,412 250,420 264,428" />
+        <Flow on={v.reply} tone="ok" d={`M250 420H272V${HOST_Y}H262`} arrow={`264,${HOST_Y - 8} 250,${HOST_Y} 264,${HOST_Y + 8}`} />
         <Flow on={v.uplink} tone="accent" d={`M${topEnd} 60H284V470H262`} arrow="264,462 250,470 264,478" />
         <Flow key={`cmd-${v.cmd}`} on={!!v.cmd} tone="ok" d={cmd.path} arrow={cmd.arrow} />
         <Flow on={v.push} tone="appr" d="M140 510V586" arrow="132,584 140,598 148,584" />

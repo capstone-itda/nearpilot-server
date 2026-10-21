@@ -21,7 +21,7 @@ describe('railView', () => {
   it('FR12B 요청 진행: 4단계가 지금 단계, 3단계는 모두 통과', () => {
     const s = SCENES.flow();
     const v = railView(s, LAYOUT, 'p-a');
-    expect(v).toMatchObject({ mode: 'live', title: '방문자 A · 사물함 열기', meta: 'Claude · 14:28:10', code: 'request_use(nearest:locker, open)' });
+    expect(v).toMatchObject({ mode: 'live', title: '방문자 A · 사물함 열기', meta: '14:28:10', code: 'request_use(nearest:locker, open)' });
     expect(v.steps.map((x) => x.status)).toEqual(['done', 'done', 'done', 'current', 'todo']);
     // 대화가 왼쪽 폰에 보이면 따로 말하지 않는다
     expect(v.steps[0]).toMatchObject({ detail: '방문자 A가 AI에게 말함', code: '' });

@@ -74,7 +74,7 @@ function apply(s0: MonitorState, e: StreamEvent): MonitorState {
       return {
         ...s,
         request: {
-          id: e.requestId, personId: e.personId, host: e.host, tool: e.tool, target: e.target, action: e.action,
+          id: e.requestId, personId: e.personId, tool: e.tool, target: e.target, action: e.action,
           at: clockOf(e.at), steps: Array.from({ length: 7 }, () => ({ result: 'pending' as const }))
         }
       };

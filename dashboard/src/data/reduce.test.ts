@@ -8,7 +8,7 @@ const s0 = () => reduceAll(initialState(PLACE), [
   { type: 'beacon', at: '14:00:00.000', personId: 'p-a', pseudonym: '방문자 A', letter: 'A', role: 'visitor', seen: true },
   { type: 'rssi', at: '14:00:00.000', personId: 'p-a', rssi: { 'locker-1': -52 } }
 ]);
-const call: StreamEvent = { type: 'mcp_call', at: '14:00:01.000', requestId: 'r-1', personId: 'p-a', host: 'claude', tool: 'request_use', target: { kind: 'nearest', capability: 'locker' }, action: 'open' };
+const call: StreamEvent = { type: 'mcp_call', at: '14:00:01.000', requestId: 'r-1', personId: 'p-a', tool: 'request_use', target: { kind: 'nearest', capability: 'locker' }, action: 'open' };
 
 describe('reduce', () => {
   it('FR12B 비콘과 RSSI가 사람을 만든다', () => {

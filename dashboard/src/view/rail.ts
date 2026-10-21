@@ -1,7 +1,7 @@
 // 모니터 상태 → 흐름 레일 다섯 단계. 쉬운 말이 크게, 코드는 보조 글자로.
 // 서버의 확인 네 칸은 무대의 서버 상자가 보이고(serverChecks), 레일은 한 줄로 줄인다.
 import { isDecided, type FloorLayout, type RequestProgress, type MonitorState } from '../model/types';
-import { ACTION_DONE, ACTION_NAME, CIRCLED, HOST_NAME, STEP_SHORT, approvalText, josa, reasonText, requestTitle, toolCall } from './text';
+import { ACTION_DONE, ACTION_NAME, CIRCLED, STEP_SHORT, approvalText, josa, reasonText, requestTitle, toolCall } from './text';
 
 export type CheckResult = 'pass' | 'fail' | 'wait' | 'unsure' | 'none' | 'skip';
 export type StepTone = 'accent' | 'ok' | 'ask' | 'appr' | 'busy' | 'deny';
@@ -74,13 +74,12 @@ export function railView(s: MonitorState, layout: FloorLayout, mirroredPersonId:
   }
   const name = layout.devices.find((d) => d.nodeId === r.nodeId)?.name ?? '';
   const who = s.people.find((p) => p.id === r.personId)?.pseudonym ?? '방문자';
-  const host = HOST_NAME[r.host];
   const act = ACTION_NAME[r.action];
   const nodeAct = `${r.nodeId} · ${r.action}`;
-  const head = { mode: 'live' as const, title: `${who} · ${requestTitle(r, (id) => layout.devices.find((d) => d.nodeId === id)?.name ?? id)}`, meta: `${host} · ${r.at}`, code: toolCall(r) };
+  const head = { mode: 'live' as const, title: `${who} · ${requestTitle(r, (id) => layout.devices.find((d) => d.nodeId === id)?.name ?? id)}`, meta: r.at, code: toolCall(r) };
 
   const s1: RailStep = { status: 'done', detail: `${josa(who, '이', '가')} AI에게 말함`, code: mirroredPersonId === r.personId ? '' : `대화는 ${who}의 폰에` };
-  const s2: RailStep = { status: 'done', detail: `${josa(host, '이', '가')} 요청함`, code: r.tool };
+  const s2: RailStep = { status: 'done', detail: 'AI가 서버에 요청함', code: r.tool };
 
   if (!isDecided(r)) {
     // 판정 전: 판정 게이지는 무대의 서버 상자에만 둔다
