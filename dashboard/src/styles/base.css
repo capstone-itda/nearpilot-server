@@ -140,6 +140,7 @@ body { margin: 0; }
   color: var(--ink);
   backdrop-filter: blur(6px);
 }
+.np-app[data-theme="light"] .np-offline { backdrop-filter: none; }
 .np-offline__title { color: var(--ink); font-weight: 600; font-size: var(--fs-lead); }
 .np-offline__detail { color: var(--ink-2); flex: 1; min-width: 0; }
 
@@ -173,6 +174,9 @@ body { margin: 0; }
 .np-app[data-motion="on"] .np-flash:not(g) { animation: np-arrive-box 1.6s ease-out; }
 /* 꺼지는 노드는 강조하지 않는다 */
 .np-app[data-motion="on"] svg .np-stage__node.np-flash[data-active="false"] { animation: none; }
+/* 라이트 테마는 빛 번짐 없이 나타나기만 한다 */
+@keyframes np-arrive-flat { 0%, 37% { opacity: 0.2; } 38%, 100% { opacity: 1; } }
+.np-app[data-theme="light"][data-motion="on"] svg .np-flash, .np-app[data-theme="light"][data-motion="on"] .np-flash:not(g) { animation-name: np-arrive-flat; }
 @media (prefers-reduced-motion: reduce) {
   .np-app[data-motion="on"] .np-flash, .np-app[data-motion="on"] svg .np-flash { animation: none; }
 }

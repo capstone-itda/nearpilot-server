@@ -13,6 +13,10 @@ const area = (a: Rect, b: Rect) => (hits(a, b) ? (Math.min(a.x2, b.x2) - Math.ma
 
 /** 글자를 둘 수 있는 무대 영역. 왼쪽의 호스트·서버·소유자 폰 칸은 뺀다. */
 export const STAGE_BOUNDS: Rect = { x1: 320, y1: 60, x2: 1392, y2: 792 };
+/** 패널이 열렸을 때 패널에 가리지 않는 무대의 오른쪽 끝 (무대 단위) */
+export const PANEL_EDGE = 830;
+/** 방을 왼쪽으로 dx만큼 밀어 그릴 때, 방 좌표에서 본 글자 영역 */
+export const shiftBounds = (dx: number): Rect => ({ ...STAGE_BOUNDS, x1: STAGE_BOUNDS.x1 + dx, x2: STAGE_BOUNDS.x2 + dx });
 
 /** 글자 폭 어림값: 한글은 1em, 영문·숫자·기호는 0.6em */
 export function textWidth(s: string, size: number): number {
@@ -62,8 +66,8 @@ function labelCandidates(b: Rect, w: number): LabelSpot[] {
  * 첫 후보부터 무대 안이고 장애물과 겹치지 않는 자리. 없으면 무대 안에서 가장 덜 겹치는 자리.
  * soft는 덮어도 덜 나쁜 것(기기 본체)이다. 글자를 덮는 것보다 낫게 친다.
  */
-function pick<T>(cands: T[], box: (c: T) => Rect, obstacles: Rect[], soft: Rect[] = []): T {
-  const ok = cands.filter((c) => inside(box(c), STAGE_BOUNDS));
+function pick<T>(cands: T[], box: (c: T) => Rect, obstacles: Rect[], soft: Rect[] = [], bounds = STAGE_BOUNDS): T {
+  const ok = cands.filter((c) => inside(box(c), bounds));
   const pool = ok.length ? ok : cands;
   // 글자끼리는 2px 띄우고, 글자를 덮는 것은 본체를 덮는 것보다 100배 나쁘게 친다
   const pad = (r: Rect): Rect => ({ x1: r.x1 - 2, y1: r.y1 - 2, x2: r.x2 + 2, y2: r.y2 + 2 });
@@ -72,17 +76,17 @@ function pick<T>(cands: T[], box: (c: T) => Rect, obstacles: Rect[], soft: Rect[
 }
 
 /** 기기마다 이름표 자리를 정한다. 화면 위쪽 기기부터 정해 다른 기기의 본체와 앞서 놓은 이름표를 피한다. */
-export function placeDeviceLabels(devices: DeviceGeom[]): void {
+export function placeDeviceLabels(devices: DeviceGeom[], bounds = STAGE_BOUNDS): void {
   const placed: Rect[] = [];
   for (const d of [...devices].sort((a, b) => a.body.y2 - b.body.y2)) {
     const others = devices.filter((o) => o !== d).map((o) => o.body);
-    d.label = pick(labelCandidates(d.body, d.labelW), deviceLabelBox, [...others, ...placed]);
+    d.label = pick(labelCandidates(d.body, d.labelW), deviceLabelBox, [...others, ...placed], [], bounds);
     placed.push(deviceLabelBox(d.label));
   }
 }
 
 /** 신호 세기 글자: 본체 위, 위쪽 옆, 옆, 아래 순서로 이름표와 다른 본체를 피한다 */
-export function placeRssi(devices: DeviceGeom[]): void {
+export function placeRssi(devices: DeviceGeom[], bounds = STAGE_BOUNDS): void {
   const placed: Rect[] = [];
   for (const d of [...devices].sort((a, b) => a.body.y1 - b.body.y1)) {
     const labels = devices.flatMap((o) => (o.label ? [deviceLabelBox(o.label)] : []));
@@ -91,11 +95,12 @@ export function placeRssi(devices: DeviceGeom[]): void {
     const right = b.x2 + 8 + RSSI_W / 2, left = b.x1 - 8 - RSSI_W / 2;
     const near: Spot[] = [
       { x: cx, y: b.y1 - 4 - RSSI_H }, { x: right, y: b.y1 }, { x: left, y: b.y1 },
-      { x: right, y: cy - RSSI_H / 2 }, { x: left, y: cy - RSSI_H / 2 }, { x: cx, y: b.y2 + 4 }
+      { x: right, y: cy - RSSI_H / 2 }, { x: left, y: cy - RSSI_H / 2 }, { x: cx, y: b.y2 + 4 },
+      { x: right, y: b.y2 - RSSI_H }, { x: left, y: b.y2 - RSSI_H }
     ];
     // 가까운 자리가 모두 막히면 한 줄씩 더 위로 올린 자리
     const cands = [...near, ...[1, 2].flatMap((k) => near.slice(0, 3).map((c) => ({ x: c.x, y: c.y - k * (RSSI_H + 4) })))];
-    d.rssi = pick(cands, rssiBox, [...labels, ...placed], bodies);
+    d.rssi = pick(cands, rssiBox, [...labels, ...placed], bodies, bounds);
     placed.push(rssiBox(d.rssi));
   }
 }
@@ -144,10 +149,10 @@ export function freePersonSpot(base: Spot, dir: 1 | -1, obstacles: Rect[], ok: (
 }
 
 /** 이름표를 둘 수 있는 쪽이 하나라도 있는지: 무대 안이고 장애물(글자와 사람)에 겹치지 않는다. 기기 본체는 덮어도 된다. */
-export function hasLabelRoom(p: Spot, obstacles: Rect[], w: number): boolean {
+export function hasLabelRoom(p: Spot, obstacles: Rect[], w: number, bounds = STAGE_BOUNDS): boolean {
   return (['right', 'left', 'above', 'below'] as LabelSide[]).some((side) => {
     const b = labelBox(p, side, w);
-    return inside(b, STAGE_BOUNDS) && !hitsAny(b, obstacles);
+    return inside(b, bounds) && !hitsAny(b, obstacles);
   });
 }
 
@@ -167,8 +172,8 @@ export function labelBox(p: Spot, side: LabelSide, w = 96): Rect {
  * 이름표는 오른쪽, 왼쪽, 위, 발 아래 순서로 무대 안이고 겹치지 않는 쪽에 둔다. 모두 겹치면 덜 겹치는 쪽.
  * soft(기기 본체)는 글자 뒤 바탕 테가 있어 덮어도 읽히므로, 글자를 덮는 것보다 낫게 친다.
  */
-export function chooseLabel(p: Spot, obstacles: Rect[], w = 96, soft: Rect[] = [], prefer: LabelSide[] = ['right', 'left', 'above', 'below']): LabelSide {
-  return pick(prefer, (side) => labelBox(p, side, w), obstacles, soft);
+export function chooseLabel(p: Spot, obstacles: Rect[], w = 96, soft: Rect[] = [], bounds = STAGE_BOUNDS): LabelSide {
+  return pick(['right', 'left', 'above', 'below'] as LabelSide[], (side) => labelBox(p, side, w), obstacles, soft, bounds);
 }
 
 // ── 콜아웃 ──────────────────────────────────────────────────────────────
@@ -193,8 +198,7 @@ export const CALLOUT_H = 76;
  * 콜아웃 상자 자리. 무대 안에서 장애물을 피하고 가리키는 점에 가장 가까운 곳.
  * 패널이 열려 있으면 패널에 가리지 않는 왼쪽(x ≤ maxX)만 쓴다. 비어 있는 곳이 없으면 가장 덜 겹치는 곳이고 clean은 false.
  */
-export function calloutSpot(ax: number, ay: number, obstacles: Rect[], maxX: number, lineObstacles: Rect[] = []): Spot & { clean: boolean } {
-  const B = STAGE_BOUNDS;
+export function calloutSpot(ax: number, ay: number, obstacles: Rect[], maxX: number, lineObstacles: Rect[] = [], B = STAGE_BOUNDS): Spot & { clean: boolean } {
   const minX = B.x1 + 12;
   const lastX = Math.min(maxX, B.x2 - CALLOUT_W - 12);
   let best: { s: Spot; overlap: number; cross: number; dist: number } | undefined;

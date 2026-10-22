@@ -1,7 +1,7 @@
 // 무대: 표시용 배치 위의 기기, 사람, 무선 흐름(D5). 배치는 이 PC에서 정한다(D4). 실제 위치·거리가 아니다.
 // 그림은 iso-glow 헤어라인 아이소메트릭이다: 어두운 판에 가는 선, 살아 있는 것만 판정 색으로 빛난다.
 // 평면 배치를 투영해 그리고(view/iso.ts), 글자는 투영한 자리에 똑바로 쓴다.
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import type { Spot } from '../model/types';
 import { GRID, ROOM, facing, frontOf, snap } from '../view/arrange';
 import { ISO_K, ROOM_ISO, iso, kernel, unIso, type Kernel } from '../view/iso';
@@ -114,7 +114,7 @@ function Device({ d, edit }: { d: StageDeviceView; edit?: DeviceEditProps }) {
   } : {};
   const l = d.label;
   return (
-    <g className="np-stage__device np-flash" data-component="StageDevice" data-spot={`${d.x} ${d.y}`} data-tone={d.tone} data-dim={b(d.dim)} {...editAttrs}>
+    <g className="np-stage__device np-flash" data-component="StageDevice" data-spot={`${d.x} ${d.y}`} data-tone={d.tone} data-dim={b(d.dim)} data-on={b(!d.hidden)} {...editAttrs}>
       {edit ? <rect className="np-stage__hit" x={d.body.x1 - 12} y={d.body.y1 - 12} width={d.body.x2 - d.body.x1 + 24} height={d.body.y2 - d.body.y1 + 24} /> : null}
       {d.capability === 'light' ? <LightFigure d={d} /> : <DeviceFigure d={d} />}
       <text className="np-stage__label" x={l.x} y={l.y + 19} data-anchor="middle">{d.name}</text>
@@ -202,6 +202,14 @@ function ServerNode({ on, j }: { on: boolean; j: StageView['judge'] }) {
         ))}
       </g>
       <g transform={SERVER_K.SIDE(RACK.w, RACK.d, RACK.h)}>{[0, 1, 2, 3, 4, 5].map((i) => <path key={i} className="np-iso__detail" d={`M8 ${20 + i * 18}H36`} />)}</g>
+    </g>
+  );
+}
+
+/** 서버 글자: 서버에서 방으로 가는 선 위에 그려, 글자 테가 선을 가린다 */
+function ServerText({ j }: { j: StageView['judge'] }) {
+  return (
+    <g className="np-stage__node np-flash" data-dim="false" data-tone={j.tone}>
       <text className="np-stage__label" x={160} y={384}>서버</text>
       <text className="np-stage__judge-mark" x={300} y={384} data-anchor="end">{j.mark}</text>
       {j.checks.map(([res, text], k) => (
@@ -227,19 +235,30 @@ function OwnerNode({ active }: { active: boolean }) {
 
 const HOST_TO_SERVER: Spot[] = [{ x: 90, y: 270 }, { x: 90, y: 382 }];
 const SERVER_TO_OWNER: Spot[] = [{ x: 82, y: 492 }, { x: 82, y: 648 }];
-/** 서버 옆면에서 방의 왼쪽 구석까지 */
-const TRUNK: Spot[] = [{ x: 112, y: 446 }, { x: 300, y: 446 }, iso({ x: ROOM.x + 8, y: ROOM.y + ROOM.h - 8 })];
+/** 서버 옆면에서 나와 확인 글자 아래로 지나는 선 */
+const TRUNK: Spot[] = [{ x: 112, y: 446 }, { x: 146, y: 446 }, { x: 146, y: 506 }, { x: 300, y: 506 }];
+/** 방이 왼쪽 칸 뒤로 잘리는 선 */
+const CLIP_X = 322;
 const BACK = ROOM.y + 8, FRONT_EDGE = ROOM.y + ROOM.h - 8, LEFT = ROOM.x + 8;
 
 /** 방 안의 배선: 왼쪽 벽을 따라 뒤쪽 벽 또는 앞쪽 가장자리로 간 뒤 기기 쪽으로 꺾는다 */
-function floorRoute(d: { x: number; y: number }): Spot[] {
-  const top = facing(d) === 'top';
-  const plan: Spot[] = top
+function floorPlan(d: { x: number; y: number }): Spot[] {
+  return facing(d) === 'top'
     ? [{ x: LEFT, y: FRONT_EDGE }, { x: LEFT, y: BACK }, { x: d.x, y: BACK }, { x: d.x, y: d.y - DEVICE_D / 2 }]
     : [{ x: LEFT, y: FRONT_EDGE }, { x: d.x, y: FRONT_EDGE }, { x: d.x, y: d.y + DEVICE_D / 2 }];
-  return plan.map((p) => iso(p));
 }
-const routeTo = (d: StageDeviceView | undefined): Spot[] => (d ? [...TRUNK, ...floorRoute(d).slice(1)] : []);
+const floorRoute = (d: { x: number; y: number }): Spot[] => floorPlan(d).map((p) => iso(p));
+const moveX = (list: Spot[], dx: number) => list.map((p) => ({ x: p.x - dx, y: p.y }));
+/** 서버에서 방 안 배선(방의 왼쪽 구석에서 시작하는 평면 경로)까지. 방을 밀면 잘림 선을 넘는 자리에서 잇는다. */
+function fromServer(plan: Spot[], shift: number): Spot[] {
+  const pts = moveX(plan.map((p) => iso(p)), shift);
+  const i = pts.findIndex((p) => p.x >= CLIP_X);
+  if (i <= 0) return [...TRUNK, ...pts.slice(Math.max(i, 0))];
+  const a = pts[i - 1], b = pts[i], t = (CLIP_X - a.x) / (b.x - a.x);
+  return [...TRUNK, { x: CLIP_X, y: a.y + (b.y - a.y) * t }, ...pts.slice(i)];
+}
+/** 서버에서 기기까지 (무대 좌표) */
+const routeTo = (d: StageDeviceView | undefined, shift: number): Spot[] => (d ? fromServer(floorPlan(d), shift) : []);
 
 const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-GRID, 0], ArrowRight: [GRID, 0], ArrowUp: [0, -GRID], ArrowDown: [0, GRID] };
 
@@ -301,12 +320,18 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
     setDrag(null);
   };
 
-  const bus = [pathOf(TRUNK), ...devices.map((d) => pathOf(floorRoute(d)))].join('');
-  const cmd = routeTo(devices.find((d) => d.nodeId === v.cmd));
-  const fault = routeTo(devices.find((d) => d.nodeId === v.fault));
+  const shift = v.shift;
+  const bus = devices.map((d) => pathOf(floorRoute(d))).join('');
+  const cmd = routeTo(devices.find((d) => d.nodeId === v.cmd), shift);
+  const fault = routeTo(devices.find((d) => d.nodeId === v.fault), shift);
   // 비콘 신호는 방 안쪽 끝의 기기에서 뒤쪽 벽과 왼쪽 벽을 따라 서버로 올라간다
   const farX = Math.max(...devices.map((d) => d.x), ROOM.x + ROOM.w / 2);
-  const uplink = [iso({ x: farX, y: BACK }), iso({ x: LEFT, y: BACK }), iso({ x: LEFT, y: FRONT_EDGE }), ...TRUNK.slice(0, -1).reverse()];
+  const uplink = fromServer([{ x: LEFT, y: FRONT_EDGE }, { x: LEFT, y: BACK }, { x: farX, y: BACK }], shift).reverse();
+  // 패널이 열려 방을 밀었으면 왼쪽 칸 뒤로 들어간 부분을 잘라 낸다
+  // 구조는 늘 같게 두어(컴포넌트가 아닌 함수) 밀 때 기기와 사람이 다시 그려지지 않는다
+  const room = (children: ReactNode) => (
+    <g clipPath={shift ? 'url(#np-room-clip)' : undefined}><g transform={shift ? `translate(${-shift} 0)` : undefined}>{children}</g></g>
+  );
   const c = v.callout;
   // 앞에 있는 것(평면 x + y가 큰 것)을 나중에 그린다
   const depth = [
@@ -319,16 +344,29 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
       <svg ref={svg} className="np-stage__svg" data-editing={b(!!drag)} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => setDrag(null)} viewBox={v.scene === 'layout' ? '300 0 1100 800' : '0 0 1400 800'} preserveAspectRatio="xMidYMid meet" role="img" aria-label={v.aria}>
         <defs>
           <filter id="np-glow" filterUnits="userSpaceOnUse" x="-2000" y="-2000" width="6000" height="6000"><feGaussianBlur stdDeviation="4" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+          <clipPath id="np-room-clip"><rect x="318" y="0" width="1100" height="800" /></clipPath>
           <filter id="np-soft" filterUnits="userSpaceOnUse" x="-2000" y="-2000" width="6000" height="6000"><feGaussianBlur stdDeviation="2.2" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
         </defs>
 
         <text className="np-stage__note" x={330} y={40}>표시용 배치 · 실제 거리와 다름</text>
 
-        {/* 방: 바닥판, 격자, 뒤쪽 낮은 벽 */}
-        <path className="np-iso__face" d={SLAB.side} /><path className="np-iso__face" d={SLAB.front} />
-        <path className="np-iso__face np-iso__floor" d={SLAB.top} />
-        <path className="np-iso__detail" d={FLOOR_GRID} />
-        <path className="np-iso__face np-iso__wall" d={WALL_LEFT} /><path className="np-iso__face np-iso__wall" d={WALL_BACK} />
+        {/* 방: 바닥판, 격자, 뒤쪽 낮은 벽, 바닥 배선, 기기 앞 원, 비콘 신호 */}
+        {room(<>
+          <path className="np-iso__face" d={SLAB.side} /><path className="np-iso__face" d={SLAB.front} />
+          <path className="np-iso__face np-iso__floor" d={SLAB.top} />
+          <path className="np-iso__detail" d={FLOOR_GRID} />
+          <path className="np-iso__face np-iso__wall" d={WALL_LEFT} /><path className="np-iso__face np-iso__wall" d={WALL_BACK} />
+          <path className="np-stage__bus" d={bus} data-on={b(v.scene !== 'layout')} />
+          {devices.map((d) => <path key={d.nodeId} className="np-stage__front" d={ROOM_ISO.ring(d.fx, d.fy, 44)} />)}
+          {v.signals.map((s) => {
+            const p = iso(s);
+            return (
+              <g key={s.personId} className="np-stage__signals" data-on={b(s.on)}>
+                {devices.map((d) => <path key={d.nodeId} className="np-stage__signal" d={`M${pt(p)}L${pt(iso({ x: d.fx, y: d.fy }))}`} />)}
+              </g>
+            );
+          })}
+        </>)}
 
         <g className="np-stage__nodes" data-on={b(v.scene !== 'layout')}>
           <path className="np-stage__wire" d={pathOf(HOST_TO_SERVER)} />
@@ -337,18 +375,7 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
           <ServerNode key={`server|${v.server}|${JSON.stringify(v.judge)}`} on={v.server} j={v.judge} />
           <OwnerNode key={`owner|${v.owner}`} active={v.owner} />
         </g>
-        <path className="np-stage__bus" d={bus} data-on={b(v.scene !== 'layout')} />
-
-        {devices.map((d) => <path key={d.nodeId} className="np-stage__front" d={ROOM_ISO.ring(d.fx, d.fy, 44)} />)}
-
-        {v.signals.map((s) => {
-          const p = iso(s);
-          return (
-            <g key={s.personId} className="np-stage__signals" data-on={b(s.on)}>
-              {devices.map((d) => <path key={d.nodeId} className="np-stage__signal" d={`M${pt(p)}L${pt(iso({ x: d.fx, y: d.fy }))}`} />)}
-            </g>
-          );
-        })}
+        <path className="np-stage__bus" d={pathOf(fromServer([{ x: LEFT, y: FRONT_EDGE }, { x: LEFT, y: BACK }], shift))} data-on={b(v.scene !== 'layout')} />
 
         <Flow on={v.mcp} tone="accent" points={HOST_TO_SERVER} />
         <Flow on={v.reply} tone="ok" points={[...HOST_TO_SERVER].reverse()} />
@@ -356,12 +383,14 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
         <Flow key={`cmd-${v.cmd}`} on={!!v.cmd} tone="ok" points={cmd} />
         <Flow on={v.push} tone="appr" points={SERVER_TO_OWNER} />
         <Flow key={`fault-${v.fault}`} on={!!v.fault} tone="deny" points={fault} />
+        <g data-on={b(v.scene !== 'layout')} className="np-stage__nodes"><ServerText key={`server|${v.server}|${JSON.stringify(v.judge)}`} j={v.judge} /></g>
 
+        {room(<>
         {/* 상태가 바뀐 기기는 다시 그려져 도착 강조가 한 번 나온다 */}
         {depth.map((x) => x.el)}
 
         <g className="np-stage__rssi" data-on={b(v.rssiOn)}>
-          {devices.map((d) => <text key={d.nodeId} className="np-stage__signal-label" x={d.rssiAt.x} y={d.rssiAt.y + 17} data-anchor="middle">{v.rssi[d.nodeId] ?? ''}</text>)}
+          {devices.filter((d) => !d.hidden).map((d) => <text key={d.nodeId} className="np-stage__signal-label" x={d.rssiAt.x} y={d.rssiAt.y + 17} data-anchor="middle">{v.rssi[d.nodeId] ?? ''}</text>)}
         </g>
 
         <g key={`${c.title}|${c.body}`} className="np-stage__callout np-flash" data-component="StageCallout" data-on={b(c.on)} data-tone={c.tone}>
@@ -373,6 +402,7 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
             <text className="np-stage__callout-body" x="18" y="58">{c.body}</text>
           </g>
         </g>
+        </>)}
 
         <text className="np-stage__code" x={1380} y={40} data-anchor="end">{v.placeName} · 근접 모델 {v.modelVersion}</text>
       </svg>

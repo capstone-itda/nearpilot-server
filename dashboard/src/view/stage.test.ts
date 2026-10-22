@@ -5,7 +5,7 @@ import { SCENES, sec, stateAt } from '../data/mock/story';
 import { stageView } from './stage';
 import { PLACE } from '../data/mock/fixtures';
 import { resolveArrangement, withArrangement } from './arrange';
-import { CALLOUT_H, CALLOUT_W, STAGE_BOUNDS, canPlaceAll, crosses, deviceLabelBox, hits, labelBox, personBox, rssiBox, type Rect } from './placement';
+import { CALLOUT_H, CALLOUT_W, PANEL_EDGE, STAGE_BOUNDS, canPlaceAll, crosses, deviceLabelBox, hits, labelBox, personBox, rssiBox, type Rect } from './placement';
 
 const dev = (v: ReturnType<typeof stageView>, id: string) => v.devices.find((d) => d.nodeId === id)!;
 
@@ -40,10 +40,23 @@ describe('stageView', () => {
     expect(v.visitors.find((x) => x.personId === 'p-b')!.on).toBe(false);
   });
 
-  it('FR12B 공용형 OK: 서버 상자의 빈자리 칸은 공용형 생략', () => {
+  it('FR12B 공용형 OK: 서버 랙의 빈자리 칸은 공용형 생략', () => {
     const s = SCENES.approval();
     s.request = { ...s.request!, verdict: 'OK', reason: 'OK', execution: 'sent', steps: s.request!.steps.map((x, i) => (i < 5 ? { result: 'pass' as const } : x)) };
     expect(stageView(s, LAYOUT, { panelOpen: false }).judge.checks[3]).toEqual(['none', '공용형 생략']);
+  });
+
+  it('FR12B 패널이 열려 있으면 방을 왼쪽으로 밀어 대상 기기를 패널 왼쪽에 보인다', () => {
+    for (const make of [SCENES.fault, SCENES.ask, SCENES.approval]) {
+      const v = stageView(make(), LAYOUT, { panelOpen: true });
+      const focus = v.devices.filter((d) => !d.dim);
+      expect(focus.length).toBeGreaterThan(0);
+      for (const d of focus) {
+        expect(d.body.x2 - v.shift, d.name).toBeLessThanOrEqual(PANEL_EDGE);
+        expect(d.hidden, d.name).toBe(false);
+      }
+      expect(stageView(make(), LAYOUT, { panelOpen: false }).shift).toBe(0);
+    }
   });
 
   it('FR12B 고장 격리: 격리 선과 빨간 콜아웃, 패널이 열려 있으면 콜아웃을 왼쪽에', () => {
@@ -52,7 +65,7 @@ describe('stageView', () => {
     expect(dev(v, 'locker-2')).toMatchObject({ status: '고장 격리', tone: 'deny', dim: false });
     expect(v).toMatchObject({ fault: 'locker-2', cmd: null, mcp: false });
     expect(v.callout).toMatchObject({ tone: 'deny', title: '사물함 2 격리', body: '열었는지 몰라 사용을 막음' });
-    expect(v.callout.x).toBeLessThanOrEqual(440);
+    expect(v.callout.x - v.shift).toBeLessThanOrEqual(440);
   });
 
   it('FR12B ASK: 요청한 기능의 기기만 남기고 방문자에게 콜아웃', () => {
@@ -69,7 +82,7 @@ describe('stageView', () => {
     expect(v).toMatchObject({ scene: 'approval', owner: true, push: true, host: true });
     expect(dev(v, 'light-1')).toMatchObject({ tone: 'appr', status: '사용 가능', dim: false });
     expect(v.callout).toMatchObject({ tone: 'appr', title: '소유자에게 승인 요청', body: '' });
-    expect(v.callout.x).toBeLessThanOrEqual(440);
+    expect(v.callout.x - v.shift).toBeLessThanOrEqual(440);
     const a = v.visitors.find((x) => x.personId === 'p-a')!;
     expect(a).toMatchObject({ active: false, dim: true });
   });
@@ -208,7 +221,9 @@ describe('바꾼 배치에서도 무대 글자가 겹치지 않는다', () => {
       for (const panelOpen of [false, true]) {
         it(`FR12B D4 ${arrName} 배치 · ${scene} 장면 · 패널 ${panelOpen ? '열림' : '닫힘'}`, () => {
           const v = stageView(make(), layout, { panelOpen });
-          const texts = v.devices.map((d) => deviceLabelBox(d.label));
+          // 방을 밀면 글자 영역도 같이 밀린다. 왼쪽 칸 뒤로 들어간 기기는 그리지 않는다.
+          const within = (a: Rect) => a.x1 >= STAGE_BOUNDS.x1 + v.shift && a.x2 <= STAGE_BOUNDS.x2 + v.shift && a.y1 >= STAGE_BOUNDS.y1 && a.y2 <= STAGE_BOUNDS.y2;
+          const texts = v.devices.filter((d) => !d.hidden).map((d) => deviceLabelBox(d.label));
           expect(pairs(texts), '기기 이름표끼리').toBe(false);
           expect(texts.every(within), '기기 이름표가 무대 안').toBe(true);
           const people = v.visitors.filter((x) => x.on);
@@ -227,7 +242,7 @@ describe('바꾼 배치에서도 무대 글자가 겹치지 않는다', () => {
             expect(texts.some((t) => crosses(a, e, t)), '지시선과 기기 글자').toBe(false);
           }
           if (v.rssiOn) {
-            const rs = v.devices.map((d) => rssiBox(d.rssiAt));
+            const rs = v.devices.filter((d) => !d.hidden).map((d) => rssiBox(d.rssiAt));
             expect(pairs(rs), '신호 글자끼리').toBe(false);
             expect(rs.some((r) => texts.some((t) => hits(r, t))), '신호 글자와 기기 이름표').toBe(false);
             expect(rs.every(within), '신호 글자가 무대 안').toBe(true);
@@ -241,7 +256,7 @@ describe('바꾼 배치에서도 무대 글자가 겹치지 않는다', () => {
 });
 
 describe('stageView 이벤트 흐름', () => {
-  it('FR12B 판정 전: 호스트→서버 선과 요청자 신호, 서버 상자는 판정 게이지, 콜아웃 없음', () => {
+  it('FR12B 판정 전: 호스트→서버 선과 요청자 신호, 서버 랙는 판정 게이지, 콜아웃 없음', () => {
     const v = stageView(stateAt(sec('14:28:10.05')), LAYOUT, { panelOpen: false });
     expect(v).toMatchObject({ scene: 'judging', mcp: true, reply: false, server: true, uplink: true, rssiOn: true, cmd: null });
     expect(v.judge).toMatchObject({ mark: '판정 중', tone: 'accent', gauge: true });

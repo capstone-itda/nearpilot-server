@@ -1,9 +1,9 @@
-// 모니터 상태 → 무대(평면도) 표시값. 장면별 고정 값 없이 규칙으로 계산한다.
+// 모니터 상태 → 무대 표시값 (평면 배치를 아이소메트릭으로 투영해 그린다). 장면별 고정 값 없이 규칙으로 계산한다.
 import type { DeviceStatus, FloorLayout, LayoutDevice, Person, RequestProgress, MonitorState, Spot } from '../model/types';
 import { ROOM, facing, frontOf, type Facing } from './arrange';
 import {
   HEAD_R, PERSON_Z, calloutSpot, chooseLabel, deviceBody, deviceLabelBox, freePersonSpot, frontBox, hasLabelRoom, labelBox, leaderEnd, personBox,
-  placeDeviceLabels, placeRssi, ringBox, rssiBox, textWidth, type LabelSide, type LabelSpot, type Rect
+  PANEL_EDGE, STAGE_BOUNDS, placeDeviceLabels, placeRssi, ringBox, rssiBox, shiftBounds, textWidth, type LabelSide, type LabelSpot, type Rect
 } from './placement';
 import { iso } from './iso';
 import {
@@ -29,6 +29,8 @@ export interface StageDeviceView {
   x: number; y: number; fx: number; fy: number; wall: Facing;
   /** 무대에서 본체가 차지하는 상자, 이름표 자리, 신호 세기 글자 자리 */
   body: Rect; label: LabelSpot; rssiAt: Spot;
+  /** 방을 밀어 그려서 왼쪽 칸 뒤로 들어가 보이지 않는다 */
+  hidden: boolean;
   status: string; code: string; tone: Tone; dim: boolean;
 }
 export interface StageVisitorView {
@@ -44,13 +46,15 @@ export const NODE_ANCHOR = { host: { x: 300, y: 196 }, server: { x: 300, y: 430 
 
 export interface StageView {
   scene: StageScene;
+  /** 방을 왼쪽으로 미는 거리 (무대 단위). 패널이 대상 기기를 가리지 않게 한다. 방 안의 좌표는 밀기 전 값이다. */
+  shift: number;
   aria: string;
   placeName: string;
   modelVersion: string;
   /** 요청을 보낸 AI 호스트를 밝힌다. 호스트 종류는 구분하지 않는다 (2026-10-21 사용자 결정) */
   host: boolean;
   server: boolean;
-  /** 서버 상자: 판정 표시, 판정 게이지, 확인 네 칸 */
+  /** 서버 랙: 판정 표시, 판정 게이지, 확인 네 칸 */
   judge: { mark: string; tone: Tone; gauge: boolean; checks: [CheckResult, string][] };
   owner: boolean;
   devices: StageDeviceView[];
@@ -98,7 +102,7 @@ export function focusDevices(r: RequestProgress, layout: FloorLayout): string[] 
  * 그 밖의 사람: 신호가 가장 센 기기 앞. 신호가 없으면 그리지 않는다.
  * 무대에서 기기 본체·글자나 다른 사람과 겹치면 기기 앞 방향(방 안쪽)으로 비켜 선다.
  */
-export function personAnchors(s: MonitorState, devices: StageDeviceView[], visitors: Person[]): Map<string, Spot> {
+export function personAnchors(s: MonitorState, devices: StageDeviceView[], visitors: Person[], bounds = STAGE_BOUNDS): Map<string, Spot> {
   const byId = new Map(devices.map((d) => [d.nodeId, d]));
   const dirOf = (d: StageDeviceView): 1 | -1 => (d.wall === 'top' ? 1 : -1);
   const obstacles = devices.flatMap((d) => [d.body, deviceLabelBox(d.label)]);
@@ -133,11 +137,11 @@ export function personAnchors(s: MonitorState, devices: StageDeviceView[], visit
     if (!base) continue;
     // 이름표 둘 곳이 있는 자리를 고른다
     const w = textWidth(p.pseudonym, 20) + 8;
-    const spot = freePersonSpot(base, dir, obstacles, (x) => hasLabelRoom(x, [...texts, ...people, ...labels], w));
+    const spot = freePersonSpot(base, dir, obstacles, (x) => hasLabelRoom(x, [...texts, ...people, ...labels], w, bounds));
     out.set(p.id, spot);
     obstacles.push(personBox(spot));
     people.push(personBox(spot));
-    labels.push(labelBox(spot, chooseLabel(spot, [...texts, ...people, ...labels], w, bodies), w));
+    labels.push(labelBox(spot, chooseLabel(spot, [...texts, ...people, ...labels], w, bodies, bounds), w));
   }
   return out;
 }
@@ -180,17 +184,27 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     }
     return {
       nodeId: d.nodeId, name: d.name, capability: d.capability, x: b.x, y: b.y, fx: f.x, fy: f.y, wall: facing(d.spot),
-      body: deviceBody(b.x, b.y, d.capability), label: { x: 0, y: 0, w: 0 }, rssiAt: { x: 0, y: 0 },
+      body: deviceBody(b.x, b.y, d.capability), label: { x: 0, y: 0, w: 0 }, rssiAt: { x: 0, y: 0 }, hidden: false,
       ...v, dim: !!r && !opt.layoutCheck && !keep.includes(d.nodeId)
     };
   });
   const geoms = devices.map((d) => ({ d, body: d.body, labelW: Math.max(textWidth(d.name, 20), textWidth(d.status, 17)) + 8 } as { d: StageDeviceView; body: Rect; labelW: number; label?: LabelSpot; rssi?: Spot }));
-  placeDeviceLabels(geoms);
-  placeRssi(geoms);
-  for (const g of geoms) { g.d.label = g.label!; g.d.rssiAt = g.rssi!; }
+  // 패널이 열려 있으면 요청과 관계있는 기기가 패널 왼쪽에 보이도록 방을 왼쪽으로 민다 (기기 글자 폭만큼 여유)
+  const focus = r && opt.panelOpen && !opt.layoutCheck ? devices.filter((d) => keep.includes(d.nodeId)) : [];
+  // 관계있는 기기가 왼쪽 칸 뒤로 들어가지 않을 만큼만 민다
+  const want = focus.length ? Math.ceil(Math.max(...focus.map((d) => d.body.x2)) + 110 - PANEL_EDGE) : 0;
+  const room = focus.length ? Math.floor(Math.min(...focus.map((d) => d.body.x1)) - STAGE_BOUNDS.x1 - 10) : 0;
+  const shift = Math.max(0, Math.min(want, room));
+  const bounds = shiftBounds(shift);
+  // 왼쪽 칸 경계에 걸친 기기는 그리지 않는다 (글자 둘 곳이 없고, 관계없는 기기다)
+  for (const d of devices) d.hidden = d.body.x1 - shift < STAGE_BOUNDS.x1;
+  const shown = geoms.filter((g) => !g.d.hidden);
+  placeDeviceLabels(shown, bounds);
+  placeRssi(shown, bounds);
+  for (const g of shown) { g.d.label = g.label!; g.d.rssiAt = g.rssi!; }
 
   // 사람
-  const anchors = personAnchors(s, devices, visitors);
+  const anchors = personAnchors(s, devices, visitors, bounds);
   // 이름표는 기기 본체와 글자, 사람 점, 이미 놓은 이름표를 피한다.
   // 신호 세기 글자는 요청 중에만 보이지만 이름표가 그때마다 옮겨 다니지 않게 늘 피한다. 기기 본체는 덮어도 된다.
   const labelObstacles: Rect[] = [...devices.flatMap((d) => [deviceLabelBox(d.label), rssiBox(d.rssiAt)]), ...[...anchors.values()].map(personBox)];
@@ -200,13 +214,13 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     const pos = at ?? { x: ROOM.x + ROOM.w - 200, y: ROOM.y + ROOM.h / 2 };
     const isReq = !!r && p.id === r.personId;
     const labelW = textWidth(p.pseudonym, 20) + 8;
-    const label = chooseLabel(pos, labelObstacles, labelW, bodies);
+    const label = chooseLabel(pos, labelObstacles, labelW, bodies, bounds);
     if (at) labelObstacles.push(labelBox(pos, label, labelW));
     return {
       personId: p.id, letter: p.letter!, name: p.pseudonym, x: pos.x, y: pos.y, labelW,
       active: s.connected && (r ? isReq : p.beaconSeen),
       dim: !!r && !opt.layoutCheck && !isReq,
-      on: !!at && p.beaconSeen,
+      on: !!at && p.beaconSeen && personBox(pos).x2 - shift >= STAGE_BOUNDS.x1,
       label
     };
   });
@@ -225,6 +239,7 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
   const target = r?.nodeId ?? null;
   const view: StageView = {
     scene,
+    shift,
     aria: '',
     placeName: layout.placeName,
     modelVersion: layout.modelVersion,
@@ -259,7 +274,7 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
   ];
   type Pos = Pick<CalloutView, 'x' | 'y' | 'ax' | 'ay' | 'lx' | 'ly'> & { clean: boolean };
   const place = (ax: number, ay: number): Pos => {
-    const c = calloutSpot(ax, ay, calloutObstacles, opt.panelOpen ? 440 : Infinity, deviceTexts);
+    const c = calloutSpot(ax, ay, calloutObstacles, opt.panelOpen ? 440 + shift : Infinity, deviceTexts, bounds);
     const l = leaderEnd(c, ax, ay);
     return { x: c.x, y: c.y, ax, ay, lx: l.x, ly: l.y, clean: c.clean };
   };
@@ -270,7 +285,7 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
   };
   const atVisitor = (personId: string) => {
     const v = vis.find((x) => x.personId === personId && x.on);
-    if (!v) return place(NODE_ANCHOR.server.x, NODE_ANCHOR.server.y);
+    if (!v) return place(NODE_ANCHOR.server.x + shift, NODE_ANCHOR.server.y);
     const h = iso(v, PERSON_Z);
     return place(h.x, h.y - HEAD_R);
   };
@@ -293,7 +308,7 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     const act = ACTION_NAME[r.action];
     switch (scene) {
       case 'judging':
-        // 서버 상자가 판정 게이지를 보인다. 콜아웃은 두지 않는다.
+        // 서버 랙가 판정 게이지를 보인다. 콜아웃은 두지 않는다.
         view.aria = `${who}의 ${cap} ${act} 요청을 서버가 판정하는 중`;
         break;
       case 'flow':
@@ -328,8 +343,8 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
       case 'approval':
         view.aria = s.ownerNotified ? `${who}의 ${cap} ${act} 요청이 소유자 승인을 기다리는 중`
           : `${who}의 ${cap} ${act} 요청을 실행하지 않음: ${approvalText(r.reason!).title}`;
-        if (r.accessExpiredAt) set('appr', place(NODE_ANCHOR.owner.x, NODE_ANCHOR.owner.y), '승인 신청 만료', '소유자 응답 없음');
-        else if (s.ownerNotified) set('appr', place(NODE_ANCHOR.owner.x, NODE_ANCHOR.owner.y), '소유자에게 승인 요청', '');
+        if (r.accessExpiredAt) set('appr', place(NODE_ANCHOR.owner.x + shift, NODE_ANCHOR.owner.y), '승인 신청 만료', '소유자 응답 없음');
+        else if (s.ownerNotified) set('appr', place(NODE_ANCHOR.owner.x + shift, NODE_ANCHOR.owner.y), '소유자에게 승인 요청', '');
         else set('appr', atDevice(target), approvalText(r.reason!).title, '');
         break;
       case 'busy':

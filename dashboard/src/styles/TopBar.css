@@ -26,6 +26,7 @@
 .np-topbar__live { display: flex; align-items: center; gap: var(--sp-2); flex: none; font-size: var(--fs-sm); color: var(--ink-2); }
 .np-topbar__live-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0.5rem var(--accent); }
 .np-topbar__live[data-live="false"] { color: var(--ink); }
+.np-app[data-theme="light"] .np-topbar__live-dot { box-shadow: none; }
 .np-topbar__live[data-live="false"] .np-topbar__live-dot { background: transparent; border: 2px solid var(--ink-2); box-shadow: none; }
 .np-topbar__clock { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--ink-3); flex: none; }
 .np-topbar__actions { display: flex; gap: var(--sp-2); flex: none; position: relative; }

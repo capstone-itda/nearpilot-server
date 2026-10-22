@@ -1,4 +1,4 @@
-// FR-12B: 흐름 레일 다섯 단계를 쉬운 말로 계산하고, 서버 상자의 확인 네 칸을 계산한다
+// FR-12B: 흐름 레일 다섯 단계를 쉬운 말로 계산하고, 서버 랙의 확인 네 칸을 계산한다
 import { describe, expect, it } from 'vitest';
 import { LAYOUT } from '../data/mock/fixtures';
 import { SCENES, sec, stateAt } from '../data/mock/story';
