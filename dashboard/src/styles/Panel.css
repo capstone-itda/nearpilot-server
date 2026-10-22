@@ -14,7 +14,7 @@
   border-left: 1px solid var(--line);
   box-shadow: var(--shadow);
 }
-.np-panel[data-size="wide"] { width: calc(var(--panel-w) * 1.5); }
+.np-panel[data-size="wide"] { width: var(--panel-wide-w, calc(var(--panel-w) * 1.5)); }
 .np-panel__head {
   display: flex;
   align-items: flex-start;
@@ -196,3 +196,17 @@
 /* 이력: 열이 많아서 판정 칸은 라벨만 보이고(사유 코드는 결과 칸에), 기기 코드는 끊지 않는다 */
 .np-panel[data-kind="history"] .np-verdict__code { display: none; }
 .np-panel[data-kind="history"] td:nth-child(5) .np-table__sub { white-space: nowrap; }
+
+/* Splitter: 폰 화면 폭, 패널 폭, 흐름 레일 높이를 끌어 바꾸는 손잡이. 평소에는 보이지 않고 올리거나 고르면 선이 보인다. */
+.np-split { position: absolute; z-index: 6; touch-action: none; }
+.np-split::after { content: ''; position: absolute; background: var(--accent); opacity: 0; transition: opacity 0.15s; }
+.np-split:hover::after, .np-split:focus-visible::after, .np-split:active::after { opacity: 0.9; }
+.np-split:focus-visible { outline: none; }
+.np-split[data-edge="phone"], .np-split[data-edge="panel"] { top: var(--topbar-h); bottom: var(--rail-h); width: 12px; cursor: col-resize; }
+.np-split[data-edge="phone"]::after, .np-split[data-edge="panel"]::after { top: 0; bottom: 0; left: 5px; width: 2px; }
+.np-split[data-edge="phone"] { left: calc(var(--phone-w) - 6px); }
+.np-split[data-edge="panel"] { right: calc(var(--side-w) + var(--panel-w) - 6px); }
+.np-monitor[data-panel="wide"] .np-split[data-edge="panel"] { right: calc(var(--side-w) + var(--panel-wide-w, calc(var(--panel-w) * 1.5)) - 6px); }
+.np-split[data-edge="rail"] { left: 0; right: 0; bottom: calc(var(--rail-h) - 6px); height: 12px; cursor: row-resize; }
+.np-split[data-edge="rail"]::after { left: 0; right: 0; top: 5px; height: 2px; }
+@media (max-width: 900px) { .np-split { display: none; } }

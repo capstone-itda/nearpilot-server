@@ -221,7 +221,9 @@ export function calloutSpot(ax: number, ay: number, obstacles: Rect[], maxX: num
       if (better) best = { s: { x, y }, overlap, cross, dist };
     }
   }
-  return { ...best!.s, clean: best!.overlap === 0 && best!.cross === 0 };
+  // 패널을 넓혀 둘 자리가 하나도 없으면 깨끗하지 않은 자리로 알린다 (패널이 열려 있으면 콜아웃을 숨긴다)
+  if (!best) return { x: minX, y: B.y1 + 12, clean: false };
+  return { ...best.s, clean: best.overlap === 0 && best.cross === 0 };
 }
 
 /** 콜아웃 상자에서 가리키는 점에 가장 가까운 테두리 점 (지시선 끝) */

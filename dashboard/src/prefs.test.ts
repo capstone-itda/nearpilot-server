@@ -5,8 +5,16 @@ afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); });
 
 describe('prefs', () => {
   it('FR12A D7 저장한 테마와 자동 전환을 다시 읽는다', () => {
-    savePrefs({ theme: 'light', follow: { followRequester: false, followApprover: true } });
-    expect(loadPrefs()).toEqual({ theme: 'light', follow: { followRequester: false, followApprover: true } });
+    savePrefs({ ...DEFAULT_PREFS, theme: 'light', follow: { followRequester: false, followApprover: true } });
+    expect(loadPrefs()).toEqual({ ...DEFAULT_PREFS, theme: 'light', follow: { followRequester: false, followApprover: true } });
+  });
+  it('FR12B 무대 확대·이동과 영역 크기를 다시 읽는다. 잘못된 값은 버린다', () => {
+    savePrefs({ ...DEFAULT_PREFS, stage: { k: 2, cx: 900, cy: 300 }, sizes: { phone: 320, rail: 200 } });
+    expect(loadPrefs().stage).toEqual({ k: 2, cx: 900, cy: 300 });
+    expect(loadPrefs().sizes).toEqual({ phone: 320, panel: undefined, wide: undefined, rail: 200 });
+    localStorage.setItem('nearpilot-dashboard', JSON.stringify({ stage: { k: 'x' }, sizes: { phone: -5, panel: 'wide' } }));
+    expect(loadPrefs().stage).toEqual(DEFAULT_PREFS.stage);
+    expect(loadPrefs().sizes).toEqual({ phone: undefined, panel: undefined, wide: undefined, rail: undefined });
   });
   it('FR12A D7 저장소를 쓸 수 없으면 기본값으로 동작한다', () => {
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });

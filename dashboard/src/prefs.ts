@@ -1,10 +1,15 @@
 // 이 PC의 표시 설정. 브라우저 저장소를 쓸 수 없으면 기본값으로 동작한다.
 import { parseFile, toFile, type Arrangement } from './view/arrange';
 import type { FollowSettings } from './view/phone';
+import { FIT, clampView, type ZoomView } from './view/zoom';
 
-export interface Prefs { theme: 'dark' | 'light'; follow: FollowSettings }
+/** 사람이 끌어 바꾼 영역 크기(px). 없으면 기본 크기. */
+export interface Sizes { phone?: number; panel?: number; wide?: number; rail?: number }
+export interface Prefs { theme: 'dark' | 'light'; follow: FollowSettings; stage: ZoomView; sizes: Sizes }
 const KEY = 'nearpilot-dashboard';
-export const DEFAULT_PREFS: Prefs = { theme: 'dark', follow: { followRequester: true, followApprover: true } };
+export const DEFAULT_PREFS: Prefs = { theme: 'dark', follow: { followRequester: true, followApprover: true }, stage: FIT, sizes: {} };
+
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined);
 
 export function loadPrefs(): Prefs {
   try {
@@ -13,7 +18,9 @@ export function loadPrefs(): Prefs {
     const p = JSON.parse(raw) as Partial<Prefs>;
     return {
       theme: p.theme === 'light' ? 'light' : 'dark',
-      follow: { ...DEFAULT_PREFS.follow, ...(p.follow ?? {}) }
+      follow: { ...DEFAULT_PREFS.follow, ...(p.follow ?? {}) },
+      stage: p.stage && num(p.stage.k) && Number.isFinite(p.stage.cx) && Number.isFinite(p.stage.cy) ? clampView(p.stage) : FIT,
+      sizes: { phone: num(p.sizes?.phone), panel: num(p.sizes?.panel), wide: num(p.sizes?.wide), rail: num(p.sizes?.rail) }
     };
   } catch {
     return DEFAULT_PREFS;

@@ -60,6 +60,12 @@ describe('stageView', () => {
     }
   });
 
+  it('FR12B 패널을 넓혀 콜아웃 둘 자리가 없으면 숨기고, 무대를 확대하면 방을 밀지 않는다', () => {
+    const v = stageView(SCENES.fault(), LAYOUT, { panelOpen: true, panelEdge: 500 });
+    expect(v.callout.on).toBe(false);
+    expect(stageView(SCENES.fault(), LAYOUT, { panelOpen: true, viewFixed: true }).shift).toBe(0);
+  });
+
   it('FR12B 고장 격리: 격리 선과 빨간 콜아웃, 패널이 열려 있으면 콜아웃을 왼쪽에', () => {
     const v = stageView(SCENES.fault(), LAYOUT, { panelOpen: true });
     expect(v.scene).toBe('fault');

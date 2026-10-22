@@ -14,7 +14,7 @@
   --soft: url(#np-soft);
 }
 .np-app[data-theme="light"] .np-stage { --glow: none; --soft: none; }
-.np-stage__svg { display: block; width: 100%; height: 100%; }
+.np-stage__svg { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-select: none; }
 
 .np-stage [data-on="false"] { display: none; }
 
@@ -139,3 +139,10 @@
 @media (prefers-reduced-motion: reduce) {
   .np-app[data-motion="on"] .np-stage__gauge-fill { animation: none; }
 }
+
+/* StageZoom: 모니터 무대의 확대·축소·맞춤 버튼. 확대한 무대는 끌어서 옮긴다. */
+.np-stage__zoom { position: absolute; left: var(--sp-4); bottom: var(--sp-4); z-index: 3; display: flex; flex-direction: column; gap: var(--sp-1); }
+.np-stage__zoom .np-btn { padding: 0; background: var(--surface); color: var(--ink-2); }
+.np-stage__zoom .np-btn:disabled { opacity: 0.4; cursor: default; }
+.np-stage[data-zoomed="true"] .np-stage__svg { cursor: grab; }
+.np-stage[data-zoomed="true"] .np-stage__svg:active { cursor: grabbing; }

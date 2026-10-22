@@ -2,7 +2,7 @@
 import type { DeviceStatus, FloorLayout, LayoutDevice, Person, RequestProgress, MonitorState, Spot } from '../model/types';
 import { ROOM, facing, frontOf, type Facing } from './arrange';
 import {
-  HEAD_R, PERSON_Z, calloutSpot, chooseLabel, deviceBody, deviceLabelBox, freePersonSpot, frontBox, hasLabelRoom, labelBox, leaderEnd, personBox,
+  CALLOUT_W, HEAD_R, PERSON_Z, calloutSpot, chooseLabel, deviceBody, deviceLabelBox, freePersonSpot, frontBox, hasLabelRoom, labelBox, leaderEnd, personBox,
   PANEL_EDGE, STAGE_BOUNDS, placeDeviceLabels, placeRssi, ringBox, rssiBox, shiftBounds, textWidth, type LabelSide, type LabelSpot, type Rect
 } from './placement';
 import { iso } from './iso';
@@ -153,6 +153,10 @@ export interface StageOptions {
   panelWide?: boolean;
   /** SET-01 배치 */
   layoutCheck?: boolean;
+  /** 패널 왼쪽 끝의 무대 x 좌표. 패널과 폰 화면 폭을 사람이 바꾸므로 화면에서 잰다. 없으면 기본 크기의 값. */
+  panelEdge?: number;
+  /** 사람이 무대를 확대하거나 옮겼다. 방을 밀지 않는다. */
+  viewFixed?: boolean;
 }
 
 export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOptions): StageView {
@@ -192,7 +196,8 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
   // 패널이 열려 있으면 요청과 관계있는 기기가 패널 왼쪽에 보이도록 방을 왼쪽으로 민다 (기기 글자 폭만큼 여유)
   const focus = r && opt.panelOpen && !opt.panelWide && !opt.layoutCheck ? devices.filter((d) => keep.includes(d.nodeId)) : [];
   // 관계있는 기기가 왼쪽 칸 뒤로 들어가지 않을 만큼만 민다
-  const want = focus.length ? Math.ceil(Math.max(...focus.map((d) => d.body.x2)) + 110 - PANEL_EDGE) : 0;
+  const edge = opt.panelEdge ?? PANEL_EDGE;
+  const want = focus.length && !opt.viewFixed ? Math.ceil(Math.max(...focus.map((d) => d.body.x2)) + 110 - edge) : 0;
   const room = focus.length ? Math.floor(Math.min(...focus.map((d) => d.body.x1)) - STAGE_BOUNDS.x1 - 10) : 0;
   const shift = Math.max(0, Math.min(want, room));
   const bounds = shiftBounds(shift);
@@ -277,7 +282,7 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
   ];
   type Pos = Pick<CalloutView, 'x' | 'y' | 'ax' | 'ay' | 'lx' | 'ly'> & { clean: boolean };
   const place = (ax: number, ay: number): Pos => {
-    const c = calloutSpot(ax, ay, calloutObstacles, opt.panelOpen ? 440 + shift : Infinity, deviceTexts, bounds);
+    const c = calloutSpot(ax, ay, calloutObstacles, opt.panelOpen ? edge - CALLOUT_W + shift : Infinity, deviceTexts, bounds);
     const l = leaderEnd(c, ax, ay);
     return { x: c.x, y: c.y, ax, ay, lx: l.x, ly: l.y, clean: c.clean };
   };

@@ -10,6 +10,7 @@ import { FlowRail } from './components/FlowRail';
 import { PhoneMirror } from './components/PhoneMirror';
 import { Stage } from './components/Stage';
 import { SideMenu, type SideKey } from './components/SideMenu';
+import { Splitter } from './components/Splitter';
 import { TopBar, type PanelKey, type SettingsKey } from './components/TopBar';
 import { DevicePanel } from './panels/DevicePanel';
 import { ApprovalsPanel, AuditPanel, HistoryPanel, TrustPanel, UsesPanel } from './panels/ListPanels';
@@ -19,10 +20,23 @@ import { choosePhone, type FollowSettings } from './view/phone';
 import { railView } from './view/rail';
 import { stageView } from './view/stage';
 import { canPlace, resolveArrangement, withArrangement, type Arrangement } from './view/arrange';
-import { clearArrangement, loadArrangement, loadPrefs, saveArrangement, savePrefs } from './prefs';
+import { clearArrangement, loadArrangement, loadPrefs, saveArrangement, savePrefs, type Sizes } from './prefs';
+import { isFit, panelEdgeOf, type ZoomView } from './view/zoom';
 
 /** 무대 위를 넓게 덮는 패널 (ListPanels의 size="wide") */
 const WIDE_PANELS: string[] = ['audit', 'history', 'trust'];
+
+/** 영역의 기본 크기와 끌어서 바꿀 수 있는 범위(px). 화면 크기에 따라 잰다. */
+function sizeLimits() {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  return {
+    phone: { base: vw * 0.24, min: 240, max: vw * 0.4 },
+    panel: { base: vw * 0.3, min: 360, max: vw * 0.6 },
+    wide: { base: vw * 0.45, min: 480, max: vw * 0.7 },
+    rail: { base: rem * 11, min: 140, max: vh * 0.4 }
+  };
+}
 
 export type PanelState =
   | { kind: 'request'; request: RequestProgress; live: boolean }
@@ -42,6 +56,9 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   const prefs = useMemo(loadPrefs, []);
   const [theme, setTheme] = useState<'dark' | 'light'>(initialTheme ?? prefs.theme);
   const [follow, setFollow] = useState<FollowSettings>(prefs.follow);
+  const [zoomView, setZoomView] = useState<ZoomView>(prefs.stage);
+  const [sizes, setSizes] = useState<Sizes>(prefs.sizes);
+  const [stageSize, setStageSize] = useState<{ w: number; h: number; right: number }>();
   const [place, setPlace] = useState<PlaceInfo>();
   const [arrangement, setArrangement] = useState<Arrangement>({});
   const [snapshot, setSnapshot] = useState<MonitorState>();
@@ -55,7 +72,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   const shownPerson = useRef<string>();
   const seen = useRef<{ init?: boolean; request?: string; faults: Set<string> }>({ faults: new Set() });
 
-  useEffect(() => { savePrefs({ theme, follow }); }, [theme, follow]);
+  useEffect(() => { savePrefs({ theme, follow, stage: zoomView, sizes }); }, [theme, follow, zoomView, sizes]);
   const loaded = !!snapshot;
   useEffect(() => {
     if (!loaded) return;
@@ -168,16 +185,35 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     const phone = choosePhone(snapshot, follow, shownPerson.current);
     shownPerson.current = phone.personId;
     const mock = snapshot.mockPhones?.find((m) => m.personId === phone.personId);
+    const wide = !!panel && WIDE_PANELS.includes(panel.kind);
+    const lim = sizeLimits();
+    const px = (k: keyof Sizes) => sizes[k] ?? lim[k].base;
+    const setSize = (k: keyof Sizes) => (v: number) => setSizes((s) => ({ ...s, [k]: v }));
+    const resetSize = (k: keyof Sizes) => () => setSizes((s) => ({ ...s, [k]: undefined }));
+    // 패널 왼쪽 끝을 무대 좌표로 바꿔, 방 밀기와 콜아웃이 실제 패널 크기를 따른다
+    const panelEdge = panel && stageSize ? panelEdgeOf(zoomView, stageSize, px(wide ? 'wide' : 'panel') - stageSize.right) : undefined;
+    // 끌어 바꾼 크기는 CSS 변수로 넘긴다 (요소에 style 속성을 쓰지 않는다)
+    const vars = (['phone', 'panel', 'wide', 'rail'] as const).filter((k) => sizes[k] !== undefined)
+      .map((k) => `--${{ phone: 'phone-w', panel: 'panel-w', wide: 'panel-wide-w', rail: 'rail-h' }[k]}: ${Math.round(sizes[k]!)}px;`).join(' ');
     screen = (
-      <div className="np-monitor" data-component="MonitorLayout" data-live={snapshot.connected ? 'true' : 'false'}>
+      <div className="np-monitor" data-component="MonitorLayout" data-live={snapshot.connected ? 'true' : 'false'} data-panel={panel ? (wide ? 'wide' : 'normal') : 'none'}>
+        {vars ? <style>{`.np-app .np-monitor { ${vars} }`}</style> : null}
         {topBar}
         <PhoneMirror who={phone.who} follow={phone.follow} stream={phone.personId ? streams[phone.personId] : undefined} mock={mock} />
-        <Stage v={stageView(snapshot, layout, { panelOpen: !!panel, panelWide: !!panel && WIDE_PANELS.includes(panel.kind) })} />
+        <Stage v={stageView(snapshot, layout, { panelOpen: !!panel, panelWide: wide, panelEdge, viewFixed: !isFit(zoomView) })}
+          zoom={{ view: zoomView, onChange: setZoomView, onSize: setStageSize }} />
+        <Splitter edge="phone" label="폰 화면 폭" value={px('phone')} min={lim.phone.min} max={lim.phone.max} toValue={(e) => e.clientX} onChange={setSize('phone')} onReset={resetSize('phone')} />
+        <Splitter edge="rail" label="흐름 레일 높이" value={px('rail')} min={lim.rail.min} max={lim.rail.max} toValue={(e) => window.innerHeight - e.clientY} onChange={setSize('rail')} onReset={resetSize('rail')} />
         <FlowRail v={railView(snapshot, layout, phone.personId)} onOpen={snapshot.request ? () => setPanel({ kind: 'request', request: snapshot.request!, live: true }) : undefined} />
         {!snapshot.connected ? (
           <OfflineBanner title="서버와 연결이 끊겼어요" detail={`마지막 수신 ${snapshot.lastReceivedAt} · 다시 연결 시도 ${snapshot.reconnectAttempts}회째`} onReconnect={() => source.reconnect()} />
         ) : null}
         {side}
+        {panel ? (
+          <Splitter edge="panel" label="패널 폭" value={px(wide ? 'wide' : 'panel')} min={lim[wide ? 'wide' : 'panel'].min} max={lim[wide ? 'wide' : 'panel'].max}
+            toValue={(e) => (document.querySelector('.np-side')?.getBoundingClientRect().left ?? window.innerWidth) - e.clientX}
+            onChange={setSize(wide ? 'wide' : 'panel')} onReset={resetSize(wide ? 'wide' : 'panel')} />
+        ) : null}
         {panel ? <PanelView panel={panel} onClose={closePanel} onOpenDevice={(nodeId) => setPanel({ kind: 'device', nodeId })} onOpenRequest={openRequest} /> : null}
       </div>
     );

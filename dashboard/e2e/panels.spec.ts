@@ -120,6 +120,63 @@ test('FR12A D7 설정 화면을 오가고 자동 전환 스위치는 이 PC에�
   await expect(page.getByRole('tab', { name: /^점검/ })).toHaveAttribute('aria-selected', 'true');
 });
 
+test('FR12B 무대를 휠로 확대하고 끌어 옮기고, 맞춤으로 되돌린다. 다시 열어도 유지한다', async ({ page }) => {
+  await ready(page, 'scene=flow');
+  const svg = page.locator('.np-monitor .np-stage__svg');
+  const vb = async () => (await svg.getAttribute('viewBox'))!.split(' ').map(Number);
+  expect(await vb()).toEqual([0, 0, 1400, 800]);
+  await page.mouse.move(1000, 400);
+  await page.mouse.wheel(0, -400);
+  const [, , w1] = await vb();
+  expect(w1).toBeLessThan(1400);
+  const [x1] = await vb();
+  await page.mouse.move(900, 500);
+  await page.mouse.down();
+  await page.mouse.move(700, 500, { steps: 4 });
+  await page.mouse.up();
+  const [x2] = await vb();
+  expect(x2).toBeGreaterThan(x1);
+  // 끌어도 글자가 선택되지 않는다
+  expect(await page.evaluate(() => String(getSelection()))).toBe('');
+  await page.reload();
+  await page.waitForSelector('[data-component="TopBar"]');
+  expect((await vb())[2]).toBeCloseTo(w1);
+  await page.getByRole('button', { name: '무대 전체 보기' }).click();
+  expect(await vb()).toEqual([0, 0, 1400, 800]);
+  await page.getByRole('button', { name: '확대' }).click();
+  expect((await vb())[2]).toBeCloseTo(1400 / 1.25);
+});
+
+test('FR12A 폰 화면 폭, 패널 폭, 흐름 레일 높이를 끌어 바꾸고, 다시 열어도 유지한다', async ({ page }) => {
+  await ready(page, 'scene=later&panel=uses');
+  const width = (sel: string) => page.locator(sel).evaluate((e) => Math.round(e.getBoundingClientRect().width));
+  const height = (sel: string) => page.locator(sel).evaluate((e) => Math.round(e.getBoundingClientRect().height));
+  const drag = async (sel: string, dx: number, dy: number) => {
+    const b = (await page.locator(sel).boundingBox())!;
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(b.x + b.width / 2 + dx, b.y + b.height / 2 + dy, { steps: 4 });
+    await page.mouse.up();
+  };
+  const phone = await width('.np-monitor > .np-phone'), panel = await width('.np-panel'), rail = await height('.np-monitor > .np-rail');
+  await drag('.np-split[data-edge="phone"]', 80, 0);
+  await drag('.np-split[data-edge="panel"]', -100, 0);
+  await drag('.np-split[data-edge="rail"]', 0, -40);
+  expect(await width('.np-monitor > .np-phone')).toBeCloseTo(phone + 80, -1);
+  expect(await width('.np-panel')).toBeCloseTo(panel + 100, -1);
+  expect(await height('.np-monitor > .np-rail')).toBeCloseTo(rail + 40, -1);
+  // 키보드로도 바꾸고, 두 번 누르면 기본 크기로 돌아간다
+  await page.locator('.np-split[data-edge="phone"]').focus();
+  await page.keyboard.press('ArrowRight');
+  expect(await width('.np-monitor > .np-phone')).toBeCloseTo(phone + 96, -1);
+  await page.reload();
+  await page.waitForSelector('[data-component="TopBar"]');
+  expect(await width('.np-monitor > .np-phone')).toBeCloseTo(phone + 96, -1);
+  expect(await height('.np-monitor > .np-rail')).toBeCloseTo(rail + 40, -1);
+  await page.locator('.np-split[data-edge="phone"]').dblclick();
+  expect(await width('.np-monitor > .np-phone')).toBeCloseTo(phone, -1);
+});
+
 test('FR12A D7 테마를 바꾸고 다시 열어도 유지한다', async ({ page }) => {
   await ready(page, 'scene=idle');
   await expect(page.locator('.np-app')).toHaveAttribute('data-theme', 'dark');

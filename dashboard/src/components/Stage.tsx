@@ -7,6 +7,8 @@ import { GRID, ROOM, facing, frontOf, snap } from '../view/arrange';
 import { ISO_K, ROOM_ISO, iso, kernel, unIso, type Kernel } from '../view/iso';
 import { DEVICE_D, DEVICE_H, DEVICE_LABEL_H, DEVICE_W, HEAD_R, PERSON_Z, deviceBody, labelBox } from '../view/placement';
 import type { StageDeviceView, StageView, StageVisitorView } from '../view/stage';
+import { FIT, ZOOM_MAX, ZOOM_STEP, isFit, panBy, viewBoxOf, zoomAt, type ZoomView } from '../view/zoom';
+import { Icon } from './common';
 
 /** SET-01 배치 편집. 모니터 무대에는 넘기지 않는다. */
 export interface StageEdit {
@@ -276,8 +278,55 @@ const WALL_H = 34;
 const WALL_LEFT = ROOM_ISO.poly([[ROOM.x, ROOM.y, 0], [ROOM.x, ROOM.y + ROOM.h, 0], [ROOM.x, ROOM.y + ROOM.h, WALL_H], [ROOM.x, ROOM.y, WALL_H]]);
 const WALL_BACK = ROOM_ISO.poly([[ROOM.x, ROOM.y, 0], [ROOM.x + ROOM.w, ROOM.y, 0], [ROOM.x + ROOM.w, ROOM.y, WALL_H], [ROOM.x, ROOM.y, WALL_H]]);
 
-export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
+/** 모니터 무대의 확대·이동 (설정의 배치 화면에서는 쓰지 않는다) */
+export interface StageZoom {
+  view: ZoomView;
+  onChange: (v: ZoomView) => void;
+  /** 그림 영역의 화면 크기와, 무대 오른쪽 끝에서 그림 영역까지의 여백(px). 패널 경계를 무대 좌표로 바꿀 때 쓴다. */
+  onSize: (s: { w: number; h: number; right: number }) => void;
+}
+
+export function Stage({ v, edit, zoom }: { v: StageView; edit?: StageEdit; zoom?: StageZoom }) {
   const svg = useRef<SVGSVGElement>(null);
+  const section = useRef<HTMLElement>(null);
+  const pan = useRef<{ x: number; y: number; view: ZoomView; scale: number } | null>(null);
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  /** 화면 좌표 → 무대 좌표 */
+  const toStage = (x: number, y: number): Spot => {
+    const m = svg.current?.getScreenCTM();
+    if (!m) return { x: 0, y: 0 };
+    const p = new DOMPoint(x, y).matrixTransform(m.inverse());
+    return { x: p.x, y: p.y };
+  };
+  // 그림 영역 크기를 알린다
+  const sized = !!zoom;
+  useEffect(() => {
+    const el = svg.current, sec = section.current;
+    if (!sized || !el || !sec) return;
+    const report = () => {
+      const a = el.getBoundingClientRect(), s = sec.getBoundingClientRect();
+      zoomRef.current?.onSize({ w: a.width, h: a.height, right: s.right - a.right });
+    };
+    const ro = new ResizeObserver(report);
+    ro.observe(sec);
+    report();
+    return () => ro.disconnect();
+  }, [sized]);
+  // 휠(트랙패드 핀치 포함)로 커서 자리를 중심으로 확대·축소한다. 페이지가 스크롤되지 않게 passive를 끈다.
+  useEffect(() => {
+    const el = svg.current;
+    if (!sized || !el) return;
+    const onWheel = (e: WheelEvent) => {
+      const z = zoomRef.current;
+      if (!z) return;
+      e.preventDefault();
+      const unit = e.deltaMode === 1 ? 16 : 1;
+      z.onChange(zoomAt(z.view, toStage(e.clientX, e.clientY), Math.exp(-e.deltaY * unit * 0.0015)));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [sized]);
   const [drag, setDrag] = useState<{ id: string; dx: number; dy: number; s: Spot; ok: boolean } | null>(null);
   /** 누른 자리의 바닥 평면 좌표 */
   const toPlan = (e: PointerEvent): Spot => {
@@ -311,13 +360,24 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
       }
     }
   };
+  // 확대한 무대는 끌어서 옮긴다
+  const onPanStart = (e: PointerEvent<SVGSVGElement>) => {
+    if (!zoom || edit || e.button !== 0) return;
+    const m = svg.current?.getScreenCTM();
+    if (!m) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    pan.current = { x: e.clientX, y: e.clientY, view: zoom.view, scale: Math.hypot(m.a, m.b) };
+  };
   const onPointerMove = (e: PointerEvent<SVGSVGElement>) => {
+    const p0 = pan.current;
+    if (p0 && zoom) { zoom.onChange(panBy(p0.view, (e.clientX - p0.x) / p0.scale, (e.clientY - p0.y) / p0.scale)); return; }
     if (!drag || !edit) return;
     const p = toPlan(e);
     const s = { x: snap(p.x - drag.dx), y: snap(p.y - drag.dy) };
     if (s.x !== drag.s.x || s.y !== drag.s.y) setDrag({ ...drag, s, ok: edit.canPlace(drag.id, s) });
   };
   const onPointerUp = () => {
+    pan.current = null;
     if (drag && edit && drag.ok) edit.onMove(drag.id, drag.s);
     setDrag(null);
   };
@@ -343,8 +403,9 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
   ].sort((a, z) => a.k - z.k);
 
   return (
-    <section className="np-stage" data-component="Stage" data-scene={v.scene} aria-label={`${v.placeName} 배치도`}>
-      <svg ref={svg} className="np-stage__svg" data-editing={b(!!drag)} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => setDrag(null)} viewBox={v.scene === 'layout' ? '300 0 1100 800' : '0 0 1400 800'} preserveAspectRatio="xMidYMid meet" role="img" aria-label={v.aria}>
+    <section ref={section} className="np-stage" data-component="Stage" data-scene={v.scene} data-zoomed={b(!!zoom && !isFit(zoom.view))} aria-label={`${v.placeName} 배치도`}>
+      <svg ref={svg} className="np-stage__svg" data-editing={b(!!drag)} onPointerDown={onPanStart} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => { pan.current = null; setDrag(null); }}
+        viewBox={v.scene === 'layout' ? '300 0 1100 800' : (zoom ? viewBoxOf(zoom.view) : viewBoxOf(FIT)).join(' ')} preserveAspectRatio="xMidYMid meet" role="img" aria-label={v.aria}>
         <defs>
           <filter id="np-glow" filterUnits="userSpaceOnUse" x="-2000" y="-2000" width="6000" height="6000"><feGaussianBlur stdDeviation="4" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
           {/* 방을 밀면 왼쪽 칸 쪽 가장자리를 흐리게 지워, 방이 그 뒤로 이어진다는 것을 보인다 */}
@@ -416,6 +477,13 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
 
         <text className="np-stage__code" x={1380} y={40} data-anchor="end">{v.placeName} · 근접 모델 {v.modelVersion}</text>
       </svg>
+      {zoom ? (
+        <div className="np-stage__zoom" data-component="StageZoom" role="group" aria-label="무대 확대">
+          <button className="np-btn" type="button" aria-label="확대" title="확대" disabled={zoom.view.k >= ZOOM_MAX} onClick={() => zoom.onChange(zoomAt(zoom.view, { x: zoom.view.cx, y: zoom.view.cy }, ZOOM_STEP))}><Icon name="plus" /></button>
+          <button className="np-btn" type="button" aria-label="축소" title="축소" disabled={isFit(zoom.view)} onClick={() => zoom.onChange(zoomAt(zoom.view, { x: zoom.view.cx, y: zoom.view.cy }, 1 / ZOOM_STEP))}><Icon name="minus" /></button>
+          <button className="np-btn" type="button" aria-label="무대 전체 보기" title="무대 전체 보기" disabled={isFit(zoom.view)} onClick={() => zoom.onChange(FIT)}><Icon name="fit" /></button>
+        </div>
+      ) : null}
     </section>
   );
 }
