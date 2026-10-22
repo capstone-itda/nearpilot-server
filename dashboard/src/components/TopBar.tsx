@@ -2,27 +2,6 @@ import { Icon } from './common';
 
 export type PanelKey = 'uses' | 'approvals' | 'audit' | 'history' | 'trust';
 export type SettingsKey = 'layout' | 'phones' | 'check';
-export type MenuKey = PanelKey | SettingsKey;
-
-export const MENU: [PanelKey, string][] = [
-  ['uses', '점유·대여 현황'], ['approvals', '승인 현황'], ['audit', '감사 로그'], ['history', '요청·판정 이력'], ['trust', '신뢰도 지표']
-];
-export const SETTINGS: [SettingsKey, string][] = [['layout', '배치'], ['phones', '폰 연결'], ['check', '점검']];
-
-export function PanelMenu({ open, current, onPick }: { open: boolean; current: MenuKey | null; onPick: (k: MenuKey) => void }) {
-  const item = ([k, label]: [MenuKey, string]) => (
-    <button key={k} className="np-menu__item" type="button" role="menuitem" aria-current={current === k ? 'true' : 'false'} onClick={() => onPick(k)}>{label}</button>
-  );
-  return (
-    <div className="np-menu" data-component="PanelMenu" data-open={open ? 'true' : 'false'} role="menu" aria-label="패널과 설정">
-      <span className="np-menu__group np-cap">패널</span>
-      {MENU.map(item)}
-      <span className="np-menu__sep" aria-hidden="true" />
-      <span className="np-menu__group np-cap">설정</span>
-      {SETTINGS.map(item)}
-    </div>
-  );
-}
 
 export interface TopBarProps {
   theme: 'dark' | 'light';
@@ -32,14 +11,10 @@ export interface TopBarProps {
   /** 목 어댑터의 데이터다 */
   mock?: boolean;
   placeName: string;
-  menuOpen: boolean;
-  current: MenuKey | null;
   onToggleTheme: () => void;
-  onToggleMenu: () => void;
-  onPick: (k: MenuKey) => void;
 }
 
-export function TopBar({ theme, live, receivedAt, mock, placeName, menuOpen, current, onToggleTheme, onToggleMenu, onPick }: TopBarProps) {
+export function TopBar({ theme, live, receivedAt, mock, placeName, onToggleTheme }: TopBarProps) {
   const toLight = theme === 'dark';
   return (
     <header className="np-topbar" data-component="TopBar">
@@ -60,13 +35,10 @@ export function TopBar({ theme, live, receivedAt, mock, placeName, menuOpen, cur
       {mock ? <span className="np-topbar__mock np-cap">목 데이터</span> : null}
       <span className="np-topbar__recv" aria-hidden="true">수신 {receivedAt}</span>
       <div className="np-topbar__actions">
-        <button className="np-btn" data-variant="quiet" type="button" aria-label={toLight ? '라이트 모드로 바꾸기' : '다크 모드로 바꾸기'} onClick={onToggleTheme}>
-          <Icon name="sun" /><Icon name="moon" /><span>{toLight ? '라이트' : '다크'}</span>
+        {/* 글자 없이 아이콘만 둔다. 지금 테마가 아니라 누르면 바뀔 테마를 그린다(다크에서는 해, 라이트에서는 달). */}
+        <button className="np-btn np-topbar__theme" data-variant="quiet" type="button" aria-label={toLight ? '라이트 모드로 바꾸기' : '다크 모드로 바꾸기'} title={toLight ? '라이트 모드로 바꾸기' : '다크 모드로 바꾸기'} onClick={onToggleTheme}>
+          <Icon name="sun" /><Icon name="moon" />
         </button>
-        <button className="np-btn" type="button" aria-haspopup="menu" aria-expanded={menuOpen ? 'true' : 'false'} onClick={onToggleMenu}>
-          <Icon name="menu" /><span>메뉴</span>
-        </button>
-        <PanelMenu open={menuOpen} current={current} onPick={onPick} />
       </div>
     </header>
   );

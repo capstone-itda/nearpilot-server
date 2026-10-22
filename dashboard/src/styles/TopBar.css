@@ -1,4 +1,4 @@
-/* TopBar: 브랜드 · 장소 · 연결 상태 · 테마 전환 · 메뉴 */
+/* TopBar: 브랜드 · 장소 · 연결 상태 · 테마 전환 */
 
 .np-topbar {
   display: flex;
@@ -29,39 +29,50 @@
 .np-app[data-theme="light"] .np-topbar__live-dot { box-shadow: none; }
 .np-topbar__live[data-live="false"] .np-topbar__live-dot { background: transparent; border: 2px solid var(--ink-2); box-shadow: none; }
 .np-topbar__clock { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--ink-3); flex: none; }
+.np-topbar__theme { padding: 0; }
+.np-topbar__theme .np-icon { width: 1.5rem; height: 1.5rem; }
+.np-topbar__theme .np-icon[data-icon="sun"] circle { fill: currentColor; }
+.np-topbar__theme .np-icon[data-icon="moon"] path { fill: currentColor; }
 .np-topbar__actions { display: flex; gap: var(--sp-2); flex: none; position: relative; }
 
-/* PanelMenu: 메뉴 버튼 아래 펼쳐지는 목록 */
-.np-menu {
-  position: absolute;
-  top: calc(100% + var(--sp-2));
-  right: 0;
-  width: 17rem;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow);
-  padding: var(--sp-2);
+/* SideMenu: 화면 오른쪽 끝의 세로 메뉴 (목록 패널, 설정) */
+.np-side {
   display: flex;
   flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-1);
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+  z-index: 6;
 }
-.np-menu[data-open="false"] { display: none; }
-.np-menu__group { padding: var(--sp-2) var(--sp-3) var(--sp-1); }
-.np-menu__item {
+.np-side__spacer { flex: 1; }
+.np-side__item {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
+  gap: 0.2rem;
   min-height: var(--hit);
-  padding: 0 var(--sp-3);
-  border: 0;
+  padding: var(--sp-2) 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
   background: transparent;
-  text-align: left;
-  font-size: var(--fs-body);
+  color: var(--ink-2);
   cursor: pointer;
 }
-.np-menu__item:hover { background: var(--accent-soft); }
-.np-menu__item[aria-current="true"] { color: var(--accent-strong); background: var(--accent-soft); }
-.np-menu__sep { height: 1px; background: var(--line-soft); margin: var(--sp-2) 0; }
+.np-side__item .np-icon { width: 1.4rem; height: 1.4rem; }
+.np-side__item:hover { color: var(--ink); border-color: var(--line-soft); }
+.np-side__item[aria-current="page"] { color: var(--accent-strong); border-color: var(--accent); background: var(--accent-soft); }
+.np-side__label { font-size: var(--fs-sm); line-height: 1.1; white-space: nowrap; }
 
 /* 마지막 수신 시각: 스트림이 들어오는 것을 보인다. 화면 낭독기에는 읽히지 않는다(0.5초마다 바뀜). */
 .np-topbar__recv { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .np-topbar__mock { padding: 2px var(--sp-2); border: 1px dashed var(--line); border-radius: var(--radius); color: var(--ink-2); }
+
+@media (max-width: 900px) {
+  .np-side { flex-direction: row; overflow-x: auto; border-left: 0; border-bottom: 1px solid var(--line); }
+  .np-side__item { min-width: var(--hit); padding: var(--sp-2); }
+  .np-side__spacer { display: none; }
+}

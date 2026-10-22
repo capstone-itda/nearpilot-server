@@ -1,6 +1,6 @@
 // SET-01~03 설정. 이 PC의 표시만 바꾸고 서버 데이터는 바꾸지 않는다 (D7).
 import { useRef, useState, type ReactNode } from 'react';
-import { DataTable, Icon, KeyValue, Switch, Td } from '../components/common';
+import { DataTable, KeyValue, Switch, Td } from '../components/common';
 import { Stage } from '../components/Stage';
 import { Loading } from '../components/Panel';
 import { MirrorVideo } from '../components/PhoneMirror';
@@ -17,17 +17,19 @@ const NAV: [SettingsKey, string, string][] = [
   ['check', '점검', '시연 직전 한 번에 확인']
 ];
 
-export function SettingsNav({ current, onPick, onBack }: { current: SettingsKey; onPick: (k: SettingsKey) => void; onBack: () => void }) {
+/** 설정 화면 위쪽 탭 (2026-10-23 사용자 결정: 사이드 메뉴의 설정을 누르면 탭으로 고른다) */
+export function SettingsTabs({ current, onPick }: { current: SettingsKey; onPick: (k: SettingsKey) => void }) {
   return (
-    <nav className="np-snav" data-component="SettingsNav" aria-label="설정 항목">
-      <button className="np-btn np-snav__back" data-variant="quiet" type="button" onClick={onBack}><Icon name="back" /><span>모니터로 돌아가기</span></button>
-      {NAV.map(([k, n, d]) => (
-        <button key={k} className="np-snav__item" type="button" aria-current={k === current ? 'page' : 'false'} onClick={() => onPick(k)}>
-          <span className="np-snav__name">{n}</span><span className="np-snav__desc">{d}</span>
-        </button>
-      ))}
-      <p className="np-snav__note">이 PC의 표시만 바꿔요. 서버에는 쓰지 않아요.</p>
-      <p className="np-snav__credit"><a href="https://iso-glow.vercel.app" target="_blank" rel="noreferrer">Made with ISO-GLOW ↗</a></p>
+    <nav className="np-stabs" data-component="SettingsTabs" aria-label="설정 항목">
+      <div className="np-stabs__list" role="tablist">
+        {NAV.map(([k, n, d]) => (
+          <button key={k} className="np-stabs__item" type="button" role="tab" aria-selected={k === current ? 'true' : 'false'} onClick={() => onPick(k)}>
+            <span className="np-stabs__name">{n}</span><span className="np-stabs__desc">{d}</span>
+          </button>
+        ))}
+      </div>
+      <p className="np-stabs__note">이 PC의 표시만 바꿔요. 서버에는 쓰지 않아요.</p>
+      <p className="np-stabs__credit"><a href="https://iso-glow.vercel.app" target="_blank" rel="noreferrer">Made with ISO-GLOW ↗</a></p>
     </nav>
   );
 }

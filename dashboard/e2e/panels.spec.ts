@@ -12,20 +12,31 @@ test.afterEach(() => { expect(writes, 'GET 말고 다른 요청이 없어야 한
 
 const PANELS: [string, string][] = [['점유·대여 현황', 'MON-06'], ['승인 현황', 'MON-07'], ['감사 로그', 'MON-08'], ['요청·판정 이력', 'MON-09'], ['신뢰도 지표', 'MON-10']];
 
-test('FR12A D1 메뉴로 패널을 열고 ×로 닫는다. 무대 크기와 위치는 그대로다', async ({ page }) => {
+test('FR12A D1 사이드 메뉴로 패널을 열고, 같은 항목이나 ×로 닫는다. 무대 크기와 위치는 그대로다', async ({ page }) => {
   await ready(page, 'scene=later');
   const before = await box(page, '.np-monitor > .np-stage');
+  const side = page.locator('[data-component="SideMenu"]');
+  const panel = page.locator('[data-component="Panel"]');
   for (const [label, id] of PANELS) {
-    await page.getByRole('button', { name: '메뉴' }).click();
-    await expect(page.locator('[data-component="PanelMenu"]')).toHaveAttribute('data-open', 'true');
-    await page.getByRole('menuitem', { name: label }).click();
-    await expect(page.locator('[data-component="PanelMenu"]')).toHaveAttribute('data-open', 'false');
-    const panel = page.locator('[data-component="Panel"]');
+    await side.getByRole('button', { name: label }).click();
     await expect(panel).toContainText(id);
+    await expect(side.getByRole('button', { name: label })).toHaveAttribute('aria-current', 'page');
     expect(await box(page, '.np-monitor > .np-stage')).toEqual(before);
     await page.getByRole('button', { name: '패널 닫기' }).click();
     await expect(panel).toHaveCount(0);
+    await expect(side.locator('[aria-current="page"]')).toHaveCount(0);
   }
+  // 같은 항목을 다시 누르면 닫히고, 다른 항목을 누르면 바로 바뀐다
+  await side.getByRole('button', { name: '감사 로그' }).click();
+  await side.getByRole('button', { name: '요청·판정 이력' }).click();
+  await expect(panel).toContainText('MON-09');
+  await side.getByRole('button', { name: '요청·판정 이력' }).click();
+  await expect(panel).toHaveCount(0);
+  // 패널이 사이드 메뉴를 가리지 않는다
+  await side.getByRole('button', { name: '신뢰도 지표' }).click();
+  const [px, , pw] = await box(page, '[data-component="Panel"]');
+  const [sx] = await box(page, '[data-component="SideMenu"]');
+  expect(px + pw).toBeLessThanOrEqual(sx + 0.5);
 });
 
 test('FR12A 이력에서 사람을 누르면 그 요청의 판정 단계를 연다', async ({ page }) => {
@@ -90,18 +101,23 @@ test('FR12B D1 ASK·승인 필요·고장 격리는 상세 패널이 자동으�
 
 test('FR12A D7 설정 화면을 오가고 자동 전환 스위치는 이 PC에만 저장한다', async ({ page }) => {
   await ready(page, 'scene=later');
-  await page.getByRole('button', { name: '메뉴' }).click();
-  await page.getByRole('menuitem', { name: '폰 연결' }).click();
+  await page.getByRole('button', { name: '설정' }).click();
+  await expect(page.getByRole('tab', { name: /^배치/ })).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('tab', { name: /^폰 연결/ }).click();
   const sw = page.getByRole('switch', { name: /요청한 사람/ });
   await expect(sw).toHaveAttribute('aria-checked', 'true');
   await sw.click();
   await expect(sw).toHaveAttribute('aria-checked', 'false');
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('nearpilot-dashboard')!).follow.followRequester)).toBe(false);
-  await page.getByRole('button', { name: /^점검/ }).click();
+  await page.getByRole('tab', { name: /^점검/ }).click();
   await expect(page.locator('[data-component="ReadyBanner"]')).toContainText('확인할 것 3건');
   await expect(page.locator('.np-crow[data-state="bad"]')).toContainText('사물함 2');
-  await page.getByRole('button', { name: '모니터로 돌아가기' }).click();
+  // 설정을 다시 누르면 모니터로 돌아간다
+  await page.getByRole('button', { name: '설정' }).click();
   await expect(page.locator('[data-component="MonitorLayout"]')).toHaveCount(1);
+  // 설정을 다시 열면 마지막에 본 탭으로 간다
+  await page.getByRole('button', { name: '설정' }).click();
+  await expect(page.getByRole('tab', { name: /^점검/ })).toHaveAttribute('aria-selected', 'true');
 });
 
 test('FR12A D7 테마를 바꾸고 다시 열어도 유지한다', async ({ page }) => {
@@ -265,7 +281,7 @@ test('FR12B 판정 중 요청 상세는 판정 중이고 단계는 기다림이�
   await expect(page.locator('.np-stage__gauge-fill')).toHaveCount(1);
 });
 
-test('FR12B 흐름 중에 메뉴로 연 목록 패널은 자동 패널로 바뀌지 않는다', async ({ page }) => {
+test('FR12B 흐름 중에 사이드 메뉴로 연 목록 패널은 자동 패널로 바뀌지 않는다', async ({ page }) => {
   await page.clock.install();
   await ready(page, 'scene=live&panel=audit');
   await expect(page.locator('.np-panel__title')).toHaveText('감사 로그');

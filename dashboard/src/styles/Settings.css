@@ -1,4 +1,4 @@
-/* SettingsLayout · SettingsNav · 설정 화면 부품(SignalTable, PhoneCard, Switch, CheckCard, ReadyBanner)
+/* SettingsLayout · SettingsTabs · 설정 화면 부품(SignalTable, PhoneCard, Switch, CheckCard, ReadyBanner)
    설정 화면은 시연 운영자용이고 서버에 쓰지 않는다. */
 
 .np-settings {
@@ -6,38 +6,49 @@
   height: 100vh;
   min-height: 600px;
   display: grid;
-  grid-template-columns: var(--nav-w) minmax(0, 1fr);
-  grid-template-rows: var(--topbar-h) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) var(--side-w);
+  grid-template-rows: var(--topbar-h) auto minmax(0, 1fr);
   overflow: hidden;
 }
 .np-settings > .np-topbar { grid-column: 1 / -1; }
+.np-settings > .np-stabs { grid-column: 1; grid-row: 2; }
+.np-settings > .np-scontent { grid-column: 1; grid-row: 3; }
+.np-settings > .np-side { grid-column: 2; grid-row: 2 / -1; }
 
-.np-snav {
+/* SettingsTabs: 설정 화면 위쪽 탭 */
+.np-stabs {
   display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-  padding: var(--sp-5) var(--sp-3);
+  align-items: stretch;
+  gap: var(--sp-4);
+  padding: 0 var(--sp-6);
   background: var(--surface);
-  border-right: 1px solid var(--line-soft);
-  min-height: 0;
+  border-bottom: 1px solid var(--line-soft);
 }
-.np-snav__back { justify-content: flex-start; margin-bottom: var(--sp-4); }
-.np-snav__item {
+.np-stabs__list { display: flex; gap: var(--sp-1); }
+.np-stabs__item {
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 0.1rem;
   min-height: var(--hit);
   padding: var(--sp-3) var(--sp-4);
-  border: 1px solid transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
   background: transparent;
+  color: var(--ink-2);
   text-align: left;
   cursor: pointer;
 }
-.np-snav__item:hover { border-color: var(--line-soft); }
-.np-snav__item[aria-current="page"] { border-color: var(--accent); background: var(--accent-soft); }
-.np-snav__name { font-size: var(--fs-body); font-weight: 500; }
-.np-snav__desc { font-size: var(--fs-sm); color: var(--ink-2); }
-.np-snav__note { margin-top: auto; padding: var(--sp-4); font-size: var(--fs-sm); color: var(--ink-3); border-top: 1px solid var(--line-soft); }
+.np-stabs__item:hover { color: var(--ink); }
+.np-stabs__item[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.np-stabs__name { font-size: var(--fs-body); font-weight: 500; }
+.np-stabs__desc { font-size: var(--fs-sm); color: var(--ink-3); }
+.np-stabs__note { margin-left: auto; align-self: center; font-size: var(--fs-sm); color: var(--ink-3); }
+.np-stabs__credit { align-self: center; font-family: var(--font-mono); font-size: var(--fs-cap); letter-spacing: 0.12em; text-transform: uppercase; }
+.np-stabs__credit a { color: var(--ink-3); text-decoration: none; }
+.np-stabs__credit a:hover { color: var(--ink); }
+/* 1500px 이하에서는 탭 설명을 숨겨 탭 줄을 낮춘다 (배치 화면 오른쪽 칸이 넘치지 않게) */
+@media (max-width: 1500px) { .np-stabs__desc { display: none; } }
 
 .np-scontent { min-height: 0; overflow: auto; padding: var(--sp-6) var(--sp-6) var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-5); }
 .np-scontent__head { display: flex; flex-direction: column; gap: var(--sp-2); }
@@ -88,14 +99,12 @@
 .np-crow[data-state="warn"] .np-crow__right { color: var(--accent-strong); font-weight: 600; }
 
 @media (max-width: 900px) {
-  .np-settings { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); }
+  .np-settings { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr); }
+  .np-settings > .np-side { grid-column: 1; grid-row: 2; }
+  .np-settings > .np-stabs { grid-row: 3; flex-wrap: wrap; }
+  .np-settings > .np-scontent { grid-row: 4; }
   .np-layoutcheck, .np-phones, .np-checks { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* SET-01 배치 파일 버튼 */
 .np-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-
-/* 무대 그림의 출처 (iso-glow, MIT) */
-.np-snav__credit { margin-top: auto; padding: var(--sp-3); font-family: var(--font-mono); font-size: var(--fs-cap); letter-spacing: 0.12em; text-transform: uppercase; }
-.np-snav__credit a { color: var(--ink-3); text-decoration: none; }
-.np-snav__credit a:hover { color: var(--ink); }

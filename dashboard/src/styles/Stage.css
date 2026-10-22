@@ -105,6 +105,10 @@
 .np-monitor[data-live="false"] .np-stage :is(.np-stage__cap, .np-stage__code, .np-stage__device-status, .np-stage__sub, .np-stage__note, .np-stage__judge-row, .np-stage__judge-mark) { font-size: 18px; }
 .np-stage[data-scene="layout"] .np-stage__visitor-letter,
 .np-monitor[data-live="false"] .np-stage .np-stage__visitor-letter { font-size: 18px; }
+/* 1500px 이하 화면은 사이드 메뉴만큼 무대가 좁아진다. 같은 보조 글자를 키워 1366에서도 11px 이상 */
+@media (max-width: 1500px) {
+  .np-monitor .np-stage :is(.np-stage__cap, .np-stage__code, .np-stage__device-status, .np-stage__sub, .np-stage__note, .np-stage__judge-row, .np-stage__judge-mark, .np-stage__visitor-letter) { font-size: 18px; }
+}
 
 /* SET-01 배치 편집: 기기를 끌거나 화살표 키로 옮긴다 */
 .np-stage__hit { fill: transparent; stroke: none; }

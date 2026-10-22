@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { DataSource } from './data/source';
 import { DataCtx, type Ctx } from './data/context';
 import { initialState, reduceAll } from './data/reduce';
@@ -8,11 +9,12 @@ import { OfflineBanner } from './components/common';
 import { FlowRail } from './components/FlowRail';
 import { PhoneMirror } from './components/PhoneMirror';
 import { Stage } from './components/Stage';
-import { TopBar, type MenuKey, type PanelKey, type SettingsKey } from './components/TopBar';
+import { SideMenu, type SideKey } from './components/SideMenu';
+import { TopBar, type PanelKey, type SettingsKey } from './components/TopBar';
 import { DevicePanel } from './panels/DevicePanel';
 import { ApprovalsPanel, AuditPanel, HistoryPanel, TrustPanel, UsesPanel } from './panels/ListPanels';
 import { RequestPanel } from './panels/RequestPanel';
-import { Check, LayoutCheck, Phones, SettingsNav } from './settings/Settings';
+import { Check, LayoutCheck, Phones, SettingsTabs } from './settings/Settings';
 import { choosePhone, type FollowSettings } from './view/phone';
 import { railView } from './view/rail';
 import { stageView } from './view/stage';
@@ -36,8 +38,6 @@ export interface AppProps {
   initialTheme?: 'dark' | 'light';
 }
 
-const SETTINGS_KEYS: SettingsKey[] = ['layout', 'phones', 'check'];
-
 export function App({ source, initialView = 'monitor', initialPanel, initialTheme }: AppProps) {
   const prefs = useMemo(loadPrefs, []);
   const [theme, setTheme] = useState<'dark' | 'light'>(initialTheme ?? prefs.theme);
@@ -47,7 +47,8 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   const [snapshot, setSnapshot] = useState<MonitorState>();
   const [view, setView] = useState<ViewState>(initialView);
   const [panel, setPanel] = useState<PanelState | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
+  // 설정을 다시 열면 마지막에 본 탭으로 간다
+  const [lastSettings, setLastSettings] = useState<SettingsKey>(initialView === 'monitor' ? 'layout' : initialView);
   // 처음 그린 화면은 강조하지 않는다. 그 뒤로 바뀌는 곳만 도착 강조를 보인다.
   const [motion, setMotion] = useState(false);
   const [streams, setStreams] = useState<Record<string, MediaStream>>({});
@@ -93,7 +94,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     const faults = snapshot.devices.filter((d) => d.state === 'FAULT').map((d) => d.nodeId);
     const newFaults = faults.filter((id) => !s.faults.has(id) && (!first || id === r?.nodeId));
     const auto = !(first && initialPanel);
-    // 사람이 메뉴로 연 목록 패널(점유, 승인, 감사, 이력, 신뢰도)은 자동 패널로 바꾸지 않는다
+    // 사람이 사이드 메뉴로 연 목록 패널(점유, 승인, 감사, 이력, 신뢰도)은 자동 패널로 바꾸지 않는다
     const keepList = (next: PanelState) => (p: PanelState | null) => (p && p.kind !== 'request' && p.kind !== 'device' ? p : next);
     if (auto && r && key !== s.request && (r.verdict === 'ASK' || r.verdict === 'NEED_APPROVAL')) setPanel(keepList({ kind: 'request', request: r, live: true }));
     else if (auto && newFaults.length) setPanel(keepList({ kind: 'device', nodeId: newFaults[0] }));
@@ -106,14 +107,10 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     s.faults = new Set(faults);
   }, [snapshot, initialPanel]);
 
-  // Esc는 메뉴를 먼저 닫고, 메뉴가 닫혀 있으면 패널을 닫는다
-  const menuRef = useRef(menuOpen);
-  menuRef.current = menuOpen;
+  // Esc는 패널을 닫는다
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      if (menuRef.current) setMenuOpen(false);
-      else setPanel(null);
+      if (e.key === 'Escape') setPanel(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -128,12 +125,15 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     deviceName: (id) => layout.devices.find((d) => d.nodeId === id)?.name ?? id
   };
 
-  const pick = (k: MenuKey) => {
-    setMenuOpen(false);
-    if ((SETTINGS_KEYS as string[]).includes(k)) { setView(k as SettingsKey); return; }
+  const isList = (p: PanelState | null): p is { kind: PanelKey } => !!p && p.kind !== 'request' && p.kind !== 'device';
+  const current: SideKey | null = view !== 'monitor' ? 'settings' : isList(panel) ? panel.kind : null;
+  // 사이드 메뉴: 같은 항목을 다시 누르면 목록 패널은 닫히고 설정은 모니터로 돌아간다. 설정은 마지막 탭을 연다.
+  const pick = (k: SideKey) => {
+    if (k === 'settings') { setView(current === 'settings' ? 'monitor' : lastSettings); return; }
     setView('monitor');
-    setPanel({ kind: k as PanelKey });
+    setPanel(current === k ? null : { kind: k });
   };
+  const pickSettings = (k: SettingsKey) => { setLastSettings(k); setView(k); };
   const closePanel = () => setPanel(null);
   const openRequest = (id: string) => source.request(id).then((request) => setPanel({ kind: 'request', request, live: snapshot.request?.id === id }), () => undefined);
   const pickWindow = (personId: string) => {
@@ -150,11 +150,18 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     onReset: () => { clearArrangement(place.placeName); setArrangement(resolveArrangement(place.devices)); }
   };
 
-  const current: MenuKey | null = view !== 'monitor' ? view : panel && panel.kind !== 'request' && panel.kind !== 'device' ? panel.kind : null;
+  // 테마는 화면 전체를 천천히 겹쳐 바꾼다(styles/base.css의 view-transition). 움직임 줄이기 설정이면 바로 바꾼다.
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    const doc = document as Document & { startViewTransition?: (cb: () => void) => unknown };
+    if (doc.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches) doc.startViewTransition(() => flushSync(() => setTheme(next)));
+    else setTheme(next);
+  };
   const topBar = (
-    <TopBar theme={theme} live={snapshot.connected} receivedAt={snapshot.lastReceivedAt} mock={source.mock} placeName={layout.placeName} menuOpen={menuOpen} current={current}
-      onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))} onToggleMenu={() => setMenuOpen((o) => !o)} onPick={pick} />
+    <TopBar theme={theme} live={snapshot.connected} receivedAt={snapshot.lastReceivedAt} mock={source.mock} placeName={layout.placeName}
+      onToggleTheme={toggleTheme} />
   );
+  const side = <SideMenu current={current} onPick={pick} />;
 
   let screen;
   if (view === 'monitor') {
@@ -170,6 +177,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
         {!snapshot.connected ? (
           <OfflineBanner title="서버와 연결이 끊겼어요" detail={`마지막 수신 ${snapshot.lastReceivedAt} · 다시 연결 시도 ${snapshot.reconnectAttempts}회째`} onReconnect={() => source.reconnect()} />
         ) : null}
+        {side}
         {panel ? <PanelView panel={panel} onClose={closePanel} onOpenDevice={(nodeId) => setPanel({ kind: 'device', nodeId })} onOpenRequest={openRequest} /> : null}
       </div>
     );
@@ -177,7 +185,8 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     screen = (
       <div className="np-settings" data-component="SettingsLayout">
         {topBar}
-        <SettingsNav current={view} onPick={setView} onBack={() => setView('monitor')} />
+        <SettingsTabs current={view} onPick={pickSettings} />
+        {side}
         {view === 'layout' ? <LayoutCheck {...arrange} /> : view === 'phones' ? <Phones streams={streams} onPick={pickWindow} follow={follow} onFollow={setFollow} /> : <Check />}
       </div>
     );

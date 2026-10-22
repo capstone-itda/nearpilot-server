@@ -4,7 +4,21 @@ import { STEP_NAMES, VERDICT_LABEL } from '../view/text';
 
 const b = (v: unknown) => (v ? 'true' : 'false');
 
-export function Icon({ name }: { name: 'menu' | 'sun' | 'moon' | 'close' | 'back' }) {
+export type IconName = 'menu' | 'sun' | 'moon' | 'close' | 'back' | 'uses' | 'approvals' | 'audit' | 'history' | 'trust' | 'settings';
+
+/** 사이드 메뉴 아이콘: 선 하나로 그린다 */
+const LINE_ICONS: Partial<Record<IconName, string>> = {
+  uses: 'M5 11h14v9H5zM8 11V8a4 4 0 0 1 8 0v3',
+  approvals: 'M4 12a8 8 0 1 0 16 0a8 8 0 1 0 -16 0M8.5 12l2.5 2.5 4.5-5',
+  audit: 'M6 3h9l3 3v15H6zM9 10h6M9 14h6M9 18h4',
+  history: 'M12 7v5l3 2M4 12a8 8 0 1 0 16 0a8 8 0 1 0 -16 0',
+  trust: 'M5 20v-8M10 20V7M15 20v-5M20 20V4',
+  settings: 'M18.9 9.4L21.8 10L21.8 14L18.9 14.6L18.7 15.1L20.3 17.5L17.5 20.3L15.1 18.7L14.6 18.9L14 21.8L10 21.8L9.4 18.9L8.9 18.7L6.5 20.3L3.7 17.5L5.3 15.1L5.1 14.6L2.2 14L2.2 10L5.1 9.4L5.3 8.9L3.7 6.5L6.5 3.7L8.9 5.3L9.4 5.1L10 2.2L14 2.2L14.6 5.1L15.1 5.3L17.5 3.7L20.3 6.5L18.7 8.9ZM15 12a3 3 0 1 0 -6 0a3 3 0 1 0 6 0'
+};
+
+export function Icon({ name }: { name: IconName }) {
+  const line = LINE_ICONS[name];
+  if (line) return <svg className="np-icon" viewBox="0 0 24 24" aria-hidden="true"><path d={line} /></svg>;
   switch (name) {
     case 'menu': return <svg className="np-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>;
     case 'sun': return <svg className="np-icon" data-icon="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>;

@@ -1,4 +1,4 @@
-// MON-06~10 메뉴로 여는 패널. 모두 조회만 한다 (FR-12A).
+// MON-06~10 사이드 메뉴로 여는 패널. 모두 조회만 한다 (FR-12A).
 import { useState } from 'react';
 import type { AuditStep, HistoryQuery, Verdict } from '../model/types';
 import { DataTable, FilterBar, NoteBox, Section, Td, TdLink, TdMono, VerdictTag, Zone } from '../components/common';

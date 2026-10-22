@@ -63,7 +63,7 @@ html { font-size: clamp(12px, 0.8333vw, 32px); }
   --rail-h: 11rem;
   --phone-w: 24vw;
   --panel-w: 30vw;
-  --nav-w: 18rem;
+  --side-w: max(64px, 4rem);
   --hit: max(44px, 2.75rem);
   --radius: 10px;
   --radius-lg: 18px;

@@ -4,7 +4,7 @@
 .np-panel {
   position: absolute;
   top: var(--topbar-h);
-  right: 0;
+  right: var(--side-w);
   bottom: var(--rail-h);
   width: var(--panel-w);
   z-index: 5;

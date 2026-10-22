@@ -112,7 +112,7 @@ body { margin: 0; }
   height: 100vh;
   min-height: 600px;
   display: grid;
-  grid-template-columns: var(--phone-w) minmax(0, 1fr);
+  grid-template-columns: var(--phone-w) minmax(0, 1fr) var(--side-w);
   grid-template-rows: var(--topbar-h) minmax(0, 1fr) var(--rail-h);
   overflow: hidden;
 }
@@ -120,8 +120,9 @@ body { margin: 0; }
 .np-monitor > .np-phone { grid-column: 1; grid-row: 2; }
 .np-monitor > .np-stage { grid-column: 2; grid-row: 2; }
 .np-monitor > .np-rail { grid-column: 1 / -1; grid-row: 3; }
+.np-monitor > .np-side { grid-column: 3; grid-row: 2; }
 .np-monitor[data-live="false"] { grid-template-rows: var(--topbar-h) auto minmax(0, 1fr) var(--rail-h); }
-.np-monitor[data-live="false"] > .np-phone, .np-monitor[data-live="false"] > .np-stage { grid-row: 3; }
+.np-monitor[data-live="false"] > .np-phone, .np-monitor[data-live="false"] > .np-stage, .np-monitor[data-live="false"] > .np-side { grid-row: 3; }
 .np-monitor[data-live="false"] > .np-rail { grid-row: 4; }
 .np-monitor[data-live="false"] > .np-stage,
 .np-monitor[data-live="false"] > .np-rail,
@@ -152,6 +153,7 @@ body { margin: 0; }
   }
   .np-monitor > .np-phone { display: none; }
   .np-monitor > .np-stage { grid-column: 1; }
+  .np-monitor > .np-side { grid-column: 1; grid-row: auto; }
 }
 
 /* 도착 강조: 바뀐 곳은 점이 선을 따라 오는 동안(0.6초, Stage의 ARRIVE_SEC) 흐리게 있다가 나타나며 한 번 빛난다.
@@ -180,3 +182,6 @@ body { margin: 0; }
 @media (prefers-reduced-motion: reduce) {
   .np-app[data-motion="on"] .np-flash, .np-app[data-motion="on"] svg .np-flash { animation: none; }
 }
+
+/* 테마 전환: 갑자기 번쩍이지 않게 화면 전체를 0.4초 동안 겹쳐 바꾼다 (App의 toggleTheme) */
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 0.4s; animation-timing-function: ease-out; }
