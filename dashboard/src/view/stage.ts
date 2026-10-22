@@ -190,7 +190,7 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
   });
   const geoms = devices.map((d) => ({ d, body: d.body, labelW: Math.max(textWidth(d.name, 20), textWidth(d.status, 17)) + 8 } as { d: StageDeviceView; body: Rect; labelW: number; label?: LabelSpot; rssi?: Spot }));
   // 패널이 열려 있으면 요청과 관계있는 기기가 패널 왼쪽에 보이도록 방을 왼쪽으로 민다 (기기 글자 폭만큼 여유)
-  const focus = r && opt.panelOpen && !opt.layoutCheck ? devices.filter((d) => keep.includes(d.nodeId)) : [];
+  const focus = r && opt.panelOpen && !opt.panelWide && !opt.layoutCheck ? devices.filter((d) => keep.includes(d.nodeId)) : [];
   // 관계있는 기기가 왼쪽 칸 뒤로 들어가지 않을 만큼만 민다
   const want = focus.length ? Math.ceil(Math.max(...focus.map((d) => d.body.x2)) + 110 - PANEL_EDGE) : 0;
   const room = focus.length ? Math.floor(Math.min(...focus.map((d) => d.body.x1)) - STAGE_BOUNDS.x1 - 10) : 0;
@@ -220,7 +220,7 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
       personId: p.id, letter: p.letter!, name: p.pseudonym, x: pos.x, y: pos.y, labelW,
       active: s.connected && (r ? isReq : p.beaconSeen),
       dim: !!r && !opt.layoutCheck && !isReq,
-      on: !!at && p.beaconSeen && personBox(pos).x2 - shift >= STAGE_BOUNDS.x1,
+      on: !!at && p.beaconSeen && personBox(pos).x1 - shift >= STAGE_BOUNDS.x1,
       label
     };
   });
@@ -308,7 +308,7 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     const act = ACTION_NAME[r.action];
     switch (scene) {
       case 'judging':
-        // 서버 랙가 판정 게이지를 보인다. 콜아웃은 두지 않는다.
+        // 서버 랙이 판정 게이지를 보인다. 콜아웃은 두지 않는다.
         view.aria = `${who}의 ${cap} ${act} 요청을 서버가 판정하는 중`;
         break;
       case 'flow':

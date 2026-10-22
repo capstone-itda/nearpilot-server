@@ -56,6 +56,7 @@ describe('stageView', () => {
         expect(d.hidden, d.name).toBe(false);
       }
       expect(stageView(make(), LAYOUT, { panelOpen: false }).shift).toBe(0);
+      expect(stageView(make(), LAYOUT, { panelOpen: true, panelWide: true }).shift, '넓은 패널이면 밀지 않음').toBe(0);
     }
   });
 
@@ -256,7 +257,7 @@ describe('바꾼 배치에서도 무대 글자가 겹치지 않는다', () => {
 });
 
 describe('stageView 이벤트 흐름', () => {
-  it('FR12B 판정 전: 호스트→서버 선과 요청자 신호, 서버 랙는 판정 게이지, 콜아웃 없음', () => {
+  it('FR12B 판정 전: 호스트→서버 선과 요청자 신호, 서버 랙은 판정 게이지, 콜아웃 없음', () => {
     const v = stageView(stateAt(sec('14:28:10.05')), LAYOUT, { panelOpen: false });
     expect(v).toMatchObject({ scene: 'judging', mcp: true, reply: false, server: true, uplink: true, rssiOn: true, cmd: null });
     expect(v.judge).toMatchObject({ mark: '판정 중', tone: 'accent', gauge: true });

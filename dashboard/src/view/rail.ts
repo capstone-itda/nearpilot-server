@@ -1,5 +1,5 @@
 // 모니터 상태 → 흐름 레일 다섯 단계. 쉬운 말이 크게, 코드는 보조 글자로.
-// 서버의 확인 네 칸은 무대의 서버 랙가 보이고(serverChecks), 레일은 한 줄로 줄인다.
+// 서버의 확인 네 칸은 무대의 서버 랙이 보이고(serverChecks), 레일은 한 줄로 줄인다.
 import { isDecided, type FloorLayout, type RequestProgress, type MonitorState } from '../model/types';
 import { ACTION_DONE, ACTION_NAME, CIRCLED, STEP_SHORT, approvalText, josa, reasonText, requestTitle, toolCall } from './text';
 
