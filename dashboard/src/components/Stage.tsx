@@ -240,7 +240,7 @@ const TRUNK: Spot[] = [{ x: 112, y: 446 }, { x: 146, y: 446 }, { x: 146, y: 506 
 /** 방이 왼쪽 칸 뒤로 잘리는 선 */
 const CLIP_X = 322;
 /** 잘린 가장자리를 흐리게 지우는 폭 */
-const FADE_W = 120;
+const FADE_W = 240;
 const BACK = ROOM.y + 8, FRONT_EDGE = ROOM.y + ROOM.h - 8, LEFT = ROOM.x + 8;
 
 /** 방 안의 배선: 왼쪽 벽을 따라 뒤쪽 벽 또는 앞쪽 가장자리로 간 뒤 기기 쪽으로 꺾는다 */
