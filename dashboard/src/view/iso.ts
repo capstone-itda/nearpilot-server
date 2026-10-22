@@ -4,12 +4,13 @@
 import type { Spot } from '../model/types';
 import { ROOM } from './arrange';
 
-const C = Math.cos(Math.PI / 6);
-const S = 0.5;
+// 바닥이 쏟아질 듯 기울어 보이지 않게 30°보다 눕힌 20° 투영 (2026-10-23 사용자 결정)
+const C = Math.cos(Math.PI / 9);
+const S = Math.sin(Math.PI / 9);
 /** 평면 단위 → 무대 단위 */
 export const ISO_K = 0.66;
 /** 방의 뒤쪽 구석(평면 ROOM.x, ROOM.y)이 무대에 놓이는 자리 */
-export const ISO_ORIGIN: Spot = { x: 745, y: 140 };
+export const ISO_ORIGIN: Spot = { x: 745, y: 260 };
 
 export type P3 = [number, number, number];
 

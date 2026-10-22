@@ -239,6 +239,8 @@ const SERVER_TO_OWNER: Spot[] = [{ x: 82, y: 492 }, { x: 82, y: 648 }];
 const TRUNK: Spot[] = [{ x: 112, y: 446 }, { x: 146, y: 446 }, { x: 146, y: 506 }, { x: 300, y: 506 }];
 /** 방이 왼쪽 칸 뒤로 잘리는 선 */
 const CLIP_X = 322;
+/** 잘린 가장자리를 흐리게 지우는 폭 */
+const FADE_W = 120;
 const BACK = ROOM.y + 8, FRONT_EDGE = ROOM.y + ROOM.h - 8, LEFT = ROOM.x + 8;
 
 /** 방 안의 배선: 왼쪽 벽을 따라 뒤쪽 벽 또는 앞쪽 가장자리로 간 뒤 기기 쪽으로 꺾는다 */
@@ -327,10 +329,11 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
   // 비콘 신호는 방 안쪽 끝의 기기에서 뒤쪽 벽과 왼쪽 벽을 따라 서버로 올라간다
   const farX = Math.max(...devices.map((d) => d.x), ROOM.x + ROOM.w / 2);
   const uplink = fromServer([{ x: LEFT, y: FRONT_EDGE }, { x: LEFT, y: BACK }, { x: farX, y: BACK }], shift).reverse();
-  // 패널이 열려 방을 밀었으면 왼쪽 칸 뒤로 들어간 부분을 잘라 낸다
+  // 패널이 열려 방을 밀었으면 왼쪽 칸 뒤로 들어간 부분을 잘라 낸다. 바닥은 잘린 쪽을 흐리게 지워 잘렸음을 보이고,
+  // 글자가 있는 층은 흐리지 않게 경계에서 자르기만 한다.
   // 구조는 늘 같게 두어(컴포넌트가 아닌 함수) 밀 때 기기와 사람이 다시 그려지지 않는다
-  const room = (children: ReactNode) => (
-    <g clipPath={shift ? 'url(#np-room-clip)' : undefined}><g transform={shift ? `translate(${-shift} 0)` : undefined}>{children}</g></g>
+  const room = (children: ReactNode, fade = false) => (
+    <g mask={shift && fade ? 'url(#np-room-cut)' : undefined} clipPath={shift && !fade ? 'url(#np-room-clip)' : undefined}><g transform={shift ? `translate(${-shift} 0)` : undefined}>{children}</g></g>
   );
   const c = v.callout;
   // 앞에 있는 것(평면 x + y가 큰 것)을 나중에 그린다
@@ -344,7 +347,14 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
       <svg ref={svg} className="np-stage__svg" data-editing={b(!!drag)} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => setDrag(null)} viewBox={v.scene === 'layout' ? '300 0 1100 800' : '0 0 1400 800'} preserveAspectRatio="xMidYMid meet" role="img" aria-label={v.aria}>
         <defs>
           <filter id="np-glow" filterUnits="userSpaceOnUse" x="-2000" y="-2000" width="6000" height="6000"><feGaussianBlur stdDeviation="4" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
-          <clipPath id="np-room-clip"><rect x="318" y="0" width="1100" height="800" /></clipPath>
+          {/* 방을 밀면 왼쪽 칸 쪽 가장자리를 흐리게 지워, 방이 그 뒤로 이어진다는 것을 보인다 */}
+          <linearGradient id="np-room-fade" gradientUnits="userSpaceOnUse" x1={CLIP_X} y1="0" x2={CLIP_X + FADE_W} y2="0">
+            <stop offset="0" stopColor="#fff" stopOpacity="0" /><stop offset="1" stopColor="#fff" stopOpacity="1" />
+          </linearGradient>
+          <clipPath id="np-room-clip"><rect x={CLIP_X} y="0" width="1100" height="800" /></clipPath>
+          <mask id="np-room-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="1400" height="800">
+            <rect x={CLIP_X} y="0" width="1100" height="800" fill="url(#np-room-fade)" />
+          </mask>
           <filter id="np-soft" filterUnits="userSpaceOnUse" x="-2000" y="-2000" width="6000" height="6000"><feGaussianBlur stdDeviation="2.2" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
         </defs>
 
@@ -366,7 +376,7 @@ export function Stage({ v, edit }: { v: StageView; edit?: StageEdit }) {
               </g>
             );
           })}
-        </>)}
+        </>, true)}
 
         <g className="np-stage__nodes" data-on={b(v.scene !== 'layout')}>
           <path className="np-stage__wire" d={pathOf(HOST_TO_SERVER)} />

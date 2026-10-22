@@ -54,11 +54,15 @@ export interface DeviceGeom { body: Rect; labelW: number; label?: LabelSpot; rss
 /** 이름표 자리 후보: 아래, 오른쪽, 왼쪽, 위 */
 function labelCandidates(b: Rect, w: number): LabelSpot[] {
   const cx = (b.x1 + b.x2) / 2, cy = (b.y1 + b.y2) / 2;
+  // 네 방향이 모두 막히면 아래에서 한쪽 끝을 본체에 맞추거나 반 줄 더 내린 자리
+  const below = [cx, b.x1 + w / 2, b.x2 - w / 2];
   return [
     { x: cx, y: b.y2 + 6, w },
     { x: b.x2 + 10 + w / 2, y: cy - DEVICE_LABEL_H / 2, w },
     { x: b.x1 - 10 - w / 2, y: cy - DEVICE_LABEL_H / 2, w },
-    { x: cx, y: b.y1 - 6 - DEVICE_LABEL_H, w }
+    { x: cx, y: b.y1 - 6 - DEVICE_LABEL_H, w },
+    ...below.slice(1).map((x) => ({ x, y: b.y2 + 6, w })),
+    ...below.map((x) => ({ x, y: b.y2 + 6 + DEVICE_LABEL_H / 2, w }))
   ];
 }
 
@@ -86,7 +90,7 @@ export function placeDeviceLabels(devices: DeviceGeom[], bounds = STAGE_BOUNDS):
 }
 
 /** 신호 세기 글자: 본체 위, 위쪽 옆, 옆, 아래 순서로 이름표와 다른 본체를 피한다 */
-export function placeRssi(devices: DeviceGeom[], bounds = STAGE_BOUNDS): void {
+export function placeRssi(devices: DeviceGeom[], bounds = STAGE_BOUNDS, avoid: Rect[] = []): void {
   const placed: Rect[] = [];
   for (const d of [...devices].sort((a, b) => a.body.y1 - b.body.y1)) {
     const labels = devices.flatMap((o) => (o.label ? [deviceLabelBox(o.label)] : []));
@@ -100,7 +104,7 @@ export function placeRssi(devices: DeviceGeom[], bounds = STAGE_BOUNDS): void {
     ];
     // 가까운 자리가 모두 막히면 한 줄씩 더 위로 올린 자리
     const cands = [...near, ...[1, 2].flatMap((k) => near.slice(0, 3).map((c) => ({ x: c.x, y: c.y - k * (RSSI_H + 4) })))];
-    d.rssi = pick(cands, rssiBox, [...labels, ...placed], bodies, bounds);
+    d.rssi = pick(cands, rssiBox, [...labels, ...placed, ...avoid], bodies, bounds);
     placed.push(rssiBox(d.rssi));
   }
 }

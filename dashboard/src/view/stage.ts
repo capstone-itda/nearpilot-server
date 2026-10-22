@@ -224,6 +224,9 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
       label
     };
   });
+  // 사람을 세운 뒤 신호 세기 글자를 다시 놓아 사람 점과 이름표를 피한다
+  placeRssi(shown, bounds, vis.filter((p) => p.on).flatMap((p) => [personBox(p), labelBox(p, p.label, p.labelW)]));
+  for (const g of shown) g.d.rssiAt = g.rssi!;
 
   // 신호와 흐름 선
   const idleShow = !r && s.connected && !opt.panelOpen && !opt.layoutCheck;

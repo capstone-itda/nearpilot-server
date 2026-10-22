@@ -248,6 +248,7 @@ describe('바꾼 배치에서도 무대 글자가 겹치지 않는다', () => {
             expect(rs.some((r) => texts.some((t) => hits(r, t))), '신호 글자와 기기 이름표').toBe(false);
             expect(rs.every(within), '신호 글자가 무대 안').toBe(true);
             expect(rs.some((r) => people.some((p) => hits(r, labelBox(p, p.label, p.labelW)))), '신호 글자와 사람 이름표').toBe(false);
+            expect(rs.some((r) => people.some((p) => hits(r, personBox(p)))), '신호 글자와 사람 점').toBe(false);
           }
           expect(stageView(make(), layout, { panelOpen: true, panelWide: true }).callout.on, '넓은 패널이면 콜아웃 숨김').toBe(false);
         });
