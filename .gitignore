@@ -31,3 +31,8 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local node lab data and firmware builds
+/server/var/node-lab*/
+/firmware/node_lab/.pio/
+/firmware/node_lab/include/config.local.h

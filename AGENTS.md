@@ -84,6 +84,9 @@ pytest tests/<계층>      # 계층 하나
 
 ## Gotchas
 <!-- 에이전트가 한 실수와 올바른 방법을 한 줄씩 쓴다. -->
+- Mosquitto 설정의 password_file 경로를 따옴표로 감싸 파일 열기에 실패했다. ASCII 임시 경로를 따옴표 없이 쓴다.
+- 테스트의 NodeAnnounce에 문자열 기능·점유 방식을 넣어 저장에 실패했다. shared 모델에는 Capability·Occupancy 열거형을 넘긴다.
+- Arduino MQTT의 onMessage에 람다를 넘겨 오버로드 선택에 실패했다. 캡처 없는 람다는 함수 포인터로 명시 변환한다.
 - Windows Mosquitto 테스트에 한글 절대 ACL 경로를 넘겨 열기에 실패했다. 같은 ACL을 임시 ASCII 경로에 복사해서 실제 브로커를 검증한다.
 - MQTT 시각 보존 테스트에서 소수부 자리 수가 다른 같은 시각을 문자열로 비교했다. 보존 여부는 파싱한 시각으로 비교한다.
 - PR 작업은 대상 브랜치의 최신 문서를 확인한 뒤 범위를 판단한다.
