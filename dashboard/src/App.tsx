@@ -124,10 +124,14 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     s.faults = new Set(faults);
   }, [snapshot, initialPanel]);
 
-  // Esc는 패널을 닫는다
+  // Esc는 설정 화면이면 설정을 닫고, 모니터면 패널을 닫는다
+  const viewRef = useRef(view);
+  viewRef.current = view;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPanel(null);
+      if (e.key !== 'Escape') return;
+      if (viewRef.current !== 'monitor') setView('monitor');
+      else setPanel(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -143,11 +147,10 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   };
 
   const isList = (p: PanelState | null): p is { kind: PanelKey } => !!p && p.kind !== 'request' && p.kind !== 'device';
-  const current: SideKey | null = view !== 'monitor' ? 'settings' : isList(panel) ? panel.kind : null;
-  // 사이드 메뉴: 같은 항목을 다시 누르면 목록 패널은 닫히고 설정은 모니터로 돌아간다. 설정은 마지막 탭을 연다.
+  const current: SideKey | null = isList(panel) ? panel.kind : null;
+  // 사이드 메뉴(모니터에만 있다): 같은 항목을 다시 누르면 목록 패널이 닫힌다. 설정은 마지막에 본 탭으로 연다.
   const pick = (k: SideKey) => {
-    if (k === 'settings') { setView(current === 'settings' ? 'monitor' : lastSettings); return; }
-    setView('monitor');
+    if (k === 'settings') { setView(lastSettings); return; }
     setPanel(current === k ? null : { kind: k });
   };
   const pickSettings = (k: SettingsKey) => { setLastSettings(k); setView(k); };
@@ -221,8 +224,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     screen = (
       <div className="np-settings" data-component="SettingsLayout">
         {topBar}
-        <SettingsTabs current={view} onPick={pickSettings} />
-        {side}
+        <SettingsTabs current={view} onPick={pickSettings} onClose={() => setView('monitor')} />
         {view === 'layout' ? <LayoutCheck {...arrange} /> : view === 'phones' ? <Phones streams={streams} onPick={pickWindow} follow={follow} onFollow={setFollow} /> : <Check />}
       </div>
     );

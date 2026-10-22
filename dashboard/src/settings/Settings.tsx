@@ -1,6 +1,6 @@
 // SET-01~03 설정. 이 PC의 표시만 바꾸고 서버 데이터는 바꾸지 않는다 (D7).
 import { useRef, useState, type ReactNode } from 'react';
-import { DataTable, KeyValue, Switch, Td } from '../components/common';
+import { DataTable, Icon, KeyValue, Switch, Td } from '../components/common';
 import { Stage } from '../components/Stage';
 import { Loading } from '../components/Panel';
 import { MirrorVideo } from '../components/PhoneMirror';
@@ -18,7 +18,7 @@ const NAV: [SettingsKey, string, string][] = [
 ];
 
 /** 설정 화면 위쪽 탭 (2026-10-23 사용자 결정: 사이드 메뉴의 설정을 누르면 탭으로 고른다) */
-export function SettingsTabs({ current, onPick }: { current: SettingsKey; onPick: (k: SettingsKey) => void }) {
+export function SettingsTabs({ current, onPick, onClose }: { current: SettingsKey; onPick: (k: SettingsKey) => void; onClose: () => void }) {
   return (
     <nav className="np-stabs" data-component="SettingsTabs" aria-label="설정 항목">
       <div className="np-stabs__list" role="tablist">
@@ -30,6 +30,7 @@ export function SettingsTabs({ current, onPick }: { current: SettingsKey; onPick
       </div>
       <p className="np-stabs__note">이 PC의 표시만 바꿔요. 서버에는 쓰지 않아요.</p>
       <p className="np-stabs__credit"><a href="https://iso-glow.vercel.app" target="_blank" rel="noreferrer">Made with ISO-GLOW ↗</a></p>
+      <button className="np-btn np-stabs__close" type="button" aria-label="설정 닫기" title="설정 닫기" onClick={onClose}><Icon name="close" /></button>
     </nav>
   );
 }

@@ -112,12 +112,16 @@ test('FR12A D7 설정 화면을 오가고 자동 전환 스위치는 이 PC에�
   await page.getByRole('tab', { name: /^점검/ }).click();
   await expect(page.locator('[data-component="ReadyBanner"]')).toContainText('확인할 것 3건');
   await expect(page.locator('.np-crow[data-state="bad"]')).toContainText('사물함 2');
-  // 설정을 다시 누르면 모니터로 돌아간다
-  await page.getByRole('button', { name: '설정' }).click();
+  // 설정 화면에는 사이드 메뉴가 없고, 설정 닫기로 모니터에 돌아간다
+  await expect(page.locator('[data-component="SideMenu"]')).toHaveCount(0);
+  await page.getByRole('button', { name: '설정 닫기' }).click();
   await expect(page.locator('[data-component="MonitorLayout"]')).toHaveCount(1);
   // 설정을 다시 열면 마지막에 본 탭으로 간다
   await page.getByRole('button', { name: '설정' }).click();
   await expect(page.getByRole('tab', { name: /^점검/ })).toHaveAttribute('aria-selected', 'true');
+  // Esc로도 닫는다
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-component="MonitorLayout"]')).toHaveCount(1);
 });
 
 test('FR12B 무대를 휠로 확대하고 끌어 옮기고, 맞춤으로 되돌린다. 다시 열어도 유지한다', async ({ page }) => {

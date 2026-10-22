@@ -6,14 +6,13 @@
   height: 100vh;
   min-height: 600px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--side-w);
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: var(--topbar-h) auto minmax(0, 1fr);
   overflow: hidden;
 }
 .np-settings > .np-topbar { grid-column: 1 / -1; }
 .np-settings > .np-stabs { grid-column: 1; grid-row: 2; }
 .np-settings > .np-scontent { grid-column: 1; grid-row: 3; }
-.np-settings > .np-side { grid-column: 2; grid-row: 2 / -1; }
 
 /* SettingsTabs: 설정 화면 위쪽 탭 */
 .np-stabs {
@@ -43,10 +42,11 @@
 .np-stabs__item[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
 .np-stabs__name { font-size: var(--fs-body); font-weight: 500; }
 .np-stabs__desc { font-size: var(--fs-sm); color: var(--ink-3); }
-.np-stabs__note { margin-left: auto; align-self: center; font-size: var(--fs-sm); color: var(--ink-3); }
+.np-stabs__note { align-self: center; font-size: var(--fs-sm); color: var(--ink-3); }
 .np-stabs__credit { align-self: center; font-family: var(--font-mono); font-size: var(--fs-cap); letter-spacing: 0.12em; text-transform: uppercase; }
 .np-stabs__credit a { color: var(--ink-3); text-decoration: none; }
 .np-stabs__credit a:hover { color: var(--ink); }
+.np-stabs__close { align-self: center; margin-left: auto; padding: 0; }
 /* 1500px 이하에서는 탭 설명을 숨겨 탭 줄을 낮춘다 (배치 화면 오른쪽 칸이 넘치지 않게) */
 @media (max-width: 1500px) { .np-stabs__desc { display: none; } }
 
@@ -99,10 +99,8 @@
 .np-crow[data-state="warn"] .np-crow__right { color: var(--accent-strong); font-weight: 600; }
 
 @media (max-width: 900px) {
-  .np-settings { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr); }
-  .np-settings > .np-side { grid-column: 1; grid-row: 2; }
-  .np-settings > .np-stabs { grid-row: 3; flex-wrap: wrap; }
-  .np-settings > .np-scontent { grid-row: 4; }
+  .np-settings { height: auto; grid-template-rows: auto auto minmax(0, 1fr); }
+  .np-settings > .np-stabs { flex-wrap: wrap; }
   .np-layoutcheck, .np-phones, .np-checks { grid-template-columns: minmax(0, 1fr); }
 }
 

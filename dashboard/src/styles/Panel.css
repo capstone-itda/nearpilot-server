@@ -202,6 +202,17 @@
 .np-split::after { content: ''; position: absolute; background: var(--accent); opacity: 0; transition: opacity 0.15s; }
 .np-split:hover::after, .np-split:focus-visible::after, .np-split:active::after { opacity: 0.9; }
 .np-split:focus-visible { outline: none; }
+/* 잡을 수 있다는 표시: 경계 가운데에 점 세 개 (VS Code의 창 경계처럼) */
+.np-split::before { content: ''; position: absolute; z-index: 1; border-radius: 2px; background-color: var(--surface); }
+.np-split[data-edge="phone"]::before, .np-split[data-edge="panel"]::before {
+  top: 50%; left: 3px; width: 6px; height: 22px; margin-top: -11px;
+  background-image: radial-gradient(circle, var(--ink-3) 1.4px, transparent 1.8px); background-size: 6px 7px; background-position: center 1px; background-repeat: repeat-y;
+}
+.np-split[data-edge="rail"]::before {
+  left: 50%; top: 3px; height: 6px; width: 22px; margin-left: -11px;
+  background-image: radial-gradient(circle, var(--ink-3) 1.4px, transparent 1.8px); background-size: 7px 6px; background-position: 1px center; background-repeat: repeat-x;
+}
+.np-split:hover::before, .np-split:focus-visible::before, .np-split:active::before { background-image: radial-gradient(circle, var(--accent-strong) 1.4px, transparent 1.8px); }
 .np-split[data-edge="phone"], .np-split[data-edge="panel"] { top: var(--topbar-h); bottom: var(--rail-h); width: 12px; cursor: col-resize; }
 .np-split[data-edge="phone"]::after, .np-split[data-edge="panel"]::after { top: 0; bottom: 0; left: 5px; width: 2px; }
 .np-split[data-edge="phone"] { left: calc(var(--phone-w) - 6px); }

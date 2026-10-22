@@ -12,7 +12,7 @@ const ITEMS: [SideKey, string, string][] = [
   ['trust', '신뢰도', '신뢰도 지표']
 ];
 
-/** 화면 오른쪽 끝의 세로 메뉴. 같은 항목을 다시 누르면 목록 패널은 닫히고, 설정은 모니터로 돌아간다. */
+/** 모니터 오른쪽 끝의 세로 메뉴. 같은 항목을 다시 누르면 목록 패널이 닫힌다. 설정은 모니터를 설정 화면으로 바꾼다. */
 export function SideMenu({ current, onPick }: { current: SideKey | null; onPick: (k: SideKey) => void }) {
   const item = ([k, short, full]: [SideKey, string, string]) => (
     <button key={k} className="np-side__item" type="button" aria-label={full} title={full} aria-current={current === k ? 'page' : 'false'} onClick={() => onPick(k)}>
