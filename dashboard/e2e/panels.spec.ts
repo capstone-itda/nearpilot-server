@@ -1,6 +1,7 @@
 // FR-12A · D1 · D2 · D7: 패널은 무대 위에 겹쳐 열리고 ×로 닫히며, 화면 동작은 서버에 쓰지 않는다
 import { expect, test, type Page, type Request } from '@playwright/test';
 import { ready } from './inspect';
+import { iso } from '../src/view/iso';
 
 const box = (page: Page, sel: string) => page.locator(sel).evaluate((e) => { const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; });
 const writes: string[] = [];
@@ -137,24 +138,24 @@ test('FR12B 재생 모드는 장면을 차례로 바꾼다', async ({ page }) =>
 
 // D4: 무대 배치는 설정에서 끌어다 놓아 정하고, 이 PC에만 저장한다
 const device = (page: Page, name: string) => page.locator(`[data-component="StageDevice"][aria-label^="${name} 옮기기"]`);
-const spotOf = async (page: Page, name: string) => device(page, name).getAttribute('transform');
-/** 무대 SVG 좌표를 화면 좌표로 */
+const spotOf = async (page: Page, name: string) => device(page, name).getAttribute('data-spot');
+/** 평면 배치 좌표의 바닥 자리를 화면 좌표로 (무대는 아이소메트릭으로 투영해 그린다) */
 const toScreen = (page: Page, x: number, y: number) => page.locator('.np-stage__svg').evaluate((svg: SVGSVGElement, p) => {
   const m = svg.getScreenCTM()!;
   const q = new DOMPoint(p.x, p.y).matrixTransform(m);
   return { x: q.x, y: q.y };
-}, { x, y });
+}, iso({ x, y }));
 
 test('FR12A D4 배치 화면에서 기기를 끌어 옮기면 이 PC에 저장되고 모니터 무대도 따라간다', async ({ page }) => {
   await ready(page, 'scene=later&view=layout');
-  expect(await spotOf(page, '사물함 1')).toBe('translate(456 120)');
+  expect(await spotOf(page, '사물함 1')).toBe('456 120');
   const from = await toScreen(page, 456, 120);
   const to = await toScreen(page, 1032, 120);
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
   await page.mouse.move(to.x, to.y, { steps: 8 });
   await page.mouse.up();
-  expect(await spotOf(page, '사물함 1')).toBe('translate(1032 120)');
+  expect(await spotOf(page, '사물함 1')).toBe('1032 120');
 
   // 겹치는 자리에는 놓지 않는다
   const busy = await toScreen(page, 792, 120);
@@ -163,22 +164,22 @@ test('FR12A D4 배치 화면에서 기기를 끌어 옮기면 이 PC에 저장�
   await page.mouse.down();
   await page.mouse.move(busy.x, busy.y, { steps: 8 });
   await page.mouse.up();
-  expect(await spotOf(page, '사물함 1')).toBe('translate(1032 120)');
+  expect(await spotOf(page, '사물함 1')).toBe('1032 120');
 
   // 화살표 키로 한 칸씩
   await device(page, '사물함 2').focus();
   await page.keyboard.press('ArrowDown');
-  expect(await spotOf(page, '사물함 2')).toBe('translate(624 144)');
+  expect(await spotOf(page, '사물함 2')).toBe('624 144');
   // 이웃 기기에 막히면 그 너머의 첫 빈자리로 건너뛴다 (사물함 3, 사물함 1 너머)
   await page.keyboard.press('ArrowRight');
-  expect(await spotOf(page, '사물함 2')).toBe('translate(1200 144)');
+  expect(await spotOf(page, '사물함 2')).toBe('1200 144');
 
   await ready(page, 'scene=later');
-  await expect(page.locator('[data-component="StageDevice"]').filter({ hasText: '사물함 1' })).toHaveAttribute('transform', 'translate(1032 120)');
+  await expect(page.locator('[data-component="StageDevice"]').filter({ hasText: '사물함 1' })).toHaveAttribute('data-spot', '1032 120');
 
   await ready(page, 'scene=later&view=layout');
   await page.getByRole('button', { name: '기본 배치로' }).click();
-  expect(await spotOf(page, '사물함 1')).toBe('translate(456 120)');
+  expect(await spotOf(page, '사물함 1')).toBe('456 120');
   expect(writes).toEqual([]);
 });
 
@@ -190,7 +191,7 @@ test('FR12A D4 배치를 파일로 내보내고 다시 불러온다', async ({ p
   file.devices['locker-1'] = { x: 1176, y: 120 };
   await page.locator('input[type="file"]').setInputFiles({ name: 'arr.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(file)) });
   await expect(page.getByRole('status').filter({ hasText: '자리를 불러왔어요' })).toBeVisible();
-  expect(await spotOf(page, '사물함 1')).toBe('translate(1176 120)');
+  expect(await spotOf(page, '사물함 1')).toBe('1176 120');
   await page.locator('input[type="file"]').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{') });
   await expect(page.getByRole('status').filter({ hasText: 'JSON 파일이 아니에요' })).toBeVisible();
   // 한 대라도 놓을 수 없는 자리면 아무것도 바꾸지 않는다
@@ -198,7 +199,7 @@ test('FR12A D4 배치를 파일로 내보내고 다시 불러온다', async ({ p
   file.devices['locker-2'] = { x: 456, y: 120 };
   await page.locator('input[type="file"]').setInputFiles({ name: 'clash.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(file)) });
   await expect(page.getByRole('status').filter({ hasText: '배치는 그대로예요' })).toBeVisible();
-  expect(await spotOf(page, '사물함 1')).toBe('translate(1176 120)');
+  expect(await spotOf(page, '사물함 1')).toBe('1176 120');
 });
 
 test('FR12A 점검은 장면의 비콘 수신과 연결 끊김을 따르고, 빈 감사 로그는 비었다고 말한다', async ({ page }) => {

@@ -27,6 +27,7 @@ export function SettingsNav({ current, onPick, onBack }: { current: SettingsKey;
         </button>
       ))}
       <p className="np-snav__note">이 PC의 표시만 바꿔요. 서버에는 쓰지 않아요.</p>
+      <p className="np-snav__credit"><a href="https://iso-glow.vercel.app" target="_blank" rel="noreferrer">Made with ISO-GLOW ↗</a></p>
     </nav>
   );
 }

@@ -94,3 +94,14 @@
 .np-step[data-status="current"][data-tone="deny"] .np-step__num { background: var(--deny); border-color: var(--deny); color: var(--on-accent); }
 .np-step[data-status="current"][data-tone="deny"] .np-step__mark { color: var(--deny); }
 .np-rail[data-mode="guide"] .np-step__detail { color: var(--ink-2); }
+
+/* 지금 단계는 판정 색으로 은은하게 빛난다 (iso-glow). 라이트 테마는 빛 번짐 없이 테두리만 */
+.np-step[data-tone="accent"] { --step-tone: var(--accent); }
+.np-step[data-tone="ok"] { --step-tone: var(--ok); }
+.np-step[data-tone="ask"] { --step-tone: var(--ask); }
+.np-step[data-tone="appr"] { --step-tone: var(--appr); }
+.np-step[data-tone="busy"] { --step-tone: var(--busy); }
+.np-step[data-tone="deny"] { --step-tone: var(--deny); }
+.np-step[data-status="current"] { box-shadow: 0 0 1.5rem -0.5rem var(--step-tone, var(--accent)); }
+.np-step[data-status="current"] .np-step__num { box-shadow: 0 0 0.6rem var(--step-tone, var(--accent)); }
+.np-app[data-theme="light"] .np-step[data-status="current"], .np-app[data-theme="light"] .np-step[data-status="current"] .np-step__num { box-shadow: none; }

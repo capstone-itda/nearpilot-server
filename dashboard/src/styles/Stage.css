@@ -1,5 +1,6 @@
-/* Stage: 근접 모델 파일의 평면도 위에 호스트 · 서버 · 기기 · 방문자를 그린다.
-   레이어는 data-on, 흐림은 data-dim, 강조 색은 data-tone 으로 바꾼다. */
+/* Stage: 표시용 배치를 iso-glow 헤어라인 아이소메트릭으로 그린다.
+   어두운 판 위의 가는 선. 살아 있는 것(켜진 기기, 지나가는 신호, 판정)만 강조색이나 판정 색으로 빛난다.
+   레이어는 data-on, 흐림은 data-dim, 색은 data-tone(→ --tone)으로 바꾼다. 라이트 테마는 빛 번짐 없이 평평하게 칠한다. */
 
 .np-stage {
   position: relative;
@@ -9,92 +10,85 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  --glow: url(#np-glow);
+  --soft: url(#np-soft);
 }
+.np-app[data-theme="light"] .np-stage { --glow: none; --soft: none; }
 .np-stage__svg { display: block; width: 100%; height: 100%; }
 
 .np-stage [data-on="false"] { display: none; }
-/* 흐림: 도형만 옅게, 글자는 읽히는 회색으로 */
-.np-stage__device[data-dim="true"] :is(rect, path), .np-stage__node[data-dim="true"] rect, .np-stage__visitor[data-dim="true"] :is(.np-stage__ring, .np-stage__visitor-dot) { opacity: var(--dim-opacity); }
-.np-stage .np-stage__device[data-dim="true"] text, .np-stage .np-stage__node[data-dim="true"] text, .np-stage .np-stage__visitor[data-dim="true"] .np-stage__label { fill: var(--ink-3); }
 
-.np-stage__grid-minor { fill: none; stroke: var(--grid); stroke-width: 1; }
-.np-stage__grid-major { fill: none; stroke: var(--grid-major); stroke-width: 1; }
-.np-stage__wall { fill: var(--room-fill); stroke: var(--accent-strong); stroke-width: 2.5; }
-.np-stage__front { fill: var(--device-fill); stroke: var(--line); stroke-width: 1; stroke-dasharray: 4 4; }
-.np-stage__link { fill: none; stroke: var(--line); stroke-width: 1.4; }
-.np-stage__link[data-dashed="true"] { stroke-dasharray: 4 4; }
-.np-stage__grid-fill { fill: url(#np-grid-major); }
-.np-stage__grid-minor-fill { fill: url(#np-grid-minor); }
-.np-stage__device[data-tone="active"] .np-stage__device-body { stroke: var(--accent-strong); stroke-width: 2.5; fill: var(--accent-soft); }
-.np-stage__device[data-tone="active"] .np-stage__device-status { fill: var(--ink); }
-.np-stage__bus { fill: none; stroke: var(--line); stroke-width: 1.4; stroke-dasharray: 6 4; }
+/* 색: data-tone이 붙은 묶음 안에서 --tone(선·빛)과 --tone-ink(글자)로 쓴다 */
+.np-stage [data-tone="accent"], .np-stage [data-tone="active"] { --tone: var(--accent); --tone-ink: var(--accent-strong); }
+.np-stage [data-tone="ok"] { --tone: var(--ok); --tone-ink: var(--ok); }
+.np-stage [data-tone="ask"] { --tone: var(--ask); --tone-ink: var(--ask); }
+.np-stage [data-tone="appr"] { --tone: var(--appr); --tone-ink: var(--appr); }
+.np-stage [data-tone="busy"] { --tone: var(--busy); --tone-ink: var(--busy); }
+.np-stage [data-tone="deny"] { --tone: var(--deny); --tone-ink: var(--deny); }
+
+/* 아이소메트릭 면과 잔선 (iso-glow의 face, detail, glass) */
+.np-iso__face { fill: var(--body); stroke: var(--line); stroke-width: 1; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.np-iso__top { fill: var(--deck); }
+.np-iso__floor { fill: var(--floor); }
+.np-iso__wall { fill: var(--surface); }
+.np-iso__detail { fill: none; stroke: var(--line-soft); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.np-iso__detail-fill { fill: var(--line); }
+.np-iso__glass { fill: var(--glass); stroke: var(--line-soft); stroke-width: 1; vector-effect: non-scaling-stroke; transition: fill 0.3s; }
+
+/* 흐림: 지금 요청과 관계없는 기기·사람. 도형만 옅게, 글자는 읽히는 회색으로 */
+.np-stage__device[data-dim="true"] .np-stage__device-body, .np-stage__visitor[data-dim="true"] :is(.np-stage__ring, .np-stage__visitor-dot, .np-stage__visitor-stem) { opacity: var(--dim-opacity); }
+.np-stage .np-stage__device[data-dim="true"] text, .np-stage .np-stage__visitor[data-dim="true"] .np-stage__label { fill: var(--ink-3); }
 
 .np-stage__cap { font-family: var(--font-mono); font-size: 17px; letter-spacing: 0.1em; fill: var(--ink-3); }
 .np-stage__label { font-family: var(--font-sans); font-size: 20px; font-weight: 500; fill: var(--ink); }
 .np-stage__sub { font-family: var(--font-sans); font-size: 16px; fill: var(--ink-2); }
-.np-stage__code { font-family: var(--font-mono); font-size: 17px; letter-spacing: 0.02em; fill: var(--ink-3); }
+.np-stage__code { font-family: var(--font-mono); font-size: 17px; letter-spacing: 0.04em; fill: var(--ink-3); }
+.np-stage__note { font-family: var(--font-mono); font-size: 16px; letter-spacing: 0.06em; fill: var(--ink-3); }
 
-/* 노드: 호스트 · 서버 · 소유자 폰 */
-.np-stage__node-box { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
-.np-stage__node[data-active="true"] .np-stage__node-box { stroke: var(--accent); stroke-width: 2; fill: var(--accent-soft); }
-.np-stage__node-corner { fill: none; stroke: var(--accent-strong); stroke-width: 2; }
-
-/* 기기 */
-.np-stage__device-body { fill: var(--device-fill); stroke: var(--accent); stroke-width: 1.5; }
-.np-stage__device-glyph { fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+/* 기기: 켜진 기기는 유리가 판정 색으로 빛나고 테두리도 그 색이 된다 */
 .np-stage__device-status { font-family: var(--font-sans); font-size: 17px; font-weight: 500; fill: var(--ink-2); }
-.np-stage__device[data-tone="ok"] .np-stage__device-body { stroke: var(--ok); fill: var(--ok-soft); }
-.np-stage__device[data-tone="ok"] .np-stage__device-status { fill: var(--ok); }
-.np-stage__device[data-tone="appr"] .np-stage__device-body { stroke: var(--appr); fill: var(--appr-soft); }
-.np-stage__device[data-tone="appr"] .np-stage__device-status { fill: var(--appr); }
-.np-stage__device[data-tone="ask"] .np-stage__device-body { stroke: var(--ask); fill: var(--ask-soft); }
-.np-stage__device[data-tone="ask"] .np-stage__device-status { fill: var(--ask); }
-.np-stage__device[data-tone="busy"] .np-stage__device-body { stroke: var(--busy); fill: var(--busy-soft); }
-.np-stage__device[data-tone="busy"] .np-stage__device-status { fill: var(--busy); }
-.np-stage__device[data-tone="deny"] .np-stage__device-body { stroke: var(--deny); fill: var(--deny-soft); stroke-dasharray: 5 3; }
-.np-stage__device[data-tone="deny"] .np-stage__device-status { fill: var(--deny); }
-.np-stage__device[data-tone="deny"] .np-stage__device-glyph { stroke: var(--deny); }
+.np-stage__device:not([data-tone="none"]) .np-iso__face { stroke: var(--tone); }
+.np-stage__device:not([data-tone="none"]) .np-iso__glass { fill: var(--tone); stroke: var(--tone); filter: var(--glow); }
+.np-stage__device:not([data-tone="none"]):not([data-tone="active"]) .np-stage__device-status { fill: var(--tone-ink); font-weight: 600; }
+.np-stage__device[data-tone="active"] .np-stage__device-status { fill: var(--ink); }
+.np-stage__device[data-tone="deny"] .np-iso__face { stroke-dasharray: 5 3; }
 
-/* 방문자 */
-.np-stage__visitor-dot { fill: var(--accent); }
+/* 사람: 바닥 고리, 기둥, 글자가 든 머리 */
+.np-stage__visitor-dot { fill: var(--accent); filter: var(--soft); }
+.np-stage__visitor-stem { stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .np-stage__visitor-letter { font-family: var(--font-mono); font-size: 16px; font-weight: 600; fill: var(--on-accent); }
-.np-stage__ring { fill: none; stroke: var(--accent); stroke-width: 1.2; opacity: 0.25; }
+.np-stage__ring { fill: none; stroke: var(--accent); stroke-width: 1.2; opacity: 0.25; vector-effect: non-scaling-stroke; }
 .np-stage__visitor[data-active="true"] .np-stage__ring { animation: np-ring 2.4s ease-out infinite; }
 .np-stage__visitor[data-active="true"] .np-stage__ring:nth-child(2) { animation-delay: 0.8s; }
 .np-stage__visitor[data-active="true"] .np-stage__ring:nth-child(3) { animation-delay: 1.6s; }
+.np-stage__visitor[data-active="true"] .np-stage__visitor-dot { filter: var(--glow); }
 
-/* 흐름 강조: 신호 · 호출 · 명령 · 알림 */
-.np-stage__signal { fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-dasharray: 3 4; }
-.np-stage__signal-label { font-family: var(--font-mono); font-size: 17px; fill: var(--accent); }
-.np-stage__flow { fill: none; stroke-width: 3; stroke-dasharray: 9 6; animation: np-dash 1s linear infinite; }
-.np-stage__flow[data-tone="accent"] { stroke: var(--accent-strong); }
-.np-stage__flow[data-tone="ok"] { stroke: var(--ok); }
-.np-stage__flow[data-tone="appr"] { stroke: var(--appr); }
-.np-stage__flow[data-tone="deny"] { stroke: var(--deny); }
-.np-stage__arrow[data-tone="accent"] { fill: var(--accent-strong); }
-.np-stage__arrow[data-tone="ok"] { fill: var(--ok); }
-.np-stage__arrow[data-tone="appr"] { fill: var(--appr); }
-.np-stage__arrow[data-tone="deny"] { fill: var(--deny); }
+/* 기기 앞 바닥 원 */
+.np-stage__front { fill: none; stroke: var(--line); stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
 
-/* 콜아웃: 한 번에 하나 */
-.np-stage__callout-box { fill: var(--surface); stroke-width: 1.5; }
-.np-stage__callout-leader { fill: none; stroke-width: 1.5; }
-.np-stage__callout-title { font-family: var(--font-sans); font-size: 20px; font-weight: 600; }
+/* 왼쪽 칸: AI 호스트, 서버, 소유자 폰. 켜지면 화면이 빛난다 */
+.np-stage__node[data-active="true"] .np-iso__glass { fill: var(--tone, var(--accent)); stroke: var(--tone, var(--accent)); filter: var(--glow); }
+.np-stage__node[data-active="true"]:not(.np-stage__server) .np-iso__face { stroke: var(--tone, var(--accent)); }
+
+/* 배선: 꺼진 선은 가는 회색, 신호가 지나면 판정 색으로 빛나고 점이 한 번 지나간다 */
+.np-stage__wire, .np-stage__bus { fill: none; stroke: var(--line); stroke-width: 1; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.np-stage__wire[data-dashed="true"] { stroke-dasharray: 4 4; }
+.np-stage__flow { fill: none; stroke: var(--tone); stroke-width: 2.5; stroke-linejoin: round; stroke-dasharray: 9 6; filter: var(--soft); animation: np-dash 1s linear infinite; }
+.np-stage__arrow { fill: var(--tone); }
+.np-stage__signal { fill: none; stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; }
+.np-stage__signal-label { font-family: var(--font-mono); font-size: 17px; fill: var(--accent-strong); }
+
+/* 흐름 선 위를 이동하는 메시지 점 */
+.np-stage__packet { fill: var(--tone); stroke: var(--bg); stroke-width: 2; filter: var(--glow); }
+.np-app[data-motion="off"] .np-stage__packet { display: none; }
+@media (prefers-reduced-motion: reduce) { .np-stage__packet { display: none; } }
+
+/* 콜아웃: 한 번에 하나. 판정 색 테두리와 제목 */
+.np-stage__callout-box { fill: var(--surface); stroke: var(--tone); stroke-width: 1.5; }
+.np-stage__callout-leader { fill: none; stroke: var(--tone); stroke-width: 1.5; }
+.np-stage__callout-dot { fill: var(--tone); filter: var(--soft); }
+.np-stage__callout-title { font-family: var(--font-sans); font-size: 20px; font-weight: 600; fill: var(--tone-ink); }
 .np-stage__callout-body { font-family: var(--font-sans); font-size: 17px; fill: var(--ink-2); }
-.np-stage__callout[data-tone="ok"] .np-stage__callout-box, .np-stage__callout[data-tone="ok"] .np-stage__callout-leader { stroke: var(--ok); }
-.np-stage__callout[data-tone="ok"] .np-stage__callout-title { fill: var(--ok); }
-.np-stage__callout[data-tone="ask"] .np-stage__callout-box, .np-stage__callout[data-tone="ask"] .np-stage__callout-leader { stroke: var(--ask); }
-.np-stage__callout[data-tone="ask"] .np-stage__callout-title { fill: var(--ask); }
-.np-stage__callout[data-tone="appr"] .np-stage__callout-box, .np-stage__callout[data-tone="appr"] .np-stage__callout-leader { stroke: var(--appr); }
-.np-stage__callout[data-tone="appr"] .np-stage__callout-title { fill: var(--appr); }
-.np-stage__callout[data-tone="busy"] .np-stage__callout-box, .np-stage__callout[data-tone="busy"] .np-stage__callout-leader { stroke: var(--busy); }
-.np-stage__callout[data-tone="busy"] .np-stage__callout-title { fill: var(--busy); }
-.np-stage__callout[data-tone="deny"] .np-stage__callout-box, .np-stage__callout[data-tone="deny"] .np-stage__callout-leader { stroke: var(--deny); }
-.np-stage__callout[data-tone="deny"] .np-stage__callout-title { fill: var(--deny); }
-.np-stage__callout[data-tone="accent"] .np-stage__callout-box, .np-stage__callout[data-tone="accent"] .np-stage__callout-leader { stroke: var(--accent); }
-.np-stage__callout[data-tone="accent"] .np-stage__callout-title { fill: var(--accent-strong); }
-
-.np-stage__titleblock { fill: var(--bg); stroke: var(--line); stroke-width: 1; }
 
 @keyframes np-ring { 0% { opacity: 0.9; } 100% { opacity: 0.08; } }
 @keyframes np-dash { to { stroke-dashoffset: -30; } }
@@ -102,8 +96,9 @@
   .np-stage__visitor[data-active="true"] .np-stage__ring, .np-stage__flow { animation: none; }
 }
 
-/* 글자 뒤 바탕색 테: 선이 지나도 글자를 읽을 수 있게 */
-.np-stage__device text, .np-stage__visitor .np-stage__label, .np-stage__signal-label { paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
+/* 글자 뒤 바탕색 테: 선과 면이 지나도 글자를 읽을 수 있게 */
+.np-stage__device text, .np-stage__visitor .np-stage__label, .np-stage__signal-label, .np-stage__node text { paint-order: stroke; stroke: var(--bg); stroke-width: 5px; stroke-linejoin: round; }
+.np-stage .np-stage__visitor .np-stage__label { stroke-width: 10px; }
 
 /* 무대가 더 작게 그려지는 곳(SET-01 배치, 연결 끊김 배너 아래): 보조 글자를 키워 1366에서도 11px 이상 */
 .np-stage[data-scene="layout"] :is(.np-stage__cap, .np-stage__code, .np-stage__device-status, .np-stage__sub, .np-stage__note),
@@ -111,31 +106,16 @@
 .np-stage[data-scene="layout"] .np-stage__visitor-letter,
 .np-monitor[data-live="false"] .np-stage .np-stage__visitor-letter { font-size: 18px; }
 
-/* 사람 이름표는 신호 점선이 지나가도 읽히게 바탕 테를 넓힌다 */
-.np-stage .np-stage__visitor .np-stage__label { stroke-width: 10px; }
-
-/* 표시용 배치 안내 */
-.np-stage__note { font-family: var(--font-sans); font-size: 16px; fill: var(--ink-3); }
-
 /* SET-01 배치 편집: 기기를 끌거나 화살표 키로 옮긴다 */
 .np-stage__hit { fill: transparent; stroke: none; }
 .np-stage__device[data-edit="true"] { cursor: grab; outline: none; touch-action: none; }
 .np-stage__svg[data-editing="true"], .np-stage__svg[data-editing="true"] .np-stage__device { cursor: grabbing; }
-.np-stage__device[data-edit="true"]:focus-visible .np-stage__hit { stroke: var(--accent-strong); stroke-width: 2.5; stroke-dasharray: 6 4; }
-.np-stage__device[data-invalid="true"] .np-stage__device-body { stroke: var(--ink); stroke-dasharray: 2 4; }
+.np-stage__device[data-edit="true"]:focus-visible .np-stage__hit { stroke: var(--accent-strong); stroke-width: 2; stroke-dasharray: 6 4; }
+.np-stage__device[data-invalid="true"] .np-iso__face { stroke: var(--ink); stroke-dasharray: 2 4; }
 .np-stage[data-scene="layout"] .np-stage__visitor { pointer-events: none; }
 
-/* 흐름 선 위를 이동하는 메시지 점 */
-.np-stage__packet { stroke: var(--surface); stroke-width: 3; }
-.np-stage__packet[data-tone="accent"] { fill: var(--accent-strong); }
-.np-stage__packet[data-tone="ok"] { fill: var(--ok); }
-.np-stage__packet[data-tone="appr"] { fill: var(--appr); }
-.np-stage__packet[data-tone="deny"] { fill: var(--deny); }
-.np-app[data-motion="off"] .np-stage__packet { display: none; }
-@media (prefers-reduced-motion: reduce) { .np-stage__packet { display: none; } }
-
-/* 서버 상자: 판정 표시, 판정 게이지, 확인 네 칸. 판정이 나면 테두리와 표시가 판정 색이 된다 (바탕은 그대로 두어 글자 대비를 지킨다). */
-.np-stage__judge-mark { font-family: var(--font-sans); font-size: 16px; font-weight: 600; fill: var(--accent-strong); }
+/* 서버: 판정 표시, 판정 게이지, 확인 네 칸의 불. 판정이 나면 랙 테두리와 표시가 판정 색이 된다 */
+.np-stage__judge-mark { font-family: var(--font-sans); font-size: 16px; font-weight: 600; fill: var(--tone-ink, var(--accent-strong)); }
 .np-stage__judge-row { font-family: var(--font-sans); font-size: 16px; fill: var(--ink-3); }
 .np-stage__judge-row[data-result="pass"] { fill: var(--ink-2); }
 .np-stage__judge-row[data-result="pass"] .np-stage__judge-icon { fill: var(--accent-strong); }
@@ -143,19 +123,15 @@
 .np-stage__judge-row[data-result="unsure"] { fill: var(--ask); font-weight: 600; }
 .np-stage__judge-row[data-result="wait"] { fill: var(--appr); font-weight: 600; }
 .np-stage__judge-icon { font-family: var(--font-mono); }
-.np-stage__gauge { fill: var(--line-soft); }
-.np-stage__gauge-fill { fill: var(--accent); transform-box: fill-box; transform-origin: left; }
+.np-stage__server:not([data-tone="none"]) .np-iso__face { stroke: var(--tone); }
+.np-stage__led { fill: var(--glass); stroke: var(--line-soft); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.np-stage__led[data-result="pass"] { fill: var(--accent); stroke: var(--accent); filter: var(--glow); }
+.np-stage__led[data-result="fail"] { fill: var(--deny); stroke: var(--deny); filter: var(--glow); }
+.np-stage__led[data-result="unsure"] { fill: var(--ask); stroke: var(--ask); filter: var(--glow); }
+.np-stage__led[data-result="wait"] { fill: var(--appr); stroke: var(--appr); filter: var(--glow); }
+.np-stage__gauge { fill: var(--glass); stroke: var(--line-soft); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.np-stage__gauge-fill { fill: var(--accent); filter: var(--glow); transform-box: fill-box; transform-origin: left; }
 .np-app[data-motion="on"] .np-stage__gauge-fill { animation: np-gauge 1s linear 0.6s backwards; }
 @media (prefers-reduced-motion: reduce) {
   .np-app[data-motion="on"] .np-stage__gauge-fill { animation: none; }
 }
-.np-stage__server[data-tone="ok"] .np-stage__node-box { stroke: var(--ok); fill: var(--surface); }
-.np-stage__server[data-tone="ask"] .np-stage__node-box { stroke: var(--ask); fill: var(--surface); }
-.np-stage__server[data-tone="appr"] .np-stage__node-box { stroke: var(--appr); fill: var(--surface); }
-.np-stage__server[data-tone="busy"] .np-stage__node-box { stroke: var(--busy); fill: var(--surface); }
-.np-stage__server[data-tone="deny"] .np-stage__node-box { stroke: var(--deny); fill: var(--surface); }
-.np-stage__server[data-tone="ok"] .np-stage__judge-mark { fill: var(--ok); }
-.np-stage__server[data-tone="ask"] .np-stage__judge-mark { fill: var(--ask); }
-.np-stage__server[data-tone="appr"] .np-stage__judge-mark { fill: var(--appr); }
-.np-stage__server[data-tone="busy"] .np-stage__judge-mark { fill: var(--busy); }
-.np-stage__server[data-tone="deny"] .np-stage__judge-mark { fill: var(--deny); }

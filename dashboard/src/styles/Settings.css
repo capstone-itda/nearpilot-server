@@ -94,3 +94,8 @@
 
 /* SET-01 배치 파일 버튼 */
 .np-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+
+/* 무대 그림의 출처 (iso-glow, MIT) */
+.np-snav__credit { margin-top: auto; padding: var(--sp-3); font-family: var(--font-mono); font-size: var(--fs-cap); letter-spacing: 0.12em; text-transform: uppercase; }
+.np-snav__credit a { color: var(--ink-3); text-decoration: none; }
+.np-snav__credit a:hover { color: var(--ink); }

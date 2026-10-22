@@ -1,7 +1,11 @@
 // 모니터 상태 → 무대(평면도) 표시값. 장면별 고정 값 없이 규칙으로 계산한다.
 import type { DeviceStatus, FloorLayout, LayoutDevice, Person, RequestProgress, MonitorState, Spot } from '../model/types';
 import { ROOM, facing, frontOf, type Facing } from './arrange';
-import { calloutSpot, chooseLabel, deviceTextBox, freePersonSpot, frontBox, labelBox, leaderEnd, personBox, ringBox, rssiBox, placeRssi, type Rect } from './placement';
+import {
+  HEAD_R, PERSON_Z, calloutSpot, chooseLabel, deviceBody, deviceLabelBox, freePersonSpot, frontBox, hasLabelRoom, labelBox, leaderEnd, personBox,
+  placeDeviceLabels, placeRssi, ringBox, rssiBox, textWidth, type LabelSide, type LabelSpot, type Rect
+} from './placement';
+import { iso } from './iso';
 import {
   ACTION_DID, ACTION_DOING, ACTION_DONE, ACTION_NAME, CAPABILITY_NAME,
   DEVICE_STATE_NAME, approvalText, josa, reasonText
@@ -21,16 +25,22 @@ export type StageScene = 'idle' | 'judging' | 'flow' | 'fault' | 'ask' | 'approv
 
 export interface StageDeviceView {
   nodeId: string; name: string; capability: LayoutDevice['capability'];
+  /** 평면 배치 자리와 기기 앞 */
   x: number; y: number; fx: number; fy: number; wall: Facing;
-  /** 신호 세기 글자를 본체 오른쪽에 둔다 (왼쪽 벽 가까이) */
-  rssiRight: boolean;
+  /** 무대에서 본체가 차지하는 상자, 이름표 자리, 신호 세기 글자 자리 */
+  body: Rect; label: LabelSpot; rssiAt: Spot;
   status: string; code: string; tone: Tone; dim: boolean;
 }
 export interface StageVisitorView {
+  /** x, y는 평면 자리. 무대에는 투영해서 그린다. */
   personId: string; letter: string; name: string; x: number; y: number;
-  active: boolean; dim: boolean; on: boolean; label: 'right' | 'left' | 'above';
+  active: boolean; dim: boolean; on: boolean; label: LabelSide; labelW: number;
 }
+/** 콜아웃은 무대 좌표: 상자 왼쪽 위(x, y), 가리키는 점(ax, ay), 지시선 끝(lx, ly) */
 export interface CalloutView { on: boolean; tone: Tone; x: number; y: number; ax: number; ay: number; lx: number; ly: number; title: string; body: string }
+
+/** 왼쪽 칸의 호스트·서버·소유자 폰이 무대에 놓이는 자리 (상자 오른쪽 가운데, 콜아웃이 가리키는 점) */
+export const NODE_ANCHOR = { host: { x: 300, y: 196 }, server: { x: 300, y: 430 }, owner: { x: 300, y: 664 } };
 
 export interface StageView {
   scene: StageScene;
@@ -86,12 +96,17 @@ export function focusDevices(r: RequestProgress, layout: FloorLayout): string[] 
  * 무대에서 사람을 세울 자리. 서버는 사람 좌표를 주지 않으므로 표시용으로만 고른다 (판정과 무관).
  * 요청한 사람: 고른 기기 앞, ASK면 확률이 높은 두 기기 사이, 아니면 확률이 가장 높은 기기 앞.
  * 그 밖의 사람: 신호가 가장 센 기기 앞. 신호가 없으면 그리지 않는다.
- * 기기 글자나 다른 사람과 겹치면 기기 앞 방향(방 안쪽)으로 비켜 선다.
+ * 무대에서 기기 본체·글자나 다른 사람과 겹치면 기기 앞 방향(방 안쪽)으로 비켜 선다.
  */
 export function personAnchors(s: MonitorState, devices: StageDeviceView[], visitors: Person[]): Map<string, Spot> {
   const byId = new Map(devices.map((d) => [d.nodeId, d]));
   const dirOf = (d: StageDeviceView): 1 | -1 => (d.wall === 'top' ? 1 : -1);
-  const obstacles = devices.map(deviceTextBox);
+  const obstacles = devices.flatMap((d) => [d.body, deviceLabelBox(d.label)]);
+  // 이름표가 피할 것: 기기 글자, 신호 세기 글자, 사람, 다른 이름표. 기기 본체는 덮어도 된다.
+  const texts = devices.flatMap((d) => [deviceLabelBox(d.label), rssiBox(d.rssiAt)]);
+  const bodies = devices.map((d) => d.body);
+  const people: Rect[] = [];
+  const labels: Rect[] = [];
   const r = s.request;
   const out = new Map<string, Spot>();
   // 요청한 사람을 먼저 세워서 그 자리를 비켜 주지 않게 한다
@@ -116,9 +131,13 @@ export function personAnchors(s: MonitorState, devices: StageDeviceView[], visit
       if (d) { base = { x: d.fx, y: d.fy }; dir = dirOf(d); }
     }
     if (!base) continue;
-    const spot = freePersonSpot(base, dir, obstacles);
+    // 이름표 둘 곳이 있는 자리를 고른다
+    const w = textWidth(p.pseudonym, 20) + 8;
+    const spot = freePersonSpot(base, dir, obstacles, (x) => hasLabelRoom(x, [...texts, ...people, ...labels], w));
     out.set(p.id, spot);
     obstacles.push(personBox(spot));
+    people.push(personBox(spot));
+    labels.push(labelBox(spot, chooseLabel(spot, [...texts, ...people, ...labels], w, bodies), w));
   }
   return out;
 }
@@ -160,25 +179,31 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
       else if (r.verdict === 'BUSY') v.tone = 'busy';
     }
     return {
-      nodeId: d.nodeId, name: d.name, capability: d.capability, x: b.x, y: b.y, fx: f.x, fy: f.y, wall: facing(d.spot), rssiRight: false,
+      nodeId: d.nodeId, name: d.name, capability: d.capability, x: b.x, y: b.y, fx: f.x, fy: f.y, wall: facing(d.spot),
+      body: deviceBody(b.x, b.y, d.capability), label: { x: 0, y: 0, w: 0 }, rssiAt: { x: 0, y: 0 },
       ...v, dim: !!r && !opt.layoutCheck && !keep.includes(d.nodeId)
     };
   });
-
-  placeRssi(devices);
+  const geoms = devices.map((d) => ({ d, body: d.body, labelW: Math.max(textWidth(d.name, 20), textWidth(d.status, 17)) + 8 } as { d: StageDeviceView; body: Rect; labelW: number; label?: LabelSpot; rssi?: Spot }));
+  placeDeviceLabels(geoms);
+  placeRssi(geoms);
+  for (const g of geoms) { g.d.label = g.label!; g.d.rssiAt = g.rssi!; }
 
   // 사람
   const anchors = personAnchors(s, devices, visitors);
-  // 이름표는 기기 글자, 사람 점, 이미 놓은 이름표를 피한다
-  const labelObstacles: Rect[] = [...devices.map(deviceTextBox), ...[...anchors.values()].map(personBox)];
+  // 이름표는 기기 본체와 글자, 사람 점, 이미 놓은 이름표를 피한다.
+  // 신호 세기 글자는 요청 중에만 보이지만 이름표가 그때마다 옮겨 다니지 않게 늘 피한다. 기기 본체는 덮어도 된다.
+  const labelObstacles: Rect[] = [...devices.flatMap((d) => [deviceLabelBox(d.label), rssiBox(d.rssiAt)]), ...[...anchors.values()].map(personBox)];
+  const bodies = devices.map((d) => d.body);
   const vis: StageVisitorView[] = visitors.map((p) => {
     const at = anchors.get(p.id);
     const pos = at ?? { x: ROOM.x + ROOM.w - 200, y: ROOM.y + ROOM.h / 2 };
     const isReq = !!r && p.id === r.personId;
-    const label = chooseLabel(pos, labelObstacles);
-    if (at) labelObstacles.push(labelBox(pos, label));
+    const labelW = textWidth(p.pseudonym, 20) + 8;
+    const label = chooseLabel(pos, labelObstacles, labelW, bodies);
+    if (at) labelObstacles.push(labelBox(pos, label, labelW));
     return {
-      personId: p.id, letter: p.letter!, name: p.pseudonym, x: pos.x, y: pos.y,
+      personId: p.id, letter: p.letter!, name: p.pseudonym, x: pos.x, y: pos.y, labelW,
       active: s.connected && (r ? isReq : p.beaconSeen),
       dim: !!r && !opt.layoutCheck && !isReq,
       on: !!at && p.beaconSeen,
@@ -226,25 +251,28 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
   };
 
   // 콜아웃: 한 번에 하나. 기기 글자, 사람, 이름표, 신호 세기 글자를 피해서 가리키는 점 가까이에 둔다.
+  const deviceTexts = devices.map((d) => deviceLabelBox(d.label));
   const calloutObstacles: Rect[] = [
-    ...devices.map(deviceTextBox),
-    ...devices.map(frontBox),
-    ...vis.filter((v) => v.on).flatMap((v) => [ringBox(v), labelBox(v, v.label)]),
-    ...(rssiPerson ? devices.map(rssiBox) : [])
+    ...devices.flatMap((d) => [d.body, deviceLabelBox(d.label), frontBox({ x: d.fx, y: d.fy })]),
+    ...vis.filter((v) => v.on).flatMap((v) => [ringBox(v), labelBox(v, v.label, v.labelW)]),
+    ...(rssiPerson ? devices.map((d) => rssiBox(d.rssiAt)) : [])
   ];
   type Pos = Pick<CalloutView, 'x' | 'y' | 'ax' | 'ay' | 'lx' | 'ly'> & { clean: boolean };
   const place = (ax: number, ay: number): Pos => {
-    const c = calloutSpot(ax, ay, calloutObstacles, opt.panelOpen ? 440 : ROOM.x + ROOM.w, devices.map(deviceTextBox));
+    const c = calloutSpot(ax, ay, calloutObstacles, opt.panelOpen ? 440 : Infinity, deviceTexts);
     const l = leaderEnd(c, ax, ay);
     return { x: c.x, y: c.y, ax, ay, lx: l.x, ly: l.y, clean: c.clean };
   };
   const atDevice = (id: string | null) => {
     const d = devices.find((x) => x.nodeId === id)!;
-    return place(d.fx, d.wall === 'top' ? d.fy + 44 : d.fy - 44);
+    const f = iso({ x: d.fx, y: d.fy });
+    return place(f.x, f.y);
   };
   const atVisitor = (personId: string) => {
     const v = vis.find((x) => x.personId === personId && x.on);
-    return v ? place(v.x, v.y + 26) : place(250, 440);
+    if (!v) return place(NODE_ANCHOR.server.x, NODE_ANCHOR.server.y);
+    const h = iso(v, PERSON_Z);
+    return place(h.x, h.y - HEAD_R);
   };
   // 패널이 열려 있으면 패널이 같은 내용을 보이므로, 글자를 가리지 않고 둘 자리가 없을 때 콜아웃을 숨긴다
   const set = (tone: Tone, { clean, ...pos }: Pos, title: string, body: string) => {
@@ -300,8 +328,8 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
       case 'approval':
         view.aria = s.ownerNotified ? `${who}의 ${cap} ${act} 요청이 소유자 승인을 기다리는 중`
           : `${who}의 ${cap} ${act} 요청을 실행하지 않음: ${approvalText(r.reason!).title}`;
-        if (r.accessExpiredAt) set('appr', place(250, 632), '승인 신청 만료', '소유자 응답 없음');
-        else if (s.ownerNotified) set('appr', place(250, 632), '소유자에게 승인 요청', '');
+        if (r.accessExpiredAt) set('appr', place(NODE_ANCHOR.owner.x, NODE_ANCHOR.owner.y), '승인 신청 만료', '소유자 응답 없음');
+        else if (s.ownerNotified) set('appr', place(NODE_ANCHOR.owner.x, NODE_ANCHOR.owner.y), '소유자에게 승인 요청', '');
         else set('appr', atDevice(target), approvalText(r.reason!).title, '');
         break;
       case 'busy':

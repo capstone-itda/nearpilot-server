@@ -5,7 +5,7 @@ import { SCENES, sec, stateAt } from '../data/mock/story';
 import { stageView } from './stage';
 import { PLACE } from '../data/mock/fixtures';
 import { resolveArrangement, withArrangement } from './arrange';
-import { CALLOUT_H, CALLOUT_W, canPlaceAll, crosses, deviceTextBox, hits, labelBox, personBox, rssiBox } from './placement';
+import { CALLOUT_H, CALLOUT_W, STAGE_BOUNDS, canPlaceAll, crosses, deviceLabelBox, hits, labelBox, personBox, rssiBox, type Rect } from './placement';
 
 const dev = (v: ReturnType<typeof stageView>, id: string) => v.devices.find((d) => d.nodeId === id)!;
 
@@ -196,8 +196,9 @@ describe('바꾼 배치에서도 무대 글자가 겹치지 않는다', () => {
     bottomall: { 'locker-1': { x: 408, y: 720 }, 'locker-2': { x: 576, y: 720 }, 'locker-3': { x: 744, y: 720 },
       'speaker-1': { x: 912, y: 720 }, 'light-1': { x: 1080, y: 720 }, 'light-2': { x: 1248, y: 504 }, 'light-3': { x: 1080, y: 504 } }
   };
-  const ROOM_BOX = { x1: 330, y1: 90, x2: 1340, y2: 740 };
-  const within = (a: { x1: number; y1: number; x2: number; y2: number }) => a.x1 >= ROOM_BOX.x1 && a.x2 <= ROOM_BOX.x2 && a.y1 >= ROOM_BOX.y1 && a.y2 <= ROOM_BOX.y2;
+  // 무대 좌표(투영 뒤)에서 잰다. 글자는 무대 영역 안에 있고 서로 겹치지 않는다.
+  const within = (a: Rect) => a.x1 >= STAGE_BOUNDS.x1 && a.x2 <= STAGE_BOUNDS.x2 && a.y1 >= STAGE_BOUNDS.y1 && a.y2 <= STAGE_BOUNDS.y2;
+  const pairs = (list: Rect[]) => list.some((a, i) => list.some((b, j) => j > i && hits(a, b)));
 
   for (const [arrName, saved] of Object.entries(ARRANGEMENTS)) {
     const arr = resolveArrangement(PLACE.devices, saved);
@@ -207,23 +208,30 @@ describe('바꾼 배치에서도 무대 글자가 겹치지 않는다', () => {
       for (const panelOpen of [false, true]) {
         it(`FR12B D4 ${arrName} 배치 · ${scene} 장면 · 패널 ${panelOpen ? '열림' : '닫힘'}`, () => {
           const v = stageView(make(), layout, { panelOpen });
-          const texts = v.devices.map(deviceTextBox);
-          for (const p of v.visitors.filter((x) => x.on)) {
+          const texts = v.devices.map((d) => deviceLabelBox(d.label));
+          expect(pairs(texts), '기기 이름표끼리').toBe(false);
+          expect(texts.every(within), '기기 이름표가 무대 안').toBe(true);
+          const people = v.visitors.filter((x) => x.on);
+          for (const p of people) {
             expect(texts.some((t) => hits(personBox(p), t)), `${p.name} 점`).toBe(false);
-            expect(texts.some((t) => hits(labelBox(p, p.label), t)), `${p.name} 이름표`).toBe(false);
-            expect(within(labelBox(p, p.label)), `${p.name} 이름표가 방 안`).toBe(true);
+            expect(texts.some((t) => hits(labelBox(p, p.label, p.labelW), t)), `${p.name} 이름표`).toBe(false);
+            expect(within(labelBox(p, p.label, p.labelW)), `${p.name} 이름표가 무대 안`).toBe(true);
           }
+          expect(pairs(people.map((p) => labelBox(p, p.label, p.labelW))), '사람 이름표끼리').toBe(false);
           if (v.callout.on) {
             const c = { x1: v.callout.x, y1: v.callout.y, x2: v.callout.x + CALLOUT_W, y2: v.callout.y + CALLOUT_H };
             expect(texts.some((t) => hits(c, t)), '콜아웃과 기기 글자').toBe(false);
-            expect(within(c), '콜아웃이 방 안').toBe(true);
+            expect(within(c), '콜아웃이 무대 안').toBe(true);
             const a = { x: v.callout.ax, y: v.callout.ay };
             const e = { x: v.callout.lx, y: v.callout.ly };
-            if (v.callout.ax > ROOM_BOX.x1) expect(texts.some((t) => crosses(a, e, t)), '지시선과 기기 글자').toBe(false);
+            expect(texts.some((t) => crosses(a, e, t)), '지시선과 기기 글자').toBe(false);
           }
-          if (v.rssiOn) for (const d of v.devices) {
-            expect(rssiBox(d).x1 >= ROOM_BOX.x1 - 12 || d.wall === 'bottom', `${d.name} 신호 글자가 왼쪽 벽 안`).toBe(true);
-            expect(v.devices.some((o) => o !== d && hits(rssiBox(d), rssiBox(o))), `${d.name} 신호 글자끼리`).toBe(false);
+          if (v.rssiOn) {
+            const rs = v.devices.map((d) => rssiBox(d.rssiAt));
+            expect(pairs(rs), '신호 글자끼리').toBe(false);
+            expect(rs.some((r) => texts.some((t) => hits(r, t))), '신호 글자와 기기 이름표').toBe(false);
+            expect(rs.every(within), '신호 글자가 무대 안').toBe(true);
+            expect(rs.some((r) => people.some((p) => hits(r, labelBox(p, p.label, p.labelW)))), '신호 글자와 사람 이름표').toBe(false);
           }
           expect(stageView(make(), layout, { panelOpen: true, panelWide: true }).callout.on, '넓은 패널이면 콜아웃 숨김').toBe(false);
         });

@@ -91,7 +91,7 @@ body { margin: 0; }
 .np-verdict[data-verdict="NEED_APPROVAL"] { color: var(--appr); background: var(--appr-soft); }
 .np-verdict[data-verdict="BUSY"] { color: var(--busy); background: var(--busy-soft); }
 .np-verdict[data-verdict="DENY"], .np-verdict[data-verdict="FAULT"] { color: var(--deny); background: var(--deny-soft); }
-.np-verdict[data-verdict="QUERY"], .np-verdict[data-verdict="INFO"] { color: var(--accent); background: var(--accent-soft); }
+.np-verdict[data-verdict="QUERY"], .np-verdict[data-verdict="INFO"] { color: var(--accent-strong); background: var(--accent-soft); }
 .np-verdict[data-verdict="WAIT"] { color: var(--ask); background: var(--ask-soft); }
 
 /* KeyValue */

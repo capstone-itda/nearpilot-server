@@ -1,26 +1,32 @@
-/* NearPilot 대시보드 디자인 토큰. 구현 때 그대로 복사한다.
+/* NearPilot 대시보드 디자인 토큰. iso-glow 헤어라인 톤(흑연 판, 가는 선, 살아 있는 것만 빛남)에 판정 색 다섯을 더했다.
    1920×1080 기준. 루트 글자 크기가 화면 폭을 따라가서 모든 rem 값이 같은 비율로 늘고 준다. */
 
 html { font-size: clamp(12px, 0.8333vw, 32px); }
 
 .np-app {
-  /* 다크 (기본) */
-  --bg: #07101d;
-  --surface: #0b1727;
-  --surface-2: #10203a;
-  --line: rgba(143, 208, 255, 0.32);
-  --line-soft: rgba(143, 208, 255, 0.14);
-  --grid: rgba(143, 208, 255, 0.05);
-  --grid-major: rgba(143, 208, 255, 0.1);
-  --ink: #e8f0fc;
-  --ink-2: #a9bdd8;
-  --ink-3: #8299b8;
-  --accent: #8fd0ff;
-  --accent-strong: #d4ebff;
-  --accent-soft: rgba(143, 208, 255, 0.12);
-  --on-accent: #06101d;
-  --device-fill: rgba(143, 208, 255, 0.07);
-  --room-fill: rgba(9, 20, 36, 0.6);
+  /* 다크 (기본): iso-glow 흑연 판. 가는 선 위에서 살아 있는 것만 강조색·판정 색으로 빛난다 */
+  --bg: #0c0d0e;
+  --surface: #141516;
+  --surface-2: #1b1d1f;
+  --line: #3d4144;
+  --line-soft: #2b2e30;
+  --grid: rgba(255, 255, 255, 0.025);
+  --grid-major: rgba(255, 255, 255, 0.05);
+  --ink: #e6e8e9;
+  --ink-2: #b4b9bd;
+  --ink-3: #979ca1;
+  --accent: #22d3ee;
+  --accent-strong: #9beefa;
+  --accent-soft: rgba(34, 211, 238, 0.1);
+  --on-accent: #06181c;
+  --device-fill: #17181a;
+  --room-fill: #141516;
+  /* 아이소메트릭 면: 몸통, 윗면, 바닥, 꺼진 유리 */
+  --body: #17181a;
+  --deck: #1b1d1f;
+  --floor: #111213;
+  --glass: #0f1011;
+  --glow-opacity: 1;
 
   --ok: #3ddc97;
   --ok-soft: rgba(61, 220, 151, 0.12);
@@ -59,39 +65,45 @@ html { font-size: clamp(12px, 0.8333vw, 32px); }
   --panel-w: 30vw;
   --nav-w: 18rem;
   --hit: max(44px, 2.75rem);
-  --radius: 2px;
+  --radius: 10px;
+  --radius-lg: 18px;
 }
 
 .np-app[data-theme="light"] {
-  /* 라이트: 종이 위 설계도 */
-  --bg: #f3f6fa;
-  --surface: #ffffff;
-  --surface-2: #e9eff7;
-  --line: rgba(22, 64, 122, 0.4);
-  --line-soft: rgba(22, 64, 122, 0.16);
-  --grid: rgba(22, 64, 122, 0.05);
-  --grid-major: rgba(22, 64, 122, 0.1);
-  --ink: #0d1b2e;
-  --ink-2: #364e6c;
-  --ink-3: #4f6787;
-  --accent: #1d5ea8;
-  --accent-strong: #0c3c78;
-  --accent-soft: rgba(29, 94, 168, 0.1);
+  /* 라이트: 빛 번짐 없이, 켜진 것은 판정 색 그대로 평평하게 */
+  --bg: #e9eaea;
+  --surface: #f6f6f5;
+  --surface-2: #ececeb;
+  --line: #8e9397;
+  --line-soft: #c3c6c8;
+  --grid: rgba(0, 0, 0, 0.03);
+  --grid-major: rgba(0, 0, 0, 0.06);
+  --ink: #16181a;
+  --ink-2: #3c4145;
+  --ink-3: #555a5e;
+  --accent: #0b7d96;
+  --accent-strong: #0b6478;
+  --accent-soft: rgba(11, 125, 150, 0.12);
   --on-accent: #ffffff;
-  --device-fill: rgba(29, 94, 168, 0.06);
-  --room-fill: rgba(255, 255, 255, 0.75);
+  --device-fill: #ececeb;
+  --room-fill: #f6f6f5;
+  --body: #ececeb;
+  --deck: #f6f6f5;
+  --floor: #f1f1f0;
+  --glass: #dcdede;
+  --glow-opacity: 0;
 
-  --ok: #0f7a55;
+  --ok: #0b6b4a;
   --ok-soft: rgba(15, 122, 85, 0.1);
-  --ask: #855c00;
+  --ask: #765100;
   --ask-soft: rgba(176, 124, 0, 0.12);
-  --appr: #6243c9;
+  --appr: #5639b8;
   --appr-soft: rgba(98, 67, 201, 0.1);
-  --busy: #a64f00;
+  --busy: #944600;
   --busy-soft: rgba(166, 79, 0, 0.1);
-  --deny: #c0223a;
+  --deny: #ad1d33;
   --deny-soft: rgba(192, 34, 58, 0.09);
 
-  --shadow: 0 1.5rem 3rem rgba(13, 27, 46, 0.16);
+  --shadow: 0 1.5rem 3rem rgba(13, 27, 46, 0.12);
   --dim-opacity: 0.5;
 }
