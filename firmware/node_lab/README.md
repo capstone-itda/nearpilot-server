@@ -66,6 +66,7 @@ ESP32 한 대만 있으면 비콘 송신과 다른 기기의 실제 수신을 �
 | `WIFI_CONNECTING`, `WIFI_CONNECTED`, `WIFI_DISCONNECTED`, `WIFI_RETRY` | Wi-Fi 접속, 끊김 원인 코드와 다음 재시도 간격이다 |
 | `CLOCK_SOURCE` | 시각원 주소, 재동기화 간격, 신뢰 기간과 최대 오차다 |
 | `CLOCK_SYNCED`, `CLOCK_TRUSTED`, `CLOCK_TRUST_EXPIRED` | 동기화, 신뢰 시작과 신뢰 만료다 |
+| `CLOCK_RETRY` | 신뢰가 없는 동안 `NP_RETRY_MAX_MS`마다 SNTP를 다시 요청했다 |
 | `MQTT_CONNECT_FAILED` | 브로커 주소, 라이브러리 오류, CONNACK 코드와 다음 재시도 간격이다 |
 | `MQTT_DISCONNECTED` | 끊긴 연결 ID와 오류다 |
 | `ANNOUNCE_DEFERRED`, `ANNOUNCED` | 시각 신뢰 전 발표 보류와 그 연결의 발표다 |

@@ -608,12 +608,13 @@ unsigned long backoff(unsigned long current) {
 }
 
 // Device-side connection conditions only. Execution permission is decided by the server.
-const char* notReadyReason() {
+// `trusted` is the loop's snapshot: the SNTP callback runs on another task.
+const char* notReadyReason(bool trusted) {
     if (!configured) return "config_missing";
     if (!storageReady) return "storage_unavailable";
     if (WiFi.status() != WL_CONNECTED) return "wifi_disconnected";
     if (!clockConfigured()) return "clock_not_configured";
-    if (!clockTrusted()) return synchronizedClock ? "clock_trust_expired" : "clock_unverified";
+    if (!trusted) return synchronizedClock ? "clock_trust_expired" : "clock_unverified";
     if (!mqtt.connected()) return "mqtt_disconnected";
     if (!announced) return "announce_pending";
     return nullptr;
@@ -694,6 +695,14 @@ void loop() {
         Serial.printf("WIFI_RETRY status=%d next_retry_ms=%lu\n", WiFi.status(), wifiDelay);
         WiFi.reconnect();
     }
+    // A publish inside the previous iteration can drop the link; log it before reconnecting.
+    auto noteDisconnect = [&]() {
+        if (!wasConnected || mqtt.connected()) return;
+        wasConnected = announced = false;
+        Serial.printf("MQTT_DISCONNECTED session_id=%s error=%d wifi=%d\n", session.c_str(), mqtt.lastError(),
+            WiFi.status() == WL_CONNECTED);
+    };
+    noteDisconnect();
     if (wifiUp && !mqtt.connected() && current - lastConnect >= mqttDelay) {
         lastConnect = current;
         session = newUuid();
@@ -718,11 +727,15 @@ void loop() {
         }
     }
     mqtt.loop();
-    if (wasConnected && !mqtt.connected()) {
-        wasConnected = announced = false;
-        Serial.printf("MQTT_DISCONNECTED session_id=%s error=%d\n", session.c_str(), mqtt.lastError());
-    }
+    noteDisconnect();
     bool trusted = clockTrusted();
+    static unsigned long lastClockRetry = 0;
+    if (!trusted && wifiUp && clockConfigured() && current - lastClockRetry >= NP_RETRY_MAX_MS) {
+        // lwIP backs off after failed polls; ask again now instead of waiting minutes.
+        lastClockRetry = current;
+        if (current >= NP_RETRY_MAX_MS) Serial.printf("CLOCK_RETRY server=%s restarted=%d\n",
+            config.timeServer.c_str(), sntp_restart());
+    }
     if (trusted && !previouslyTrusted) Serial.printf("CLOCK_TRUSTED age_ms=%lu\n", millis() - lastSync);
     if (!trusted && previouslyTrusted)
         Serial.printf("CLOCK_TRUST_EXPIRED age_ms=%lu trust_ms=%lu\n", millis() - lastSync, config.timeTrustMs);
@@ -754,7 +767,7 @@ void loop() {
         if (mqtt.connected() && announced) status();
     }
     if (current - lastRssi >= NP_RSSI_FRAME_MS) { lastRssi = current; rssiFrame(); }
-    const char* reason = notReadyReason();
+    const char* reason = notReadyReason(trusted);
     String state = reason ? reason : "ready";
     if (state != lastReason || (reason && current - lastReadyLog >= NP_RETRY_MAX_MS)) {
         lastReadyLog = current;

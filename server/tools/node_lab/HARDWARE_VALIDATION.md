@@ -60,3 +60,49 @@ COMMAND_RESULT command_id=d6959eba-d2a8-4175-a831-835ac240d69c state=unknown
 - 두 건은 Windows 파일명 제약으로 건너뛴다. 예상 실패는 기존 합성 모델 검사다.
 - 펌웨어 `esp32dev` 빌드와 실제 COM6 업로드를 확인했다.
 - 시각 구간 검사는 USB 지연 포함, 서버 시계 점프와 응답 지연 초과를 검증한다.
+
+## 공통 펌웨어의 자동 연결 (2026-10-23)
+
+같은 ESP32-WROOM-32E(ESP32-D0WD-V3) 한 대와 Android 핫스팟으로 확인했다.
+펌웨어 업로드는 앱 영역만 쓴다. NVS의 설정과 명령 기록은 업로드 뒤에도 남았다.
+원본은 로컬 `server/var/node-lab-hotspot/`의 `boot-*.jsonl`, `provision.jsonl`, `run-auto-*.log`다.
+서버는 시험 콘솔의 `node_readiness`로 확인했다. 시험 DB의 `light-1`은 이전 시험의 `FAULT`다.
+모든 시나리오에서 서버는 `fault=true`, `ready=false`(`fault_recovery`)를 유지했다. 재부팅·재주입으로 풀리지 않았다.
+
+| 시나리오 | 방법 | 기기 | 서버 |
+|---|---|---|---|
+| 설정 없는 부팅 | USB RTS 재시작 | `CONFIG_MISSING`, 네트워크 미시작 | — |
+| USB 설정 주입 | `provision.py` | 11개 값 저장, 재시작 뒤 `CONFIG_STATE` 일치. 로그에는 비밀값의 바이트 수만 | — |
+| 서버·시각원에 닿지 않음 | 노트북이 핫스팟 밖 | Wi-Fi 1.5초. MQTT `error=-3` 4·8·16·30·30초 재시도. 발표·status·RSSI 없음 | — |
+| 시각원 미동기화 응답 | Windows NTP가 leap 3, stratum 0 응답 | MQTT 접속 뒤 `ANNOUNCE_DEFERRED`. 발표·status·RSSI 없음 | 온라인 아님 |
+| 정상 부팅 (EN 대체) | USB RTS 재시작 | Wi-Fi 1.5초, MQTT 2.2초, 신뢰 2.7초, 발표 2.8초, `NODE_READY` 3.0초 | 새 연결 `online=true` |
+| EN 버튼 | 사람이 누름 | 마지막 부팅 기준 `NODE_READY` 2.5초, 순서 위반 없음. 3.3초 간격 재시작 두 번이 기록됐다 | 새 연결 `online=true` |
+| 전원 재투입 | USB 케이블 5초 분리 | 다시 꽂은 뒤 설정 유지(`generation=1`) | 15초 뒤 `online=false`, 재투입 뒤 새 연결 `online=true` |
+| 서버 강제 종료·재시작 | 시험 콘솔 프로세스 강제 종료 | 연결 유지 | 재시작 5초 안에 같은 연결 `online=true` |
+| 브로커 재시작 | 시험 Mosquitto 종료 뒤 약 50초 뒤 시작 | `MQTT_DISCONNECTED`, 4·8·16·30초 재시도, 다음 시도에 새 연결·발표 | 15초 뒤 `online=false`, 재접속 3초 뒤 `online=true` |
+| Wi-Fi 끊김 | 핫스팟 약 30초 끔 | `WIFI_DISCONNECTED reason=1`, `MQTT_DISCONNECTED error=-5 wifi=0`, 20·30초 재시도, 63초 뒤 `NODE_READY`. 시각 신뢰는 유지 | 14초 뒤 `online=false`, 새 연결 `online=true` |
+| 시각원 단절 | `Stop-Service w32time` | 마지막 동기화 120초 뒤 `CLOCK_TRUST_EXPIRED`, `NODE_NOT_READY reason=clock_trust_expired`, 보고 중단 | 15초 뒤 `online=false` |
+| 시각원 복구 | `Start-Service w32time`, 재동기화 | 약 2분 뒤 재동기화, 같은 연결로 `NODE_READY` | 1초 뒤 `online=true` |
+| 펌웨어 재업로드 | PlatformIO upload | 설정 유지, `NODE_READY` 4.3초 | 새 연결 `online=true` |
+
+### 시험 중 고친 펌웨어 결함
+
+- 발행 중 끊긴 연결을 다음 반복의 재접속이 먼저 처리해서 `MQTT_DISCONNECTED`와 오류 코드가 빠졌다. 재접속 전에 끊김을 기록한다.
+- 같은 반복에서 시각 신뢰를 두 번 읽어 SNTP 콜백 사이에 `NODE_READY`가 `CLOCK_TRUSTED`보다 먼저 찍혔다. 한 번 읽은 값으로 판정한다.
+- lwIP SNTP는 실패 뒤 재시도 간격을 늘려 시각원 복구 뒤 약 2분 걸렸다. 신뢰가 없는 동안 30초마다 SNTP를 다시 요청한다(`CLOCK_RETRY`). 이 개선은 시각원 단절로 다시 시험하지 않았다.
+
+### 미해결 관찰
+
+- 연결이 정상인데도 가끔 MQTT 응답 대기가 2초(`NP_MQTT_IO_TIMEOUT_MS`)를 넘어 `error=-9`로 끊기고 0.2초 안에 새 연결로 재접속한다. 약 30분 동안 원인 코드가 없던 수정 전 재접속 2회, 발행 중 `-9` 끊김 1회, 구독 `-9` 실패 1회를 관찰했다.
+- 같은 시간 ping 60회는 손실 0, 최대 93ms였다. 후보는 BLE 스캔 창 90%와 Wi-Fi의 무선 공유, 또는 짧은 대기 시간이다. 원인을 확정하지 않았고 값을 바꾸지 않았다.
+- 재접속은 연결 ID를 바꾼다. 그 순간 진행 중인 명령은 `SESSION_MISMATCH`로 거부될 수 있다. 명령 전송 시점과 겹치는 경우는 시험하지 않았다.
+- 이 보드는 EN 버튼, USB RTS 재시작, 전원 재투입을 모두 `reset_reason=power_on`으로 기록한다. 펌웨어 재시작만 `software`다.
+- Wi-Fi 재시도 상한 30초 때문에 AP가 돌아온 뒤 재접속까지 최대 30초가 더 걸린다.
+- USB 포트를 여는 순간 보드가 재시작될 때가 있었다. 전원 재투입 직후 부팅 로그는 포트가 다시 잡히는 동안 놓쳤다. 서버 로그와 `CONFIG?`로 확인했다.
+
+### 한 대로 확인하지 못한 것
+
+- 여러 기기의 동시 부팅, 기기 간 구분, 다른 기기 토픽에 대한 ACL 거부
+- 서버·시각원 주소 변경 뒤 재주입. 노트북 주소가 바뀌지 않아 실행하지 않았다
+- 명령 기록이 있는 기기의 ID 변경 거부. 펌웨어 검토만 했다
+- 장시간 동작의 시각 오차와 시각원 변경 뒤 오차

@@ -21,6 +21,7 @@ STAGES = {
     "CLOCK_SYNCED": re.compile(r"CLOCK_SYNCED .*"),
     "CLOCK_TRUSTED": re.compile(r"CLOCK_TRUSTED .*"),
     "CLOCK_TRUST_EXPIRED": re.compile(r"CLOCK_TRUST_EXPIRED .*"),
+    "CLOCK_RETRY": re.compile(r"CLOCK_RETRY .*"),
     "MQTT_CONNECTED": re.compile(r"MQTT_CONNECTED session_id=(?P<session>\S+).*"),
     "MQTT_CONNECT_FAILED": re.compile(r"MQTT_CONNECT_FAILED .*"),
     "MQTT_SUBSCRIBE_FAILED": re.compile(r"MQTT_SUBSCRIBE_FAILED .*"),
@@ -30,6 +31,9 @@ STAGES = {
     "NODE_READY": re.compile(r"NODE_READY session_id=(?P<session>\S+).*"),
     "NODE_NOT_READY": re.compile(r"NODE_NOT_READY reason=(?P<reason>\S+).*"),
     "COMMAND_RESULT": re.compile(r"COMMAND_RESULT .*"),
+    "COMMAND_RECEIVED": re.compile(r"COMMAND_RECEIVED .*"),
+    "SAFETY_CHECK_UNSUPPORTED": re.compile(r"SAFETY_CHECK_UNSUPPORTED .*"),
+    "COMMAND_QUEUE_REJECTED": re.compile(r"COMMAND_QUEUE_REJECTED .*"),
 }
 
 
