@@ -13,6 +13,12 @@ data class BeaconIdentifier(val uuid: String, val major: Int, val minor: Int) {
             Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
         private val ID_RANGE = 0..65535
 
+        /** 처음 켰을 때 쓸 값. 무작위 UUID, major 1, 무작위 minor(1~65535)다. */
+        fun generate(
+            newUuid: () -> java.util.UUID = java.util.UUID::randomUUID,
+            random: kotlin.random.Random = kotlin.random.Random.Default,
+        ): BeaconIdentifier = BeaconIdentifier(newUuid().toString().lowercase(), 1, random.nextInt(1, 65536))
+
         /** 입력 문자열을 검증한다. 틀린 칸을 모두 돌려준다. */
         fun parse(uuid: String, major: String, minor: String): IdentifierParseResult {
             val normalizedUuid = uuid.trim().lowercase()

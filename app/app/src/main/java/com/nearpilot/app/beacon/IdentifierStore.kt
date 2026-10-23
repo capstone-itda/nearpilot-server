@@ -23,7 +23,21 @@ class IdentifierStore(context: Context) {
             .apply()
     }
 
+    /** 저장한 값이 없으면 새로 만들어 저장한다. */
+    fun loadOrCreate(): BeaconIdentifier = load() ?: BeaconIdentifier.generate().also(::save)
+
+    var introSeen: Boolean
+        get() = prefs.getBoolean(KEY_INTRO_SEEN, false)
+        set(value) = prefs.edit().putBoolean(KEY_INTRO_SEEN, value).apply()
+
+    /** 권한을 한 번이라도 물었는지. 묻기 전에는 '다시 묻지 않음'과 구분할 수 없다. */
+    var permissionAsked: Boolean
+        get() = prefs.getBoolean(KEY_PERMISSION_ASKED, false)
+        set(value) = prefs.edit().putBoolean(KEY_PERMISSION_ASKED, value).apply()
+
     private companion object {
+        const val KEY_PERMISSION_ASKED = "permission_asked"
+        const val KEY_INTRO_SEEN = "intro_seen"
         const val KEY_UUID = "uuid"
         const val KEY_MAJOR = "major"
         const val KEY_MINOR = "minor"
