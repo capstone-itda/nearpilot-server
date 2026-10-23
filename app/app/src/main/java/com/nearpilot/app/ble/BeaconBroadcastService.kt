@@ -20,7 +20,7 @@ import com.nearpilot.app.beacon.BeaconIdentifier
 import com.nearpilot.app.beacon.BroadcastController
 import com.nearpilot.app.beacon.BroadcastState
 import com.nearpilot.app.beacon.IdentifierParseResult
-import com.nearpilot.app.ui.describe
+import com.nearpilot.app.beacon.presentation
 
 /** 화면 밖에서도 송출을 유지하는 포그라운드 서비스. */
 class BeaconBroadcastService : Service() {
@@ -134,10 +134,12 @@ class BeaconBroadcastService : Service() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE,
         )
+        val presentation = state.presentation()
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-            .setContentTitle("NearPilot 비콘")
-            .setContentText(state.describe())
+            .setContentTitle("NearPilot 비콘 · ${presentation.title}")
+            .setContentText(presentation.message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(presentation.message))
             .setContentIntent(openApp)
             .setOngoing(ongoing)
             .setOnlyAlertOnce(true)
