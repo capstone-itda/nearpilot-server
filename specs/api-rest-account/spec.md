@@ -32,6 +32,7 @@
 ### 고치는 곳
 - `server/src/nearpilot/api/rest/`
 - `server/tests/api/`
+- `server/tests/integration/` (실제 DB 시나리오 테스트 하나)
 
 ### 고치지 않는 곳
 - 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
@@ -75,7 +76,7 @@
 ## 7. 가정
 
 - 담당자가 앱용 REST를 맡는다 — `architecture.md` §2에는 미결이다. 담당자가 팀에 알렸다.
-- 서버 조립이 `AdminService`를 만들어 라우터에 넘긴다 — 상태 관리가 조립에 반영한다. 그 전까지 이 경로는 실행 중인 서버에 없다.
+- 서버 조립이 `AdminService`를 만들어 라우터에 넘긴다 — 상태 관리가 조립에 반영한다. 그 전까지 이 경로는 실행 중인 서버에 없다. 라우터는 저장소를 작업 스레드에서 부르므로 조립의 `AdminService`도 스레드별 연결을 써야 한다. 지금 `ThreadDatabase`에는 `AdminRepository`의 스레드별 접점이 없다.
 
 ## 8. 테스트
 
