@@ -2,9 +2,9 @@
 import { describe, expect, it } from 'vitest';
 import type { StreamEvent } from '../model/events';
 import { FINISHED_HOLD_SEC, initialState, reduceAll } from './reduce';
-import { PLACE } from './mock/fixtures';
+import { LOUNGE, PLACES } from './mock/fixtures';
 
-const s0 = () => reduceAll(initialState(PLACE), [
+const s0 = () => reduceAll(initialState([LOUNGE]), [
   { type: 'beacon', at: '14:00:00.000', personId: 'p-a', pseudonym: '방문자 A', letter: 'A', role: 'visitor', seen: true },
   { type: 'rssi', at: '14:00:00.000', personId: 'p-a', rssi: { 'locker-1': -52 } }
 ]);
@@ -15,6 +15,20 @@ describe('reduce', () => {
     expect(s0().people).toEqual([{ id: 'p-a', pseudonym: '방문자 A', letter: 'A', role: 'visitor', beaconSeen: true, rssi: { 'locker-1': -52 }, near: 'locker-1', nearCandidate: undefined }]);
     const gone = reduceAll(s0(), [{ type: 'beacon', at: '14:00:02.000', personId: 'p-a', pseudonym: '방문자 A', letter: 'A', role: 'visitor', seen: false }]);
     expect(gone.people[0]).toMatchObject({ beaconSeen: false, rssi: {}, near: undefined });
+  });
+
+  it('FR12B 처음 상태는 모든 장소의 기기를 사용 가능으로 둔다', () => {
+    const s = initialState(PLACES);
+    expect(s.devices.map((d) => d.nodeId)).toEqual(PLACES.flatMap((p) => p.devices.map((d) => d.nodeId)));
+    expect(s.devices.every((d) => d.state === 'AVAILABLE')).toBe(true);
+  });
+
+  it('FR12B 무대에 세우는 기기는 장소와 상관없이 신호가 가장 센 기기다', () => {
+    const s = reduceAll(initialState(PLACES), [
+      { type: 'beacon', at: '14:00:00.000', personId: 'p-a', pseudonym: '방문자 A', letter: 'A', role: 'visitor', seen: true },
+      { type: 'rssi', at: '14:00:00.000', personId: 'p-a', rssi: { 'locker-1': -70, 'mood-1': -50 } }
+    ]);
+    expect(s.people[0].near).toBe('mood-1');
   });
 
   it('FR12B 무대에 세우는 기기는 다른 기기 신호가 4dB 이상 센 상태가 2초 이어질 때만 바뀐다', () => {

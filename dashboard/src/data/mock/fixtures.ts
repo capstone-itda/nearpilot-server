@@ -1,16 +1,20 @@
 // 목 조회 데이터. 스트림 이벤트 이야기는 story.ts에 있고, 여기 시각과 같다.
 // 13:21 방문자 C가 사물함 3 대여(14:21:05부터 대여 초과). 14:12 방문자 A가 조명 1 시간 승인(15:12까지).
 // 14:26 A의 ASK, 14:28 A가 사물함 1, 14:29 B의 사물함 2가 결과 불명으로 FAULT, 14:30 B의 조명 1 승인 필요.
+// 14:43 A가 옆방으로 옮겨 무드등을 켬 (승인 없이 OK).
 import { resolveArrangement, withArrangement } from '../../view/arrange';
 import type {
   ApprovalRow, Approvals, AuditRow, FloorLayout, Health, HistoryRow, PlaceInfo, RentalInfo, TrustReport, UseRow
 } from '../../model/types';
 
-export const PLACE: PlaceInfo = {
+/** 배치 화면에서 약한 신호로 표시할 기준 (dBm). 응답 전체에 하나다. */
+export const WEAK_RSSI_DBM = -80;
+
+export const LOUNGE: PlaceInfo = {
+  placeId: 'lounge',
   placeName: '공용 라운지',
   modelVersion: 'v3',
   calibrationVersion: 'cal-2',
-  weakRssiDbm: -80,
   // NFR-10 시연 장비: 사물함 3, LED 조명 3, 스피커 1
   devices: [
     { nodeId: 'locker-1', name: '사물함 1', capability: 'locker', occupancy: 'rental' },
@@ -22,8 +26,17 @@ export const PLACE: PlaceInfo = {
     { nodeId: 'light-3', name: '조명 3', capability: 'light', occupancy: 'shared' }
   ]
 };
-/** 기본 표시 배치를 입힌 장소 (테스트용) */
-export const LAYOUT: FloorLayout = withArrangement(PLACE, resolveArrangement(PLACE.devices));
+/** NFR-10 시연의 두 번째 장소: 무드등 하나. 장소마다 근접 모델과 보정이 따로라 버전이 다르다. */
+export const SIDE_ROOM: PlaceInfo = {
+  placeId: 'side-room',
+  placeName: '옆방',
+  modelVersion: 'v2',
+  calibrationVersion: 'cal-1',
+  devices: [{ nodeId: 'mood-1', name: '무드등', capability: 'light', occupancy: 'shared' }]
+};
+export const PLACES: PlaceInfo[] = [LOUNGE, SIDE_ROOM];
+/** 라운지에 기본 표시 배치를 입힌 것 (테스트용) */
+export const LAYOUT: FloorLayout = withArrangement(LOUNGE, resolveArrangement(LOUNGE.devices), WEAK_RSSI_DBM);
 
 /** 목 전용: 이 시각부터 조회 결과에 나타난다. 조회는 마지막으로 보낸 이벤트 시각까지만 보여 준다. */
 export type Since<T> = T & { since: string };
@@ -50,6 +63,7 @@ export const APPROVALS: { [K in keyof Approvals]: Since<ApprovalRow>[] } = {
 };
 
 export const AUDIT: AuditRow[] = [
+  { id: 'a9', at: '14:43:49', step: 'exec', nodeId: 'mood-1', text: '켜짐 완료', code: 'OK' },
   { id: 'a8', at: '14:30:58', step: '4', nodeId: 'light-1', text: '승인 필요', code: 'APPROVAL_REQUIRED' },
   { id: 'a7', at: '14:30:58', step: '3', nodeId: 'light-1', text: '근접 통과 0.91', code: 'OK' },
   { id: 'a6', at: '14:29:40', step: 'fault', nodeId: 'locker-2', text: '결과 불명으로 격리', code: 'EXEC_UNKNOWN' },
@@ -61,6 +75,7 @@ export const AUDIT: AuditRow[] = [
 ];
 
 export const HISTORY: Since<HistoryRow>[] = [
+  { requestId: 'r-1443', at: '14:43', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'OK', nodeId: 'mood-1', outcome: '켜짐', since: '14:43:49' },
   { requestId: 'r-1430', at: '14:30', personId: 'p-b', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함', code: 'APPROVAL_REQUIRED', since: '14:30:58' },
   { requestId: 'r-1429', at: '14:29', personId: 'p-b', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-2', outcome: '결과 불명 → 고장 격리', code: 'EXEC_UNKNOWN', since: '14:29:40' },
   { requestId: 'r-1428', at: '14:28', personId: 'p-a', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-1', outcome: '열림', since: '14:28:11' },
@@ -115,12 +130,12 @@ export const RENTALS: Record<string, RentalInfo> = {
 };
 
 export const HEALTH: Health = {
-  devices: PLACE.devices.map((d) => ({ nodeId: d.nodeId, connected: true, trust: 'trusted' })),
+  devices: PLACES.flatMap((p) => p.devices).map((d) => ({ nodeId: d.nodeId, connected: true, trust: 'trusted' })),
   beacons: [
     { personId: 'p-a', label: 'minor 101', lastSeenSec: 1 },
     { personId: 'p-b', label: 'minor 102', lastSeenSec: 1, note: '스피커 쪽 신호 약함' },
     { personId: 'p-c', label: 'minor 103', lastSeenSec: 1 },
     { personId: 'p-owner', label: '—', lastSeenSec: null, note: '비콘 없음 · 승인만 함' }
   ],
-  server: { database: true, mqtt: true, model: 'v3 · cal-2' }
+  server: { database: true, mqtt: true, model: PLACES.map((p) => `${p.modelVersion} · ${p.calibrationVersion}`).join(' / ') }
 };

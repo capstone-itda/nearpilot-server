@@ -34,11 +34,11 @@ function nearOf(p: Person, rssi: Record<string, number>, at: string): Pick<Perso
   return secOf(at) - secOf(c.since) >= NEAR_DWELL_SEC ? { near: best, nearCandidate: undefined } : { near: cur, nearCandidate: c };
 }
 
-/** 연결 직후의 빈 상태: 장소의 기기는 모두 사용 가능, 사람은 비콘 이벤트가 오면 생긴다 */
-export function initialState(place: PlaceInfo): MonitorState {
+/** 연결 직후의 빈 상태: 모든 장소의 기기는 모두 사용 가능, 사람은 비콘 이벤트가 오면 생긴다 */
+export function initialState(places: PlaceInfo[]): MonitorState {
   return {
     connected: true, lastReceivedAt: '', reconnectAttempts: 0,
-    devices: place.devices.map((d) => ({ nodeId: d.nodeId, state: 'AVAILABLE', online: true, trust: 'trusted', overdue: false })),
+    devices: places.flatMap((p) => p.devices).map((d) => ({ nodeId: d.nodeId, state: 'AVAILABLE', online: true, trust: 'trusted', overdue: false })),
     people: [], ownerNotified: false
   };
 }

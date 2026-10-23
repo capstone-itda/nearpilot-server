@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { LAYOUT } from '../data/mock/fixtures';
 import { SCENES, sec, stateAt } from '../data/mock/story';
 import { stageView } from './stage';
-import { PLACE } from '../data/mock/fixtures';
+import { LOUNGE, WEAK_RSSI_DBM } from '../data/mock/fixtures';
 import { resolveArrangement, withArrangement } from './arrange';
 import { CALLOUT_H, CALLOUT_W, PANEL_EDGE, STAGE_BOUNDS, canPlaceAll, crosses, deviceLabelBox, hits, labelBox, personBox, rssiBox, type Rect } from './placement';
 
@@ -221,10 +221,12 @@ describe('바꾼 배치에서도 무대 글자가 겹치지 않는다', () => {
   const pairs = (list: Rect[]) => list.some((a, i) => list.some((b, j) => j > i && hits(a, b)));
 
   for (const [arrName, saved] of Object.entries(ARRANGEMENTS)) {
-    const arr = resolveArrangement(PLACE.devices, saved);
+    const arr = resolveArrangement(LOUNGE.devices, saved);
     it(`FR12A D4 ${arrName} 배치는 저장한 자리 그대로 허용된다`, () => expect(canPlaceAll(arr, saved)).toBe(true));
-    const layout = withArrangement(PLACE, arr);
+    const layout = withArrangement(LOUNGE, arr, WEAK_RSSI_DBM);
     for (const [scene, make] of Object.entries(SCENES)) {
+      // 옆방 장면은 주 장소인 옆방의 배치로 그린다 (places.test.ts)
+      if (scene === 'side-room') continue;
       for (const panelOpen of [false, true]) {
         it(`FR12B D4 ${arrName} 배치 · ${scene} 장면 · 패널 ${panelOpen ? '열림' : '닫힘'}`, () => {
           const v = stageView(make(), layout, { panelOpen });

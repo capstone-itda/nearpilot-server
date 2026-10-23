@@ -57,12 +57,12 @@ export function saveMirrorPending(personId: string | null): void {
   }
 }
 
-/** 장소별 표시 배치. 파일 내보내기와 같은 형식으로 둔다. */
-const arrangementKey = (place: string) => `nearpilot-arrangement:${place}`;
+/** 장소별 표시 배치. 파일 내보내기와 같은 형식으로 두고, 열쇠는 placeId다. */
+const arrangementKey = (placeId: string) => `nearpilot-arrangement:${placeId}`;
 
-export function loadArrangement(place: string): Arrangement {
+export function loadArrangement(placeId: string): Arrangement {
   try {
-    const raw = localStorage.getItem(arrangementKey(place));
+    const raw = localStorage.getItem(arrangementKey(placeId));
     if (!raw) return {};
     const f = parseFile(raw);
     return f.ok ? f.devices : {};
@@ -71,17 +71,17 @@ export function loadArrangement(place: string): Arrangement {
   }
 }
 
-export function saveArrangement(place: string, arr: Arrangement): void {
+export function saveArrangement(placeId: string, arr: Arrangement): void {
   try {
-    localStorage.setItem(arrangementKey(place), JSON.stringify(toFile(place, arr)));
+    localStorage.setItem(arrangementKey(placeId), JSON.stringify(toFile(placeId, arr)));
   } catch {
     // 저장하지 못해도 이번 화면에서는 바꾼 배치를 쓴다
   }
 }
 
-export function clearArrangement(place: string): void {
+export function clearArrangement(placeId: string): void {
   try {
-    localStorage.removeItem(arrangementKey(place));
+    localStorage.removeItem(arrangementKey(placeId));
   } catch {
     // 지우지 못해도 이번 화면은 기본 배치로 바뀐다
   }

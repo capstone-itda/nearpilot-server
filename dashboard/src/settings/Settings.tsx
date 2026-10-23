@@ -69,7 +69,7 @@ export function LayoutCheck({ arrangement, canPlace, onChange, onReset }: Layout
     if (names.length) weak.push(`${p.pseudonym}의 신호가 ${names.join(', ')}에서 약해요.`);
   }
   const exportFile = () => {
-    const blob = new Blob([JSON.stringify(toFile(layout.placeName, arrangement), null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(toFile(layout.placeId, arrangement, layout.placeName), null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -91,7 +91,7 @@ export function LayoutCheck({ arrangement, canPlace, onChange, onReset }: Layout
       }
       if (a.moved === 0) { setStatus('불러오지 못했어요. 파일에 지금 장소의 기기가 없어요. 배치는 그대로예요.'); return; }
       onChange(a.next);
-      const other = r.place && r.place !== layout.placeName ? ` 다른 장소(${r.place})의 파일이라 이름이 같은 기기만 옮겼어요.` : '';
+      const other = r.place && r.place !== layout.placeId ? ` 다른 장소(${r.placeName ?? r.place})의 파일이라 이름이 같은 기기만 옮겼어요.` : '';
       const skipped = a.unknown ? ` 지금 장소에 없는 기기 ${a.unknown}대는 건너뛰었어요.` : '';
       setStatus(`기기 ${a.moved}대의 자리를 불러왔어요.${other}${skipped}`);
     }, () => setStatus('파일을 읽지 못했어요.'));

@@ -26,14 +26,20 @@ export interface DeviceInfo {
   occupancy: Occupancy;
 }
 
-/** 조회 REST의 장소 정보. 좌표는 없다. */
+/** 조회 REST의 장소 하나. 좌표는 없다. */
 export interface PlaceInfo {
+  placeId: string;
   placeName: string;
   modelVersion: string;
   calibrationVersion: string;
+  devices: DeviceInfo[];
+}
+
+/** 조회 REST의 장소 목록 (GET /dashboard/places). 약한 신호 기준은 응답 전체에 하나다. */
+export interface PlacesInfo {
   /** 배치 화면에서 약한 신호로 표시할 기준 (dBm). 설정에서 받는다. 판정에는 쓰지 않는다. */
   weakRssiDbm: number;
-  devices: DeviceInfo[];
+  places: PlaceInfo[];
 }
 
 /** 무대 위 표시 자리 (SVG 단위). 실제 위치가 아니고 이 PC에서 정한다. */
@@ -41,7 +47,7 @@ export interface Spot { x: number; y: number }
 
 export interface LayoutDevice extends DeviceInfo { spot: Spot }
 /** 장소 정보에 이 PC의 표시 배치를 입힌 것 */
-export interface FloorLayout extends Omit<PlaceInfo, 'devices'> { devices: LayoutDevice[] }
+export interface FloorLayout extends Omit<PlaceInfo, 'devices'> { weakRssiDbm: number; devices: LayoutDevice[] }
 
 export interface DeviceStatus {
   nodeId: string;

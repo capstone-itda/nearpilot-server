@@ -2,8 +2,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StreamEvent } from '../../model/events';
 import type { MonitorState } from '../../model/types';
+import { placeOfNode, requestPlace } from '../../view/places';
 import { initialState, reduceAll } from '../reduce';
-import { PLACE } from './fixtures';
+import { PLACES } from './fixtures';
 import { PLAY_ORDER, SCENES, sec } from './story';
 import { LIVE_START, createMockSource, liveClock } from './mockSource';
 
@@ -27,7 +28,7 @@ describe('createMockSource', () => {
     expect(flat.some((e) => e.type === 'exec_result' && e.result === 'succeeded')).toBe(true);
     // 무대에 세우는 기기(near)는 받은 RSSI 순서에 따라 늦게 바뀌므로 비교에서 뺀다
     const strip = (m: MonitorState) => ({ ...m, people: m.people.map(({ near: _n, nearCandidate: _c, ...p }) => p) });
-    expect(strip(reduceAll(initialState(PLACE), flat))).toEqual(strip(SCENES[PLAY_ORDER.at(-1)!]()));
+    expect(strip(reduceAll(initialState(PLACES), flat))).toEqual(strip(SCENES[PLAY_ORDER.at(-1)!]()));
   });
 });
 
@@ -108,6 +109,72 @@ describe('조회는 판정을 앞서가지 않는다', () => {
     const ask = createMockSource({ scene: 'ask' });
     expect((await ask.history({ period: '오늘' })).map((h) => h.requestId)).toContain('r-1426');
     expect((await ask.audit()).map((a) => a.id)).toContain('a4');
+  });
+});
+
+describe('두 장소', () => {
+  it('FR12A 장소 목록은 장소 둘과 약한 신호 기준 하나를 주고, 장소와 기기는 한 번씩만 나온다', async () => {
+    const info = await createMockSource({ scene: 'idle' }).places();
+    expect(typeof info.weakRssiDbm).toBe('number');
+    expect(info.places.map((p) => p.placeId)).toEqual(['lounge', 'side-room']);
+    expect(info.places[0]).toMatchObject({ placeName: '공용 라운지' });
+    expect(info.places[0].devices).toHaveLength(7);
+    expect(info.places[1]).toMatchObject({ placeName: '옆방', devices: [{ nodeId: 'mood-1', name: '무드등', capability: 'light', occupancy: 'shared' }] });
+    // 장소마다 근접 모델과 보정이 따로다
+    expect(info.places[0].modelVersion).not.toBe(info.places[1].modelVersion);
+    expect(info.places[0].calibrationVersion).not.toBe(info.places[1].calibrationVersion);
+    const nodeIds = info.places.flatMap((p) => p.devices.map((d) => d.nodeId));
+    expect(new Set(nodeIds).size).toBe(nodeIds.length);
+  });
+
+  it('FR12B 옆방 장면: A는 옆방 무드등 앞, C는 라운지 기기 앞이고 진행 중인 요청의 장소는 옆방이다', () => {
+    const s = SCENES['side-room']();
+    const person = (id: string) => s.people.find((p) => p.id === id)!;
+    expect(person('p-a')).toMatchObject({ beaconSeen: true, near: 'mood-1' });
+    expect(person('p-c').beaconSeen).toBe(true);
+    expect(placeOfNode(PLACES, person('p-c').near)).toBe('lounge');
+    expect(s.request).toMatchObject({ personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'OK', nodeId: 'mood-1', execution: 'sent' });
+    expect(requestPlace(s, PLACES)).toBe('side-room');
+  });
+
+  it('FR12A 옆방 장면: 진행 중인 요청은 상세로 열 수 있고 이력, 감사, 신뢰도에는 아직 없다', async () => {
+    const side = createMockSource({ scene: 'side-room' });
+    expect(await side.request('r-1443')).toEqual(SCENES['side-room']().request);
+    expect((await side.history({ period: '오늘' })).map((h) => h.requestId)).not.toContain('r-1443');
+    expect((await side.audit()).map((a) => a.id)).not.toContain('a9');
+    // 이력 수 = 신뢰도 판정 수
+    expect((await side.trust()).live.decisions).toBe((await side.history({ period: '오늘 14:00~23:59' })).length);
+  });
+
+  it('FR12A 점검의 기기에 모든 장소의 기기가 있고, 비콘 수신은 모니터 상태를 따른다', async () => {
+    for (const scene of ['idle', 'side-room'] as const) {
+      const health = await createMockSource({ scene }).health();
+      expect(health.devices.map((d) => d.nodeId).sort()).toEqual(PLACES.flatMap((p) => p.devices.map((d) => d.nodeId)).sort());
+      const state = SCENES[scene]();
+      for (const b of health.beacons) {
+        const p = state.people.find((x) => x.id === b.personId)!;
+        if (p.role === 'visitor') expect(b.lastSeenSec === null, `${scene} ${p.pseudonym}`).toBe(!p.beaconSeen);
+      }
+    }
+    // 옆방 장면에서는 방문자 셋이 모두 비콘을 보낸다
+    expect(SCENES['side-room']().people.filter((p) => p.role === 'visitor' && p.beaconSeen).map((p) => p.id)).toEqual(['p-a', 'p-b', 'p-c']);
+  });
+
+  it('FR12A 옆방 요청은 AI에 응답한 뒤 이력, 감사, 신뢰도에 나오고 이력 수와 판정 수가 같다', async () => {
+    vi.useFakeTimers();
+    const s = createMockSource({ scene: 'live' });
+    s.subscribe(() => undefined);
+    // 이야기 시각이 AI 응답(14:43:49)을 지날 때까지 흘려보낸다
+    const clock = liveClock();
+    let e = 0;
+    while (clock(e) < sec('14:43:52')) e += 1;
+    vi.advanceTimersByTime(e * 1000);
+    expect((await s.history({ period: '오늘' }))[0]).toMatchObject({ requestId: 'r-1443', personId: 'p-a', verdict: 'OK', nodeId: 'mood-1' });
+    const live = (await s.trust()).live;
+    expect(live.decisions).toBe((await s.history({ period: '오늘 14:00~23:59' })).length);
+    expect(live.counts).toEqual({ OK: 4, ASK: 1, NEED_APPROVAL: 2, BUSY: 1, DENY: 1 });
+    expect(await s.request('r-1443')).toMatchObject({ verdict: 'OK', execution: 'succeeded', nodeId: 'mood-1' });
+    expect((await s.audit())[0]).toMatchObject({ id: 'a9', step: 'exec', nodeId: 'mood-1', code: 'OK' });
   });
 });
 

@@ -4,7 +4,7 @@ import type { DataSource } from './data/source';
 import { DataCtx, type Ctx } from './data/context';
 import { initialState, reduceAll } from './data/reduce';
 import { paceJudging } from './data/pace';
-import type { PlaceInfo, RequestProgress, MonitorState } from './model/types';
+import type { PlacesInfo, RequestProgress, MonitorState } from './model/types';
 import { OfflineBanner } from './components/common';
 import { FlowRail } from './components/FlowRail';
 import { PhoneMirror } from './components/PhoneMirror';
@@ -17,6 +17,7 @@ import { ApprovalsPanel, AuditPanel, HistoryPanel, TrustPanel, UsesPanel } from 
 import { RequestPanel } from './panels/RequestPanel';
 import { Check, LayoutCheck, Phones, SettingsTabs, type MirrorGuideState } from './settings/Settings';
 import { choosePhone, type FollowSettings } from './view/phone';
+import { nextFocus, type StageFocus } from './view/places';
 import { railView } from './view/rail';
 import { stageView } from './view/stage';
 import { canPlace, resolveArrangement, withArrangement, type Arrangement } from './view/arrange';
@@ -64,8 +65,9 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   const [zoomView, setZoomView] = useState<ZoomView>(prefs.stage);
   const [sizes, setSizes] = useState<Sizes>(prefs.sizes);
   const [stageSize, setStageSize] = useState<{ w: number; h: number; right: number }>();
-  const [place, setPlace] = useState<PlaceInfo>();
-  const [arrangement, setArrangement] = useState<Arrangement>({});
+  const [info, setInfo] = useState<PlacesInfo>();
+  /** 장소별 표시 배치 (placeId → 배치) */
+  const [arrangements, setArrangements] = useState<Record<string, Arrangement>>({});
   const [snapshot, setSnapshot] = useState<MonitorState>();
   // 권한 설정을 열고 돌아오기 전에 브라우저를 다시 열었으면 폰 연결 탭에서 안내를 이어서 띄운다
   const pending = useMemo(loadMirrorPending, []);
@@ -92,17 +94,25 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     return () => clearTimeout(t);
   }, [loaded]);
   useEffect(() => {
-    source.place().then((p) => { setPlace(p); setArrangement(resolveArrangement(p.devices, loadArrangement(p.placeName))); }, () => undefined);
+    source.places().then((p) => {
+      setInfo(p);
+      setArrangements(Object.fromEntries(p.places.map((pl) => [pl.placeId, resolveArrangement(pl.devices, loadArrangement(pl.placeId))])));
+    }, () => undefined);
   }, [source]);
-  const layout = useMemo(() => (place ? withArrangement(place, arrangement) : undefined), [place, arrangement]);
+  // 무대의 주 장소: 스냅숏이 바뀔 때마다 진행 중인 요청과 사람의 이동으로 고른다 (잠금은 아직 없다)
+  const focusRef = useRef<StageFocus>();
+  const focus = useMemo(() => (info && snapshot ? nextFocus(focusRef.current, snapshot, info.places) : undefined), [info, snapshot]);
+  focusRef.current = focus;
+  const place = info?.places.find((p) => p.placeId === focus?.primary);
+  const layout = useMemo(() => (info && place ? withArrangement(place, arrangements[place.placeId] ?? {}, info.weakRssiDbm) : undefined), [info, place, arrangements]);
   // 받은 이벤트 묶음을 차례로 쌓는다. 기기 목록이 있어야 처음 상태를 만들 수 있어서 장소를 받은 뒤 구독한다.
   useEffect(() => {
-    if (!place) return;
+    if (!info) return;
     // 판정 결과는 판정 게이지가 찬 뒤에 넘긴다
-    const pacer = paceJudging((events) => setSnapshot((s) => reduceAll(s ?? initialState(place), events)));
+    const pacer = paceJudging((events) => setSnapshot((s) => reduceAll(s ?? initialState(info.places), events)));
     const off = source.subscribe(pacer.push);
     return () => { off(); pacer.stop(); };
-  }, [source, place]);
+  }, [source, info]);
 
   // 처음 화면의 패널
   useEffect(() => {
@@ -150,13 +160,15 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  if (!place || !layout || !snapshot) return <div className="np-app" data-theme={theme}><p className="np-loading" role="status">불러오는 중…</p></div>;
+  if (!info || !place || !layout || !snapshot) return <div className="np-app" data-theme={theme}><p className="np-loading" role="status">불러오는 중…</p></div>;
 
   const people = new Map(snapshot.people.map((p) => [p.id, p.pseudonym]));
+  // 이력과 감사 로그는 주 장소가 아닌 장소의 기기도 이름으로 보인다
+  const deviceNames = new Map(info.places.flatMap((p) => p.devices).map((d) => [d.nodeId, d.name]));
   const ctx: Ctx = {
     source, layout, snapshot,
     personName: (id) => people.get(id) ?? '알 수 없음',
-    deviceName: (id) => layout.devices.find((d) => d.nodeId === id)?.name ?? id
+    deviceName: (id) => deviceNames.get(id) ?? id
   };
 
   const isList = (p: PanelState | null): p is { kind: PanelKey } => !!p && p.kind !== 'request' && p.kind !== 'device';
@@ -198,11 +210,13 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     onClose: () => { setGuide(null); saveMirrorPending(null); }
   } : null;
 
+  // 배치 화면은 주 장소의 배치를 편집한다
+  const arrangement = arrangements[place.placeId] ?? {};
   const arrange = {
     arrangement,
     canPlace: (nodeId: string, s: { x: number; y: number }) => canPlace(arrangement, nodeId, s),
-    onChange: (next: Arrangement) => { const r = resolveArrangement(place.devices, next); setArrangement(r); saveArrangement(place.placeName, r); },
-    onReset: () => { clearArrangement(place.placeName); setArrangement(resolveArrangement(place.devices)); }
+    onChange: (next: Arrangement) => { const r = resolveArrangement(place.devices, next); setArrangements((a) => ({ ...a, [place.placeId]: r })); saveArrangement(place.placeId, r); },
+    onReset: () => { clearArrangement(place.placeId); setArrangements((a) => ({ ...a, [place.placeId]: resolveArrangement(place.devices) })); }
   };
 
   // 테마는 화면 전체를 천천히 겹쳐 바꾼다(styles/base.css의 view-transition). 움직임 줄이기 설정이면 바로 바꾼다.
