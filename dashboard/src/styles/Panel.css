@@ -3,16 +3,19 @@
 
 .np-panel {
   position: absolute;
-  top: var(--topbar-h);
-  right: var(--side-w);
-  bottom: var(--rail-h);
+  /* 사이드 메뉴 카드 왼쪽에 이어 붙는다. 오른쪽 테두리는 메뉴의 왼쪽 테두리가 대신한다. 무대 크기와 위치는 바뀌지 않는다 (D1). */
+  top: calc(var(--topbar-h) + var(--gutter));
+  right: calc(var(--side-w) + var(--gutter));
+  bottom: var(--gutter);
   width: var(--panel-w);
   z-index: 5;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   background: var(--surface);
-  border-left: 1px solid var(--line);
-  box-shadow: var(--shadow);
+  border: 1px solid var(--line-soft);
+  border-right: 0;
+  border-radius: var(--radius) 0 0 var(--radius);
+  overflow: hidden;
 }
 .np-panel[data-size="wide"] { width: var(--panel-wide-w, calc(var(--panel-w) * 1.5)); }
 .np-panel__head {
@@ -197,27 +200,39 @@
 .np-panel[data-kind="history"] .np-verdict__code { display: none; }
 .np-panel[data-kind="history"] td:nth-child(5) .np-table__sub { white-space: nowrap; }
 
-/* Splitter: 폰 화면 폭, 패널 폭, 흐름 레일 높이를 끌어 바꾸는 손잡이. 평소에는 보이지 않고 올리거나 고르면 선이 보인다. */
+/* Splitter: 카드 사이 간격이 크기 조절 경계다. 간격 가운데에 점 세 개를 두어 잡을 수 있다는 것을 보인다 (VS Code처럼). */
 .np-split { position: absolute; z-index: 6; touch-action: none; }
-.np-split::after { content: ''; position: absolute; background: var(--accent); opacity: 0; transition: opacity 0.15s; }
-.np-split:hover::after, .np-split:focus-visible::after, .np-split:active::after { opacity: 0.9; }
 .np-split:focus-visible { outline: none; }
-/* 잡을 수 있다는 표시: 경계 가운데에 점 세 개 (VS Code의 창 경계처럼) */
-.np-split::before { content: ''; position: absolute; z-index: 1; border-radius: 2px; background-color: var(--surface); }
+/* 간격이 좁아도 잡기 쉽게 잡는 자리는 양옆으로 넓힌다 */
+.np-split::after { content: ''; position: absolute; }
+.np-split[data-edge="rail"]::after { inset: -4px 0; }
+.np-split::before { content: ''; position: absolute; background-image: radial-gradient(circle, var(--ink-3) 1.3px, transparent 1.7px); }
+.np-split:hover::before, .np-split:focus-visible::before, .np-split:active::before { background-image: radial-gradient(circle, var(--accent-strong) 1.3px, transparent 1.7px); }
+/* 세로 경계는 요소 자체를 간격보다 양옆 4px씩 넓혀 잡고, 점과 띠는 가운데 간격에만 그린다 */
+.np-split[data-edge="phone"], .np-split[data-edge="panel"] { top: calc(var(--topbar-h) + var(--gutter)); bottom: calc(var(--rail-h) + var(--gutter) * 2); width: calc(var(--gutter) + 8px); cursor: col-resize; }
+.np-split[data-edge="panel"] { bottom: var(--gutter); }
 .np-split[data-edge="phone"]::before, .np-split[data-edge="panel"]::before {
-  top: 50%; left: 3px; width: 6px; height: 22px; margin-top: -11px;
-  background-image: radial-gradient(circle, var(--ink-3) 1.4px, transparent 1.8px); background-size: 6px 7px; background-position: center 1px; background-repeat: repeat-y;
+  top: 50%; left: 4px; right: 4px; height: 21px; margin-top: -10px; background-size: 100% 7px; background-repeat: repeat-y;
 }
-.np-split[data-edge="rail"]::before {
-  left: 50%; top: 3px; height: 6px; width: 22px; margin-left: -11px;
-  background-image: radial-gradient(circle, var(--ink-3) 1.4px, transparent 1.8px); background-size: 7px 6px; background-position: 1px center; background-repeat: repeat-x;
-}
-.np-split:hover::before, .np-split:focus-visible::before, .np-split:active::before { background-image: radial-gradient(circle, var(--accent-strong) 1.4px, transparent 1.8px); }
-.np-split[data-edge="phone"], .np-split[data-edge="panel"] { top: var(--topbar-h); bottom: var(--rail-h); width: 12px; cursor: col-resize; }
-.np-split[data-edge="phone"]::after, .np-split[data-edge="panel"]::after { top: 0; bottom: 0; left: 5px; width: 2px; }
-.np-split[data-edge="phone"] { left: calc(var(--phone-w) - 6px); }
-.np-split[data-edge="panel"] { right: calc(var(--side-w) + var(--panel-w) - 6px); }
-.np-monitor[data-panel="wide"] .np-split[data-edge="panel"] { right: calc(var(--side-w) + var(--panel-wide-w, calc(var(--panel-w) * 1.5)) - 6px); }
-.np-split[data-edge="rail"] { left: 0; right: 0; bottom: calc(var(--rail-h) - 6px); height: 12px; cursor: row-resize; }
-.np-split[data-edge="rail"]::after { left: 0; right: 0; top: 5px; height: 2px; }
+.np-split[data-edge="phone"] { left: calc(var(--gutter) + var(--phone-w) - 4px); bottom: var(--gutter); }
+/* 패널은 무대 위에 겹치므로 경계 띠를 바탕색으로 칠해 카드 사이 간격처럼 보인다 */
+.np-split[data-edge="panel"] { right: calc(var(--side-w) + var(--gutter) + var(--open-w) - 4px); background: linear-gradient(var(--board), var(--board)) center / var(--gutter) 100% no-repeat; }
+.np-split[data-edge="rail"] { left: calc(var(--gutter) * 2 + var(--phone-w)); right: calc(var(--side-w) + var(--gutter) * 2 + var(--open-w, 0px)); bottom: calc(var(--gutter) + var(--rail-h)); height: var(--gutter); cursor: row-resize; }
+.np-split[data-edge="rail"]::before { left: 50%; top: 0; bottom: 0; width: 21px; margin-left: -10px; background-size: 7px 100%; background-repeat: repeat-x; }
 @media (max-width: 900px) { .np-split { display: none; } }
+/* 패널 왼쪽 간격 바로 앞에 무대 카드의 둥근 오른쪽 끝을 그린다. 바깥 그림자로 모서리 밖과 간격, 패널 둥근 모서리 밑까지 바탕색으로 덮는다. */
+.np-stage-cap {
+  position: absolute;
+  z-index: 5;
+  top: calc(var(--topbar-h) + var(--gutter));
+  bottom: calc(var(--rail-h) + var(--gutter) * 2);
+  right: calc(var(--side-w) + var(--gutter) * 2 + var(--open-w));
+  width: var(--radius);
+  border: 1px solid var(--line-soft);
+  border-left: 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  box-shadow: 0 0 0 calc(var(--gutter) + var(--radius)) var(--board);
+  clip-path: inset(0 calc((var(--gutter) + var(--radius)) * -1) 0 0);
+  pointer-events: none;
+}
+@media (max-width: 900px) { .np-stage-cap { display: none; } }

@@ -5,9 +5,10 @@ import { FIT, clampView, type ZoomView } from './view/zoom';
 
 /** 사람이 끌어 바꾼 영역 크기(px). 없으면 기본 크기. */
 export interface Sizes { phone?: number; panel?: number; wide?: number; rail?: number }
-export interface Prefs { theme: 'dark' | 'light'; follow: FollowSettings; stage: ZoomView; sizes: Sizes }
+/** mirrorReady: 이 PC에서 미러링 창 공유에 한 번 성공했다. 그 전에는 macOS에서 권한 안내를 먼저 띄운다. */
+export interface Prefs { theme: 'dark' | 'light'; follow: FollowSettings; stage: ZoomView; sizes: Sizes; mirrorReady: boolean }
 const KEY = 'nearpilot-dashboard';
-export const DEFAULT_PREFS: Prefs = { theme: 'dark', follow: { followRequester: true, followApprover: true }, stage: FIT, sizes: {} };
+export const DEFAULT_PREFS: Prefs = { theme: 'dark', follow: { followRequester: true, followApprover: true }, stage: FIT, sizes: {}, mirrorReady: false };
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined);
 
@@ -20,7 +21,8 @@ export function loadPrefs(): Prefs {
       theme: p.theme === 'light' ? 'light' : 'dark',
       follow: { ...DEFAULT_PREFS.follow, ...(p.follow ?? {}) },
       stage: p.stage && num(p.stage.k) && Number.isFinite(p.stage.cx) && Number.isFinite(p.stage.cy) ? clampView(p.stage) : FIT,
-      sizes: { phone: num(p.sizes?.phone), panel: num(p.sizes?.panel), wide: num(p.sizes?.wide), rail: num(p.sizes?.rail) }
+      sizes: { phone: num(p.sizes?.phone), panel: num(p.sizes?.panel), wide: num(p.sizes?.wide), rail: num(p.sizes?.rail) },
+      mirrorReady: p.mirrorReady === true
     };
   } catch {
     return DEFAULT_PREFS;
@@ -32,6 +34,26 @@ export function savePrefs(p: Prefs): void {
     localStorage.setItem(KEY, JSON.stringify(p));
   } catch {
     // 저장하지 못해도 화면은 그대로 동작한다
+  }
+}
+
+/** 권한 설정을 열고 아직 창을 고르지 않은 사람. 권한을 켠 뒤 브라우저를 다시 열어도 안내를 이어서 띄운다. */
+const PENDING = 'nearpilot-mirror-pending';
+
+export function loadMirrorPending(): string | null {
+  try {
+    return localStorage.getItem(PENDING);
+  } catch {
+    return null;
+  }
+}
+
+export function saveMirrorPending(personId: string | null): void {
+  try {
+    if (personId) localStorage.setItem(PENDING, personId);
+    else localStorage.removeItem(PENDING);
+  } catch {
+    // 저장하지 못하면 브라우저를 다시 열었을 때 안내가 이어지지 않을 뿐이다
   }
 }
 

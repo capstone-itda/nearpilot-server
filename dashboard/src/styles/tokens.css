@@ -5,6 +5,8 @@ html { font-size: clamp(12px, 0.8333vw, 32px); }
 
 .np-app {
   /* 다크 (기본): iso-glow 흑연 판. 가는 선 위에서 살아 있는 것만 강조색·판정 색으로 빛난다 */
+  /* board: 모든 영역이 카드로 올라앉는 바탕. 패널과 같은 색이라 상단 바, 사이드 메뉴, 패널이 한 색으로 보인다 (VS Code처럼). 카드 사이 간격이 크기 조절 경계다. */
+  --board: #141516;
   --bg: #0c0d0e;
   --surface: #141516;
   --surface-2: #1b1d1f;
@@ -64,6 +66,7 @@ html { font-size: clamp(12px, 0.8333vw, 32px); }
   --phone-w: 24vw;
   --panel-w: 30vw;
   --side-w: max(64px, 4rem);
+  --gutter: max(4px, 0.25rem);
   --hit: max(44px, 2.75rem);
   --radius: 10px;
   --radius-lg: 18px;
@@ -71,6 +74,7 @@ html { font-size: clamp(12px, 0.8333vw, 32px); }
 
 .np-app[data-theme="light"] {
   /* 라이트: 빛 번짐 없이, 켜진 것은 판정 색 그대로 평평하게 */
+  --board: #f6f6f5;
   --bg: #e9eaea;
   --surface: #f6f6f5;
   --surface-2: #ececeb;

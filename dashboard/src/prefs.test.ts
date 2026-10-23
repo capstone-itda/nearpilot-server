@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_PREFS, clearArrangement, loadArrangement, loadPrefs, saveArrangement, savePrefs } from './prefs';
+import { DEFAULT_PREFS, clearArrangement, loadArrangement, loadMirrorPending, loadPrefs, saveArrangement, saveMirrorPending, savePrefs } from './prefs';
 
 afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); });
 
@@ -15,6 +15,16 @@ describe('prefs', () => {
     localStorage.setItem('nearpilot-dashboard', JSON.stringify({ stage: { k: 'x' }, sizes: { phone: -5, panel: 'wide' } }));
     expect(loadPrefs().stage).toEqual(DEFAULT_PREFS.stage);
     expect(loadPrefs().sizes).toEqual({ phone: undefined, panel: undefined, wide: undefined, rail: undefined });
+  });
+  it('FR12A D7 미러링에 한 번 성공했는지와 권한 설정을 열고 기다리는 사람을 다시 읽는다', () => {
+    savePrefs({ ...DEFAULT_PREFS, mirrorReady: true });
+    expect(loadPrefs().mirrorReady).toBe(true);
+    localStorage.setItem('nearpilot-dashboard', JSON.stringify({ mirrorReady: 'yes' }));
+    expect(loadPrefs().mirrorReady).toBe(false);
+    saveMirrorPending('visitor-a');
+    expect(loadMirrorPending()).toBe('visitor-a');
+    saveMirrorPending(null);
+    expect(loadMirrorPending()).toBeNull();
   });
   it('FR12A D7 저장소를 쓸 수 없으면 기본값으로 동작한다', () => {
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });

@@ -1,5 +1,5 @@
 // SET-01~03 설정. 이 PC의 표시만 바꾸고 서버 데이터는 바꾸지 않는다 (D7).
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { DataTable, Icon, KeyValue, Switch, Td } from '../components/common';
 import { Stage } from '../components/Stage';
 import { Loading } from '../components/Panel';
@@ -10,6 +10,7 @@ import { applyFile, parseFile, toFile, type Arrangement } from '../view/arrange'
 import { useData, useQuery } from '../data/context';
 import type { FollowSettings } from '../view/phone';
 import { stageView } from '../view/stage';
+import { guideText, mirrorNotice, settingsUrl, type MirrorFailure, type Platform } from '../view/mirror';
 
 const NAV: [SettingsKey, string, string][] = [
   ['layout', '배치', '무대 배치와 실시간 신호'],
@@ -142,11 +143,54 @@ export interface PhonesProps {
   onPick: (personId: string) => void;
   follow: FollowSettings;
   onFollow: (f: FollowSettings) => void;
+  /** 마지막 미러링 창 공유가 실패한 사람과 이유 */
+  fail: { personId: string; reason: MirrorFailure } | null;
+  /** 화면 공유 권한 안내. 없으면 띄우지 않는다. */
+  guide: (MirrorGuideState & MirrorGuideActions) | null;
+}
+
+export interface MirrorGuideState { personId: string; stage: 'ask' | 'back'; retry: boolean }
+interface MirrorGuideActions { platform: Platform; onSettings: () => void; onPick: () => void; onClose: () => void }
+
+/** 공유 창을 열기 전에 띄우는 화면 공유 권한 안내. 설정 열기로 운영체제 권한 화면을 열고, 돌아오면 창 고르기를 앞세운다.
+    브라우저는 사람이 누른 순간에만 공유 창을 열 수 있어서 돌아온 뒤 한 번 더 누른다. */
+function MirrorGuide({ g, who }: { g: MirrorGuideState & MirrorGuideActions; who: string }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const primary = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const d = ref.current;
+    if (d && !d.open) d.showModal();
+  }, []);
+  useEffect(() => { primary.current?.focus(); }, [g.stage]);
+  const url = settingsUrl(g.platform);
+  const t = guideText(g.platform, g.retry);
+  const back = g.stage === 'back';
+  const settings = url ? (
+    <a ref={back ? undefined : (primary as React.RefObject<HTMLAnchorElement>)} className="np-btn" data-variant={back ? 'quiet' : 'primary'} href={url} onClick={g.onSettings}>
+      {back ? '설정 다시 열기' : '설정 열기'}
+    </a>
+  ) : null;
+  const pick = (
+    <button ref={back || !url ? (primary as React.RefObject<HTMLButtonElement>) : undefined} className="np-btn" data-variant={back || !url ? 'primary' : 'quiet'} type="button" onClick={g.onPick}>
+      {back || !url ? '창 고르기' : '이미 켰어요, 창 고르기'}
+    </button>
+  );
+  return (
+    <dialog ref={ref} className="np-guide" data-component="MirrorGuide" data-stage={g.stage} aria-labelledby="np-guide-title" onCancel={(e) => { e.preventDefault(); g.onClose(); }}>
+      <p className="np-guide__who">{who} 폰 미러링</p>
+      <h2 id="np-guide-title" className="np-guide__title">{back ? '권한을 켰으면 창을 골라요' : t.title}</h2>
+      <p className="np-guide__text">{back ? '설정에서 이 브라우저를 켰다면 창 고르기를 눌러요. 공유 창이 열리면 폰 미러링 창을 고르면 돼요.' : t.detail}</p>
+      <div className="np-guide__actions">
+        <button className="np-btn" data-variant="quiet" type="button" onClick={g.onClose}>닫기</button>
+        {back ? <>{settings}{pick}</> : <>{pick}{settings}</>}
+      </div>
+    </dialog>
+  );
 }
 
 const ago = (sec: number | null) => (sec === null ? '—' : sec < 60 ? `${sec}초 전` : `${Math.round(sec / 60)}분 전`);
 
-export function Phones({ streams, onPick, follow, onFollow }: PhonesProps) {
+export function Phones({ streams, onPick, follow, onFollow, fail, guide }: PhonesProps) {
   const { source, snapshot } = useData();
   const q = useQuery(() => source.health(), []);
   const people = snapshot.people.filter((p) => p.role === 'owner' || p.beaconSeen || streams[p.id]);
@@ -157,6 +201,7 @@ export function Phones({ streams, onPick, follow, onFollow }: PhonesProps) {
           const linked = !!streams[p.id];
           const mock = !linked && snapshot.mockPhones?.some((m) => m.personId === p.id);
           const beacon = q.data?.beacons.find((x) => x.personId === p.id);
+          const notice = fail?.personId === p.id ? mirrorNotice(fail.reason) : null;
           return (
             <section key={p.id} className="np-card" data-component="PhoneCard">
               <div className="np-card__head"><h2 className="np-card__title">{p.pseudonym}</h2><span className="np-pcard__status" data-linked={linked ? 'true' : 'false'}>{linked ? '미러링 연결됨' : mock ? '목 화면' : '미러링 창 없음'}</span></div>
@@ -164,6 +209,7 @@ export function Phones({ streams, onPick, follow, onFollow }: PhonesProps) {
                 <div className="np-pcard__preview-screen">{linked ? <MirrorVideo stream={streams[p.id]} /> : mock ? '목 화면 사용 중' : '창을 고르면 여기에 보여요'}</div>
               </div>
               <KeyValue rows={[['비콘', beacon?.label ?? '—', true], ['수신', beacon ? (beacon.lastSeenSec === null ? beacon.note ?? '—' : ago(beacon.lastSeenSec)) : '—']]} />
+              {notice ? <div className="np-pcard__fail" data-component="MirrorNotice" role="alert"><strong>{notice.title}</strong><span>{notice.detail}</span></div> : null}
               <button className="np-btn" type="button" onClick={() => onPick(p.id)}>{linked ? '창 다시 고르기' : '미러링 창 고르기'}</button>
             </section>
           );
@@ -176,6 +222,7 @@ export function Phones({ streams, onPick, follow, onFollow }: PhonesProps) {
           <Switch label="승인 알림이 오면 소유자 폰으로 바꿔요" on={follow.followApprover} onChange={(v) => onFollow({ ...follow, followApprover: v })} />
         </div>
       </section>
+      {guide ? <MirrorGuide g={guide} who={snapshot.people.find((p) => p.id === guide.personId)?.pseudonym ?? ''} /> : null}
     </SettingsContent>
   );
 }

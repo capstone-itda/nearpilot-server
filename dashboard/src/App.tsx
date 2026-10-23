@@ -15,23 +15,28 @@ import { TopBar, type PanelKey, type SettingsKey } from './components/TopBar';
 import { DevicePanel } from './panels/DevicePanel';
 import { ApprovalsPanel, AuditPanel, HistoryPanel, TrustPanel, UsesPanel } from './panels/ListPanels';
 import { RequestPanel } from './panels/RequestPanel';
-import { Check, LayoutCheck, Phones, SettingsTabs } from './settings/Settings';
+import { Check, LayoutCheck, Phones, SettingsTabs, type MirrorGuideState } from './settings/Settings';
 import { choosePhone, type FollowSettings } from './view/phone';
 import { railView } from './view/rail';
 import { stageView } from './view/stage';
 import { canPlace, resolveArrangement, withArrangement, type Arrangement } from './view/arrange';
-import { clearArrangement, loadArrangement, loadPrefs, saveArrangement, savePrefs, type Sizes } from './prefs';
+import { clearArrangement, loadArrangement, loadMirrorPending, loadPrefs, saveArrangement, saveMirrorPending, savePrefs, type Sizes } from './prefs';
+import { guideFirst, mirrorFailure, platformOf, type MirrorFailure } from './view/mirror';
 import { isFit, panelEdgeOf, type ZoomView } from './view/zoom';
 
 /** 무대 위를 넓게 덮는 패널 (ListPanels의 size="wide") */
 const WIDE_PANELS: string[] = ['audit', 'history', 'trust'];
 
 /** 영역의 기본 크기와 끌어서 바꿀 수 있는 범위(px). 화면 크기에 따라 잰다. */
-function sizeLimits() {
+function sizeLimits(phoneRatio: number) {
   const vw = window.innerWidth, vh = window.innerHeight;
   const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  // 폰 칸은 폰 화면이 칸 높이를 다 쓸 만큼보다 좁아지지 않는다. 좁아지면 폰 비율이 무너진다.
+  const stage = document.querySelector('.np-phone__stage'), card = stage?.closest('.np-phone');
+  // 최대 폭은 넘지 않는다. 폰을 뽑아 영상이 가로로 바뀌어도 무대를 밀어내지 않는다.
+  const phoneMin = stage && card ? Math.min(vw * 0.4, Math.ceil(stage.clientHeight * phoneRatio + card.getBoundingClientRect().width - stage.clientWidth + 4)) : 240;
   return {
-    phone: { base: vw * 0.24, min: 240, max: vw * 0.4 },
+    phone: { base: vw * 0.24, min: phoneMin, max: vw * 0.4 },
     panel: { base: vw * 0.3, min: 360, max: vw * 0.6 },
     wide: { base: vw * 0.45, min: 480, max: vw * 0.7 },
     rail: { base: rem * 11, min: 140, max: vh * 0.4 }
@@ -62,17 +67,24 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   const [place, setPlace] = useState<PlaceInfo>();
   const [arrangement, setArrangement] = useState<Arrangement>({});
   const [snapshot, setSnapshot] = useState<MonitorState>();
-  const [view, setView] = useState<ViewState>(initialView);
+  // 권한 설정을 열고 돌아오기 전에 브라우저를 다시 열었으면 폰 연결 탭에서 안내를 이어서 띄운다
+  const pending = useMemo(loadMirrorPending, []);
+  const [view, setView] = useState<ViewState>(pending ? 'phones' : initialView);
   const [panel, setPanel] = useState<PanelState | null>(null);
   // 설정을 다시 열면 마지막에 본 탭으로 간다
   const [lastSettings, setLastSettings] = useState<SettingsKey>(initialView === 'monitor' ? 'layout' : initialView);
   // 처음 그린 화면은 강조하지 않는다. 그 뒤로 바뀌는 곳만 도착 강조를 보인다.
   const [motion, setMotion] = useState(false);
   const [streams, setStreams] = useState<Record<string, MediaStream>>({});
+  /** 마지막 미러링 창 공유가 실패한 사람과 이유. 다시 고르거나 성공하면 지운다. */
+  const [mirrorFail, setMirrorFail] = useState<{ personId: string; reason: MirrorFailure } | null>(null);
+  const [mirrorReady, setMirrorReady] = useState(prefs.mirrorReady);
+  /** 화면 공유 권한 안내. ask: 설정을 열기 전 · back: 설정을 연 뒤라 창 고르기를 앞세운다. retry: 공유했는데 운영체제가 막았다. */
+  const [guide, setGuide] = useState<MirrorGuideState | null>(pending ? { personId: pending, stage: 'back', retry: false } : null);
   const shownPerson = useRef<string>();
   const seen = useRef<{ init?: boolean; request?: string; faults: Set<string> }>({ faults: new Set() });
 
-  useEffect(() => { savePrefs({ theme, follow, stage: zoomView, sizes }); }, [theme, follow, zoomView, sizes]);
+  useEffect(() => { savePrefs({ theme, follow, stage: zoomView, sizes, mirrorReady }); }, [theme, follow, zoomView, sizes, mirrorReady]);
   const loaded = !!snapshot;
   useEffect(() => {
     if (!loaded) return;
@@ -129,7 +141,8 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   viewRef.current = view;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
+      // 열린 대화상자(미러링 권한 안내)가 있으면 Esc는 그 대화상자만 닫는다
+      if (e.key !== 'Escape' || document.querySelector('dialog[open]')) return;
       if (viewRef.current !== 'monitor') setView('monitor');
       else setPanel(null);
     };
@@ -156,12 +169,34 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   const pickSettings = (k: SettingsKey) => { setLastSettings(k); setView(k); };
   const closePanel = () => setPanel(null);
   const openRequest = (id: string) => source.request(id).then((request) => setPanel({ kind: 'request', request, live: snapshot.request?.id === id }), () => undefined);
-  const pickWindow = (personId: string) => {
-    navigator.mediaDevices?.getDisplayMedia({ video: true, audio: false }).then((stream) => {
+  const platform = platformOf(navigator.userAgent);
+  const shareWindow = (personId: string) => {
+    setMirrorFail(null);
+    // 화면 공유를 쓸 수 없는 브라우저·주소면 getDisplayMedia가 없다. 그때도 같은 실패 안내로 보낸다.
+    Promise.resolve().then(() => navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })).then((stream) => {
       stream.getVideoTracks()[0]?.addEventListener('ended', () => setStreams((s) => { const n = { ...s }; delete n[personId]; return n; }));
       setStreams((s) => ({ ...s, [personId]: stream }));
-    }, () => undefined);
+      setMirrorReady(true);
+      saveMirrorPending(null);
+    }, (err: unknown) => {
+      const reason = mirrorFailure(err);
+      saveMirrorPending(null);
+      if (reason === 'system') setGuide({ personId, stage: 'ask', retry: true });
+      else if (reason !== 'cancel') setMirrorFail({ personId, reason });
+    });
   };
+  // 권한이 없을 수 있으면 공유 창보다 권한 안내를 먼저 띄운다. 공유 창이 열린 채로 운영체제 권한 창이 뜨면 공유 창을 닫을 때까지 권한 창이 화면을 덮는다.
+  const pickWindow = (personId: string) => {
+    setMirrorFail(null);
+    if (guideFirst(platform, mirrorReady)) setGuide({ personId, stage: 'ask', retry: false });
+    else shareWindow(personId);
+  };
+  const mirrorGuide = guide ? {
+    ...guide, platform,
+    onSettings: () => { saveMirrorPending(guide.personId); setGuide({ ...guide, stage: 'back' }); },
+    onPick: () => { setGuide(null); shareWindow(guide.personId); },
+    onClose: () => { setGuide(null); saveMirrorPending(null); }
+  } : null;
 
   const arrange = {
     arrangement,
@@ -189,32 +224,39 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     shownPerson.current = phone.personId;
     const mock = snapshot.mockPhones?.find((m) => m.personId === phone.personId);
     const wide = !!panel && WIDE_PANELS.includes(panel.kind);
-    const lim = sizeLimits();
-    const px = (k: keyof Sizes) => sizes[k] ?? lim[k].base;
+    const stream = phone.personId ? streams[phone.personId] : undefined;
+    const video = stream?.getVideoTracks()[0]?.getSettings();
+    // 폰 화면의 가로/세로 비율. 세로 영상은 영상 크기, 그 밖에는 폰 틀(9:19.5)
+    const lim = sizeLimits(video?.width && video.height && video.width < video.height ? video.width / video.height : 9 / 19.5);
+    // 카드 사이 간격(px). 손잡이는 간격 가운데를 잡는다.
+    const gutter = Math.max(4, (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16) * 0.25);
+    const px = (k: keyof Sizes) => Math.max(sizes[k] ?? lim[k].base, lim[k].min);
     const setSize = (k: keyof Sizes) => (v: number) => setSizes((s) => ({ ...s, [k]: v }));
     const resetSize = (k: keyof Sizes) => () => setSizes((s) => ({ ...s, [k]: undefined }));
     // 패널 왼쪽 끝을 무대 좌표로 바꿔, 방 밀기와 콜아웃이 실제 패널 크기를 따른다
-    const panelEdge = panel && stageSize ? panelEdgeOf(zoomView, stageSize, px(wide ? 'wide' : 'panel') - stageSize.right) : undefined;
+    const panelEdge = panel && stageSize ? panelEdgeOf(zoomView, stageSize, px(wide ? 'wide' : 'panel') - gutter - stageSize.right) : undefined;
     // 끌어 바꾼 크기는 CSS 변수로 넘긴다 (요소에 style 속성을 쓰지 않는다)
-    const vars = (['phone', 'panel', 'wide', 'rail'] as const).filter((k) => sizes[k] !== undefined)
-      .map((k) => `--${{ phone: 'phone-w', panel: 'panel-w', wide: 'panel-wide-w', rail: 'rail-h' }[k]}: ${Math.round(sizes[k]!)}px;`).join(' ');
+    const vars = (['phone', 'panel', 'wide', 'rail'] as const).filter((k) => sizes[k] !== undefined || (k === 'phone' && px(k) > lim[k].base))
+      .map((k) => `--${{ phone: 'phone-w', panel: 'panel-w', wide: 'panel-wide-w', rail: 'rail-h' }[k]}: ${Math.round(px(k))}px;`).join(' ');
     screen = (
       <div className="np-monitor" data-component="MonitorLayout" data-live={snapshot.connected ? 'true' : 'false'} data-panel={panel ? (wide ? 'wide' : 'normal') : 'none'}>
-        {vars ? <style>{`.np-app .np-monitor { ${vars} }`}</style> : null}
+        {vars ? <style data-component="SizeVars">{`.np-app .np-monitor { ${vars} }`}</style> : null}
         {topBar}
-        <PhoneMirror who={phone.who} follow={phone.follow} stream={phone.personId ? streams[phone.personId] : undefined} mock={mock} />
+        <PhoneMirror who={phone.who} follow={phone.follow} stream={stream} mock={mock} />
         <Stage v={stageView(snapshot, layout, { panelOpen: !!panel, panelWide: wide, panelEdge, viewFixed: !isFit(zoomView) })}
           zoom={{ view: zoomView, onChange: setZoomView, onSize: setStageSize }} />
-        <Splitter edge="phone" label="폰 화면 폭" value={px('phone')} min={lim.phone.min} max={lim.phone.max} toValue={(e) => e.clientX} onChange={setSize('phone')} onReset={resetSize('phone')} />
-        <Splitter edge="rail" label="흐름 레일 높이" value={px('rail')} min={lim.rail.min} max={lim.rail.max} toValue={(e) => window.innerHeight - e.clientY} onChange={setSize('rail')} onReset={resetSize('rail')} />
+        <Splitter edge="phone" label="폰 화면 폭" value={px('phone')} min={lim.phone.min} max={lim.phone.max} toValue={(e) => e.clientX - gutter * 1.5} onChange={setSize('phone')} onReset={resetSize('phone')} />
+        <Splitter edge="rail" label="흐름 레일 높이" value={px('rail')} min={lim.rail.min} max={lim.rail.max} toValue={(e) => window.innerHeight - gutter * 1.5 - e.clientY} onChange={setSize('rail')} onReset={resetSize('rail')} />
         <FlowRail v={railView(snapshot, layout, phone.personId)} onOpen={snapshot.request ? () => setPanel({ kind: 'request', request: snapshot.request!, live: true }) : undefined} />
         {!snapshot.connected ? (
           <OfflineBanner title="서버와 연결이 끊겼어요" detail={`마지막 수신 ${snapshot.lastReceivedAt} · 다시 연결 시도 ${snapshot.reconnectAttempts}회째`} onReconnect={() => source.reconnect()} />
         ) : null}
         {side}
+        {/* 패널에 가려진 무대 카드의 보이는 오른쪽 끝을 둥글게 마감한다 */}
+        {panel ? <div className="np-stage-cap" data-component="StageCap" aria-hidden="true" /> : null}
         {panel ? (
           <Splitter edge="panel" label="패널 폭" value={px(wide ? 'wide' : 'panel')} min={lim[wide ? 'wide' : 'panel'].min} max={lim[wide ? 'wide' : 'panel'].max}
-            toValue={(e) => (document.querySelector('.np-side')?.getBoundingClientRect().left ?? window.innerWidth) - e.clientX}
+            toValue={(e) => (document.querySelector('.np-side')?.getBoundingClientRect().left ?? window.innerWidth) - gutter / 2 - e.clientX}
             onChange={setSize(wide ? 'wide' : 'panel')} onReset={resetSize(wide ? 'wide' : 'panel')} />
         ) : null}
         {panel ? <PanelView panel={panel} onClose={closePanel} onOpenDevice={(nodeId) => setPanel({ kind: 'device', nodeId })} onOpenRequest={openRequest} /> : null}
@@ -225,7 +267,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
       <div className="np-settings" data-component="SettingsLayout">
         {topBar}
         <SettingsTabs current={view} onPick={pickSettings} onClose={() => setView('monitor')} />
-        {view === 'layout' ? <LayoutCheck {...arrange} /> : view === 'phones' ? <Phones streams={streams} onPick={pickWindow} follow={follow} onFollow={setFollow} /> : <Check />}
+        {view === 'layout' ? <LayoutCheck {...arrange} /> : view === 'phones' ? <Phones streams={streams} onPick={pickWindow} follow={follow} onFollow={setFollow} fail={mirrorFail} guide={mirrorGuide} /> : <Check />}
       </div>
     );
   }

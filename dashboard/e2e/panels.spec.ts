@@ -349,3 +349,110 @@ test('FR12B 흐름 중에 사이드 메뉴로 연 목록 패널은 자동 패널
   await untilTitle(page, '방문자 B · 조명 켜기');
   await expect(page.locator('.np-panel__title')).toHaveText('감사 로그');
 });
+
+const MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
+const WIN = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
+// 공유 창 대신 정한 결과를 차례로 돌려주고 호출 횟수를 센다. 결과가 바닥나면 캔버스 영상을 준다.
+const fakeShare = (page: Page, results: [string, string][]) => page.addInitScript((queue) => {
+  const w = window as unknown as { __shares: number };
+  w.__shares = 0;
+  navigator.mediaDevices.getDisplayMedia = async () => {
+    w.__shares++;
+    const next = queue.shift();
+    if (next) throw new DOMException(next[1], next[0]);
+    return document.createElement('canvas').captureStream();
+  };
+  // 운영체제 설정 주소는 테스트 브라우저에서 열지 않는다
+  document.addEventListener('click', (e) => { if ((e.target as Element).closest?.('a[href^="x-apple"], a[href^="ms-settings"]')) e.preventDefault(); }, true);
+}, results);
+const shares = (page: Page) => page.evaluate(() => (window as unknown as { __shares: number }).__shares);
+
+test.describe('미러링 권한 안내 macOS', () => {
+  test.use({ userAgent: MAC });
+  test('FR12A D7 처음에는 권한 안내를 먼저 띄우고, 설정 열기 뒤에는 창 고르기를 앞세우며, 브라우저를 다시 열어도 이어진다', async ({ page }) => {
+    await fakeShare(page, []);
+    await ready(page, 'view=phones');
+    const guide = page.locator('[data-component="MirrorGuide"]');
+    await page.getByRole('button', { name: '미러링 창 고르기' }).first().click();
+    await expect(guide).toContainText('화면 공유 권한이 필요해요');
+    expect(await shares(page)).toBe(0);
+    const open = guide.getByRole('link', { name: '설정 열기' });
+    await expect(open).toHaveAttribute('href', /Privacy_ScreenCapture/);
+    await expect(open).toBeFocused();
+    await open.click();
+    await expect(guide).toContainText('권한을 켰으면 창을 골라요');
+    await expect(guide.getByRole('button', { name: '창 고르기' })).toBeFocused();
+
+    // 권한을 켜고 브라우저를 다시 열면 모니터로 열어도 폰 연결 탭에서 안내가 이어진다
+    await ready(page, 'scene=idle');
+    await expect(guide).toContainText('권한을 켰으면 창을 골라요');
+    await guide.getByRole('button', { name: '창 고르기' }).click();
+    await expect(guide).toHaveCount(0);
+    await expect(page.locator('[data-component="PhoneCard"]').first()).toContainText('미러링 연결됨');
+    expect(await shares(page)).toBe(1);
+
+    // 한 번 성공했으면 다음부터는 바로 공유 창을 연다
+    await ready(page, 'view=phones');
+    await page.getByRole('button', { name: '미러링 창 고르기' }).first().click();
+    await expect(page.locator('[data-component="PhoneCard"]').first()).toContainText('미러링 연결됨');
+    await expect(guide).toHaveCount(0);
+  });
+});
+
+test.describe('미러링 권한 안내 Windows', () => {
+  test.use({ userAgent: WIN });
+  test('FR12A D7 바로 공유 창을 열고, 운영체제가 막으면 권한 안내를, 화면을 못 잡으면 카드 안내를 띄우며, 취소는 안내하지 않는다', async ({ page }) => {
+    await fakeShare(page, [['NotAllowedError', 'Permission denied by system'], ['NotReadableError', 'Could not start video source'], ['NotAllowedError', 'Permission denied']]);
+    await ready(page, 'view=phones');
+    const guide = page.locator('[data-component="MirrorGuide"]');
+    const cards = page.locator('[data-component="PhoneCard"]');
+    await cards.nth(1).getByRole('button', { name: '미러링 창 고르기' }).click();
+    await expect(guide).toContainText('아직 화면 공유 권한이 꺼져 있어요');
+    await expect(guide).toContainText('Windows 설정');
+    await expect(guide.getByRole('link', { name: '설정 열기' })).toHaveAttribute('href', 'ms-settings:privacy');
+    expect(await shares(page)).toBe(1);
+    // Esc는 안내만 닫고 설정 화면은 그대로다
+    await page.keyboard.press('Escape');
+    await expect(guide).toHaveCount(0);
+    await expect(page.locator('.np-stabs')).toBeVisible();
+
+    await cards.nth(1).getByRole('button', { name: '미러링 창 고르기' }).click();
+    await expect(cards.nth(1).locator('[data-component="MirrorNotice"]')).toContainText('고른 화면을 잡지 못했어요');
+    await cards.nth(1).getByRole('button', { name: '미러링 창 고르기' }).click();
+    await expect(page.locator('[data-component="MirrorNotice"]')).toHaveCount(0);
+    await expect(guide).toHaveCount(0);
+    expect(await shares(page)).toBe(3);
+  });
+});
+
+test.describe('미러링 신호', () => {
+  test.use({ userAgent: WIN });
+  test('FR12A 폰을 뽑아 미러링 창이 검은 화면만 보내면 신호 없음을 띄우고, 화면이 다시 들어오면 영상으로 돌아온다', async ({ page }) => {
+    // 폰 화면처럼 그리다가 window.__unplug가 켜지면 검은 화면만 보내는 캔버스 영상
+    await page.addInitScript(() => {
+      const w = window as unknown as { __unplug: boolean };
+      w.__unplug = false;
+      navigator.mediaDevices.getDisplayMedia = async () => {
+        const c = document.createElement('canvas'); c.width = 90; c.height = 195;
+        const x = c.getContext('2d')!;
+        setInterval(() => {
+          x.fillStyle = '#000'; x.fillRect(0, 0, c.width, c.height);
+          if (!w.__unplug) { x.fillStyle = '#fff'; x.fillRect(10, 10, 40, 8); }
+        }, 100);
+        return c.captureStream(10);
+      };
+    });
+    await ready(page, 'view=phones');
+    await page.locator('[data-component="PhoneCard"]').first().getByRole('button', { name: '미러링 창 고르기' }).click();
+    await page.getByRole('button', { name: '설정 닫기' }).click();
+    const phone = page.locator('[data-component="PhoneMirror"]');
+    await expect(phone.locator('.np-phone__live')).toBeVisible();
+    await page.evaluate(() => { (window as unknown as { __unplug: boolean }).__unplug = true; });
+    await expect(phone.getByRole('status')).toContainText('폰 화면 신호 없음', { timeout: 6000 });
+    await expect(phone).toContainText('폰 화면 · 신호 없음');
+    await expect(phone.locator('.np-phone__live')).toHaveCount(0);
+    await page.evaluate(() => { (window as unknown as { __unplug: boolean }).__unplug = false; });
+    await expect(phone.locator('.np-phone__live')).toBeVisible({ timeout: 4000 });
+    await expect(phone.getByRole('status')).toHaveCount(0);
+  });
+});

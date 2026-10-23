@@ -8,11 +8,16 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: var(--topbar-h) auto minmax(0, 1fr);
+  gap: var(--gutter);
+  padding: 0 var(--gutter) var(--gutter);
+  background: var(--board);
   overflow: hidden;
 }
 .np-settings > .np-topbar { grid-column: 1 / -1; }
 .np-settings > .np-stabs { grid-column: 1; grid-row: 2; }
 .np-settings > .np-scontent { grid-column: 1; grid-row: 3; }
+.np-settings > :is(.np-stabs, .np-scontent) { border: 1px solid var(--line-soft); border-radius: var(--radius); }
+.np-settings > .np-scontent { background: var(--bg); }
 
 /* SettingsTabs: 설정 화면 위쪽 탭 */
 .np-stabs {
@@ -21,7 +26,6 @@
   gap: var(--sp-4);
   padding: 0 var(--sp-6);
   background: var(--surface);
-  border-bottom: 1px solid var(--line-soft);
 }
 .np-stabs__list { display: flex; gap: var(--sp-1); }
 .np-stabs__item {
@@ -50,7 +54,8 @@
 /* 1500px 이하에서는 탭 설명을 숨겨 탭 줄을 낮춘다 (배치 화면 오른쪽 칸이 넘치지 않게) */
 @media (max-width: 1500px) { .np-stabs__desc { display: none; } }
 
-.np-scontent { min-height: 0; overflow: auto; padding: var(--sp-6) var(--sp-6) var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-5); }
+/* 탭과 내용을 카드로 나눈 만큼 위아래 여백을 줄여, 낮은 화면에서도 배치 화면의 오른쪽 칸이 스크롤 없이 들어간다 */
+.np-scontent { min-height: 0; overflow: auto; padding: var(--sp-5) var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-4); }
 .np-scontent__head { display: flex; flex-direction: column; gap: var(--sp-2); }
 .np-scontent__title { font-size: var(--fs-title); font-weight: 500; }
 .np-scontent__sub { font-size: var(--fs-body); color: var(--ink-2); }
@@ -76,6 +81,9 @@
 .np-pcard__preview[data-linked="false"] { border-style: dashed; border-color: var(--line); }
 .np-pcard__status { font-size: var(--fs-sm); color: var(--ink-2); }
 .np-pcard__status[data-linked="true"] { color: var(--accent-strong); }
+/* 미러링 창 공유가 실패한 이유와 할 일 (MirrorNotice) */
+.np-pcard__fail { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--ask); border-radius: var(--radius); background: var(--ask-soft); font-size: var(--fs-sm); color: var(--ink); }
+.np-pcard__fail strong { font-size: var(--fs-body); }
 .np-switches { display: flex; flex-direction: column; gap: var(--sp-3); }
 .np-switch { display: flex; align-items: center; gap: var(--sp-3); min-height: var(--hit); padding: 0; border: 0; background: transparent; text-align: left; font-size: var(--fs-body); cursor: pointer; }
 .np-switch__track { position: relative; width: 2.75rem; height: 1.5rem; flex: none; border-radius: 999px; background: var(--line-soft); border: 1px solid var(--line); }
@@ -106,3 +114,21 @@
 
 /* SET-01 배치 파일 버튼 */
 .np-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+
+/* 화면 공유 권한 안내 (MirrorGuide). 브라우저 모달 대화상자라 Esc와 포커스 가두기는 브라우저가 맡는다. */
+.np-guide {
+  width: min(34rem, calc(100vw - var(--sp-5) * 2));
+  padding: var(--sp-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+}
+.np-guide[open] { display: flex; flex-direction: column; gap: var(--sp-3); }
+.np-guide::backdrop { background: rgb(0 0 0 / 0.45); }
+.np-guide__who { font-size: var(--fs-sm); color: var(--ink-2); }
+.np-guide__title { font-size: var(--fs-lead); font-weight: 600; }
+.np-guide__text { font-size: var(--fs-body); color: var(--ink-2); line-height: 1.6; }
+.np-guide__actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-2); }
+.np-guide .np-btn { text-decoration: none; }
+.np-guide .np-btn[data-variant="primary"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }

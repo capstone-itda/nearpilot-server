@@ -114,15 +114,31 @@ body { margin: 0; }
   display: grid;
   grid-template-columns: var(--phone-w) minmax(0, 1fr) var(--side-w);
   grid-template-rows: var(--topbar-h) minmax(0, 1fr) var(--rail-h);
+  gap: var(--gutter);
+  padding: 0 var(--gutter) var(--gutter);
+  background: var(--board);
   overflow: hidden;
 }
+/* 영역은 바탕 위의 카드다 (2026-10-23 사용자 결정, VS Code처럼). 상단 바는 바탕에 바로 둔다. */
+.np-monitor > :is(.np-phone, .np-stage, .np-rail, .np-offline) { border: 1px solid var(--line-soft); border-radius: var(--radius); overflow: hidden; }
+/* 사이드 메뉴도 카드다. 연 패널은 이 카드 왼쪽에 이어 붙어 한 카드가 되고, 메뉴와는 경계선 하나로만 나뉜다 (VS Code 탐색기와 활동 막대처럼). */
+.np-monitor > .np-side { border: 1px solid var(--line-soft); border-radius: var(--radius); }
+.np-monitor:is([data-panel="normal"], [data-panel="wide"]) > .np-side { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.np-monitor > .np-stage { background: var(--bg); }
+.np-monitor > .np-topbar, .np-settings > .np-topbar { background: transparent; border-bottom: 0; margin: 0 calc(var(--gutter) * -1); }
 .np-monitor > .np-topbar { grid-column: 1 / -1; grid-row: 1; }
-.np-monitor > .np-phone { grid-column: 1; grid-row: 2; }
+/* 폰 화면은 상단 바 아래부터 화면 아래까지 써서 크게 보인다. 흐름 레일은 무대 아래에만 둔다. */
+.np-monitor > .np-phone { grid-column: 1; grid-row: 2 / -1; }
 .np-monitor > .np-stage { grid-column: 2; grid-row: 2; }
-.np-monitor > .np-rail { grid-column: 1 / -1; grid-row: 3; }
-.np-monitor > .np-side { grid-column: 3; grid-row: 2; }
+.np-monitor > .np-rail { grid-column: 2; grid-row: 3; }
+/* 패널을 열면 흐름 레일도 패널 앞까지 좁아진다. 패널은 메뉴 옆에서 화면 아래까지 내려온다. */
+.np-monitor[data-panel="normal"] { --open-w: var(--panel-w); }
+.np-monitor[data-panel="wide"] { --open-w: var(--panel-wide-w, calc(var(--panel-w) * 1.5)); }
+.np-monitor:is([data-panel="normal"], [data-panel="wide"]) > .np-rail { margin-right: var(--open-w); }
+.np-monitor > .np-side { grid-column: 3; grid-row: 2 / -1; }
 .np-monitor[data-live="false"] { grid-template-rows: var(--topbar-h) auto minmax(0, 1fr) var(--rail-h); }
-.np-monitor[data-live="false"] > .np-phone, .np-monitor[data-live="false"] > .np-stage, .np-monitor[data-live="false"] > .np-side { grid-row: 3; }
+.np-monitor[data-live="false"] > .np-stage { grid-row: 3; }
+.np-monitor[data-live="false"] > :is(.np-side, .np-phone) { grid-row: 3 / -1; }
 .np-monitor[data-live="false"] > .np-rail { grid-row: 4; }
 .np-monitor[data-live="false"] > .np-stage,
 .np-monitor[data-live="false"] > .np-rail,
@@ -135,9 +151,9 @@ body { margin: 0; }
   display: flex;
   align-items: center;
   gap: var(--sp-4);
-  padding: var(--sp-3) var(--sp-5);
+  /* 띠를 얇게 두어 무대 높이를 지킨다. 버튼 높이(누르는 자리)가 띠 높이를 정한다 */
+  padding: var(--sp-1) var(--sp-1) var(--sp-1) var(--sp-5);
   background: var(--surface-2);
-  border-bottom: 1px dashed var(--accent);
   color: var(--ink);
   backdrop-filter: blur(6px);
 }
@@ -153,6 +169,7 @@ body { margin: 0; }
   }
   .np-monitor > .np-phone { display: none; }
   .np-monitor > .np-stage { grid-column: 1; }
+  .np-monitor > .np-rail { grid-column: 1; }
   .np-monitor > .np-side { grid-column: 1; grid-row: auto; }
 }
 

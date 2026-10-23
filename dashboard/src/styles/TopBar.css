@@ -42,7 +42,6 @@
   gap: var(--sp-1);
   padding: var(--sp-2) var(--sp-1);
   background: var(--surface);
-  border-left: 1px solid var(--line);
   min-height: 0;
   overflow: auto;
   position: relative;
@@ -72,7 +71,7 @@
 .np-topbar__mock { padding: 2px var(--sp-2); border: 1px dashed var(--line); border-radius: var(--radius); color: var(--ink-2); }
 
 @media (max-width: 900px) {
-  .np-side { flex-direction: row; overflow-x: auto; border-left: 0; border-bottom: 1px solid var(--line); }
+  .np-side { flex-direction: row; overflow-x: auto; }
   .np-side__item { min-width: var(--hit); padding: var(--sp-2); }
   .np-side__spacer { display: none; }
 }

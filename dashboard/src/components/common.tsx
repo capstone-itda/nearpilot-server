@@ -4,7 +4,7 @@ import { STEP_NAMES, VERDICT_LABEL } from '../view/text';
 
 const b = (v: unknown) => (v ? 'true' : 'false');
 
-export type IconName = 'menu' | 'sun' | 'moon' | 'close' | 'back' | 'uses' | 'approvals' | 'audit' | 'history' | 'trust' | 'settings' | 'plus' | 'minus' | 'fit';
+export type IconName = 'menu' | 'sun' | 'moon' | 'close' | 'back' | 'uses' | 'approvals' | 'audit' | 'history' | 'trust' | 'settings' | 'plus' | 'minus' | 'fit' | 'talk' | 'ai' | 'check' | 'run' | 'result';
 
 /** 사이드 메뉴 아이콘: 선 하나로 그린다 */
 const LINE_ICONS: Partial<Record<IconName, string>> = {
@@ -16,6 +16,11 @@ const LINE_ICONS: Partial<Record<IconName, string>> = {
   plus: 'M12 5v14M5 12h14',
   minus: 'M5 12h14',
   fit: 'M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5',
+  talk: 'M4 5h16v11H10l-5 4v-4H4z',
+  ai: 'M12 3l2 5.5 5.5 2-5.5 2L12 18l-2-5.5-5.5-2 5.5-2zM18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z',
+  check: 'M12 3l8 3v6c0 4.5-3.4 7.7-8 9-4.6-1.3-8-4.5-8-9V6zM8.5 12l2.5 2.5 4.5-5',
+  run: 'M13 3L5 14h6l-1 7 8-11h-6z',
+  result: 'M6 21V4M6 4h11l-2.5 4 2.5 4H6',
   settings: 'M18.9 9.4L21.8 10L21.8 14L18.9 14.6L18.7 15.1L20.3 17.5L17.5 20.3L15.1 18.7L14.6 18.9L14 21.8L10 21.8L9.4 18.9L8.9 18.7L6.5 20.3L3.7 17.5L5.3 15.1L5.1 14.6L2.2 14L2.2 10L5.1 9.4L5.3 8.9L3.7 6.5L6.5 3.7L8.9 5.3L9.4 5.1L10 2.2L14 2.2L14.6 5.1L15.1 5.3L17.5 3.7L20.3 6.5L18.7 8.9ZM15 12a3 3 0 1 0 -6 0a3 3 0 1 0 6 0'
 };
 
