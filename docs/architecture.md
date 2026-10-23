@@ -1201,7 +1201,42 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 복구 승인: `POST /admin/nodes/{node_id}/recovery/{recovery_id}/approve`
 - 두 복구 경로에는 인증과 장소 소유권 검사를 적용한다. 약속은 §4 "복구 준비 조회와 복구 승인"에 있다.
 - 두 복구 경로는 상태 관리가 구현한다 (#89).
-- 미결: 두 복구 경로를 뺀 REST 경로
+- 미결: 대시보드 조회 REST의 경로와 응답 형식 (FR-12A)
+
+#### 공통 규칙
+
+- 인증이 필요한 경로는 MCP와 같은 `Authorization: Bearer <토큰>` 헤더로 계정을 식별한다. API는 요청 본문의 계정 ID를 쓰지 않는다.
+- 토큰이 없거나 틀리면 `401`과 `{"error": "INVALID_TOKEN"}`을 반환한다.
+- 거부와 실패의 본문은 `{"error": "<사유 코드>"}`다. 사유 코드는 CORE가 반환한 값을 그대로 쓴다 (NFR-07).
+- 응답에 사용자 ID와 다른 계정의 정보를 넣지 않는다 (FR-11, NFR-08).
+
+#### 계정
+
+| 경로 | 인증 | 본문 | 성공 응답 | 거부 |
+|---|---|---|---|---|
+| `POST /accounts` | 없음 | `{"name"}` | `201`, `{"token"}` | `409` `ACCOUNT_ALREADY_EXISTS` |
+| `PUT /me/beacon` | 필요 | `{"uuid", "major", "minor"}` | `200`, `{"uuid", "major", "minor", "is_active": true}` | `409` `BEACON_ALREADY_REGISTERED`, `400` `INVALID_BEACON` |
+
+- `POST /accounts`는 `visitor` 계정을 만든다. 계정 ID는 서버가 만든다. 소유자 계정은 시드 스크립트로만 만든다.
+- 토큰 원문은 `POST /accounts`의 응답에서만 한 번 보낸다. 토큰을 다시 발급하는 경로는 두지 않는다.
+- `PUT /me/beacon`은 토큰 계정의 활성 비콘을 등록한다. 같은 계정의 다른 비콘은 비활성화한다 (FR-01).
+- `uuid`는 하이픈을 포함한 UUID 문자열이다. 서버는 소문자로 바꿔서 저장한다. `major`와 `minor`는 0~65535의 정수다.
+- 계정 등록과 비콘 등록은 `AdminService`의 `register_account()`와 `register_beacon()`에 하나씩 대응한다.
+
+#### 승인
+
+| 경로 | 인증 | 본문 | 성공 응답 | 거부 |
+|---|---|---|---|---|
+| `GET /approvals` | 필요 | 없음 | `200`, 승인 요청 목록 | 없음 |
+| `GET /approvals/{approval_id}` | 필요 | 없음 | `200`, 승인 요청 한 건 | `403` `NOT_AUTHORIZED`, `404` `NOT_FOUND` |
+| `POST /approvals/{approval_id}/decision` | 필요 | `{"decision": "approved" \| "denied"}` | `200`, 승인 요청 한 건 | `403` `NOT_AUTHORIZED`, `404` `NOT_FOUND`, `409` `ALREADY_DECIDED`, `409` `POLICY_VERSION_MISMATCH`, `409` `REQUEST_EXPIRED` |
+
+- 승인 요청 한 건은 `approval_id`, `node_id`, `action`, `status`, `created_at`, `pending_expires_at`, `valid_until`을 담는다. 요청자의 계정 정보는 담지 않는다.
+- `GET /approvals`는 토큰 계정이 승인 권한을 가진 기기의 대기 승인 가운데 만료되지 않은 것을 반환한다. 권한이 없으면 빈 목록이다.
+- `POST /approvals/{approval_id}/decision`은 결정을 CORE에 전달한다. 승인 권한, 대기 상태, 정책 버전은 CORE가 검증한다 (FR-03).
+- 같은 결정의 재전송(`ALREADY_APPLIED`)은 `200`과 기존 결과를 반환한다.
+- 승인 결과는 실행 허가가 아니다. 방문자는 AI 호스트로 `request_use`를 다시 호출한다 (FR-03).
+- 대기 승인의 알림 수단은 미결이다 (FR-03). 앱은 알림 수단이 정해지기 전까지 `GET /approvals`를 주기적으로 호출할 수 있다.
 
 ### WebSocket
 
