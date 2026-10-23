@@ -24,6 +24,7 @@ from nearpilot.shared.enums import (
     ReasonCode,
     Role,
     TrustState,
+    Verdict,
 )
 from nearpilot.shared.models import (
     RecoveryRecord,
@@ -73,6 +74,7 @@ from nearpilot.shared.models import (
     StoreResult,
     UseRequest,
     UseSession,
+    MonitorEvent,
 )
 
 # ── DB 제공 ─────────────────────────────────────────────────────────
@@ -668,3 +670,42 @@ class RetentionStore(Protocol):
         수집 회차에 연결된 관측은 지우지 않는다. 쓰기 하나는 BEGIN IMMEDIATE 하나다.
         """
         ...
+
+
+# ── 대시보드 모니터링 (FR-12A, FR-12B, 2026-10-23 팀 결정) ─────────────
+
+
+@runtime_checkable
+class MonitorFeed(Protocol):
+    """API → 이벤트가 난 영역 (판정, 상태 관리, IOT, MCP 도구). 모니터링 이벤트를 받는다 (FR-12B)."""
+
+    def publish(self, event: MonitorEvent) -> None:
+        """어느 스레드에서 불러도 막지 않고 예외를 올리지 않는다 (NFR-07)."""
+        ...
+
+
+@runtime_checkable
+class MonitorSnapshot(Protocol):
+    """CORE 조회 서비스 → API. 스트림 연결 직후 보낼 지금 상태 (FR-12B)."""
+
+    def current_events(self) -> Sequence[MonitorEvent]:
+        """지금 상태(진행 중인 요청, 기기 상태, 비콘)를 이벤트로 돌려준다."""
+        ...
+
+
+@runtime_checkable
+class DashboardQueries(Protocol):
+    """CORE 조회 서비스 → API. 대시보드 조회 REST 9개의 원천 (FR-12A).
+
+    행의 사람은 키 "subject" 에 Subject 로 담는다. 시각은 datetime 이다. 사용자 ID 는 API 가 지운다 (FR-11).
+    """
+
+    def place(self) -> Mapping[str, Any]: ...
+    def uses(self) -> Sequence[Mapping[str, Any]]: ...
+    def approvals(self) -> Mapping[str, Any]: ...
+    def audit(self, limit: int) -> Sequence[Mapping[str, Any]]: ...
+    def history(self, period: str, verdict: Verdict | None, node_id: str | None) -> Sequence[Mapping[str, Any]]: ...
+    def request(self, request_id: str) -> Mapping[str, Any] | None: ...
+    def trust(self) -> Mapping[str, Any]: ...
+    def rental(self, node_id: str) -> Mapping[str, Any] | None: ...
+    def health(self) -> Mapping[str, Any]: ...

@@ -2,7 +2,7 @@
 
 - 담당: dnnals (대시보드)
 - 요구사항: FR-11, FR-12A, FR-12B, NFR-07, NFR-08
-- 따르는 결정: #168
+- 따르는 결정: #168, 2026-10-23 팀 대면 논의 (대시보드 접점은 shared, 발행은 사건이 난 영역, 조회는 CORE 조회 서비스, 설정은 선택 섹션 `[dashboard]`)
 
 ## 1. 왜
 
@@ -69,7 +69,7 @@
 
 - 사용자 ID, 계정 정보, 토큰을 메시지, 응답, 로그에 쓰지 않는다 (FR-11, NFR-08).
 - 스트림 연결과 조회는 소유자(`Role.OWNER`) 토큰만 받는다. 토큰으로 계정을 찾는 일은 `api/auth`의 `Authenticator`가 한다 (의존 규칙 1).
-- 다른 계층의 코드를 부르지 않는다. 이벤트와 조회 결과는 이 작업이 정한 접점(`MonitorFeed`, `MonitorSnapshot`, `DashboardQueries`)으로만 받는다 (의존 규칙 4는 7절 가정).
+- 다른 계층의 코드를 부르지 않는다. 이벤트와 조회 결과는 `shared`의 접점(`MonitorFeed`, `MonitorSnapshot`, `DashboardQueries`)으로만 받는다 (의존 규칙 4).
 - 대기열 크기, 묶음 크기, 인증 기한, 감사 조회 한도는 코드 상수로 쓰지 않는다. `DashboardSettings`로 받는다 (AGENTS.md 코딩 규칙).
 - 동기 접점은 이벤트 루프를 막지 않도록 스레드에서 부른다.
 - 판정 값, 사유 코드, 단계, 상태 이름은 `shared/enums.py`의 값만 쓴다.
@@ -80,23 +80,24 @@
 - `server/src/nearpilot/api/ws/`
 - `server/src/nearpilot/api/rest/` (대시보드 조회만)
 - `server/tests/api/`
-- `docs/architecture.md` §5 REST와 WebSocket의 대시보드 미결 두 줄, `docs/requirements.md` FR-12A·FR-12B의 같은 미결 두 줄 (대시보드 담당 결정, 2026-10-23)
+- `server/src/nearpilot/shared/models.py`, `shared/interfaces.py`: 대시보드 접점(`Subject`, `MonitorEvent`, `MonitorFeed`, `MonitorSnapshot`, `DashboardQueries`)을 더하기만 한다 (2026-10-23 팀 결정)
+- `docs/architecture.md` §2 담당, §4 영역 간 계약, §5 REST와 WebSocket, `docs/requirements.md` FR-12A·FR-12B의 미결 두 줄 (2026-10-23 팀 결정과 대시보드 담당 결정)
 
 ### 고치지 않는 곳
-- 항상: `docs/` (위 네 줄은 제외), `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
+- 항상: `docs/` (위 절은 제외), `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/` (위 두 파일의 추가는 제외), `server/pyproject.toml`, `.github/`
 - 이 작업: `api/mcp/`, `api/auth/`, `core/`, `db/`, `iot/`, `runtime/`, `cli/`, `dashboard/`
 
 ### 다른 영역과 닿는 곳
 | 계약 | 사용 또는 제공 | 상대 영역 |
 |---|---|---|
 | `Authenticator.authenticate` | 사용 | 판정 (`api/auth`) |
-| `MonitorFeed.publish` (이 작업이 정한 접점) | 제공 | 이벤트를 만드는 영역 (7절 가정) |
-| `MonitorSnapshot`, `DashboardQueries` (이 작업이 정한 접점) | 사용. 테스트는 fake | 조회를 구현하는 영역 (7절 가정) |
+| `MonitorFeed.publish` | 제공 | 이벤트가 난 영역: 판정, 상태 관리, IOT, MCP 도구 (2026-10-23 팀 결정) |
+| `MonitorSnapshot`, `DashboardQueries` | 사용. 테스트는 fake | CORE 조회 서비스 (2026-10-23 팀 결정) |
 | `create_dashboard_router` | 제공 | 상태 관리 (조립) |
 | 모니터링 WebSocket, 대시보드 조회 REST | 제공 | 대시보드 |
 
 ### 만들지 않는 것
-- 이벤트를 발행하는 코드 (판정, 상태 관리, IOT, MCP 도구), 조회 접점의 구현 (DB·CORE), 서버 앱에 라우터를 붙이는 조립과 설정 파일의 섹션. 이슈 초안으로 넘긴다 (7절).
+- 이벤트를 발행하는 코드 (판정, 상태 관리, IOT, MCP 도구), CORE 조회 서비스와 저장소의 읽기 메서드, 서버 앱에 라우터를 붙이는 조립과 설정 섹션 `[dashboard]`. 각 영역의 후속 작업이다 (architecture.md §4).
 - 앱용 REST (계정, 승인)와 `FAULT` 복구 REST
 - 대시보드의 서버 어댑터 (`dashboard/`)
 - 장소별로 스트림과 조회를 거르는 것 (7절 가정)
@@ -141,7 +142,7 @@
 - 닫기 코드: 4401 토큰 오류, 4403 소유자 아님, 4408 인증 기한, 1011 서버 오류, 1013 대기열 넘침 — 대시보드가 다시 연결할지(1013, 1011) 사람에게 알릴지(4401, 4403)를 코드로 고른다.
 - 허브는 연결마다 크기가 정해진 대기열을 둔다. 차면 그 연결만 닫는다 — 발행자를 막지 않고, 늦은 화면 하나가 다른 화면과 판정을 늦추지 않는다. 다시 연결하면 지금 상태를 다시 받는다.
 - 연결하면 구독을 먼저 등록하고 지금 상태를 읽는다 — 그 사이에 난 이벤트를 잃지 않는다. 같은 이벤트가 지금 상태와 스트림에 두 번 올 수 있다. 대시보드는 이벤트를 차례로 쌓으므로 같은 상태가 된다.
-- 접점(`MonitorEvent`, `Subject`, `MonitorFeed`, `MonitorSnapshot`, `DashboardQueries`, `DashboardSettings`)은 `api/ws/ports.py`에 둔다 — `shared`는 이 작업이 고치지 않는다. `shared`로 옮기는 일은 7절 이슈 초안이다.
+- 영역 사이 접점(`Subject`, `MonitorEvent`은 `shared/models.py`, `MonitorFeed`, `MonitorSnapshot`, `DashboardQueries`는 `shared/interfaces.py`)은 `shared`에 둔다 (2026-10-23 팀 결정). `DashboardSettings`는 API 안의 설정이라 `api/ws/settings.py`에 둔다.
 - 도구 호출 이벤트의 `tool`은 MCP 도구 6개를 모두 받고, `target`과 `action`은 선택 키다 — 조회 도구에는 대상이 없다. 대시보드는 `request_use`만 그린다.
 - 점검의 비콘 `label`은 서버가 사람 이름으로 채운다 — 조회를 구현하는 영역은 이름을 모른다.
 - 요청 한 건의 `steps`는 ⓪~⑥ 일곱 칸이고, 신뢰도의 판정 수(`counts`)는 판정 값 다섯 개를 모두 담는다. 어긋나면 형식 오류다.
@@ -151,11 +152,8 @@
 
 ## 7. 가정
 
-- 이벤트를 만드는 영역(판정, 상태 관리, IOT, MCP 도구)이 `MonitorFeed.publish`를 부르고, 조회를 구현하는 영역이 `MonitorSnapshot`, `DashboardQueries`를 구현한다. 접점은 `shared`로 옮긴다. 의존 규칙 1에 따라 조회는 db가 아니라 core 쪽이 제공한다 — 이슈 초안 (이슈 없음)
-- 조립이 `create_dashboard_router`를 MCP 앱보다 먼저 붙이고, `DashboardSettings`의 값은 서버 설정 파일의 새 선택 섹션에서 받는다 — 이슈 초안 (이슈 없음)
-- 지금 저장하지 않는 사건(MCP 도구 호출, 승인 결정, 명령 전송 시작)은 발행 영역이 사건이 난 곳에서 발행한다 — 이슈 초안 (이슈 없음)
 - 시연은 장소 하나다. 소유자는 스트림과 조회에서 모든 기기를 본다. 장소별로 거르는 일은 장소가 둘 이상이 될 때 정한다 — 미결 (이슈 없음)
-- 감사 행의 `text`, 단계의 `detail`에 사용자 ID를 넣지 않는 것은 발행 영역이 지킨다. 이 작업은 키 단위로만 거른다 — 이슈 초안 (이슈 없음)
+- 감사 행의 `text`, 단계의 `detail`에 사용자 ID를 넣지 않는 것은 발행 영역과 조회 서비스가 지킨다. 이 작업은 키 단위로만 거른다 — 미결 (이슈 없음)
 
 ## 8. 테스트
 
