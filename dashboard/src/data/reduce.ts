@@ -27,9 +27,10 @@ function nearOf(p: Person, rssi: Record<string, number>, at: string): Pick<Perso
   const best = Object.entries(rssi).sort((a, b) => b[1] - a[1])[0]?.[0];
   if (!best) return { near: undefined, nearCandidate: undefined };
   const cur = p.near;
-  // 처음 받았거나 지금 기기의 신호가 없으면 바로 정한다
-  if (!cur || rssi[cur] === undefined) return { near: best, nearCandidate: undefined };
-  if (best === cur || rssi[best] - rssi[cur] < NEAR_MARGIN_DB) return { near: cur, nearCandidate: undefined };
+  // 처음 받았으면 바로 정한다
+  if (!cur) return { near: best, nearCandidate: undefined };
+  // 지금 기기의 신호가 한 묶음에서 빠지면 4dB 비교 없이 2초 규칙만 쓴다 (빠짐 하나로 장소가 바뀌지 않게)
+  if (rssi[cur] !== undefined && (best === cur || rssi[best] - rssi[cur] < NEAR_MARGIN_DB)) return { near: cur, nearCandidate: undefined };
   const c = p.nearCandidate?.nodeId === best ? p.nearCandidate : { nodeId: best, since: at };
   return secOf(at) - secOf(c.since) >= NEAR_DWELL_SEC ? { near: best, nearCandidate: undefined } : { near: cur, nearCandidate: c };
 }

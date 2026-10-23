@@ -279,6 +279,14 @@ test('FR12A D4 배치를 파일로 내보내고 다시 불러온다', async ({ p
   expect(await spotOf(page, '사물함 1')).toBe('1176 120');
 });
 
+test('FR12A D4 배치 화면의 장소 탭은 처음에 지금 무대의 장소를 연다', async ({ page }) => {
+  // 옆방 요청이 진행 중이라 무대는 옆방이다
+  await ready(page, 'scene=side-room&view=layout');
+  const tabs = page.getByRole('tablist', { name: '장소' });
+  await expect(tabs.getByRole('tab', { name: '옆방' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('[data-component="StageDevice"]')).toHaveCount(1);
+});
+
 test('FR12A D4 배치 화면의 장소 탭: 옆방 탭에서 무드등을 옮기면 옆방 배치로만 저장되고 라운지 배치는 그대로다', async ({ page }) => {
   await ready(page, 'scene=later&view=layout');
   const tabs = page.getByRole('tablist', { name: '장소' });

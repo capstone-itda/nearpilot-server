@@ -45,6 +45,16 @@ describe('reduce', () => {
       at('14:00:03.500', { 'locker-1': -56, 'locker-2': -50 })])).toBe('locker-1');
   });
 
+  it('FR12B 지금 기기의 신호가 한 묶음에서 빠져도 바로 옮기지 않고, 다른 기기가 2초 이어 가장 세면 옮긴다', () => {
+    const at = (t: string, rssi: Record<string, number>): StreamEvent => ({ type: 'rssi', at: t, personId: 'p-a', rssi });
+    const near = (events: StreamEvent[]) => reduceAll(s0(), events).people[0].near;
+    // 한 묶음만 빠지고 돌아오면 그대로
+    expect(near([at('14:00:01.000', { 'mood-1': -78 }), at('14:00:01.500', { 'locker-1': -52, 'mood-1': -78 })])).toBe('locker-1');
+    expect(near([at('14:00:01.000', { 'mood-1': -78 })])).toBe('locker-1');
+    // 빠진 채 2초 이어지면 옮긴다
+    expect(near([at('14:00:01.000', { 'mood-1': -78 }), at('14:00:03.000', { 'mood-1': -78 })])).toBe('mood-1');
+  });
+
   it('FR12B 도구 호출이 오면 판정 전 요청이 생기고 단계는 기다림이다', () => {
     const s = reduceAll(s0(), [call]);
     expect(s.request).toMatchObject({ id: 'r-1', at: '14:00:01' });

@@ -261,7 +261,8 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
   // 이 장소에 세우지 않은 사람(다른 장소에 있는 사람)의 신호는 이 장소의 선으로 그리지 않는다
   const signalOn = !!signalPerson && anchors.has(signalPerson.id);
   const signals = vis.map((v) => ({ personId: v.personId, x: v.x, y: v.y, on: signalOn && signalPerson?.id === v.personId }));
-  const rssiPerson = !opt.layoutCheck && inFlight ? requester : undefined;
+  // 요청한 사람이 다른 장소에 있으면 이 장소 기기 옆에 그 사람의 신호 세기를 쓰지 않는다 (그 사람은 작은 방에 있다)
+  const rssiPerson = !opt.layoutCheck && inFlight && uplinkHere ? requester : undefined;
   const rssi: Record<string, string> = {};
   if (rssiPerson) for (const [id, v] of Object.entries(rssiPerson.rssi)) rssi[id] = dbm(v);
 

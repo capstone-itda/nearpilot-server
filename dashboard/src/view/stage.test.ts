@@ -453,6 +453,14 @@ describe('stageView 두 장소', () => {
     expect(draw(withoutBeacon(ask), 'lounge').v).toMatchObject({ scene: 'ask', uplink: true });
   });
 
+  it('FR12B 요청한 사람이 다른 장소에 있으면 이 장소 기기 옆에 그 사람의 신호 세기를 쓰지 않는다', () => {
+    const base = stateAt(sec('14:43:48.05'));
+    const people = base.people.map((p) => (p.id === base.request!.personId ? { ...p, rssi: { 'mood-1': -49, 'light-3': -86, 'speaker-1': -88 } } : p));
+    const s = { ...base, people };
+    expect(draw(s, 'lounge').v).toMatchObject({ rssiOn: false, uplink: false });
+    expect(draw(s, 'side-room').v).toMatchObject({ rssiOn: true, uplink: true });
+  });
+
   it('FR12B 다른 장소의 기기 앞에 있는 사람은 이 장소에 세우지 않는다 (신호가 이 장소의 기기에 잡혀도)', () => {
     const s = SCENES.idle();
     const people = s.people.map((p) => (p.id === 'p-a' ? { ...p, near: 'mood-1', rssi: { 'locker-1': -60, 'mood-1': -49 } } : p));
