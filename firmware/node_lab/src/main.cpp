@@ -74,7 +74,42 @@ bool clockTrusted() {
         (millis() - lastSync <= NP_TIME_TRUST_MS);
 }
 
-void onSync(timeval*) { lastSync = millis(); synchronizedClock = true; }
+void onSync(timeval*) {
+    lastSync = millis();
+    synchronizedClock = true;
+    Serial.printf("CLOCK_SYNCED utc=%s\n", utcNow().c_str());
+}
+
+// Read-only USB diagnostic. It never changes clock trust or authorizes output.
+void clockProbe() {
+    static String line;
+    static bool overflow = false;
+    unsigned budget = 64;
+    while (Serial.available() && budget--) {
+        char ch = Serial.read();
+        if (ch == '\r') continue;
+        if (ch != '\n') {
+            if (line.length() < 48) line += ch;
+            else overflow = true;
+            continue;
+        }
+        if (!overflow && line.startsWith("CLOCK? ") && line.length() == 39) {
+            String nonce = line.substring(7);
+            bool valid = true;
+            for (unsigned i = 0; i < nonce.length(); ++i)
+                if (!isxdigit(static_cast<unsigned char>(nonce[i]))) valid = false;
+            if (valid) {
+                timeval stamp;
+                gettimeofday(&stamp, nullptr);
+                Serial.printf("CLOCK_SAMPLE nonce=%s unix_us=%lld synced=%d age_ms=%lu uptime_ms=%lu\n",
+                    nonce.c_str(), static_cast<long long>(stamp.tv_sec) * 1000000 + stamp.tv_usec,
+                    synchronizedClock, millis() - lastSync, millis());
+            }
+        }
+        line = "";
+        overflow = false;
+    }
+}
 
 void common(JsonDocument& doc, int channel) {
     doc["schema_version"] = 1;
@@ -381,6 +416,7 @@ void setup() {
 }
 
 void loop() {
+    clockProbe();
     static unsigned long lastConnect = 0, lastWifi = 0, lastStatus = 0, lastRssi = 0, lastClock = 0;
     static bool previouslyTrusted = false;
     unsigned long current = millis();

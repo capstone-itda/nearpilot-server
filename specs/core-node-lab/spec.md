@@ -113,3 +113,6 @@
 - `esp32dev` 수신 환경과 `ibeacon` 송신 환경의 PlatformIO 빌드가 모두 통과했다.
 - 실제 보드가 없어 업로드, BLE 송수신, NTP 오차, GPIO와 재부팅 NVS 보존은 미검증이다.
 - 보드 없는 demo는 실제 HMM·MQTT·SQLite로 기기 2대의 관측과 on/off 저장을 확인했다.
+- 2026-10-23 ESP32-WROOM-32E 실측은 `server/tools/node_lab/HARDWARE_VALIDATION.md`에 기록한다.
+- 실제 BLE 수신, MQTT 관측 저장, HMM 확률, 명령 수신과 시리얼 처리를 확인했다. 물리 성공은 미검증이다.
+- 추가한 시각 구간 검사를 포함해 `2737 passed, 2 skipped, 1 xfailed`다. 실제 Mosquitto를 포함한다.

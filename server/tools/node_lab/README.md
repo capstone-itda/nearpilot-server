@@ -107,6 +107,28 @@ AP 안의 NTP 서버 운영과 Windows 방화벽의 MQTT 포트 허용은 환경
 실측 모델을 쓸 때는 `server.toml`의 모델 루트와 장소별 버전을 바꾼다.
 장소 ID는 이 도구의 시험 장소인 `node-lab`과 일치해야 한다.
 
+## USB 시각 실측
+
+`clock_probe.py`는 pyserial이 설치된 Python으로 실행한다. PlatformIO 가상환경에 pyserial이 있다.
+Arduino 시리얼 모니터와 함께 포트를 열지 않는다. 저장소 루트에서 실행한다.
+
+```powershell
+.\firmware\node_lab\.venv\Scripts\python.exe server/tools/node_lab/clock_probe.py --port COM6 --output server/var/node-lab-hardware/clock-measurement.jsonl --duration 150 --interval 3 --max-rtt 0.8 --jump-tolerance 0.01 --max-sync-age 120 --margin 0.25 --reset
+```
+
+기기는 `CLOCK? <32자리 식별자>`에 현재 시각, 동기화 여부와 경과 시간을 응답한다.
+도구는 요청 직전과 응답 직후의 서버 시각으로 기기 오차의 구간을 계산한다.
+왕복 지연 초과, 서버 시계 점프와 미동기화 표본은 거부한다.
+`measurement_summary`는 관측 구간의 최대 절댓값과 명시한 여유의 합을 제안한다.
+도구는 서버나 펌웨어 설정을 자동으로 바꾸지 않는다.
+예시 간격과 여유는 진단용 입력이다. 운영용 검증 값이 아니다.
+같은 조건의 짧은 연결 시험과 운영용 장시간 검증을 구분한다.
+실측한 파일은 시험 폴더에 보존하고 최대 시각 오차를 양쪽 설정에 맞춘다.
+
+Windows 시간 서비스를 재시작하면 미동기화 상태를 확인한다.
+관리자 PowerShell에서 `w32tm /resync /rediscover` 뒤 실제 NTP 응답과 `CLOCK_SYNCED`를 확인한다.
+로컬 `stripchart`의 오프셋만으로 ESP32 시각 오차를 확정하지 않는다.
+
 ## 펌웨어의 unknown 결과
 
 ESP32만으로는 LED의 실제 켜짐이나 구동부 완료를 증명할 수 없다.

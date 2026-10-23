@@ -84,6 +84,7 @@ pytest tests/<계층>      # 계층 하나
 
 ## Gotchas
 <!-- 에이전트가 한 실수와 올바른 방법을 한 줄씩 쓴다. -->
+- Windows 시간 서비스를 재시작한 뒤 재동기화를 확인하지 않아 ESP32가 미동기화 NTP 응답을 받았다. 재시작 후 관리자 권한으로 재동기화하고 실제 NTP 응답의 leap·stratum과 ESP32의 CLOCK_SYNCED를 확인한다.
 - Mosquitto 설정의 password_file 경로를 따옴표로 감싸 파일 열기에 실패했다. ASCII 임시 경로를 따옴표 없이 쓴다.
 - 테스트의 NodeAnnounce에 문자열 기능·점유 방식을 넣어 저장에 실패했다. shared 모델에는 Capability·Occupancy 열거형을 넘긴다.
 - Arduino MQTT의 onMessage에 람다를 넘겨 오버로드 선택에 실패했다. 캡처 없는 람다는 함수 포인터로 명시 변환한다.
