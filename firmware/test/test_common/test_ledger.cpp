@@ -1,29 +1,11 @@
 #include <unity.h>
 
-#include <map>
 #include <string>
 
+#include "fake_store.h"
 #include "np_ledger.h"
 
 namespace {
-
-class FakeStore : public np::RecordStore {
-public:
-    bool available = true;
-    bool failWrite = false;
-    bool corruptWrite = false;
-    std::map<int, std::string> slots;
-
-    bool ready() const override { return available; }
-    int capacity() const override { return 3; }
-    bool has(int slot) override { return slots.count(slot) > 0; }
-    std::string read(int slot) override { return slots[slot]; }
-    bool write(int slot, const std::string& body) override {
-        if (failWrite) return false;
-        slots[slot] = corruptWrite ? body.substr(1) : body;
-        return true;
-    }
-};
 
 const char* CONTENT = "[\"light-01\",\"on\",\"s\",\"2026-10-23T00:00:00Z\",\"2026-10-23T00:00:30Z\"]";
 

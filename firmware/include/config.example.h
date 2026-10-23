@@ -13,7 +13,14 @@
 #define NP_RETRY_MAX_MS 30000UL
 #define NP_MQTT_KEEPALIVE_SEC 30
 #define NP_MQTT_IO_TIMEOUT_MS 2000
-#define NP_MAX_COMMAND_RECORDS 64
+// Largest stored record. 512 bytes take 18 NVS entries, so 7 fit in a 126-entry page.
+#define NP_MAX_RECORD_BYTES 512
+// Slots in the 64-page np_records partition (partitions.csv): one page is NVS's compaction page and
+// one is kept free for rewrites, so at most 7 x 62 = 434 records of the largest size fit.
+// Verified by test_FR22_record_partition_capacity.
+#define NP_MAX_COMMAND_RECORDS 400
+// node_lab slots in the default nvs; at least node_lab's NP_MAX_COMMAND_RECORDS.
+#define NP_LEGACY_COMMAND_RECORDS 64
 #define NP_MAX_BEACONS 16
 #define NP_MAX_COMMAND_BYTES 2048
 #define NP_MAX_COMMAND_ID_BYTES 128

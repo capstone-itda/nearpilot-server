@@ -1,6 +1,6 @@
 # ESP32 펌웨어의 MQTT v1 연동과 실제 기기 검증
 
-- 상태: 구현 중 (2단계 진행)
+- 상태: 구현 중 (2단계 구현 완료, 실제 연결 재보고 확인 남음)
 - 담당: 작업 지시자 (펌웨어). architecture.md §2의 팀 배정은 미결이다 (7절 가정).
 - 후속 구현 브랜치: `feat/firmware-contracts`
 - 요구사항: FR-04, FR-05, FR-06, FR-07, FR-20, FR-22, NFR-03, NFR-04, NFR-07, NFR-08, NFR-10, NFR-11, NFR-12, NFR-14
@@ -89,7 +89,7 @@ IR 무드등의 관측 근거가 없으면 `light_on=null`이다. IR 송출만�
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 1 | node_lab에서 실제 기기로 검증한 공통 동작을 `firmware/`의 모듈로 옮기고 단위 테스트 환경을 만든다 | 완료 (8절) |
-| 2 | 명령 기록의 상태 전이, 전원 차단 복원, 충돌, 저장 실패와 용량 | 진행 중 |
+| 2 | 명령 기록의 상태 전이, 전원 차단 복원, 충돌, 저장 실패와 용량 | 구현 완료 (8절). 실제 연결의 재보고 확인 남음 |
 | 3 | 장치 기능·점유 방식의 USB 설정과 기능별 동작 검증 | 대기 |
 | 4 | 구동부·센서 인터페이스와 증명된 성공·실패·불명 결과 | 대기 |
 | 5 | `safety_check` 검사 기록, 근거 모델, v1 기준 표와 결과 규칙 | 대기 |
@@ -107,7 +107,11 @@ IR 무드등의 관측 근거가 없으면 `light_on=null`이다. IR 송출만�
 - 새 명령 기록은 기록 전용 NVS 파티션에 쓴다 (6절). node_lab이 기본 NVS에 남긴 기록도 계속 조회한다.
 - 접수를 저장한 뒤 재검사에서 걸리면 구동하지 않고 `failed`와 그 거부 코드를 보고한다.
   구동하지 않았음을 확인한 실행 실패이기 때문이다 (architecture.md §5 MQTT 5절). 1단계는 `unknown`이었다.
-- 새 기록은 기록 본문과 갱신 여유 공간이 남을 때만 만든다. 모자라면 `STORAGE_ERROR`로 거부하고 기존 기록을 지우지 않는다.
+- 기록 하나는 결과의 오류 코드까지 붙여 512바이트 이하다. 넘는 명령은 기록하지 않고 `INVALID_MESSAGE`로 거부한다.
+  같은 내용은 언제나 같은 이유로 거부되므로 기록 없이도 재전송에 같은 결과를 준다.
+- 슬롯은 400개다. 빈 슬롯이 없으면 `STORAGE_ERROR`로 거부하고 기존 기록을 지우지 않는다.
+- 부팅 때 모든 슬롯을 한 번 읽어 명령 ID 해시 색인을 만든다. 조회는 해시가 같은 슬롯만 읽는다.
+  읽을 수 없는 기록이 있으면 조회를 `STORAGE_ERROR`로 막는다. 쓰기에 실패하면 색인을 다시 만든다.
 - `running`은 발행만 하고 저장하지 않는다. 재시작 뒤 `accepted`로 남은 기록은 모두 `unknown`으로 바꿔 보고한다.
 - 결과 저장에 실패하면 결과를 발행하지 않는다. 기록은 `accepted`로 남고 다음 연결의 재보고에서 `unknown`이 된다.
 
@@ -197,7 +201,8 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
 | USB 설정 값이 없거나 범위·문자 규칙을 어긴다 | 저장하지 않고 처음 어긴 키 이름으로 거부한다 | `test_NFR08_config_rejects_invalid_values` |
 | 명령의 시각 문자열이 UTC 형식이 아니거나 없는 날짜다 | `INVALID_MESSAGE`로 거부한다 | `test_FR06_rejects_malformed_utc` |
 | 명령 기록이 다른 `node_id`의 것인데 설정의 `node_id`를 바꾼다 | 설정을 거부하고 기록을 그대로 둔다 | `test_FR22_ledger_owner_conflict` |
-| 기록 저장 공간이나 슬롯이 모자란다 | `STORAGE_ERROR`로 거부한다. 기존 기록을 지우지 않는다 | `test_FR22_full_ledger_rejects_without_eviction` |
+| 기록 슬롯이 모자란다 | `STORAGE_ERROR`로 거부한다. 기존 기록을 지우지 않는다 | `test_FR22_full_ledger_rejects_without_eviction` |
+| 명령 기록이 크기 한도를 넘는다 | 기록하지 않고 `INVALID_MESSAGE`로 거부한다. 구동하지 않는다 | `test_FR06_invalid_message_no_actuation` |
 | node_lab이 남긴 기록의 명령이 다시 온다 | 기존 기록으로 처리하고 다시 구동하지 않는다 | `test_FR22_legacy_records_block_reexecution` |
 
 ## 6. 결정
@@ -214,6 +219,9 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
   - 기본 NVS 20KB에는 기록이 약 35개만 들어가서 설정한 64개를 다 담지 못했다.
   - `firmware/partitions.csv`에서 spiffs를 줄여 256KB짜리 `np_records` 파티션을 만든다. 앞쪽 파티션의 위치는 그대로다.
   - 기록은 `np-records` 이름 공간의 키 하나에 하나씩 쓴다. NVS 키 쓰기는 전원이 꺼져도 이전 값이나 새 값 중 하나만 남는다.
+  - 용량은 슬롯 수와 기록 크기 한도로 정한다. NVS의 빈 항목 수는 쓰지 않는다.
+    실측에서 빈 항목이 440개 남았는데도 기록 하나를 다시 쓰지 못했다. 가득 찬 페이지 끝의 빈 항목이 기록 하나보다 작았다.
+  - 512바이트 기록은 18항목이라 126항목 페이지에 7개 들어간다. 64페이지에서 정리용 1페이지와 재작성용 1페이지를 빼면 434개다. 슬롯은 400개로 둔다.
   - 설정은 기본 NVS의 `np-config`에 남는다. node_lab의 `np-node-lab` 기록은 읽고, 이미 있는 기록만 제자리에서 갱신한다.
   - 파티션을 열지 못하면 지우지 않고 `storage_unavailable`로 둔다.
 - 명령 처리 상태 전이는 `firmware/lib/np_executor/`에 둔다 — 담당자가 2026-10-23에 골랐다. 검사, 결과 발행, 구동과 시각·ID 생성은 `CommandPort` 인터페이스로 받는다. 테스트는 fake를 쓴다.
@@ -303,9 +311,19 @@ MQTT 필드, 검사 기준의 뜻, 공용 설정과 다른 영역의 동작을 �
 | FR-07 | `test_FR07_power_loss_restores_unknown` | 재시작 뒤 `accepted` 기록을 `unknown`으로 저장·보고하고 다시 구동하지 않는다 |
 | FR-07 | `test_FR07_no_completion_without_evidence` | 결과 저장에 실패하면 결과를 발행하지 않고 `accepted` 기록을 남긴다 |
 | FR-07 | `test_FR07_result_event_identity` | 재보고가 사건 ID, 상태와 발생 시각을 유지한다 |
-| FR-22 | `test_FR22_full_ledger_rejects_without_eviction` | 슬롯이나 여유 공간이 모자라면 거부하고 기존 기록을 지우지 않는다 |
+| FR-22 | `test_FR22_full_ledger_rejects_without_eviction` | 슬롯이 모자라면 거부하고 기존 기록을 지우지 않는다 |
 | FR-22 | `test_FR22_legacy_records_block_reexecution` | node_lab 기록을 조회·재보고하고 새 기록은 기록 파티션에만 쓴다 |
-| FR-22 | `test_FR22_record_partition_capacity` | 실제 `np_records` 파티션에 최대 크기 접수 기록을 채워 용량과 조회 시간을 잰다 |
+| FR-22 | `test_FR22_record_partition_capacity` | 실제 `np_records` 파티션에 512바이트 기록 400개를 쓰고 모두 다시 쓴다. 색인 생성과 조회 시간을 잰다 |
+
+2단계 결과 (2026-10-23, ESP32-WROOM-32E):
+
+- `pio test -e native`: 25개 통과. `pio test -e esp32dev`: `test_common` 25개와 `test_esp32_storage` 1개 통과.
+- 첫 측정(여유 공간 검사 방식): 484바이트 기록 441개를 쓴 뒤 빈 항목 440개가 남았지만 마지막 기록을 다시 쓰지 못했다.
+  슬롯 2000개를 차례로 읽는 조회는 1.9초 걸렸다. 그래서 크기 한도, 슬롯 수와 색인으로 바꿨다 (6절).
+- 바꾼 뒤: 512바이트 기록 400개를 쓰고 모두 다시 썼다. 부팅 색인 생성은 1.4초, 없는 ID 조회는 0.2ms, 있는 ID 조회는 4ms다.
+- 제품 펌웨어를 올리자 `RECORD_STORE primary=1 legacy=1`로 두 저장소를 열었다. 기존 설정(generation 1)은 그대로 읽었다.
+- 이번에는 PC가 시험 AP 밖에 있어 MQTT와 시각원에 연결하지 못했다. node_lab 기록의 실제 재보고는 다음 연결 시험에서 확인한다.
+- 연결마다 모든 기록을 재보고한다. 기록이 수백 개면 연결 직후 발행이 몰린다. 7단계에서 측정한다.
 
 실제 기기는 다음 절차로 검증한다.
 

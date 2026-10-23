@@ -18,7 +18,9 @@
 #include "np_clock.h"
 #include "np_command.h"
 #include "np_config.h"
+#include "np_executor.h"
 #include "np_ledger.h"
+#include "np_nvs_store.h"
 #include "np_ready.h"
 #if __has_include("config.local.h")
 #include "config.local.h"
@@ -27,28 +29,11 @@
 #endif
 
 static_assert(NP_MAX_COMMAND_RECORDS > 0 && NP_MAX_COMMAND_RECORDS < 10000, "NVS slot limit");
+static_assert(NP_LEGACY_COMMAND_RECORDS >= 0 && NP_LEGACY_COMMAND_RECORDS < 10000, "NVS slot limit");
 static_assert(NP_RSSI_FRAME_MS > 0 && NP_STATUS_MS > 0, "report interval");
 static_assert(NP_BLE_SCAN_WINDOW_MS <= NP_BLE_SCAN_INTERVAL_MS, "BLE scan window");
 static_assert(NP_RECONNECT_MS > 0 && NP_WIFI_RECONNECT_MS > 0, "retry interval");
 static_assert(NP_RECONNECT_MS <= NP_RETRY_MAX_MS && NP_WIFI_RECONNECT_MS <= NP_RETRY_MAX_MS, "retry limit");
-
-// NVS slots c0..cN in the node_lab namespace, so records survive a switch between the two firmwares.
-class NvsRecordStore : public np::RecordStore {
-public:
-    bool begin() { return opened_ = prefs_.begin("np-node-lab", false); }
-    bool ready() const override { return opened_; }
-    int capacity() const override { return NP_MAX_COMMAND_RECORDS; }
-    bool has(int slot) override { return prefs_.isKey(key(slot).c_str()); }
-    std::string read(int slot) override { return prefs_.getString(key(slot).c_str()).c_str(); }
-    bool write(int slot, const std::string& body) override {
-        return prefs_.putString(key(slot).c_str(), body.c_str()) == body.size();
-    }
-
-private:
-    static String key(int slot) { return String("c") + slot; }
-    Preferences prefs_;
-    bool opened_ = false;
-};
 
 // Per-device values are injected over USB and kept in their own NVS namespace.
 // The command record namespace is never opened for writing by provisioning.
@@ -59,9 +44,12 @@ bool settingsReady = false;
 
 WiFiClient network;
 MQTTClient mqtt(NP_MAX_COMMAND_BYTES + 1024);
-NvsRecordStore recordStore;
-np::Ledger ledger(recordStore);
-bool handlingCommand = false;
+// New records go to the dedicated partition; node_lab's slots in the default nvs are still consulted.
+np::NvsRecordStore recordStore("np_records", "np-records", NP_MAX_COMMAND_RECORDS);
+np::NvsRecordStore legacyStore("nvs", "np-node-lab", NP_LEGACY_COMMAND_RECORDS);
+np::LayeredRecordStore records(recordStore, legacyStore);
+np::Ledger ledger(records);
+bool commandBusy();
 String session;
 bool announced = false;
 unsigned long seq[5] = {};
@@ -147,7 +135,7 @@ void status() {
     JsonObject state = doc["physical_state"].to<JsonObject>();
     state["door_closed"] = nullptr;
     state["light_on"] = nullptr;  // No light sensor exists on the bare ESP32.
-    state["actuator_state"] = handlingCommand ? "busy" : "idle";
+    state["actuator_state"] = commandBusy() ? "busy" : "idle";
     state["sensor_fault"] = false; // No external sensors are attached yet.
     report("status", doc, 1);
 }
@@ -199,115 +187,51 @@ void rssiFrame() {
     if (mqtt.connected() && announced && clockTrusted()) report("rssi", doc, 0);
 }
 
-void result(JsonDocument& record) {
+bool result(JsonDocument& record) {
     JsonDocument doc;
     common(doc, 3);
     for (const char* key : {"command_id", "event_id", "state", "occurred_at"}) doc[key] = record[key];
     if (record["error_code"].is<const char*>()) doc["error_code"] = record["error_code"];
-    report("result", doc, 1);
+    bool sent = report("result", doc, 1);
     Serial.printf("COMMAND_RESULT command_id=%s state=%s\n",
         record["command_id"].as<const char*>(), record["state"].as<const char*>());
+    return sent;
 }
 
-void event(JsonDocument& record, const char* state, const char* error = nullptr) {
-    record["state"] = state;
-    record["event_id"] = newUuid();
-    record["occurred_at"] = utcNow();
-    record.remove("error_code");
-    if (error) record["error_code"] = error;
-}
+class BoardCommandPort : public np::CommandPort {
+public:
+    const char* validate(JsonDocument& command) override {
+        timeval current;
+        gettimeofday(&current, nullptr);
+        np::CommandContext context;
+        context.nodeId = config.nodeId;
+        context.session = session.c_str();
+        context.connected = mqtt.connected();
+        context.clockTrusted = clockTrusted();
+        context.nowSec = current.tv_sec + current.tv_usec / 1e6;
+        context.maxErrorSec = config.clockMaxErrorSec;
+        return np::validateCommand(command, context);
+    }
+    std::string newEventId() override { return newUuid().c_str(); }
+    std::string utcNow() override { return ::utcNow().c_str(); }
+    void publish(JsonDocument& record) override { result(record); }
+    void actuate(const std::string& commandId, const std::string& action) override {
+        bool on = action == "on";
+        if (NP_OUTPUT_PIN >= 0) digitalWrite(NP_OUTPUT_PIN, on == NP_OUTPUT_ACTIVE_HIGH ? HIGH : LOW);
+        Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s physical_completion=unverified\n",
+            commandId.c_str(), on ? "on" : "off", NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only");
+    }
+    void log(const std::string& line) override { Serial.println(line.c_str()); }
+};
 
-const char* validate(JsonDocument& command) {
-    timeval current;
-    gettimeofday(&current, nullptr);
-    np::CommandContext context;
-    context.nodeId = config.nodeId;
-    context.session = session.c_str();
-    context.connected = mqtt.connected();
-    context.clockTrusted = clockTrusted();
-    context.nowSec = current.tv_sec + current.tv_usec / 1e6;
-    context.maxErrorSec = config.clockMaxErrorSec;
-    return np::validateCommand(command, context);
-}
+BoardCommandPort commandPort;
+np::Executor executor(ledger, commandPort, NP_MAX_COMMAND_ID_BYTES, NP_MAX_RECORD_BYTES);
 
-void handleCommand(const String& payload, bool receivedBusy) {
-    JsonDocument command;
-    if (deserializeJson(command, payload) || !command["command_id"].is<const char*>()) {
-        Serial.println("COMMAND_REJECTED invalid_json_or_id");
-        return;
-    }
-    std::string id = command["command_id"].as<std::string>();
-    if (id.empty() || id.size() > NP_MAX_COMMAND_ID_BYTES) return;
-    std::string content = np::canonicalContent(command);
-    JsonDocument record;
-    int empty;
-    int slot = ledger.find(id, record, empty);
-    Serial.printf("COMMAND_RECEIVED command_id=%s\n", id.c_str());
-    if (slot >= 0) {
-        if (record["content"].as<std::string>() != content) {
-            JsonDocument conflict;
-            conflict["command_id"] = id;
-            event(conflict, "rejected", "COMMAND_ID_CONFLICT");
-            result(conflict); // Keep original persisted record unchanged.
-        } else {
-            Serial.println("COMMAND_DUPLICATE no_new_output");
-            result(record);
-        }
-        return;
-    }
-    record["command_id"] = id;
-    record["content"] = content;
-    if (slot == np::Ledger::STORAGE_ERROR || empty < 0) {
-        event(record, "rejected", "STORAGE_ERROR");
-        result(record);
-        Serial.println("STORAGE_BLOCKED no_output_no_record_deletion");
-        return;
-    }
-    const char* rejection = (receivedBusy || handlingCommand) ? "DEVICE_BUSY" : validate(command);
-    event(record, rejection ? "rejected" : "accepted", rejection);
-    if (!ledger.save(empty, record)) {
-        event(record, "rejected", "STORAGE_ERROR");
-        result(record);
-        Serial.println("STORAGE_WRITE_FAILED no_output");
-        return;
-    }
-    if (!rejection) handlingCommand = true;
-    result(record);
-    if (rejection) return;
-    // Recheck connection, validity and time trust after the synchronous flash write / PUBACK.
-    rejection = validate(command);
-    if (!rejection) {
-        JsonDocument progress;
-        progress.set(record);
-        event(progress, "running");
-        result(progress);
-        // Publishing can reconnect or consume validity time. Check again immediately before output.
-        rejection = validate(command);
-        if (!rejection) {
-            bool on = command["action"].as<std::string>() == "on";
-            if (NP_OUTPUT_PIN >= 0) digitalWrite(NP_OUTPUT_PIN, on == NP_OUTPUT_ACTIVE_HIGH ? HIGH : LOW);
-            Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s physical_completion=unverified\n",
-                id.c_str(), on ? "on" : "off", NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only");
-        }
-    }
-    // Accepted commands are never reported successful without a completion sensor.
-    event(record, "unknown");
-    if (ledger.save(empty, record)) result(record);
-    else Serial.println("RESULT_STORE_FAILED accepted_record_kept_no_retry");
-    handlingCommand = false;
-}
+bool commandBusy() { return executor.busy(); }
 
 void replayRecords() {
-    if (!ledger.ready() || !clockTrusted()) return;
-    ledger.forEach([](int slot, JsonDocument& record) {
-        if (record["state"].as<std::string>() == "accepted") {
-            event(record, "unknown");
-            if (!ledger.save(slot, record)) return;
-        }
-        result(record); // Stable event ID / occurred_at; new publication seq and sent_at.
-    });
+    if (ledger.ready() && clockTrusted()) executor.replay();
 }
-
 
 // ---- USB provisioning (separate NVS namespace; command records are only read) ----
 
@@ -464,7 +388,8 @@ void setup() {
     Serial.begin(NP_SERIAL_BAUD);
     setenv("TZ", "UTC0", 1);
     tzset();
-    bool storageReady = recordStore.begin();
+    bool storageReady = recordStore.begin() & legacyStore.begin();  // Open both even if one fails.
+    if (storageReady) ledger.load();  // One full read now instead of on the first command.
     settingsReady = settings.begin("np-config", false);
     const char* loaded = loadConfig();
     if (NP_OUTPUT_PIN >= 0) {
@@ -475,6 +400,9 @@ void setup() {
     Serial.printf("NODE_START node=%s config=%s generation=%lu mode=%s storage=%d reset_reason=%s\n",
         configured ? config.nodeId.c_str() : "-", loaded, config.generation,
         NP_OUTPUT_PIN >= 0 ? "optional_gpio" : "serial_only", storageReady, resetReason());
+    Serial.printf("RECORD_STORE primary=%d legacy=%d slots=%d legacy_slots=%d free_entries=%u\n",
+        recordStore.ready(), legacyStore.ready(), NP_MAX_COMMAND_RECORDS, NP_LEGACY_COMMAND_RECORDS,
+        unsigned(recordStore.freeEntries()));
     if (!configured) {
         Serial.println("CONFIG_MISSING usb_provisioning_required network_not_started");
         return;
@@ -497,7 +425,7 @@ void setup() {
     mqtt.onMessage(+[](String& topic, String& payload) {
         // QoS1 publish can call this callback; never publish/actuate recursively here.
         if (payload.length() <= NP_MAX_COMMAND_BYTES && inbox.size() < 4)
-            inbox.push_back({topic, payload, handlingCommand});
+            inbox.push_back({topic, payload, executor.busy()});
         else Serial.println("COMMAND_QUEUE_REJECTED capacity_or_size");
     });
     NimBLEDevice::init("");
@@ -599,7 +527,7 @@ void loop() {
     if (!inbox.empty()) {
         Incoming received = inbox.front();
         inbox.erase(inbox.begin());
-        if (received.topic.endsWith("/cmd")) handleCommand(received.payload, received.receivedBusy);
+        if (received.topic.endsWith("/cmd")) executor.handle(received.payload.c_str(), received.receivedBusy);
         else Serial.println("SAFETY_CHECK_UNSUPPORTED no_sensor_evidence_no_pass_result");
     }
     if (current - lastStatus >= NP_STATUS_MS) {

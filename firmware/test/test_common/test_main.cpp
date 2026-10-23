@@ -5,6 +5,7 @@ void runConfigTests();
 void runClockTests();
 void runCommandTests();
 void runLedgerTests();
+void runExecutorTests();
 void runBeaconTests();
 void runReadyTests();
 
@@ -17,6 +18,7 @@ int runAll() {
     runClockTests();
     runCommandTests();
     runLedgerTests();
+    runExecutorTests();
     runBeaconTests();
     runReadyTests();
     return UNITY_END();
