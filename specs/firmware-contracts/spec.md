@@ -91,7 +91,7 @@ IR 무드등의 관측 근거가 없으면 `light_on=null`이다. IR 송출만�
 | 1 | node_lab에서 실제 기기로 검증한 공통 동작을 `firmware/`의 모듈로 옮기고 단위 테스트 환경을 만든다 | 완료 (8절) |
 | 2 | 명령 기록의 상태 전이, 전원 차단 복원, 충돌, 저장 실패와 용량 | 구현 완료 (8절). 실제 연결의 재보고 확인 남음 |
 | 3 | 장치 기능·점유 방식의 USB 설정과 기능별 동작 검증 | 구현 완료 (8절). 설정 재주입 뒤 실제 발표·명령 확인 남음 |
-| 4 | 구동부·센서 인터페이스와 증명된 성공·실패·불명 결과 | 대기 |
+| 4 | 구동부·센서 인터페이스와 증명된 성공·실패·불명 결과 | 구현 중 (2026-10-23 결정, 6절) |
 | 5 | `safety_check` 검사 기록, 근거 모델, v1 기준 표와 결과 규칙 | 대기 |
 | 6 | 센서 인터페이스로 만드는 상태 보고 | 대기 |
 | 7 | 연결 안정성: MQTT 끊김 원인과 watchdog | 대기 |
@@ -205,6 +205,15 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
 | 명령 기록이 크기 한도를 넘는다 | 기록하지 않고 `INVALID_MESSAGE`로 거부한다. 구동하지 않는다 | `test_FR06_invalid_message_no_actuation` |
 | node_lab이 남긴 기록의 명령이 다시 온다 | 기존 기록으로 처리하고 다시 구동하지 않는다 | `test_FR22_legacy_records_block_reexecution` |
 
+| 구동 시작이 실패하거나 관측이 실행 실패를 확인했다 | `failed`를 저장한 뒤 보고한다 | `test_FR07_verified_execution_failure` |
+| 완료를 증명했지만 기능별 성공 보고가 꺼져 있다 | `unknown`으로 보고한다 | `test_FR07_completion_requires_enabled_capability` |
+| 유효한 완료 근거와 결과 저장을 확인했다 | `succeeded`로 보고한다 | `test_FR07_proven_completion_saved_before_success` |
+| 완료 관측이 없거나 오류가 나거나 기한이 없다 | 즉시 `unknown`이다 | `test_FR07_unavailable_observation_is_unknown` |
+| 완료 대기 기한을 넘겼다 | `unknown`이며 바쁨을 푼다 | `test_FR07_completion_deadline` |
+| 관측이 시작 전이거나 다른 명령이거나 출처가 없다 | 완료 근거로 쓰지 않는다 | `test_FR07_completion_evidence_freshness` |
+| 구동 중 같은 명령이 다시 오거나 재접속한다 | 접수를 재보고하고 현재 구동을 유지한다 | `test_NFR03_at_most_once_actuation` |
+| 실제 기능에 완료 관측이 없다 | 모든 기능의 성공 보고를 꺼 두고 신호 뒤 `unknown`이다 | `test_NFR10_device_slots_have_no_completion` |
+
 3단계의 사례와 테스트는 다음과 같다.
 
 | 요구사항 | 테스트 | 확인하는 것 |
@@ -214,6 +223,7 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
 | NFR-08 | `test_NFR08_config_rejects_invalid_capability` | 기능 누락·타입·허용 값 오류를 키 이름으로 거부한다 |
 | NFR-08 | `test_NFR08_config_rejects_invalid_occupancy` | 점유 방식 누락·타입·허용 값 오류를 키 이름으로 거부한다 |
 | FR-22 | `test_FR22_changed_capability_preserves_duplicate` | 기능 변경 뒤에도 기존 결과를 재보고하고 구동하지 않는다 |
+
 
 ## 6. 결정
 
@@ -241,6 +251,13 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
 - USB 키 목록만 확장한다 — 담당자가 2026-10-23에 확정했다. 주입 도구 변경은 경계 밖이라 멈추고 이슈 초안을 전달했다. 이슈는 생성하지 않는다. node_lab은 추가 키가 든 설정을 읽지만 발표는 고정이며 설정 재저장 시 추가 키를 없앤다. node_lab은 수정하지 않는다.
 - 3단계에서도 모든 기능의 제어 신호 뒤 결과는 `unknown`이다 — 담당자가 2026-10-23에 작업 범위를 정했다. `open`은 시리얼과 선택 GPIO 신호만 낸다. 스피커 완료 검증은 활성화하지 않는다.
 
+- 4단계 명령은 비동기 상태 기계로 처리한다 — 담당자가 2026-10-23에 추천안을 모두 골랐다. `handle()`은 접수와 구동 시작을 처리한다. `loop()`는 짧게 진행과 완료를 확인한다. MQTT 유지와 BLE 관측 보고를 계속한다. 구동 시작을 확인한 뒤에만 `running`을 발행한다. 판정이 끝날 때까지 새 명령은 `DEVICE_BUSY`로 거부한다.
+- `running`은 계속 발행만 한다 — 담당자가 2026-10-23에 골랐다. 재시작 뒤 접수 기록은 `unknown`으로 복원한다. 자동 재구동하지 않는다. 같은 실행 중 재접속은 복원과 구분하고 현재 접수를 불명으로 바꾸지 않는다.
+- 완료 대기 기한은 기능별 빌드 설정으로 받는다 — 담당자가 2026-10-23에 골랐다. 단위는 밀리초다. 0은 미설정이며 양수만 대기 기한이다. 단조 시각으로 경과 시간을 잰다. 미측정 기본값을 넣지 않는다. 기한 또는 완료 관측이 없으면 즉시 `unknown`이다. USB 설정과 주입 도구는 바꾸지 않는다.
+- 시작 전 완료 관측은 인정하지 않는다 — 담당자가 2026-10-23에 보수적인 가정을 골랐다. #142의 구체 완료 조건은 미결이다. 관측은 명령 ID, 단조 관측 시각과 근거 출처를 담는다. 시작 뒤의 명령별 근거만 검사한다. 시각만 새롭다는 이유로 완료를 인정하지 않는다.
+- 구동 시작과 완료 관측은 Arduino 없는 장치 인터페이스로 받는다 — 4단계의 구동부는 시작 성공·실패·불명을 구분한다. 관측은 대기, 완료 증명, 실패 확인과 확인 불가를 구분한다. 관측 오류와 기한 초과는 `unknown`이다. 시작 실패 또는 유효한 실패 근거만 `failed`다. 완료 증명은 기능별 활성화와 결과 저장 확인 뒤에만 `succeeded`다.
+- 실제 `locker`, `light`, `speaker`는 완료 관측을 제공하지 않는다 — 4단계에서도 기존 시리얼·선택 GPIO 신호만 낸다. 성공 보고는 기능별로 모두 꺼 둔다. 문 닫힘과 IR 송출을 완료 근거로 만들지 않는다.
+
 ## 7. 가정
 
 이 spec은 기존 계약을 유지한다. 미결과 독립적인 계약·예외 동작·검증 계획의 문서화를 먼저 마친다.
@@ -252,6 +269,7 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
 | 시각 동기화 | 시각원의 배포 위치, 연결 방법, 시작 절차, 재동기화 간격과 신뢰 상태 관리다 | 미결 — #140. 미검증 상태의 구동 차단은 유지한다 |
 | 오차 실측과 설정 | 기기별 측정 조건, 최대 오차, 내부 시간 설정과 배포 설정 연결이다 | 미결 — #140. 공용 설정 이름·범위·값을 이 spec만으로 정하지 않는다 |
 | 반납 센서와 측정 | 각 v1 항목의 관측 수단, 측정 순서, 이상 검출 범위와 근거 변환이다 | architecture.md §4·5. 문 닫힘만으로 잠금을 증명하지 않는다 |
+| 완료 근거의 신선도 | 시작 전 관측의 인정 조건이다 | 미결 — #142. 시작 전 관측은 인정하지 않는 가정으로 공통 틀을 만든다. 시작 뒤 관측도 명령과 근거 출처를 확인한다 |
 | 동작별 완료 관측 | 사물함 `open`, 조명과 스피커 `on`·`off`의 완료 조건과 오류 검출이다 | 미결 — #142. 증명한 기능만 성공 보고를 활성화한다 |
 | IR 무드등과 스피커 | IR 무드등 관측 수단과 스피커 완료 근거다. 스피커의 새 보고 필드는 별도 계약이다 | 미결 — #142. 확인 불가를 성공으로 대체하지 않는다 |
 | 명령 기록 | 저장 매체, 원자적 저장, 접수·진행·결과 복원과 저장 실패 진단이다 | architecture.md §5 MQTT 4·7절. 구동 전 저장과 재실행 금지는 유지한다. 저장 방식은 6절에 정했다. node_lab은 기본 파티션 표와 `np-node-lab`만 쓰므로 제품 펌웨어의 기록을 모른다. 제품 펌웨어를 쓴 기기에 node_lab을 올리면 이미 쓴 명령 ID를 보내지 않는다 |
@@ -313,6 +331,22 @@ MQTT 필드, 검사 기준의 뜻, 공용 설정과 다른 영역의 동작을 �
 | NFR-08 | `test_NFR08_config_rejects_invalid_capability` | 기능 누락·타입·허용 값 오류를 키 이름으로 거부한다 |
 | NFR-08 | `test_NFR08_config_rejects_invalid_occupancy` | 점유 방식 누락·타입·허용 값 오류를 키 이름으로 거부한다 |
 | FR-22 | `test_FR22_changed_capability_preserves_duplicate` | 기능 변경 뒤에도 기존 결과를 재보고하고 구동하지 않는다 |
+
+4단계 검증 계획 (PC와 ESP32의 `test_common`):
+
+| 요구사항 | 테스트 | 확인하는 것 |
+|---|---|---|
+| FR-07 | `test_FR07_proven_completion_saved_before_success` | 근거와 저장 확인 뒤 성공하며 저장 실패 때 성공을 발행하지 않는다 |
+| FR-07 | `test_FR07_verified_execution_failure` | 시작 실패와 명령별 실패 관측만 실행 실패로 보고한다 |
+| FR-07 | `test_FR07_completion_requires_enabled_capability` | 기능별 성공 보고를 꺼 두면 완료 관측도 성공으로 바꾸지 않는다 |
+| FR-07 | `test_FR07_unavailable_observation_is_unknown` | 관측 없음, 오류, 기한 미설정과 시작 불명은 성공이 아니다 |
+| FR-07 | `test_FR07_completion_deadline` | fake 단조 시각으로 기한 경계와 바쁨 해제를 확인한다 |
+| FR-07 | `test_FR07_completion_evidence_freshness` | 시작 전, 다른 명령과 출처 없는 관측은 완료를 증명하지 못한다 |
+| FR-07 | `test_FR07_no_completion_without_evidence` | 제어 신호와 결과 저장 실패는 성공 근거가 아니다 |
+| FR-07 | `test_FR07_power_loss_restores_unknown` | 진행 중 전원 차단 뒤 복원은 불명이며 재구동하지 않는다 |
+| FR-06 | `test_FR06_concurrent_commands_busy` | 진행 중 새 명령을 거부하고 판정 뒤 바쁨을 푼다 |
+| NFR-03 | `test_NFR03_at_most_once_actuation` | 진행 중 중복·재접속으로 다시 구동하거나 조기 불명 처리하지 않는다 |
+| NFR-10 | `test_NFR10_device_slots_have_no_completion` | 세 기능의 신호 연결은 완료 관측과 성공 활성화를 제공하지 않는다 |
 
 1단계 결과 (2026-10-23, ESP32-WROOM-32E):
 
