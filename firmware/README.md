@@ -29,7 +29,8 @@ pio test -e esp32dev --upload-port COM6 --test-port COM6
 pio test -e native
 ```
 
-`native`는 PC에서 실행하며 호스트 C++ 컴파일러(Windows에서는 MinGW-w64 등)가 필요하다.
+`native`는 PC에서 실행하며 PATH에 `gcc`·`g++`가 필요하다.
+Windows에서는 `winget install BrechtSanders.WinLibs.POSIX.UCRT`로 설치한 MinGW-w64 GCC로 검증했다.
 
 ## 설정과 확인
 

@@ -265,7 +265,8 @@ MQTT 필드, 검사 기준의 뜻, 공용 설정과 다른 영역의 동작을 �
 
 1단계 결과 (2026-10-23, ESP32-WROOM-32E):
 
-- `pio test -e esp32dev`: 13개 통과. `native`는 이 PC에 호스트 컴파일러가 없어 실행하지 않았다.
+- `pio test -e esp32dev`: 13개 통과.
+- `pio test -e native`: 13개 통과. Windows에서 WinLibs MinGW-w64 GCC 16.2.0(UCRT)을 썼다.
 - 제품 펌웨어를 올린 뒤 node_lab에서 주입한 설정(generation 1)을 그대로 읽었다. `boot_check`에서 순서 위반 없이 4.8초에 `NODE_READY`가 됐다.
 - node_lab이 남긴 명령 기록을 읽어 같은 사건으로 재보고했다. 서버는 새 연결을 온라인으로 확인했고 `FAULT` 차단은 그대로 유지됐다.
 - 연결 직후 MQTT `-9` 끊김이 한 번 있었고 바로 다시 연결됐다. node_lab에서도 본 현상이며 7단계에서 다룬다.
