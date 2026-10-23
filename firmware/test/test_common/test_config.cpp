@@ -8,6 +8,8 @@
 namespace {
 
 void fill(JsonDocument& doc) {
+    doc["capability"] = "light";
+    doc["occupancy"] = "shared";
     doc["node_id"] = "light-01";
     doc["mqtt_user"] = "node-light-01";
     doc["mqtt_password"] = "test-only";
@@ -92,6 +94,37 @@ void test_NFR08_config_rejects_invalid_values() {
     TEST_ASSERT_EQUAL_STRING("mqtt_port", np::decodeConfig(doc, out));
 }
 
+void test_FR04_announce_uses_configured_capability() {
+    for (const char* capability : {"locker", "light", "speaker"}) {
+        for (const char* occupancy : {"rental", "shared"}) {
+            JsonDocument settings, announcement;
+            fill(settings);
+            settings["capability"] = capability;
+            settings["occupancy"] = occupancy;
+            np::NodeConfig out;
+            TEST_ASSERT_NULL(np::decodeConfig(settings, out));
+            np::announceConfig(announcement, out);
+            TEST_ASSERT_EQUAL_STRING(capability, announcement["capability"].as<const char*>());
+            TEST_ASSERT_EQUAL_STRING(occupancy, announcement["occupancy"].as<const char*>());
+        }
+    }
+}
+
+void rejectsSetting(const char* key) {
+    TEST_ASSERT_TRUE(np::isConfigKey(key));
+    for (const char* invalid : {"", "LIGHT", "unsupported", " light"})
+        TEST_ASSERT_EQUAL_STRING(key, decodeWith(key, invalid));
+    TEST_ASSERT_EQUAL_STRING(key, decodeWith(key, nullptr));
+    JsonDocument doc;
+    fill(doc);
+    doc[key] = 1;
+    np::NodeConfig out;
+    TEST_ASSERT_EQUAL_STRING(key, np::decodeConfig(doc, out));
+}
+
+void test_NFR08_config_rejects_invalid_capability() { rejectsSetting("capability"); }
+void test_NFR08_config_rejects_invalid_occupancy() { rejectsSetting("occupancy"); }
+
 void test_NFR08_config_hex_rejects_nul() {
     std::string out;
     TEST_ASSERT_TRUE(np::fromHex("4142", out));
@@ -110,5 +143,8 @@ void test_NFR08_config_hex_rejects_nul() {
 void runConfigTests() {
     RUN_TEST(test_NFR08_config_accepts_valid_values);
     RUN_TEST(test_NFR08_config_rejects_invalid_values);
+    RUN_TEST(test_FR04_announce_uses_configured_capability);
+    RUN_TEST(test_NFR08_config_rejects_invalid_capability);
+    RUN_TEST(test_NFR08_config_rejects_invalid_occupancy);
     RUN_TEST(test_NFR08_config_hex_rejects_nul);
 }

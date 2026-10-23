@@ -8,7 +8,7 @@ namespace np {
 
 const char* const CONFIG_KEYS[CONFIG_KEY_COUNT] = {"node_id", "mqtt_user", "mqtt_password", "wifi_ssid",
     "wifi_password", "mqtt_host", "mqtt_port", "time_server", "clock_max_error_sec", "time_trust_ms",
-    "time_resync_ms"};
+    "time_resync_ms", "capability", "occupancy"};
 
 namespace {
 
@@ -61,6 +61,10 @@ bool isConfigKey(const std::string& key) {
 const char* decodeConfig(JsonDocument& doc, NodeConfig& out) {
     for (const char* key : CONFIG_KEYS)
         if (!doc[key].is<const char*>()) return key;
+    out.capability = doc["capability"].as<std::string>();
+    out.occupancy = doc["occupancy"].as<std::string>();
+    if (out.capability != "locker" && out.capability != "light" && out.capability != "speaker") return "capability";
+    if (out.occupancy != "rental" && out.occupancy != "shared") return "occupancy";
     out.nodeId = doc["node_id"].as<std::string>();
     out.mqttUser = doc["mqtt_user"].as<std::string>();
     out.mqttPassword = doc["mqtt_password"].as<std::string>();
@@ -90,6 +94,11 @@ const char* decodeConfig(JsonDocument& doc, NodeConfig& out) {
     if (out.timeTrustMs && out.timeResyncMs && out.timeResyncMs > out.timeTrustMs) return "time_resync_ms";
     out.generation = doc["generation"] | 0UL;
     return nullptr;
+}
+
+void announceConfig(JsonDocument& doc, const NodeConfig& config) {
+    doc["capability"] = config.capability;
+    doc["occupancy"] = config.occupancy;
 }
 
 bool hexValid(const std::string& value) {

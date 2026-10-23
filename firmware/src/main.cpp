@@ -122,8 +122,7 @@ bool report(const char* kind, JsonDocument& doc, int qos, bool retained = false)
 bool announce() {
     JsonDocument doc;
     common(doc, 0);
-    doc["capability"] = "light";  // Step 3 moves capability and occupancy into provisioning.
-    doc["occupancy"] = "shared";
+    np::announceConfig(doc, config);
     return report("announce", doc, 1, true);
 }
 
@@ -205,6 +204,7 @@ public:
         gettimeofday(&current, nullptr);
         np::CommandContext context;
         context.nodeId = config.nodeId;
+        context.capability = config.capability;
         context.session = session.c_str();
         context.connected = mqtt.connected();
         context.clockTrusted = clockTrusted();
@@ -216,10 +216,10 @@ public:
     std::string utcNow() override { return ::utcNow().c_str(); }
     void publish(JsonDocument& record) override { result(record); }
     void actuate(const std::string& commandId, const std::string& action) override {
-        bool on = action == "on";
+        bool on = action == "on" || action == "open";
         if (NP_OUTPUT_PIN >= 0) digitalWrite(NP_OUTPUT_PIN, on == NP_OUTPUT_ACTIVE_HIGH ? HIGH : LOW);
         Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s physical_completion=unverified\n",
-            commandId.c_str(), on ? "on" : "off", NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only");
+            commandId.c_str(), action.c_str(), NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only");
     }
     void log(const std::string& line) override { Serial.println(line.c_str()); }
 };

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "fake_store.h"
+#include "np_command.h"
 #include "np_executor.h"
 
 namespace {
@@ -109,6 +110,36 @@ void test_FR06_duplicate_after_restart() {
     assertPublished({"unknown"}, port);
     TEST_ASSERT_EQUAL_INT(0, port.actuations);
     TEST_ASSERT_EQUAL_UINT32(1, port.checks.size());
+}
+
+void test_FR22_changed_capability_preserves_duplicate() {
+    class ValidatingPort : public FakePort {
+    public:
+        np::CommandContext context;
+        const char* validate(JsonDocument& doc) override { return np::validateCommand(doc, context); }
+    } port;
+    port.context.nodeId = "light-01";
+    port.context.session = "s";
+    port.context.capability = "light";
+    port.context.connected = port.context.clockTrusted = true;
+    port.context.nowSec = 1792713610.0;
+    FakeStore store;
+    np::Ledger ledger(store);
+    np::Executor executor(ledger, port, 128, 512);
+    executor.handle(command("a"), false);
+    const std::string original = store.slots[0];
+    TEST_ASSERT_EQUAL_INT(1, port.actuations);
+    port.context.capability = "locker";
+    TEST_ASSERT_NULL(ledger.ownerConflict("light-01"));
+    executor.handle(command("a"), false);
+    TEST_ASSERT_EQUAL_STRING("unknown", port.published.back().c_str());
+    TEST_ASSERT_EQUAL_STRING(original.c_str(), store.slots[0].c_str());
+    TEST_ASSERT_EQUAL_INT(1, port.actuations);
+    executor.handle(command("b"), false);
+    TEST_ASSERT_EQUAL_STRING("rejected:UNSUPPORTED_ACTION", port.published.back().c_str());
+    executor.handle(command("c", "open"), false);
+    TEST_ASSERT_EQUAL_STRING("unknown", port.published.back().c_str());
+    TEST_ASSERT_EQUAL_INT(2, port.actuations);
 }
 
 void test_FR06_command_id_conflict() {
@@ -279,6 +310,7 @@ void runExecutorTests() {
     RUN_TEST(test_FR06_accepted_then_unknown_without_evidence);
     RUN_TEST(test_FR06_invalid_message_no_actuation);
     RUN_TEST(test_FR06_duplicate_after_restart);
+    RUN_TEST(test_FR22_changed_capability_preserves_duplicate);
     RUN_TEST(test_FR06_command_id_conflict);
     RUN_TEST(test_FR06_concurrent_commands_busy);
     RUN_TEST(test_FR06_receipt_storage_failure);

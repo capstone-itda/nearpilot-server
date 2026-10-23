@@ -18,6 +18,7 @@ void fill(JsonDocument& doc) {
 
 np::CommandContext context() {
     np::CommandContext value;
+    value.capability = "light";
     value.nodeId = "light-01";
     value.session = "session-1";
     value.connected = true;
@@ -66,6 +67,26 @@ void test_FR06_validate_order() {
     TEST_ASSERT_NULL(check("expires_at", "2026-10-23T00:00:10.6Z"));
 }
 
+void test_FR06_capability_action_matrix() {
+    for (const char* capability : {"locker", "light", "speaker", "", "other"}) {
+        for (const char* action : {"open", "on", "off", "", "close", "ON"}) {
+            auto ctx = context();
+            ctx.capability = capability;
+            const std::string cap = capability, act = action;
+            const bool allowed = cap == "locker" ? act == "open" :
+                (cap == "light" || cap == "speaker") && (act == "on" || act == "off");
+            const char* result = check("action", action, ctx);
+            if (allowed) TEST_ASSERT_NULL(result);
+            else TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_ACTION", result);
+            ctx.clockTrusted = false;
+            TEST_ASSERT_EQUAL_STRING(allowed ? "CLOCK_UNVERIFIED" : "UNSUPPORTED_ACTION",
+                                     check("action", action, ctx));
+            ctx.connected = false;
+            TEST_ASSERT_EQUAL_STRING("SESSION_MISMATCH", check("action", action, ctx));
+        }
+    }
+}
+
 void test_FR06_canonical_content_fields() {
     JsonDocument doc;
     fill(doc);
@@ -88,5 +109,6 @@ void test_FR06_canonical_content_fields() {
 
 void runCommandTests() {
     RUN_TEST(test_FR06_validate_order);
+    RUN_TEST(test_FR06_capability_action_matrix);
     RUN_TEST(test_FR06_canonical_content_fields);
 }

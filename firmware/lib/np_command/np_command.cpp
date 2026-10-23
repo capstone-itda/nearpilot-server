@@ -12,7 +12,9 @@ const char* validateCommand(JsonDocument& doc, const CommandContext& context) {
     if (!context.connected || doc["target_session_id"].as<std::string>() != context.session)
         return "SESSION_MISMATCH";
     const std::string action = doc["action"].as<std::string>();
-    if (action != "on" && action != "off") return "UNSUPPORTED_ACTION";
+    const bool supported = context.capability == "locker" ? action == "open" :
+        (context.capability == "light" || context.capability == "speaker") && (action == "on" || action == "off");
+    if (!supported) return "UNSUPPORTED_ACTION";
     if (!context.clockTrusted) return "CLOCK_UNVERIFIED";
     double issued, expires;
     if (!parseUtc(doc["issued_at"].as<std::string>(), issued) ||

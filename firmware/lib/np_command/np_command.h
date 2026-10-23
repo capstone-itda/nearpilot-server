@@ -6,7 +6,7 @@
 namespace np {
 
 struct CommandContext {
-    std::string nodeId, session;
+    std::string nodeId, session, capability;
     bool connected = false;
     bool clockTrusted = false;
     double nowSec = 0.0;       // UTC seconds from the synchronized wall clock.
