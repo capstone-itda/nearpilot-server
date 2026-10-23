@@ -9,6 +9,7 @@
 #include <WiFi.h>
 #include <esp_sntp.h>
 #include <esp_system.h>
+#include <esp_timer.h>
 #include <sys/time.h>
 #include <time.h>
 #include <string>
@@ -27,6 +28,19 @@
 #else
 #include "config.example.h"
 #endif
+
+// Older local build configurations have no completion settings yet.
+#ifndef NP_LOCKER_COMPLETION_TIMEOUT_MS
+#define NP_LOCKER_COMPLETION_TIMEOUT_MS 0ULL
+#endif
+#ifndef NP_LIGHT_COMPLETION_TIMEOUT_MS
+#define NP_LIGHT_COMPLETION_TIMEOUT_MS 0ULL
+#endif
+#ifndef NP_SPEAKER_COMPLETION_TIMEOUT_MS
+#define NP_SPEAKER_COMPLETION_TIMEOUT_MS 0ULL
+#endif
+static_assert(NP_LOCKER_COMPLETION_TIMEOUT_MS >= 0 && NP_LIGHT_COMPLETION_TIMEOUT_MS >= 0 &&
+              NP_SPEAKER_COMPLETION_TIMEOUT_MS >= 0, "completion timeout must be unset or positive");
 
 static_assert(NP_MAX_COMMAND_RECORDS > 0 && NP_MAX_COMMAND_RECORDS < 10000, "NVS slot limit");
 static_assert(NP_LEGACY_COMMAND_RECORDS >= 0 && NP_LEGACY_COMMAND_RECORDS < 10000, "NVS slot limit");
@@ -197,6 +211,16 @@ bool result(JsonDocument& record) {
     return sent;
 }
 
+void signalOutput(const np::Actuation& request) {
+    bool on = request.action == "on" || request.action == "open";
+    if (NP_OUTPUT_PIN >= 0) digitalWrite(NP_OUTPUT_PIN, on == NP_OUTPUT_ACTIVE_HIGH ? HIGH : LOW);
+    Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s physical_completion=unverified\n",
+        request.commandId.c_str(), request.action.c_str(), NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only");
+}
+
+np::SignalDevices devices(signalOutput, NP_LOCKER_COMPLETION_TIMEOUT_MS,
+                          NP_LIGHT_COMPLETION_TIMEOUT_MS, NP_SPEAKER_COMPLETION_TIMEOUT_MS);
+
 class BoardCommandPort : public np::CommandPort {
 public:
     const char* validate(JsonDocument& command) override {
@@ -215,12 +239,12 @@ public:
     std::string newEventId() override { return newUuid().c_str(); }
     std::string utcNow() override { return ::utcNow().c_str(); }
     void publish(JsonDocument& record) override { result(record); }
-    void actuate(const std::string& commandId, const std::string& action) override {
-        bool on = action == "on" || action == "open";
-        if (NP_OUTPUT_PIN >= 0) digitalWrite(NP_OUTPUT_PIN, on == NP_OUTPUT_ACTIVE_HIGH ? HIGH : LOW);
-        Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s physical_completion=unverified\n",
-            commandId.c_str(), action.c_str(), NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only");
+    np::Device& device() override {
+        if (config.capability == "locker") return devices.locker;
+        if (config.capability == "speaker") return devices.speaker;
+        return devices.light;  // validateCommand rejects unknown capabilities before this call.
     }
+    uint64_t monotonicMs() override { return uint64_t(esp_timer_get_time()) / 1000; }
     void log(const std::string& line) override { Serial.println(line.c_str()); }
 };
 
@@ -530,6 +554,7 @@ void loop() {
         if (received.topic.endsWith("/cmd")) executor.handle(received.payload.c_str(), received.receivedBusy);
         else Serial.println("SAFETY_CHECK_UNSUPPORTED no_sensor_evidence_no_pass_result");
     }
+    executor.poll();
     if (current - lastStatus >= NP_STATUS_MS) {
         lastStatus = current;
         if (mqtt.connected() && announced) status();

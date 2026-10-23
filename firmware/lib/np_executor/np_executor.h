@@ -5,10 +5,11 @@
 #include <string>
 
 #include "np_ledger.h"
+#include "np_device.h"
 
 namespace np {
 
-// Board side of command handling. Every call is synchronous.
+// Board side of command handling. Calls must return promptly.
 class CommandPort {
 public:
     virtual ~CommandPort() = default;
@@ -17,8 +18,8 @@ public:
     virtual std::string newEventId() = 0;
     virtual std::string utcNow() = 0;
     virtual void publish(JsonDocument& record) = 0;
-    // Sends the control signal only. It is never completion evidence.
-    virtual void actuate(const std::string& commandId, const std::string& action) = 0;
+    virtual Device& device() = 0;
+    virtual uint64_t monotonicMs() = 0;
     virtual void log(const std::string& line) = 0;
 };
 
@@ -32,7 +33,10 @@ public:
     // receivedBusy: the message arrived while another command was being handled.
     void handle(const std::string& payload, bool receivedBusy);
 
-    // Re-reports every readable record. A restored receipt without a result becomes unknown.
+    // Poll once from loop(); no waiting or automatic restart of the actuator.
+    void poll();
+
+    // Restored receipts become unknown; a live execution is kept intact on reconnect.
     void replay();
 
     bool busy() const { return busy_; }
@@ -40,12 +44,18 @@ public:
 private:
     void event(JsonDocument& record, const char* state, const char* error = nullptr);
     void reject(JsonDocument& record, const char* code, const char* note);
+    void finish(const char* state, const char* error = nullptr);
 
     Ledger& ledger_;
     CommandPort& port_;
     size_t maxIdBytes_;
     size_t maxRecordBytes_;
     bool busy_ = false;
+    int activeSlot_ = -1;
+    JsonDocument activeRecord_;
+    Actuation activeRequest_;
+    Device* activeDevice_ = nullptr;
+    CompletionPolicy activePolicy_;
 };
 
 }  // namespace np

@@ -11,7 +11,8 @@
 | `lib/np_clock/` | 시각 신뢰 판정과 서버 UTC 시각 해석 |
 | `lib/np_command/` | MQTT v1 `cmd`의 기능별 동작 검사, 검사 순서와 명령 내용 비교 필드 |
 | `lib/np_ledger/` | 명령 기록, ID 해시 색인과 저장소 인터페이스 `RecordStore` |
-| `lib/np_executor/` | 명령 처리 상태 전이 (조회, 검사, 접수 저장, 재검사, 구동, 결과 저장, 재보고) |
+| `lib/np_executor/` | 비동기 명령 상태 전이, 완료 근거 검사, 결과 저장과 재보고 |
+| `lib/np_device/` | 구동 시작·완료 관측 인터페이스, 기능별 완료 정책과 관측 없는 세 기능 연결 |
 | `lib/np_nvs/` | ESP32 NVS로 만든 `RecordStore`. PC 테스트에서는 빌드하지 않는다 |
 | `lib/np_beacon/` | iBeacon 제조사 데이터 해석 |
 | `lib/np_ready/` | 준비 사유 순서와 재시도 간격 |
@@ -47,7 +48,15 @@ Windows에서는 `winget install BrechtSanders.WinLibs.POSIX.UCRT`로 설치한 
 현재 `python -m tools.node_lab provision`은 새 키를 전달하지 못한다. 도구 변경은 별도 범위다.
 부팅 확인 도구와 `CONFIG_STATE` 형식은 유지한다 (`server/tools/node_lab/README.md`).
 `announce`는 설정 값을 발표한다. `locker`는 `open`, `light`·`speaker`는 `on`·`off`만 받는다.
-모든 구동은 시리얼·선택 GPIO 신호이며 결과는 `unknown`이다. 완료 검증은 4단계다.
+모든 구동은 시리얼·선택 GPIO 신호이며 결과는 `unknown`이다. 실제 완료 근거는 #142의 미결이다.
+`handle()`은 구동을 시작하고 `poll()`은 `loop()`에서 완료를 확인한다. 완료를 기다리는 동안 새 명령은 `DEVICE_BUSY`다.
+`np_device`의 구동부와 완료 관측을 기능별로 교체한다. 관측은 명령 ID, 단조 관측 시각과 근거 출처를 담는다.
+시작 전 관측, 다른 명령, 출처 누락과 미래 관측은 완료 근거가 아니다. 문 닫힘과 IR 송출을 성공으로 추정하지 않는다.
+`NP_LOCKER_COMPLETION_TIMEOUT_MS`, `NP_LIGHT_COMPLETION_TIMEOUT_MS`, `NP_SPEAKER_COMPLETION_TIMEOUT_MS`는 밀리초 단위다.
+0은 미설정이며 양수가 대기 기한이다. 미측정 수치를 넣지 않는다. 관측이나 기한이 없으면 즉시 `unknown`이다.
+완료 증명은 기능별 `CompletionPolicy.successEnabled`를 켠 뒤에만 성공으로 보고한다. 실제 세 기능은 모두 꺼져 있다.
+완료 결과는 저장과 확인 조회를 통과한 뒤 발행한다. `running`은 저장하지 않는다.
+재접속은 현재 구동을 유지한다. 재시작 뒤 접수 기록은 `unknown`이며 자동으로 다시 구동하지 않는다.
 기록이 있어도 기능·점유 방식 변경을 허용한다. `node_id` 변경 차단과 기존 명령 결과 재보고를 유지한다.
 서버는 기능·점유 방식 변경을 발표한 신뢰 기기를 `discovered`로 되돌린다 (FR-04).
 설정은 두 펌웨어 모두 기본 NVS의 `np-config`에 둔다. 펌웨어를 바꿔 올려도 저장 값은 유지되지만 새 필수 키가 없으면 제품 펌웨어가 사용하지 않는다.

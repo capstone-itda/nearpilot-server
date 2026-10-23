@@ -65,30 +65,67 @@ void Executor::handle(const std::string& payload, bool receivedBusy) {
         return reject(record, "INVALID_MESSAGE", "RECORD_TOO_LARGE not_recorded");
     if (!ledger_.create(empty, record))
         return reject(record, "STORAGE_ERROR", "STORAGE_WRITE_FAILED no_output");
-    port_.publish(record);
-    if (rejection) return;
-    busy_ = true;
-    // Recheck after the flash write and publish, then once more right before output.
-    rejection = port_.validate(command);
-    if (!rejection) {
-        JsonDocument progress;
-        progress.set(record);
-        event(progress, "running");
-        port_.publish(progress);
-        rejection = port_.validate(command);
-        if (!rejection) port_.actuate(id, command["action"].as<std::string>());
+    if (rejection) {
+        port_.publish(record);
+        return;
     }
-    // Not starting is a verified failure. Output without a completion sensor stays unknown.
-    if (rejection) event(record, "failed", rejection);
-    else event(record, "unknown");
-    if (ledger_.save(empty, record)) port_.publish(record);
+    busy_ = true;
+    activeSlot_ = empty;
+    activeRecord_.set(record);
+    activeDevice_ = &port_.device();
+    activePolicy_ = activeDevice_->policy;
+    activeRequest_ = {id, command["action"].as<std::string>(), 0};
+    port_.publish(record);
+    // Recheck after the flash write and receipt publish, immediately before output.
+    rejection = port_.validate(command);
+    if (rejection) return finish("failed", rejection);
+    activeRequest_.startedAtMs = port_.monotonicMs();
+    StartResult started = activeDevice_->actuator.start(activeRequest_);
+    if (started == StartResult::Failed) return finish("failed");
+    if (started != StartResult::Started) return finish("unknown");
+    JsonDocument progress;
+    progress.set(activeRecord_);
+    event(progress, "running");
+    port_.publish(progress);
+    if (!activePolicy_.timeoutMs || !activeDevice_->observer.available()) finish("unknown");
+}
+
+void Executor::finish(const char* state, const char* error) {
+    event(activeRecord_, state, error);
+    if (ledger_.save(activeSlot_, activeRecord_)) port_.publish(activeRecord_);
     else port_.log("RESULT_STORE_FAILED accepted_record_kept_no_retry");
     busy_ = false;
+    activeSlot_ = -1;
+    activeDevice_ = nullptr;
+    activeRecord_.clear();
+    activeRequest_ = {};
+}
+
+void Executor::poll() {
+    if (!busy_) return;
+    if (!activeDevice_->observer.available()) return finish("unknown");
+    uint64_t now = port_.monotonicMs();
+    if (now < activeRequest_.startedAtMs || now - activeRequest_.startedAtMs >= activePolicy_.timeoutMs)
+        return finish("unknown");
+    CompletionObservation observation = activeDevice_->observer.observe(activeRequest_);
+    // An observer may have consumed time or become unavailable during this call.
+    now = port_.monotonicMs();
+    if (now < activeRequest_.startedAtMs || now - activeRequest_.startedAtMs >= activePolicy_.timeoutMs)
+        return finish("unknown");
+    if (observation.state == ObservationState::Pending) return;
+    if (observation.state == ObservationState::Unavailable) return finish("unknown");
+    if (observation.commandId != activeRequest_.commandId || observation.source.empty() ||
+        observation.observedAtMs <= activeRequest_.startedAtMs || observation.observedAtMs > now)
+        return finish("unknown");
+    if (observation.state == ObservationState::Failed) return finish("failed");
+    finish(observation.state == ObservationState::Proven && activePolicy_.successEnabled ? "succeeded" : "unknown");
 }
 
 void Executor::replay() {
     ledger_.forEach([this](int slot, JsonDocument& record) {
-        if (record["state"].as<std::string>() == "accepted") {
+        // Reconnection during a live execution is not power-loss recovery.
+        if (slot != activeSlot_ && (record["state"].as<std::string>() == "accepted" ||
+                                   record["state"].as<std::string>() == "running")) {
             event(record, "unknown");
             if (!ledger_.save(slot, record)) return;
         }

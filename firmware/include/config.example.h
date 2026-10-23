@@ -5,6 +5,12 @@
 // No extra board is required. Leave OUTPUT_PIN=-1 for serial-only verification.
 #define NP_OUTPUT_PIN -1
 #define NP_OUTPUT_ACTIVE_HIGH true
+// Milliseconds, 0 = unmeasured/unset; otherwise a positive integer.
+// These are device completion limits, not the server's exec_timeout_sec.
+// No observer is installed and success reporting is disabled for every feature (#142).
+#define NP_LOCKER_COMPLETION_TIMEOUT_MS 0ULL
+#define NP_LIGHT_COMPLETION_TIMEOUT_MS 0ULL
+#define NP_SPEAKER_COMPLETION_TIMEOUT_MS 0ULL
 #define NP_RSSI_FRAME_MS 1000UL
 #define NP_STATUS_MS 1000UL
 // Retry starts at these minimums, doubles after each failure and stops at NP_RETRY_MAX_MS.
