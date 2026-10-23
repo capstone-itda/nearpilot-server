@@ -753,8 +753,9 @@ def test_FR12B_형식_값은_shared_열거형_값을_쓴다():
     assert approval_event(ApprovalStatus.DENIED)["kind"] == approval_event("denied")["kind"] == "denied"
     assert approval_event(ApprovalStatus.APPROVED)["kind"] == "approved"
     assert [approval_event(kind)["kind"] for kind in ("requested", "expired")] == ["requested", "expired"]
-    with pytest.raises(SchemaError, match=r"^approval\.kind$"):
-        approval_event("rejected")
+    for kind in ("rejected", ApprovalStatus.PENDING.value):  # 대기(pending)는 이벤트 kind 가 아니다 (requested 로 보낸다)
+        with pytest.raises(SchemaError, match=r"^approval\.kind$"):
+            approval_event(kind)
 
     # RequestProgress 의 execution: ExecutionStatus 의 값 모두
     for status in ExecutionStatus:

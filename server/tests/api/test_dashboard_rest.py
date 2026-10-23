@@ -193,7 +193,7 @@ def test_FR11_조회_응답에서_허용_목록_밖의_키와_사용자_ID를_�
     assert OWNER.user_id not in text and VISITOR.user_id not in text
 
 
-def test_FR12A_장소_조회는_소유자의_장소를_모두_돌려준다():
+def test_FR12A_장소_조회는_등록된_장소를_모두_돌려준다():
     rig = Rig()
     status, body = run(rig.fetch("/dashboard/places"))
     assert status == 200
@@ -215,6 +215,12 @@ def test_FR12A_장소_조회는_소유자의_장소를_모두_돌려준다():
         ],
     }
     assert rig.queries.calls == [("places", ())]
+    # 장소 행에 weakRssiDbm 이 와도 형식 밖의 키라 버린다
+    first = dict(rig.queries.places_data["places"][0], weakRssiDbm=-60)
+    rig.queries.places_data = {**rig.queries.places_data, "places": [first, *rig.queries.places_data["places"][1:]]}
+    status, body = run(rig.fetch("/dashboard/places"))
+    assert status == 200 and body["weakRssiDbm"] == -80
+    assert all("weakRssiDbm" not in place for place in body["places"])
     rig.queries.places_data = {"weakRssiDbm": -80, "places": []}  # 장소가 아직 없다
     assert run(rig.fetch("/dashboard/places")) == (200, {"weakRssiDbm": -80, "places": []})
 

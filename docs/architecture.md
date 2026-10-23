@@ -1245,7 +1245,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 #### 대시보드 조회
 
 - 대시보드 조회는 `GET`만 둔다. 소유자 토큰(`Authorization: Bearer`)만 받는다. 응답 키는 camelCase이고, 시각은 ISO 8601(밀리초, 시간대 포함)이다. 오류 본문은 공통 규칙의 `{"error": "<사유 코드>"}`다 (401 `INVALID_TOKEN`, 403 `POLICY_DENIED`, 400 `INVALID_INPUT`, 404 `USE_NOT_FOUND`, 500 `INTERNAL_ERROR`).
-  - `GET /dashboard/places`: 소유자의 장소 목록 (장소마다 이름, 근접 모델·보정 버전, 기기 목록)과 약한 신호 기준
+  - `GET /dashboard/places`: 등록된 장소 목록 (장소마다 이름, 근접 모델·보정 버전, 기기 목록)과 약한 신호 기준
   - `GET /dashboard/uses`: 점유 목록
   - `GET /dashboard/approvals`: 대기·유효·끝난 승인
   - `GET /dashboard/audit?limit=`: 최근 감사 행. `limit`은 설정 한도로 줄인다
@@ -1255,7 +1255,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
   - `GET /dashboard/rentals/{node_id}`: 대여 한 건
   - `GET /dashboard/health`: 기기 연결·신뢰, 비콘 수신, 서버 점검
 - 쓰기 메서드는 405 `INVALID_INPUT`(`Allow: GET`), 조회 경로가 아닌 `/dashboard/...`는 404 `USE_NOT_FOUND`다. 조회 처리기와 조회 서비스에 닿지 않는다.
-- 사람은 `personId`(서버 프로세스 동안 쓰는 불투명한 값)로만 보낸다. 표의 키만 보낸다. 선택 키는 값이 없으면 빼고, null 허용 키(∅)는 값이 없으면 `null`이다. 열거형 값은 `shared/enums.py`의 값 문자열이다. 정수는 ±(2^53−1) 안이다. 판정 수(`counts`의 값, `decisions`, `doubleOccupancy`), 점유 행 `uses`, 지표 `id`는 정수이고, 평가 `date`는 문자열이다.
+- 사람은 `personId`(서버 프로세스 동안 쓰는 불투명한 값)로만 보낸다. 표의 키만 보낸다. 선택 키는 값이 없으면 빼고, null 허용 키(∅)는 값이 없으면 `null`이다. 열거형 값은 `shared/enums.py`의 값 문자열이다. 정수는 ±(2^53−1) 안이다. 판정 수(`counts`의 값, `decisions`, `doubleOccupancy`), 승인 행 `uses`, 지표 `id`는 정수이고, 평가 `date`는 문자열이다.
 
 | 형식 | 키 (✔ 필수, ∅ null 허용, 나머지 선택) |
 |---|---|

@@ -705,7 +705,7 @@ class DashboardQueries(Protocol):
     """
 
     def places(self) -> Mapping[str, Any]:
-        """소유자가 가진 장소 전체. 시연은 한 소유자가 두 장소를 갖는다. placeId 와 nodeId 는 목록 전체에서 한 번씩만 나온다."""
+        """등록된 장소 전체. 다른 조회처럼 소유자별로 거르지 않는다. placeId 와 nodeId 는 목록 전체에서 한 번씩만 나온다."""
         ...
 
     def uses(self) -> Sequence[Mapping[str, Any]]: ...
