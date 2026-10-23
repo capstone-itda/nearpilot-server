@@ -1,11 +1,12 @@
 // 모니터 상태 → 무대 표시값 (평면 배치를 아이소메트릭으로 투영해 그린다). 장면별 고정 값 없이 규칙으로 계산한다.
-import type { DeviceStatus, FloorLayout, LayoutDevice, Person, RequestProgress, MonitorState, Spot } from '../model/types';
+import type { DeviceInfo, DeviceStatus, FloorLayout, LayoutDevice, Person, PlaceInfo, RequestProgress, MonitorState, Spot } from '../model/types';
 import { ROOM, facing, frontOf, type Facing } from './arrange';
 import {
   CALLOUT_W, HEAD_R, PERSON_Z, calloutSpot, chooseLabel, deviceBody, deviceLabelBox, freePersonSpot, frontBox, hasLabelRoom, labelBox, leaderEnd, personBox,
   PANEL_EDGE, STAGE_BOUNDS, placeDeviceLabels, placeRssi, ringBox, rssiBox, shiftBounds, textWidth, type LabelSide, type LabelSpot, type Rect
 } from './placement';
 import { iso } from './iso';
+import { requestPlace } from './places';
 import {
   ACTION_DID, ACTION_DOING, ACTION_DONE, ACTION_NAME, CAPABILITY_NAME,
   DEVICE_STATE_NAME, approvalText, josa, reasonText
@@ -46,6 +47,8 @@ export const NODE_ANCHOR = { host: { x: 300, y: 196 }, server: { x: 300, y: 430 
 
 export interface StageView {
   scene: StageScene;
+  /** 크게 그리는 장소. 주 장소가 바뀌었는지 가린다. */
+  placeId: string;
   /** 방을 왼쪽으로 미는 거리 (무대 단위). 패널이 대상 기기를 가리지 않게 한다. 방 안의 좌표는 밀기 전 값이다. */
   shift: number;
   aria: string;
@@ -80,7 +83,8 @@ const VERDICT_TONE = { OK: 'ok', ASK: 'ask', NEED_APPROVAL: 'appr', BUSY: 'busy'
 
 const dbm = (v: number) => `${String(v).replace('-', '−')} dBm`;
 
-function baseDevice(st: DeviceStatus | undefined): { status: string; code: string; tone: Tone } {
+/** 기기 상태 → 표시 글자와 색. 작은 방(inset.ts)도 같은 규칙으로 칠한다. */
+export function baseDevice(st: DeviceStatus | undefined): { status: string; code: string; tone: Tone } {
   if (!st) return { status: '알 수 없음', code: '—', tone: 'none' };
   if (st.state === 'FAULT') return { status: DEVICE_STATE_NAME.FAULT, code: 'FAULT', tone: 'deny' };
   if (st.state === 'AVAILABLE') return { status: DEVICE_STATE_NAME.AVAILABLE, code: 'AVAILABLE', tone: 'none' };
@@ -116,7 +120,8 @@ export function personAnchors(s: MonitorState, devices: StageDeviceView[], visit
   // 요청한 사람을 먼저 세워서 그 자리를 비켜 주지 않게 한다
   const order = [...visitors].sort((a, b) => Number(b.id === r?.personId) - Number(a.id === r?.personId));
   for (const p of order) {
-    if (!p.beaconSeen) continue;
+    // 다른 장소의 기기 앞에 있는 사람은 이 장소에 세우지 않는다 (작은 방에 그린다)
+    if (!p.beaconSeen || (p.near && !byId.has(p.near))) continue;
     let base: Spot | undefined;
     let dir: 1 | -1 = 1;
     if (r && r.personId === p.id) {
@@ -157,12 +162,19 @@ export interface StageOptions {
   panelEdge?: number;
   /** 사람이 무대를 확대하거나 옮겼다. 방을 밀지 않는다. */
   viewFixed?: boolean;
+  /** 모든 장소. 주 장소에 없는 기기(다른 장소의 기기)의 이름과 기능, 공용 판정의 같은 기능 기기를 여기서 찾는다. 없으면 주 장소만 안다. */
+  places?: PlaceInfo[];
+  /** 작은 방 상자 (무대 좌표, inset.ts). 콜아웃이 피하고, 주 장소에 없는 기기를 가리킬 때 이 상자를 가리킨다. */
+  inset?: Rect;
 }
 
 export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOptions): StageView {
   const r = s.request;
   const byId = new Map(s.devices.map((d) => [d.nodeId, d]));
-  const devName = (id?: string) => layout.devices.find((d) => d.nodeId === id)?.name ?? id ?? '';
+  // 이름과 기능은 모든 장소에서 찾는다 (잠금 중에는 요청한 기기가 주 장소에 없을 수 있다)
+  const places: PlaceInfo[] = opt.places ?? [layout];
+  const known = (id?: string): DeviceInfo | undefined => places.flatMap((p) => p.devices).find((d) => d.nodeId === id);
+  const devName = (id?: string) => known(id)?.name ?? id ?? '';
   const visitors = s.people.filter((p) => p.role === 'visitor' && p.letter);
   const requester = r ? s.people.find((p) => p.id === r.personId) : undefined;
   const keep = r ? focusDevices(r, layout) : [];
@@ -239,14 +251,19 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
   // 실행이 끝난 요청은 신호와 호출 선을 끈다
   const inFlight = !!r && (scene === 'judging' || (scene === 'flow' && r.execution !== 'succeeded') || scene === 'ask');
   const signalPerson: Person | undefined = opt.layoutCheck ? undefined : inFlight ? requester : idlePerson;
-  const signals = vis.map((v) => ({ personId: v.personId, x: v.x, y: v.y, on: !!signalPerson && signalPerson.id === v.personId }));
+  // 이 장소에 세우지 않은 사람(다른 장소에 있는 사람)의 신호는 이 장소의 선으로 그리지 않는다
+  const signalOn = !!signalPerson && anchors.has(signalPerson.id);
+  const signals = vis.map((v) => ({ personId: v.personId, x: v.x, y: v.y, on: signalOn && signalPerson?.id === v.personId }));
   const rssiPerson = !opt.layoutCheck && inFlight ? requester : undefined;
   const rssi: Record<string, string> = {};
   if (rssiPerson) for (const [id, v] of Object.entries(rssiPerson.rssi)) rssi[id] = dbm(v);
 
   const target = r?.nodeId ?? null;
+  // 잠금 중에 다른 장소의 기기에 요청이 오면 그 기기는 주 장소에 없다. 명령 선과 격리 선은 그리지 않는다.
+  const targetHere = target !== null && devices.some((d) => d.nodeId === target);
   const view: StageView = {
     scene,
+    placeId: layout.placeId,
     shift,
     aria: '',
     placeName: layout.placeName,
@@ -256,8 +273,8 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     judge: !r || opt.layoutCheck
       ? { mark: '', tone: 'none', gauge: false, checks: CHECK_NAMES.map((n) => ['none', n] as [CheckResult, string]) }
       : isDecided(r)
-        ? { mark: VERDICT_LABEL[r.verdict], tone: VERDICT_TONE[r.verdict], gauge: false, checks: serverChecks(r, layout) }
-        : { mark: '판정 중', tone: 'accent', gauge: true, checks: serverChecks(r, layout) },
+        ? { mark: VERDICT_LABEL[r.verdict], tone: VERDICT_TONE[r.verdict], gauge: false, checks: serverChecks(r, places, requestPlace(s, places)) }
+        : { mark: '판정 중', tone: 'accent', gauge: true, checks: serverChecks(r, places, requestPlace(s, places)) },
     owner: !opt.layoutCheck && !!r && r.verdict === 'NEED_APPROVAL' && s.ownerNotified,
     devices,
     visitors: vis,
@@ -266,10 +283,10 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     rssi,
     mcp: !!r && !opt.layoutCheck && !r.respondedAt,
     reply: !!r && !opt.layoutCheck && !!r.respondedAt && secOf(s.lastReceivedAt) - secOf(r.respondedAt) <= REPLY_SHOW_SEC,
-    uplink: scene === 'judging' || scene === 'ask' || !!idlePerson,
-    cmd: scene === 'flow' && r!.execution === 'sent' ? target : null,
+    uplink: scene === 'judging' || scene === 'ask' ? signalOn : !!idlePerson,
+    cmd: scene === 'flow' && r!.execution === 'sent' && targetHere ? target : null,
     push: scene === 'approval' && s.ownerNotified,
-    fault: scene === 'fault' ? target : null,
+    fault: scene === 'fault' && targetHere ? target : null,
     callout: { on: false, tone: 'accent', x: 0, y: 0, ax: 0, ay: 0, lx: 0, ly: 0, title: '', body: '' }
   };
 
@@ -278,7 +295,8 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
   const calloutObstacles: Rect[] = [
     ...devices.flatMap((d) => [d.body, deviceLabelBox(d.label), frontBox({ x: d.fx, y: d.fy })]),
     ...vis.filter((v) => v.on).flatMap((v) => [ringBox(v), labelBox(v, v.label, v.labelW)]),
-    ...(rssiPerson ? devices.map((d) => rssiBox(d.rssiAt)) : [])
+    ...(rssiPerson ? devices.map((d) => rssiBox(d.rssiAt)) : []),
+    ...(opt.inset ? [opt.inset] : [])
   ];
   type Pos = Pick<CalloutView, 'x' | 'y' | 'ax' | 'ay' | 'lx' | 'ly'> & { clean: boolean };
   const place = (ax: number, ay: number): Pos => {
@@ -286,14 +304,21 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     const l = leaderEnd(c, ax, ay);
     return { x: c.x, y: c.y, ax, ay, lx: l.x, ly: l.y, clean: c.clean };
   };
+  const atServer = () => place(NODE_ANCHOR.server.x + shift, NODE_ANCHOR.server.y);
+  // 이 장소에 없는 기기나 사람(다른 장소)을 가리킬 때: 작은 방이 있으면 작은 방 윗변 가운데, 없으면 서버 랙
+  const atElsewhere = () => (opt.inset ? place((opt.inset.x1 + opt.inset.x2) / 2, opt.inset.y1) : atServer());
   const atDevice = (id: string | null) => {
-    const d = devices.find((x) => x.nodeId === id)!;
+    const d = devices.find((x) => x.nodeId === id);
+    if (!d) return atElsewhere();
     const f = iso({ x: d.fx, y: d.fy });
     return place(f.x, f.y);
   };
   const atVisitor = (personId: string) => {
     const v = vis.find((x) => x.personId === personId && x.on);
-    if (!v) return place(NODE_ANCHOR.server.x + shift, NODE_ANCHOR.server.y);
+    if (!v) {
+      const p = s.people.find((x) => x.id === personId);
+      return p?.beaconSeen && p.near && !devices.some((d) => d.nodeId === p.near) ? atElsewhere() : atServer();
+    }
     const h = iso(v, PERSON_Z);
     return place(h.x, h.y - HEAD_R);
   };
@@ -312,7 +337,7 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     if (spot?.clean) set('accent', spot, '비콘 신호를 받는 중', '');
   } else {
     const name = devName(target ?? undefined);
-    const cap = CAPABILITY_NAME[r.target.capability ?? layout.devices.find((d) => d.nodeId === target)?.capability ?? 'locker'];
+    const cap = CAPABILITY_NAME[r.target.capability ?? known(target ?? undefined)?.capability ?? 'locker'];
     const act = ACTION_NAME[r.action];
     switch (scene) {
       case 'judging':

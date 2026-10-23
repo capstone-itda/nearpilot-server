@@ -20,8 +20,14 @@
 .np-topbar__name { display: flex; flex-direction: column; line-height: 1.1; }
 .np-topbar__wordmark { font-family: var(--font-mono); font-weight: 600; font-size: var(--fs-body); letter-spacing: 0.18em; }
 .np-topbar__divider { width: 1px; height: 1.75rem; background: var(--line); flex: none; }
-.np-topbar__place { display: flex; flex-direction: column; line-height: 1.15; flex: none; }
-.np-topbar__place-name { font-size: var(--fs-body); }
+/* 장소 고르기: 자동 + 장소 이름. 고정한 것은 눌린 모양(aria-pressed)이고, 지금 무대에 보이는 장소는 점이다. 점 자리는 늘 있어 폭이 변하지 않는다. */
+.np-topbar__place { display: flex; align-items: center; gap: var(--sp-3); flex: none; }
+.np-topbar__chooser { display: flex; gap: var(--sp-1); }
+.np-topbar__pick { padding: 0 var(--sp-3); white-space: nowrap; }
+.np-topbar__pick:disabled { opacity: 0.4; cursor: default; }
+.np-topbar__pick-dot { width: 0.5rem; height: 0.5rem; flex: none; border-radius: 50%; background: transparent; }
+.np-topbar__pick[aria-current="true"] .np-topbar__pick-dot { background: var(--accent); box-shadow: 0 0 0.5rem var(--accent); }
+.np-app[data-theme="light"] .np-topbar__pick-dot { box-shadow: none; }
 .np-topbar__spacer { flex: 1; }
 .np-topbar__live { display: flex; align-items: center; gap: var(--sp-2); flex: none; font-size: var(--fs-sm); color: var(--ink-2); }
 .np-topbar__live-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0.5rem var(--accent); }

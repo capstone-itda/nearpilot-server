@@ -264,7 +264,7 @@ test('FR12A D4 배치를 파일로 내보내고 다시 불러온다', async ({ p
   await ready(page, 'scene=later&view=layout');
   const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: '파일로 내보내기' }).click()]);
   const file = JSON.parse(await (await download.createReadStream()).toArray().then((c) => Buffer.concat(c).toString('utf8')));
-  expect(file).toMatchObject({ kind: 'nearpilot-arrangement', version: 1, place: '공용 라운지' });
+  expect(file).toMatchObject({ kind: 'nearpilot-arrangement', version: 1, place: 'lounge', placeName: '공용 라운지' });
   file.devices['locker-1'] = { x: 1176, y: 120 };
   await page.locator('input[type="file"]').setInputFiles({ name: 'arr.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(file)) });
   await expect(page.getByRole('status').filter({ hasText: '자리를 불러왔어요' })).toBeVisible();
@@ -277,6 +277,74 @@ test('FR12A D4 배치를 파일로 내보내고 다시 불러온다', async ({ p
   await page.locator('input[type="file"]').setInputFiles({ name: 'clash.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(file)) });
   await expect(page.getByRole('status').filter({ hasText: '배치는 그대로예요' })).toBeVisible();
   expect(await spotOf(page, '사물함 1')).toBe('1176 120');
+});
+
+test('FR12A D4 배치 화면의 장소 탭: 옆방 탭에서 무드등을 옮기면 옆방 배치로만 저장되고 라운지 배치는 그대로다', async ({ page }) => {
+  await ready(page, 'scene=later&view=layout');
+  const tabs = page.getByRole('tablist', { name: '장소' });
+  await expect(tabs.getByRole('tab', { name: '공용 라운지' })).toHaveAttribute('aria-selected', 'true');
+  await tabs.getByRole('tab', { name: '옆방' }).click();
+  await expect(tabs.getByRole('tab', { name: '옆방' })).toHaveAttribute('aria-selected', 'true');
+  // 옆방의 배치: 기기는 무드등 하나
+  await expect(page.locator('[data-component="StageDevice"]')).toHaveCount(1);
+  const before = await spotOf(page, '무드등');
+  await device(page, '무드등').focus();
+  await page.keyboard.press('ArrowLeft');
+  const after = await spotOf(page, '무드등');
+  expect(after).not.toBe(before);
+  const [x, y] = after!.split(' ').map(Number);
+  const saved = await page.evaluate(() => [localStorage.getItem('nearpilot-arrangement:side-room'), localStorage.getItem('nearpilot-arrangement:lounge')]);
+  expect(JSON.parse(saved[0]!)).toMatchObject({ kind: 'nearpilot-arrangement', place: 'side-room', devices: { 'mood-1': { x, y } } });
+  expect(saved[1], '라운지 배치는 저장하지 않았다').toBeNull();
+  // 내보내기는 고른 장소의 배치다
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: '파일로 내보내기' }).click()]);
+  const file = JSON.parse(await (await download.createReadStream()).toArray().then((c) => Buffer.concat(c).toString('utf8')));
+  expect(file).toMatchObject({ place: 'side-room', placeName: '옆방', devices: { 'mood-1': { x, y } } });
+  // 라운지 탭의 배치는 그대로다. 마지막에 본 탭은 설정을 닫았다 다시 열어도 남는다.
+  await tabs.getByRole('tab', { name: '공용 라운지' }).click();
+  expect(await spotOf(page, '사물함 1')).toBe('456 120');
+  await tabs.getByRole('tab', { name: '옆방' }).click();
+  await page.getByRole('button', { name: '설정 닫기' }).click();
+  await page.locator('[data-component="SideMenu"]').getByRole('button', { name: '설정' }).click();
+  await expect(page.getByRole('tablist', { name: '장소' }).getByRole('tab', { name: '옆방' })).toHaveAttribute('aria-selected', 'true');
+  // 모니터로 돌아가 라운지를 고르면 라운지 무대는 기본 배치다
+  await page.getByRole('button', { name: '설정 닫기' }).click();
+  await page.locator('[data-component="TopBar"]').getByRole('button', { name: '공용 라운지' }).click();
+  await expect(page.locator('[data-component="StageDevice"]').filter({ hasText: '사물함 1' })).toHaveAttribute('data-spot', '456 120');
+  expect(writes).toEqual([]);
+});
+
+test('FR12A D4 옆방 탭의 파일 불러오기와 기본 배치로는 옆방에만 적용되고 라운지 배치는 그대로다', async ({ page }) => {
+  await ready(page, 'scene=later&view=layout');
+  const tabs = page.getByRole('tablist', { name: '장소' });
+  const input = page.locator('input[type="file"]');
+  const file = (place: string, devices: object) => ({ name: `${place}.json`, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ kind: 'nearpilot-arrangement', version: 1, place, devices })) });
+  const saved = () => page.evaluate(() => [localStorage.getItem('nearpilot-arrangement:side-room'), localStorage.getItem('nearpilot-arrangement:lounge')]);
+  // 라운지 탭에서 사물함 1을 옮겨 둔다
+  await input.setInputFiles(file('lounge', { 'locker-1': { x: 1032, y: 120 } }));
+  await expect(page.getByRole('status').filter({ hasText: '기기 1대의 자리를 불러왔어요' })).toBeVisible();
+  expect(await spotOf(page, '사물함 1')).toBe('1032 120');
+
+  await tabs.getByRole('tab', { name: '옆방' }).click();
+  expect(await spotOf(page, '무드등')).toBe('456 720');
+  await input.setInputFiles(file('side-room', { 'mood-1': { x: 600, y: 240 } }));
+  await expect(page.getByRole('status').filter({ hasText: '기기 1대의 자리를 불러왔어요' })).toBeVisible();
+  expect(await spotOf(page, '무드등')).toBe('600 240');
+  expect(JSON.parse((await saved())[0]!)).toMatchObject({ place: 'side-room', devices: { 'mood-1': { x: 600, y: 240 } } });
+  // 라운지 파일의 기기는 옆방에 없어 아무것도 바꾸지 않는다
+  await input.setInputFiles(file('lounge', { 'locker-1': { x: 456, y: 120 } }));
+  await expect(page.getByRole('status').filter({ hasText: '지금 장소의 기기가 없어요' })).toBeVisible();
+  expect(await spotOf(page, '무드등')).toBe('600 240');
+
+  // 기본 배치로: 옆방만 되돌린다
+  await page.getByRole('button', { name: '기본 배치로' }).click();
+  expect(await spotOf(page, '무드등')).toBe('456 720');
+  const [side, lounge] = await saved();
+  expect(side, '옆방의 저장한 배치는 지웠다').toBeNull();
+  expect(JSON.parse(lounge!)).toMatchObject({ place: 'lounge', devices: { 'locker-1': { x: 1032, y: 120 } } });
+  await tabs.getByRole('tab', { name: '공용 라운지' }).click();
+  expect(await spotOf(page, '사물함 1')).toBe('1032 120');
+  expect(writes).toEqual([]);
 });
 
 test('FR12A 점검은 장면의 비콘 수신과 연결 끊김을 따르고, 빈 감사 로그는 비었다고 말한다', async ({ page }) => {

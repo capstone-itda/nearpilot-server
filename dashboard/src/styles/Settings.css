@@ -56,13 +56,20 @@
 
 /* 탭과 내용을 카드로 나눈 만큼 위아래 여백을 줄여, 낮은 화면에서도 배치 화면의 오른쪽 칸이 스크롤 없이 들어간다 */
 .np-scontent { min-height: 0; overflow: auto; padding: var(--sp-5) var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-4); }
-.np-scontent__head { display: flex; flex-direction: column; gap: var(--sp-2); }
+.np-scontent__head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--sp-3) var(--sp-5); }
+.np-scontent__titles { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
 .np-scontent__title { font-size: var(--fs-title); font-weight: 500; }
 .np-scontent__sub { font-size: var(--fs-body); color: var(--ink-2); }
 
 .np-card { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4) var(--sp-5); border: 1px solid var(--line-soft); background: var(--surface); min-width: 0; }
 .np-card__head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
 .np-card__title { font-size: var(--fs-lead); font-weight: 600; }
+
+/* 배치 화면의 장소 탭: 제목 줄 오른쪽에 둬서 낮은 화면에서도 아래 칸을 밀지 않는다 */
+.np-ptabs { display: flex; gap: var(--sp-1); }
+.np-ptabs__item { min-height: var(--hit); padding: 0 var(--sp-4); border: 1px solid var(--line); border-radius: var(--radius); background: transparent; color: var(--ink-2); cursor: pointer; }
+.np-ptabs__item:hover { border-color: var(--accent); color: var(--ink); }
+.np-ptabs__item[aria-selected="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
 
 /* SET-01 배치 · 신호 점검 */
 .np-layoutcheck { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 30rem; gap: var(--sp-5); }

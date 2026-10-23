@@ -37,8 +37,9 @@ function execText(r: RequestProgress, subject: string): string {
 }
 
 export function RequestPanel({ r, onClose }: { r: RequestProgress; onClose: () => void }) {
-  const { personName, deviceName, layout, snapshot } = useData();
-  const cap = CAPABILITY_NAME[r.target.capability ?? layout.devices.find((d) => d.nodeId === r.nodeId)?.capability ?? 'locker'];
+  const { personName, deviceName, places, snapshot } = useData();
+  const devices = places.flatMap((p) => p.devices);
+  const cap = CAPABILITY_NAME[r.target.capability ?? devices.find((d) => d.nodeId === r.nodeId)?.capability ?? 'locker'];
   const d: DecidedRequest | undefined = isDecided(r) ? r : undefined;
   const rows: [StepRowResult, string, string][] = r.steps.map((s) =>
     s.result === 'pass' ? ['pass', '통과', s.detail ?? '']
@@ -63,7 +64,7 @@ export function RequestPanel({ r, onClose }: { r: RequestProgress; onClose: () =
       ) : null}
       {showBars ? (
         <Section title={`어느 ${cap} 앞일까`} hint={`가장 높은 확률이 기준선을 넘어야 ${ACTION_VERB[r.action]}`}>
-          <ProbBars rows={layout.devices.filter((d) => r.posteriors![d.nodeId] !== undefined).map((d) => [d.name, r.posteriors![d.nodeId], d.nodeId === post[0][0] ? 'ask' : 'muted'])} threshold={r.threshold!} />
+          <ProbBars rows={devices.filter((d) => r.posteriors![d.nodeId] !== undefined).map((d) => [d.name, r.posteriors![d.nodeId], d.nodeId === post[0][0] ? 'ask' : 'muted'])} threshold={r.threshold!} />
         </Section>
       ) : null}
       {d?.verdict === 'NEED_APPROVAL' ? (

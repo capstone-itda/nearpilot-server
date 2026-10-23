@@ -11,6 +11,10 @@ const hitsAny = (a: Rect, list: Rect[]) => list.some((b) => hits(a, b));
 const inside = (a: Rect, b: Rect) => a.x1 >= b.x1 && a.x2 <= b.x2 && a.y1 >= b.y1 && a.y2 <= b.y2;
 const area = (a: Rect, b: Rect) => (hits(a, b) ? (Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1)) * (Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1)) : 0);
 
+/** 방 바닥판의 두께와 뒤쪽·왼쪽 낮은 벽의 높이 (평면 단위). Stage.tsx가 그리는 방의 바깥 모양이다. */
+export const SLAB_H = 12;
+export const WALL_H = 34;
+
 /** 글자를 둘 수 있는 무대 영역. 왼쪽의 호스트·서버·소유자 폰 칸은 뺀다. */
 export const STAGE_BOUNDS: Rect = { x1: 320, y1: 60, x2: 1392, y2: 792 };
 /** 패널이 열렸을 때 패널에 가리지 않는 무대의 오른쪽 끝 (무대 단위) */

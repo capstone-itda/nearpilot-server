@@ -95,7 +95,7 @@ const VERDICTS: Verdict[] = ['OK', 'ASK', 'NEED_APPROVAL', 'BUSY', 'DENY'];
 const HISTORY_PAGE = 6;
 
 export function HistoryPanel({ onClose, onOpenRequest }: Close & { onOpenRequest: (requestId: string) => void }) {
-  const { source, layout, deviceName, personName } = useData();
+  const { source, places, deviceName, personName } = useData();
   const [form, setForm] = useState<HistoryQuery>({ period: '오늘' });
   const [query, setQuery] = useState<HistoryQuery>(form);
   const q = useQuery(() => source.history(query), [query]);
@@ -117,7 +117,7 @@ export function HistoryPanel({ onClose, onOpenRequest }: Close & { onOpenRequest
             </select></label>
           <label className="np-field"><span className="np-field__label">기기</span>
             <select className="np-field__input" value={form.nodeId ?? ''} onChange={(e) => setForm({ ...form, nodeId: e.target.value || undefined })}>
-              <option value="">전체</option>{layout.devices.map((d) => <option key={d.nodeId} value={d.nodeId}>{d.name}</option>)}
+              <option value="">전체</option>{places.flatMap((p) => p.devices).map((d) => <option key={d.nodeId} value={d.nodeId}>{d.name}</option>)}
             </select></label>
           <button className="np-btn" type="submit">찾기</button>
         </form>

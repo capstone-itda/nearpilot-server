@@ -21,8 +21,8 @@ for (const [name, devices] of Object.entries(ARRANGEMENTS)) {
   for (const scene of SCENES) {
     for (const [w, h] of SIZES) {
       test(`FR12B D4 ${name} 배치 · ${scene} · ${w}×${h}`, async ({ page }) => {
-        await page.addInitScript((file) => localStorage.setItem('nearpilot-arrangement:공용 라운지', file),
-          JSON.stringify({ kind: 'nearpilot-arrangement', version: 1, place: '공용 라운지', devices }));
+        await page.addInitScript((file) => localStorage.setItem('nearpilot-arrangement:lounge', file),
+          JSON.stringify({ kind: 'nearpilot-arrangement', version: 1, place: 'lounge', devices }));
         await page.setViewportSize({ width: w, height: h });
         await ready(page, `scene=${scene}`);
         const r = await inspect(page);

@@ -1,6 +1,6 @@
 // 모니터 상태 → 흐름 레일 다섯 단계. 쉬운 말이 크게, 코드는 보조 글자로.
 // 서버의 확인 네 칸은 무대의 서버 랙이 보이고(serverChecks), 레일은 한 줄로 줄인다.
-import { isDecided, type FloorLayout, type RequestProgress, type MonitorState } from '../model/types';
+import { isDecided, type DeviceInfo, type PlaceInfo, type RequestProgress, type MonitorState } from '../model/types';
 import { ACTION_DONE, ACTION_NAME, CIRCLED, STEP_SHORT, approvalText, josa, reasonText, requestTitle, toolCall } from './text';
 
 export type CheckResult = 'pass' | 'fail' | 'wait' | 'unsure' | 'none' | 'skip';
@@ -25,16 +25,23 @@ export const GUIDE_STEPS: RailStep[] = [
 /** 확인 네 칸의 기본 이름 */
 export const CHECK_NAMES = ['누구인지', '어디 앞인지', '정책', '비었는지'];
 
-function shared(r: RequestProgress, layout: FloorLayout): boolean {
-  const dev = layout.devices.find((d) => d.nodeId === r.nodeId);
-  return (dev?.occupancy ?? layout.devices.find((d) => d.capability === r.target.capability)?.occupancy) === 'shared';
+/** 모든 장소에서 기기를 찾는다. 주 장소가 아닌 장소의 기기도 이름과 방식을 알 수 있다. */
+const findDevice = (places: PlaceInfo[], nodeId: string | undefined): DeviceInfo | undefined => places.flatMap((p) => p.devices).find((d) => d.nodeId === nodeId);
+
+/** 공용형인가: 고른 기기가 있으면 그 기기, 없으면 요청 장소(모르면 모든 장소)에서 요청한 기능의 첫 기기 */
+function shared(r: RequestProgress, places: PlaceInfo[], placeId: string | undefined): boolean {
+  const pool = places.filter((p) => !placeId || p.placeId === placeId).flatMap((p) => p.devices);
+  return (findDevice(places, r.nodeId)?.occupancy ?? pool.find((d) => d.capability === r.target.capability)?.occupancy) === 'shared';
 }
 
-/** 서버의 확인 네 칸: ①비콘 ③근접 ④정책 ⑤⑥점유. 판정 전에는 비어 있다. 단계 밖에서 멈춘 요청(인증, 접수 제한, 재검사)은 통과한 칸만 ✓ */
-export function serverChecks(r: RequestProgress, layout: FloorLayout): [CheckResult, string][] {
+/**
+ * 서버의 확인 네 칸: ①비콘 ③근접 ④정책 ⑤⑥점유. 판정 전에는 비어 있다. 단계 밖에서 멈춘 요청(인증, 접수 제한, 재검사)은 통과한 칸만 ✓
+ * placeId는 요청 장소(places.ts의 requestPlace)다. 고른 기기가 없을 때 같은 기능의 기기를 이 장소에서 찾는다.
+ */
+export function serverChecks(r: RequestProgress, places: PlaceInfo[], placeId?: string): [CheckResult, string][] {
   const out: [CheckResult, string][] = CHECK_NAMES.map((n) => ['none', n]);
   if (!isDecided(r)) return out;
-  const name = layout.devices.find((d) => d.nodeId === r.nodeId)?.name ?? '';
+  const name = findDevice(places, r.nodeId)?.name ?? '';
   const st = r.steps;
   const stopAt = st.findIndex((x) => x.result === 'stop');
   const passed = (i: number) => st[i]?.result === 'pass';
@@ -52,7 +59,7 @@ export function serverChecks(r: RequestProgress, layout: FloorLayout): [CheckRes
   if (stopAt === 4) out[2] = r.verdict === 'NEED_APPROVAL' ? ['wait', '승인 필요'] : fail('정책이 막음');
   else if (passed(4)) out[2] = ['pass', '정책 통과'];
   // ⑤⑥ 비어 있는지
-  if (shared(r, layout)) out[3] = ['none', '공용형 생략'];
+  if (shared(r, places, placeId)) out[3] = ['none', '공용형 생략'];
   else if (stopAt === 5) out[3] = fail(r.reason === 'COMMAND_IN_PROGRESS' ? '다른 명령 실행 중' : '이미 점유됨');
   else if (stopAt === 6) out[3] = fail('다른 기기 사용 중');
   else if (passed(5) && passed(6)) out[3] = ['pass', '비어 있음'];
@@ -67,16 +74,16 @@ export function judgeSummary(r: RequestProgress): string {
   return r.verdict === 'OK' ? '모두 통과' : reasonText(r.reason);
 }
 
-export function railView(s: MonitorState, layout: FloorLayout, mirroredPersonId: string | undefined): RailView {
+export function railView(s: MonitorState, places: PlaceInfo[], mirroredPersonId: string | undefined): RailView {
   const r = s.request;
   if (!r) {
     return { mode: 'guide', title: s.connected ? '요청 대기' : '마지막으로 받은 화면', meta: '', code: '', steps: GUIDE_STEPS };
   }
-  const name = layout.devices.find((d) => d.nodeId === r.nodeId)?.name ?? '';
+  const name = findDevice(places, r.nodeId)?.name ?? '';
   const who = s.people.find((p) => p.id === r.personId)?.pseudonym ?? '방문자';
   const act = ACTION_NAME[r.action];
   const nodeAct = `${r.nodeId} · ${r.action}`;
-  const head = { mode: 'live' as const, title: `${who} · ${requestTitle(r, (id) => layout.devices.find((d) => d.nodeId === id)?.name ?? id)}`, meta: r.at, code: toolCall(r) };
+  const head = { mode: 'live' as const, title: `${who} · ${requestTitle(r, (id) => findDevice(places, id)?.name ?? id)}`, meta: r.at, code: toolCall(r) };
 
   const s1: RailStep = { status: 'done', detail: `${josa(who, '이', '가')} AI에게 말함`, code: mirroredPersonId === r.personId ? '' : `대화는 ${who}의 폰에` };
   const s2: RailStep = { status: 'done', detail: 'AI가 서버에 요청함', code: r.tool };

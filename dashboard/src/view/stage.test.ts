@@ -2,10 +2,13 @@
 import { describe, expect, it } from 'vitest';
 import { LAYOUT } from '../data/mock/fixtures';
 import { SCENES, sec, stateAt } from '../data/mock/story';
-import { stageView } from './stage';
-import { LOUNGE, WEAK_RSSI_DBM } from '../data/mock/fixtures';
+import { NODE_ANCHOR, stageView } from './stage';
+import { LOUNGE, PLACES, WEAK_RSSI_DBM } from '../data/mock/fixtures';
+import type { MonitorState } from '../model/types';
 import { resolveArrangement, withArrangement } from './arrange';
+import { insetView } from './inset';
 import { CALLOUT_H, CALLOUT_W, PANEL_EDGE, STAGE_BOUNDS, canPlaceAll, crosses, deviceLabelBox, hits, labelBox, personBox, rssiBox, type Rect } from './placement';
+import { nextFocus } from './places';
 
 const dev = (v: ReturnType<typeof stageView>, id: string) => v.devices.find((d) => d.nodeId === id)!;
 
@@ -284,5 +287,105 @@ describe('stageView 이벤트 흐름', () => {
     const v = stageView(stateAt(sec('14:41:01')), LAYOUT, { panelOpen: false });
     expect(v).toMatchObject({ scene: 'approval', push: false, owner: false });
     expect(v.callout.title).toBe('승인 신청 만료');
+  });
+});
+
+// 주 장소가 아닌 장소의 사람과 요청: 작은 방에 그리고, 콜아웃은 작은 방을 가리킨다
+describe('stageView 두 장소', () => {
+  const layoutOf = (id: string) => {
+    const place = PLACES.find((p) => p.placeId === id)!;
+    return withArrangement(place, resolveArrangement(place.devices), WEAK_RSSI_DBM);
+  };
+  /** App과 같은 순서로 그린다: 큰 무대 → 작은 방 → 작은 방을 피한 큰 무대 */
+  function draw(s: MonitorState, lock?: string, panelOpen = false) {
+    const focus = nextFocus(undefined, s, PLACES, lock);
+    const opt = { panelOpen, places: PLACES };
+    const primary = layoutOf(focus.primary!);
+    const base = stageView(s, primary, opt);
+    const inset = focus.inset ? insetView(s, layoutOf(focus.inset), base, opt) : undefined;
+    return { focus, inset, v: inset ? stageView(s, primary, { ...opt, inset: inset.box }) : base };
+  }
+  const calloutBox = (v: ReturnType<typeof stageView>): Rect => ({ x1: v.callout.x, y1: v.callout.y, x2: v.callout.x + CALLOUT_W, y2: v.callout.y + CALLOUT_H });
+
+  for (const [scene, make] of Object.entries(SCENES)) {
+    for (const lock of [undefined, 'lounge', 'side-room']) {
+      it(`FR12B ${scene} 장면 · ${lock ?? '자동'}: 콜아웃이 작은 방과 겹치지 않고 어떤 장면도 예외 없이 그려진다`, () => {
+        const { inset, v } = draw(make(), lock);
+        if (inset && v.callout.on) expect(hits(calloutBox(v), inset.box)).toBe(false);
+        expect(v.placeId).toBe(lock ?? v.placeId);
+      });
+    }
+  }
+
+  it('FR12B 라운지 고정 중 옆방 요청: 호스트·서버 선과 서버 랙 판정은 그리고, 명령 선은 그리지 않는다', () => {
+    const { focus, inset, v } = draw(SCENES['side-room'](), 'lounge');
+    expect(focus).toMatchObject({ primary: 'lounge', inset: 'side-room' });
+    expect(inset!.placeId).toBe('side-room');
+    expect(inset!.people.map((p) => p.letter)).toEqual(['A']);
+    expect(v).toMatchObject({ placeId: 'lounge', scene: 'flow', mcp: true, server: true, cmd: null, fault: null });
+    expect(v.judge).toMatchObject({ mark: '허가', tone: 'ok' });
+    // 무드등은 라운지에 없지만 이름과 공용형 판정은 모든 장소에서 찾는다
+    expect(v.judge.checks).toEqual([['pass', '누구인지'], ['pass', '무드등 앞'], ['pass', '정책 통과'], ['none', '공용형 생략']]);
+    // 옆방에 있는 요청자는 라운지에 세우지 않고, 신호 선도 그리지 않는다
+    expect(v.visitors.find((x) => x.personId === 'p-a')!.on).toBe(false);
+    expect(v.signals.some((x) => x.on)).toBe(false);
+    expect(v.uplink).toBe(false);
+  });
+
+  it('FR12B 라운지 고정 중 옆방 요청: 콜아웃은 작은 방 윗변 가운데를 가리킨다', () => {
+    const { inset, v } = draw(SCENES['side-room'](), 'lounge');
+    expect(v.callout).toMatchObject({ on: true, tone: 'ok', title: '무드등에 켜기 명령' });
+    expect(v.callout.ax).toBeCloseTo((inset!.box.x1 + inset!.box.x2) / 2, 5);
+    expect(v.callout.ay).toBe(inset!.box.y1);
+    expect(hits(calloutBox(v), inset!.box)).toBe(false);
+  });
+
+  it('FR12B 작은 방이 없으면 콜아웃은 서버 랙을 가리킨다', () => {
+    const s = SCENES['side-room']();
+    const v = stageView(s, layoutOf('lounge'), { panelOpen: false, places: PLACES });
+    expect(v.cmd).toBeNull();
+    expect(v.callout).toMatchObject({ on: true, title: '무드등에 켜기 명령', ax: NODE_ANCHOR.server.x, ay: NODE_ANCHOR.server.y });
+  });
+
+  it('FR12B 다른 장소의 기기에 온 요청은 어떤 판정이어도 예외 없이 콜아웃을 단다', () => {
+    const base = SCENES['side-room']();
+    const r = base.request!;
+    const variants: [string, NonNullable<MonitorState['request']>][] = [
+      ['허가', { ...r, execution: undefined }],
+      ['완료', { ...r, execution: 'succeeded' }],
+      ['실패 격리', { ...r, execution: 'failed' }],
+      ['불명 격리', { ...r, execution: 'unknown' }],
+      ['승인 필요', { ...r, verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED', execution: undefined }],
+      ['바쁨', { ...r, verdict: 'BUSY', reason: 'DEVICE_BUSY', execution: undefined }],
+      ['거부', { ...r, verdict: 'DENY', reason: 'POLICY_DENIED', execution: undefined }],
+      ['되물음', { ...r, verdict: 'ASK', reason: 'LOW_CONFIDENCE', nodeId: undefined, execution: undefined, posteriors: { 'mood-1': 0.6 } }]
+    ];
+    for (const [name, request] of variants) {
+      const { inset, v } = draw({ ...base, request }, 'lounge');
+      expect(v.callout.on, name).toBe(true);
+      expect(v.cmd, name).toBeNull();
+      expect(v.fault, name).toBeNull();
+      expect(v.callout.ay, name).toBe(inset!.box.y1);
+    }
+  });
+
+  it('FR12B 판정 중인 옆방 요청도 라운지에서는 호스트→서버 선과 판정 게이지만 그린다', () => {
+    const { v } = draw(stateAt(sec('14:43:48.05')), 'lounge');
+    expect(v).toMatchObject({ scene: 'judging', mcp: true, server: true, cmd: null, uplink: false });
+    expect(v.judge).toMatchObject({ mark: '판정 중', gauge: true });
+    expect(v.signals.some((x) => x.on)).toBe(false);
+  });
+
+  it('FR12B 다른 장소의 기기 앞에 있는 사람은 이 장소에 세우지 않는다 (신호가 이 장소의 기기에 잡혀도)', () => {
+    const s = SCENES.idle();
+    const people = s.people.map((p) => (p.id === 'p-a' ? { ...p, near: 'mood-1', rssi: { 'locker-1': -60, 'mood-1': -49 } } : p));
+    const v = stageView({ ...s, people }, layoutOf('lounge'), { panelOpen: false, places: PLACES });
+    expect(v.visitors.find((x) => x.personId === 'p-a')!.on).toBe(false);
+  });
+
+  it('FR12B 라운지에서 옆방으로 옮긴 사람은 라운지 무대에서 사라지고 옆방 무대에 나타난다', () => {
+    const s = SCENES['side-room']();
+    expect(draw(s, 'lounge').v.visitors.filter((x) => x.on).map((x) => x.letter)).toEqual(['B', 'C']);
+    expect(draw(s, 'side-room').v.visitors.filter((x) => x.on).map((x) => x.letter)).toEqual(['A']);
   });
 });

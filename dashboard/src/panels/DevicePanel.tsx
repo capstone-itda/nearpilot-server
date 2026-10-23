@@ -47,9 +47,9 @@ function RentalBody({ nodeId, state }: { nodeId: string; state: string }) {
 }
 
 export function DevicePanel({ nodeId, onClose }: { nodeId: string; onClose: () => void }) {
-  const { snapshot, layout, deviceName } = useData();
+  const { snapshot, places, deviceName } = useData();
   const st = snapshot.devices.find((d) => d.nodeId === nodeId);
-  const dev = layout.devices.find((d) => d.nodeId === nodeId);
+  const dev = places.flatMap((p) => p.devices).find((d) => d.nodeId === nodeId);
   const state = st?.state ?? 'AVAILABLE';
   const tag = state === 'FAULT'
     ? <VerdictTag verdict="FAULT" />
