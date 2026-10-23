@@ -2,7 +2,7 @@
 
 소유자 토큰만 받는다. 처리 순서는 인증 → 인자 검사 → 조회 접점 → 형식 검사이고, 어느 단계에서든 실패하면 다음으로 가지 않는다.
 인증을 인자 검사보다 먼저 해서 인증하지 않은 호출이 인자 규칙을 알아내지 못한다 (spec 6절).
-오류 응답은 `{"reason": "<사유 코드>"}` 이다. 응답과 로그에 예외 내용을 쓰지 않는다 — 예외 메시지에 사용자 ID 가 있을 수 있다.
+오류 응답은 `{"error": "<사유 코드>"}` 이다 (architecture.md §5 REST 공통 규칙). 응답과 로그에 예외 내용을 쓰지 않는다 — 예외 메시지에 사용자 ID 가 있을 수 있다.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ QUERY_PREFIX = "/dashboard"
 
 
 def _error(status: int, reason: ReasonCode) -> JSONResponse:
-    return JSONResponse({"reason": reason.value}, status_code=status)
+    return JSONResponse({"error": reason.value}, status_code=status)
 
 
 async def _authorize(request: Request, authenticator: Authenticator) -> JSONResponse | None:

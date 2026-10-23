@@ -63,7 +63,7 @@
 | `GET /dashboard/rentals/{node_id}` | `RentalInfo` | `personId` |
 | `GET /dashboard/health` | `Health` | `beacons`의 행마다 `personId` |
 
-- 오류 응답은 `{"reason": "<사유 코드>"}`다. 조회 경로가 받지 않는 메서드(405)와 없는 경로(404)는 FastAPI 기본 본문이다.
+- 오류 응답은 `{"error": "<사유 코드>"}`다 (architecture.md §5 REST 공통 규칙, #184). 조회 경로가 받지 않는 메서드(405)와 없는 경로(404)는 FastAPI 기본 본문이다.
 
 ## 3. 제약
 

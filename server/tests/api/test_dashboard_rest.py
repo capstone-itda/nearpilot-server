@@ -175,14 +175,14 @@ def test_FR12B_같은_사람은_스트림과_조회에서_같은_이름():
 @pytest.mark.parametrize("route", ROUTES, ids=kind_of)
 def test_FR12A_토큰이_틀리면_401(route, headers):
     rig = Rig()
-    assert run(rig.fetch(route.path, route.query, headers)) == (401, {"reason": "INVALID_TOKEN"})
+    assert run(rig.fetch(route.path, route.query, headers)) == (401, {"error": "INVALID_TOKEN"})
     assert rig.queries.calls == []
 
 
 @pytest.mark.parametrize("route", ROUTES, ids=kind_of)
 def test_FR12A_방문자_토큰은_403(route):
     rig = Rig()
-    assert run(rig.fetch(route.path, route.query, VISITOR_HEADERS)) == (403, {"reason": "POLICY_DENIED"})
+    assert run(rig.fetch(route.path, route.query, VISITOR_HEADERS)) == (403, {"error": "POLICY_DENIED"})
     assert rig.queries.calls == []
 
 
@@ -190,7 +190,7 @@ def test_FR12A_방문자_토큰은_403(route):
 def test_FR12A_계정_조회가_실패하면_500(route):
     rig = Rig()
     rig.accounts.error = RuntimeError(f"계정 조회 고장: {VISITOR.user_id}")
-    assert run(rig.fetch(route.path, route.query)) == (500, {"reason": "INTERNAL_ERROR"})
+    assert run(rig.fetch(route.path, route.query)) == (500, {"error": "INTERNAL_ERROR"})
     assert rig.queries.calls == []
 
 
@@ -198,7 +198,7 @@ def test_FR12A_계정_조회가_실패하면_500(route):
 def test_FR12A_없는_요청과_대여는_404(route):
     rig = Rig()
     setattr(rig.queries, route.data, None)
-    assert run(rig.fetch(route.path, route.query)) == (404, {"reason": "USE_NOT_FOUND"})
+    assert run(rig.fetch(route.path, route.query)) == (404, {"error": "USE_NOT_FOUND"})
     assert rig.queries.calls == [(route.method, route.args)]  # 접점에 물어본 뒤의 결과다
 
 
@@ -206,7 +206,7 @@ def test_FR12A_없는_요청과_대여는_404(route):
 def test_FR12A_요청과_대여가_아닌_조회가_None이면_500(route):
     rig = Rig()
     setattr(rig.queries, route.data, None)
-    assert run(rig.fetch(route.path, route.query)) == (500, {"reason": "INTERNAL_ERROR"})  # 없는 것이 아니라 틀린 결과다
+    assert run(rig.fetch(route.path, route.query)) == (500, {"error": "INTERNAL_ERROR"})  # 없는 것이 아니라 틀린 결과다
 
 
 @pytest.mark.parametrize("failure", ["raises", "malformed"])
@@ -219,7 +219,7 @@ def test_FR12A_조회가_실패하면_500(route, failure, caplog):
     else:
         setattr(rig.queries, route.data, without(getattr(rig.queries, route.data), route.drop))
         logged = f"경로={route.bad_path}"
-    assert run(rig.fetch(route.path, route.query)) == (500, {"reason": "INTERNAL_ERROR"})
+    assert run(rig.fetch(route.path, route.query)) == (500, {"error": "INTERNAL_ERROR"})
     [record] = [r for r in caplog.records if r.name == REST_LOGGER]
     assert record.levelno == logging.ERROR
     assert f"kind={route.kind} " in record.getMessage() and logged in record.getMessage()  # 종류와 경로나 예외 종류만 남는다
@@ -258,7 +258,7 @@ def test_FR12A_조회가_실패하면_500(route, failure, caplog):
 )
 def test_FR12A_조회_인자가_틀리면_400(path, query):
     rig = Rig()
-    assert run(rig.fetch(path, query)) == (400, {"reason": "INVALID_INPUT"})
+    assert run(rig.fetch(path, query)) == (400, {"error": "INVALID_INPUT"})
     assert rig.queries.calls == []
 
 
@@ -276,7 +276,7 @@ def test_FR12A_조회_인자가_틀리면_400(path, query):
 )
 def test_FR12A_인증에_실패하면_인자가_틀려도_401_403(path, query, headers, status, reason):
     rig = Rig()
-    assert run(rig.fetch(path, query, headers)) == (status, {"reason": reason})  # 인증이 먼저다
+    assert run(rig.fetch(path, query, headers)) == (status, {"error": reason})  # 인증이 먼저다
     assert rig.queries.calls == []
 
 
