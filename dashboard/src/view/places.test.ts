@@ -84,10 +84,50 @@ describe('nextFocus', () => {
     expect(again).toMatchObject({ primary: 'side-room', inset: 'lounge' });
   });
 
-  it('FR12B 처음 나타난 사람의 장소도 주 장소가 된다', () => {
+  it('FR12B 앞 계산이 있으면 처음 나타난 사람의 장소도 주 장소가 된다', () => {
     const before = nextFocus(undefined, state([person('a', 'locker-1')]), PLACES);
     const after = nextFocus(before, state([person('a', 'locker-1'), person('c', 'mood-1')]), PLACES);
     expect(after).toMatchObject({ primary: 'side-room', inset: 'lounge' });
+  });
+
+  it('FR12B 앞 계산이 없으면(화면을 새로 엶) 옮긴 사람이 없어 사람이 있는 첫 장소가 주 장소다. 아무도 없으면 첫 장소다', () => {
+    // 사람 순서가 아니라 장소 목록 순서의 첫 장소다 (옛 계산은 목록 마지막 사람의 장소 side-room)
+    expect(nextFocus(undefined, state([person('b', 'locker-1'), person('a', 'mood-1')]), PLACES).primary).toBe('lounge');
+    expect(nextFocus(undefined, state([person('a', 'mood-1'), person('b', 'locker-1')]), PLACES).primary).toBe('lounge');
+    expect(nextFocus(undefined, state([person('a', 'mood-1')]), PLACES).primary).toBe('side-room');
+    expect(nextFocus(undefined, state([person('a'), person('b')]), PLACES).primary).toBe('lounge');
+    expect(nextFocus(undefined, state([]), PLACES).primary).toBe('lounge');
+  });
+
+  it('FR12B 비콘이 끊겼다가 같은 장소로 돌아온 사람은 옮긴 사람이 아니라 주 장소가 그대로다', () => {
+    const lounge = nextFocus(undefined, state([person('b', 'locker-1')]), PLACES);
+    const side = nextFocus(lounge, state([person('b', 'locker-1'), person('a', 'mood-1')]), PLACES);
+    expect(side).toMatchObject({ primary: 'side-room', inset: 'lounge' });
+    // b의 비콘이 끊긴다: 장소는 앞 값을 이어받고 작은 방은 비콘을 받는 사람만 센다
+    const dropped = nextFocus(side, state([person('b'), person('a', 'mood-1')]), PLACES);
+    expect(dropped).toMatchObject({ primary: 'side-room', personAt: { a: 'side-room', b: 'lounge' } });
+    expect(dropped.inset).toBeUndefined();
+    // b가 같은 locker-1로 돌아온다
+    const back = nextFocus(dropped, state([person('b', 'locker-1'), person('a', 'mood-1')]), PLACES);
+    expect(back).toMatchObject({ primary: 'side-room', inset: 'lounge' });
+  });
+
+  it('FR12B 비콘이 끊겼다가 다른 장소로 돌아온 사람은 옮긴 사람이다', () => {
+    const lounge = nextFocus(undefined, state([person('b', 'locker-1')]), PLACES);
+    const side = nextFocus(lounge, state([person('b', 'locker-1'), person('a', 'mood-1')]), PLACES);
+    const dropped = nextFocus(side, state([person('b', 'locker-1'), person('a')]), PLACES);
+    expect(dropped.primary).toBe('side-room');
+    // a가 옆방에서 끊겼다가 라운지의 locker-1 앞으로 돌아온다
+    expect(nextFocus(dropped, state([person('b', 'locker-1'), person('a', 'locker-1')]), PLACES)).toMatchObject({ primary: 'lounge', personAt: { a: 'lounge' } });
+  });
+
+  it('FR12B 비콘이 끊긴 사람의 앞 장소는 목록에 있을 때만 이어받는다', () => {
+    const prev = { primary: 'lounge', anchor: 'lounge', personAt: { a: 'attic', b: 'side-room' } };
+    const f = nextFocus(prev, state([person('a'), person('b')]), PLACES);
+    expect(f.personAt).toEqual({ b: 'side-room' });
+    // 이어받은 장소는 기억일 뿐이라 작은 방을 만들지 않는다
+    expect(f.inset).toBeUndefined();
+    expect(f.primary).toBe('lounge');
   });
 
   it('FR12B 옮긴 사람이 여럿이면 목록 순서의 마지막 사람의 장소다', () => {
@@ -142,6 +182,34 @@ describe('nextFocus', () => {
     expect(nextFocus(undefined, state([person('a', 'mood-1')]), PLACES, 'attic').primary).toBe('side-room');
   });
 
+  it('FR12B 고정 중에도 주 장소를 이어 계산해 두고, 고정을 풀면 그 장소가 주 장소다', () => {
+    const start = nextFocus(undefined, state([person('a', 'locker-1')]), PLACES, 'lounge');
+    expect(start).toMatchObject({ primary: 'lounge', anchor: 'lounge' });
+    // 라운지에 고정한 채 사람이 옆방으로 옮긴다: 보이는 주 장소는 그대로, 계산해 둔 주 장소는 옆방
+    const moved = nextFocus(start, state([person('a', 'mood-1')]), PLACES, 'lounge');
+    expect(moved).toMatchObject({ primary: 'lounge', anchor: 'side-room', inset: 'side-room' });
+    // 고정을 풀면 옮긴 사람의 장소다. 한 번 더 계산해도 그대로다
+    const freed = nextFocus(moved, state([person('a', 'mood-1')]), PLACES);
+    expect(freed).toMatchObject({ primary: 'side-room', anchor: 'side-room' });
+    expect(nextFocus(freed, state([person('a', 'mood-1')]), PLACES).primary).toBe('side-room');
+  });
+
+  it('FR12B 고정 중에 온 요청의 장소도 이어 계산해 두어, 요청이 내려간 뒤 고정을 풀면 그 장소다', () => {
+    const start = nextFocus(undefined, state([person('a', 'locker-1')]), PLACES, 'lounge');
+    const asking = nextFocus(start, state([person('a', 'locker-1')], request({ target: { kind: 'explicit', nodeId: 'mood-1' } })), PLACES, 'lounge');
+    expect(asking).toMatchObject({ primary: 'lounge', anchor: 'side-room' });
+    // 요청이 내려간 뒤에도 계산해 둔 주 장소는 그대로이고, 고정을 풀면 그 장소다
+    const done = nextFocus(asking, state([person('a', 'locker-1')]), PLACES, 'lounge');
+    expect(done).toMatchObject({ primary: 'lounge', anchor: 'side-room' });
+    expect(nextFocus(done, state([person('a', 'locker-1')]), PLACES).primary).toBe('side-room');
+  });
+
+  it('FR12B 고정한 채 시작해 아무 일도 없었다면 고정을 풀 때 사람이 있는 첫 장소다', () => {
+    const start = nextFocus(undefined, state([person('a', 'locker-1')]), PLACES, 'side-room');
+    expect(start).toMatchObject({ primary: 'side-room', anchor: 'lounge' });
+    expect(nextFocus(start, state([person('a', 'locker-1')]), PLACES).primary).toBe('lounge');
+  });
+
   it('FR12B 비콘을 받지 않는 사람은 장소가 없다', () => {
     const stale: Person = { ...person('a'), near: 'mood-1' };
     const f = nextFocus(undefined, state([stale, person('b', 'locker-1')]), PLACES);
@@ -153,8 +221,11 @@ describe('nextFocus', () => {
     expect(nextFocus(undefined, state([person('a', 'mood-1')]), [])).toEqual({ personAt: {} });
   });
 
-  it('FR12B 이전 주 장소가 목록에 없으면 첫 장소다', () => {
-    expect(nextFocus({ primary: 'attic', personAt: {} }, state([]), PLACES).primary).toBe('lounge');
+  it('FR12B 앞에 계산해 둔 주 장소가 목록에 없으면 사람이 있는 첫 장소, 아무도 없으면 첫 장소다', () => {
+    const prev = { primary: 'attic', anchor: 'attic', personAt: { a: 'side-room' } };
+    expect(nextFocus({ ...prev, personAt: {} }, state([]), PLACES).primary).toBe('lounge');
+    // a는 앞 계산에서도 옆방이라 옮긴 사람이 아니다
+    expect(nextFocus(prev, state([person('a', 'mood-1')]), PLACES)).toMatchObject({ primary: 'side-room', anchor: 'side-room' });
     expect(nextFocus(undefined, state([]), PLACES).primary).toBe('lounge');
   });
 

@@ -60,9 +60,10 @@ export function saveMirrorPending(personId: string | null): void {
 /** 장소별 표시 배치. 파일 내보내기와 같은 형식으로 두고, 열쇠는 placeId다. */
 const arrangementKey = (placeId: string) => `nearpilot-arrangement:${placeId}`;
 
-export function loadArrangement(placeId: string): Arrangement {
+/** placeId 배치가 없으면 장소 이름 열쇠로 저장한 이전 배치를 읽는다. 읽기만 하고, 새 열쇠에는 저장할 때 쓴다. */
+export function loadArrangement(placeId: string, placeName?: string): Arrangement {
   try {
-    const raw = localStorage.getItem(arrangementKey(placeId));
+    const raw = localStorage.getItem(arrangementKey(placeId)) ?? (placeName ? localStorage.getItem(arrangementKey(placeName)) : null);
     if (!raw) return {};
     const f = parseFile(raw);
     return f.ok ? f.devices : {};
@@ -79,9 +80,11 @@ export function saveArrangement(placeId: string, arr: Arrangement): void {
   }
 }
 
-export function clearArrangement(placeId: string): void {
+/** 이전 열쇠도 지운다. 남기면 다음에 열 때 지운 배치가 되살아난다. */
+export function clearArrangement(placeId: string, placeName?: string): void {
   try {
     localStorage.removeItem(arrangementKey(placeId));
+    if (placeName) localStorage.removeItem(arrangementKey(placeName));
   } catch {
     // 지우지 못해도 이번 화면은 기본 배치로 바뀐다
   }

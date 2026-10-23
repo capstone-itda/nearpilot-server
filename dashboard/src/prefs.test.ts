@@ -51,4 +51,32 @@ describe('prefs', () => {
     clearArrangement('lounge');
     expect(loadArrangement('side-room')).toEqual({ 'mood-1': { x: 600, y: 720 } });
   });
+
+  // 이전 버전은 장소 이름을 열쇠로 저장했다 (nearpilot-arrangement:공용 라운지)
+  const LEGACY_KEY = 'nearpilot-arrangement:공용 라운지';
+  const legacyFile = (x: number) => JSON.stringify({ kind: 'nearpilot-arrangement', version: 1, place: '공용 라운지', devices: { 'locker-1': { x, y: 120 } } });
+
+  it('FR12A D4 placeId 배치가 없으면 장소 이름 열쇠로 저장한 이전 배치를 읽는다. 읽기만 하고 새 열쇠에는 쓰지 않는다', () => {
+    localStorage.setItem(LEGACY_KEY, legacyFile(456));
+    expect(loadArrangement('lounge', '공용 라운지')).toEqual({ 'locker-1': { x: 456, y: 120 } });
+    // 장소 이름을 주지 않거나 다른 장소의 이름이면 이전 열쇠를 읽지 않는다
+    expect(loadArrangement('lounge')).toEqual({});
+    expect(loadArrangement('side-room', '옆방')).toEqual({});
+    // 새 열쇠는 저장할 때 생긴다
+    expect(localStorage.getItem('nearpilot-arrangement:lounge')).toBeNull();
+    expect(localStorage.getItem(LEGACY_KEY)).toBe(legacyFile(456));
+  });
+
+  it('FR12A D4 placeId 배치가 있으면 이전 배치보다 우선한다', () => {
+    localStorage.setItem(LEGACY_KEY, legacyFile(456));
+    saveArrangement('lounge', { 'locker-1': { x: 600, y: 336 } });
+    expect(loadArrangement('lounge', '공용 라운지')).toEqual({ 'locker-1': { x: 600, y: 336 } });
+  });
+
+  it('FR12A D4 배치를 지우면 이전 열쇠도 지워 다음에 열 때 지운 배치가 되살아나지 않는다', () => {
+    localStorage.setItem(LEGACY_KEY, legacyFile(456));
+    clearArrangement('lounge', '공용 라운지');
+    expect(localStorage.getItem(LEGACY_KEY)).toBeNull();
+    expect(loadArrangement('lounge', '공용 라운지')).toEqual({});
+  });
 });

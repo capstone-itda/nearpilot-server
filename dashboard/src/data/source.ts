@@ -13,7 +13,7 @@ export interface DataSource {
   /** 끊긴 스트림을 다시 연결한다. 서버 상태는 바꾸지 않는다. */
   reconnect(): void;
 
-  // 대시보드 조회 REST (FR-12A). 경로와 형식은 미결이다.
+  // 대시보드 조회 REST (FR-12A). 경로와 형식은 docs/architecture.md §5 "대시보드 조회"를 따른다.
   /** 장소 목록(장소마다 이름, 모델·보정 버전, 기기 목록)과 약한 신호 기준. 무대 배치는 이 PC에서 정한다. */
   places(): Promise<PlacesInfo>;
   uses(): Promise<UseRow[]>;

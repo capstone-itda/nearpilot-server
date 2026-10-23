@@ -1,5 +1,5 @@
 // 화면이 쓰는 값. 이름과 값은 server/src/nearpilot/shared/enums.py를 따른다.
-// 서버 메시지 형식은 미결이다 (FR-12A, FR-12B). 스트림 이벤트는 events.ts, 조회 결과는 아래 형태로 어댑터가 바꿔 넘긴다.
+// 서버 메시지 형식은 architecture.md §5에 있다 (FR-12A, FR-12B). 스트림 이벤트는 events.ts, 조회 결과는 아래 형태로 어댑터가 바꿔 넘긴다.
 
 export type Verdict = 'OK' | 'BUSY' | 'ASK' | 'DENY' | 'NEED_APPROVAL';
 export type DeviceState = 'AVAILABLE' | 'RESERVED' | 'ACTIVE' | 'CLOSING' | 'FAULT';

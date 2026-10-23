@@ -36,7 +36,7 @@ const settled = async (page: Page) => {
   await page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined))));
 };
 
-test('MON-11 상단 바에서 장소를 고르면 무대의 장소 이름이 바뀌고 자동을 누르면 돌아오며, 고르기 버튼의 폭은 변하지 않는다', async ({ page }) => {
+test('FR12B MON-11 상단 바에서 장소를 고르면 무대의 장소 이름이 바뀌고 자동을 누르면 돌아오며, 고르기 버튼의 폭은 변하지 않는다', async ({ page }) => {
   await ready(page, 'scene=side-room&theme=dark');
   const chooser = bar(page).locator('[data-component="PlaceChooser"]');
   // 고정해도 자동·장소 버튼의 자리와 폭이 변하지 않는다
@@ -65,7 +65,7 @@ test('MON-11 상단 바에서 장소를 고르면 무대의 장소 이름이 바
   expect(await steady()).toBe(true);
 });
 
-test('MON-11 작은 방은 버튼이다: 누르거나 Enter, Space를 누르면 그 장소로 고정하고, 무대를 확대하면 함께 커진다', async ({ page }) => {
+test('FR12B MON-11 작은 방은 버튼이다: 누르거나 Enter, Space를 누르면 그 장소로 고정하고, 무대를 확대하면 함께 커진다', async ({ page }) => {
   await ready(page, 'scene=side-room&theme=dark');
   await expect(inset(page)).toHaveAttribute('role', 'button');
   await expect(inset(page)).toHaveAccessibleName('공용 라운지에 방문자 B, 방문자 C. 누르면 이 장소로 고정해요');
@@ -95,7 +95,7 @@ test('MON-11 작은 방은 버튼이다: 누르거나 Enter, Space를 누르면 
   expect(await size()).toBeGreaterThan(small * 1.1);
 });
 
-test('MON-11 패널이 열리면 작은 방을 숨긴다', async ({ page }) => {
+test('FR12B MON-11 패널이 열리면 작은 방을 숨긴다', async ({ page }) => {
   await ready(page, 'scene=side-room&panel=uses');
   await expect(page.locator('[data-component="Panel"]')).toBeVisible();
   await expect(page.locator('[data-component="StageInset"]')).toHaveCount(0);
@@ -103,44 +103,57 @@ test('MON-11 패널이 열리면 작은 방을 숨긴다', async ({ page }) => {
   await expect(inset(page)).toHaveAttribute('data-place', 'lounge');
 });
 
-test('MON-11 주 장소가 바뀌면 방과 작은 방을 0.4초 동안 겹쳐 바꾼다', async ({ page }) => {
-  await ready(page, 'scene=side-room&theme=dark');
-  await page.waitForTimeout(1000);
-  // 눌린 그 그림에서 떠나는 방(바닥 층, 기기 층)과 작은 방이 남아 있고 새 방과 작은 방이 나타나며, 0.4초 뒤에 떠나는 그림이 없어진다
-  const seen = await page.evaluate(async () => {
-    const pick = [...document.querySelectorAll<HTMLButtonElement>('[data-component="TopBar"] button')].find((b) => b.textContent === '공용 라운지')!;
-    pick.click();
-    await new Promise((r) => setTimeout(r, 30));
+/**
+ * 시계를 직접 다룬다: 페이지를 열기 전에 가짜 시계를 깔고, 도착 강조를 켜는 0.8초 타이머(App)가 지나도록 시간을 넘긴 뒤 멈춘다.
+ * 멈춘 시계에서는 떠나는 그림을 지우는 400ms 타이머(Stage의 PLACE_FADE_MS)가 실제 시간에 밀리지 않는다.
+ */
+async function frozenAt(page: Page, query: string) {
+  await page.clock.install();
+  await ready(page, query);
+  await page.clock.pauseAt(Date.now() + 2000);
+  await expect(page.locator('.np-app')).toHaveAttribute('data-motion', 'on');
+}
+
+test('FR12B MON-11 주 장소가 바뀌면 방과 작은 방을 0.4초 동안 겹쳐 바꾼다', async ({ page }) => {
+  await frozenAt(page, 'scene=side-room&theme=dark');
+  await bar(page).getByRole('button', { name: '공용 라운지' }).click();
+  // 눌린 그 그림에서 떠나는 방(바닥 층, 기기 층)과 작은 방이 남아 있고 새 방과 작은 방이 나타난다. 둘 다 0.4초다.
+  const seen = await page.evaluate(() => {
     const leaving = [...document.querySelectorAll('[data-leaving="true"]')];
+    const coming = [...document.querySelectorAll('[data-fade="in"]')];
     // 새 장소의 기기는 도착 강조 없이 겹쳐 나타난다
     const arriving = document.getAnimations().filter((a) => (a as CSSAnimation).animationName.startsWith('np-arrive') && (a.effect as KeyframeEffect).target?.closest('[data-component="StageDevice"]')).length;
-    const coming = [...document.querySelectorAll('[data-fade="in"]')].map((e) => getComputedStyle(e).animationName);
-    const out = { during: leaving.length, animation: leaving.map((e) => getComputedStyle(e).animationName), coming, arriving, after: -1 };
-    await new Promise((r) => setTimeout(r, 700));
-    out.after = document.querySelectorAll('[data-leaving="true"]').length;
-    return out;
+    const style = (e: Element) => getComputedStyle(e);
+    return {
+      leaving: leaving.map((e) => [style(e).animationName, style(e).animationDuration]),
+      coming: coming.map((e) => [style(e).animationName, style(e).animationDuration]),
+      arriving
+    };
   });
   expect(seen).toEqual({
-    during: 3, animation: ['np-place-out', 'np-place-out', 'np-place-out'], coming: ['np-place-in', 'np-place-in', 'np-place-in'], arriving: 0, after: 0
+    leaving: [['np-place-out', '0.4s'], ['np-place-out', '0.4s'], ['np-place-out', '0.4s']],
+    coming: [['np-place-in', '0.4s'], ['np-place-in', '0.4s'], ['np-place-in', '0.4s']],
+    arriving: 0
   });
+  // 0.4초가 되기 전에는 떠나는 그림이 남아 있고, 지나면 없어진다
+  await page.clock.runFor(399);
+  await expect(page.locator('[data-leaving="true"]')).toHaveCount(3);
+  await page.clock.runFor(2);
+  await expect(page.locator('[data-leaving="true"]')).toHaveCount(0);
 });
 
-test('MON-11 움직임 줄이기 설정이면 주 장소를 바로 바꾼다', async ({ page }) => {
+test('FR12B MON-11 움직임 줄이기 설정이면 주 장소를 바로 바꾼다', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await ready(page, 'scene=side-room&theme=dark');
-  await page.waitForTimeout(1000);
-  const during = await page.evaluate(async () => {
-    [...document.querySelectorAll<HTMLButtonElement>('[data-component="TopBar"] button')].find((b) => b.textContent === '공용 라운지')!.click();
-    await new Promise((r) => setTimeout(r, 30));
-    return document.querySelectorAll('[data-leaving="true"]').length;
-  });
-  expect(during).toBe(0);
+  await frozenAt(page, 'scene=side-room&theme=dark');
+  await bar(page).getByRole('button', { name: '공용 라운지' }).click();
+  // 시계가 멈춰 있으니 기다린 시간 때문이 아니라 처음부터 떠나는 그림을 남기지 않은 것이다
   await expect(placeText(page)).toContainText('공용 라운지');
+  await expect(page.locator('[data-leaving="true"]')).toHaveCount(0);
 });
 
 for (const theme of ['dark', 'light']) {
   for (const [w, h] of SIZES) {
-    test(`MON-11 라운지 고정 · ${theme === 'dark' ? '다크' : '라이트'} ${w}×${h}`, async ({ page }) => {
+    test(`FR12B MON-11 라운지 고정 · ${theme === 'dark' ? '다크' : '라이트'} ${w}×${h}`, async ({ page }) => {
       await page.setViewportSize({ width: w, height: h });
       await ready(page, `scene=side-room&theme=${theme}`);
       await bar(page).getByRole('button', { name: '공용 라운지' }).click();

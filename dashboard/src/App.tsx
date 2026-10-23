@@ -101,7 +101,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   useEffect(() => {
     source.places().then((p) => {
       setInfo(p);
-      setArrangements(Object.fromEntries(p.places.map((pl) => [pl.placeId, resolveArrangement(pl.devices, loadArrangement(pl.placeId))])));
+      setArrangements(Object.fromEntries(p.places.map((pl) => [pl.placeId, resolveArrangement(pl.devices, loadArrangement(pl.placeId, pl.placeName))])));
     }, () => undefined);
   }, [source]);
   // 무대의 주 장소: 스냅숏이 바뀔 때마다 진행 중인 요청과 사람의 이동으로 고른다. 고정한 장소가 있으면 그 장소다.
@@ -225,7 +225,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     arrangement,
     canPlace: (nodeId: string, s: { x: number; y: number }) => canPlace(arrangement, nodeId, s),
     onChange: (next: Arrangement) => { const r = resolveArrangement(tab.devices, next); setArrangements((a) => ({ ...a, [tab.placeId]: r })); saveArrangement(tab.placeId, r); },
-    onReset: () => { clearArrangement(tab.placeId); setArrangements((a) => ({ ...a, [tab.placeId]: resolveArrangement(tab.devices) })); }
+    onReset: () => { clearArrangement(tab.placeId, tab.placeName); setArrangements((a) => ({ ...a, [tab.placeId]: resolveArrangement(tab.devices) })); }
   };
 
   // 테마는 화면 전체를 천천히 겹쳐 바꾼다(styles/base.css의 view-transition). 움직임 줄이기 설정이면 바로 바꾼다.

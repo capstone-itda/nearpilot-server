@@ -1,4 +1,4 @@
-// FR-12B 모니터링 스트림의 이벤트. 메시지 형식은 미결이라 이 형태는 가정이다 (spec 7절).
+// FR-12B 모니터링 스트림의 이벤트. 서버 메시지(architecture.md §5 "WebSocket")는 어댑터가 이 형태로 옮긴다 (spec 7절).
 // 서버 어댑터는 WebSocket 메시지를 이 형태로 바꿔 넘긴다. 시각은 서버 시각 (HH:MM:SS.mmm).
 import type {
   Action, AuditRow, DeviceState, MockPhoneScreen, Person, ReasonCode, RequestProgress, Verdict

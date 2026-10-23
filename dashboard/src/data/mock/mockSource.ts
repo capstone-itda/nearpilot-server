@@ -1,4 +1,4 @@
-// 목 어댑터: 서버 없이 화면을 그린다. 서버 어댑터는 경로와 형식이 정해진 뒤 같은 인터페이스로 만든다.
+// 목 어댑터: 서버 없이 화면을 그린다. 서버 어댑터는 따로 같은 인터페이스로 만든다.
 // 스트림은 story.ts의 이벤트를 보낸다. 조회는 마지막으로 보낸 이벤트 시각까지의 기록만 준다.
 import type { DataSource } from '../source';
 import type { StreamEvent } from '../../model/events';

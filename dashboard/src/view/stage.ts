@@ -6,7 +6,7 @@ import {
   PANEL_EDGE, STAGE_BOUNDS, placeDeviceLabels, placeRssi, ringBox, rssiBox, shiftBounds, textWidth, type LabelSide, type LabelSpot, type Rect
 } from './placement';
 import { iso } from './iso';
-import { requestPlace } from './places';
+import { placeOfPerson, requestPlace } from './places';
 import {
   ACTION_DID, ACTION_DOING, ACTION_DONE, ACTION_NAME, CAPABILITY_NAME,
   DEVICE_STATE_NAME, approvalText, josa, reasonText
@@ -177,7 +177,14 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
   const devName = (id?: string) => known(id)?.name ?? id ?? '';
   const visitors = s.people.filter((p) => p.role === 'visitor' && p.letter);
   const requester = r ? s.people.find((p) => p.id === r.personId) : undefined;
-  const keep = r ? focusDevices(r, layout) : [];
+  // 요청 장소가 이 장소가 아니면 이 장소의 기기는 요청과 관계가 없다. 같은 기능의 기기를 강조하지 않고, 다른 기기를 흐리지도 않는다.
+  // 요청 장소를 정할 수 없으면(원격 요청) 이 장소의 요청으로 본다.
+  const reqPlace = r ? requestPlace(s, places) : undefined;
+  const elsewhere = reqPlace !== undefined && reqPlace !== layout.placeId;
+  const keep = r && !elsewhere ? focusDevices(r, layout) : [];
+  // 판정 전 비콘→서버 선은 늘 켠다. 요청한 사람이 다른 장소에 있으면 이 장소의 선이 아니라 끈다. 장소를 알 수 없는 요청자(원격)는 켠다.
+  const requesterAt = requester && placeOfPerson(places, requester);
+  const uplinkHere = requesterAt === undefined || requesterAt === layout.placeId;
 
   // 장면 이름
   let scene: StageScene = 'idle';
@@ -201,7 +208,7 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     return {
       nodeId: d.nodeId, name: d.name, capability: d.capability, x: b.x, y: b.y, fx: f.x, fy: f.y, wall: facing(d.spot),
       body: deviceBody(b.x, b.y, d.capability), label: { x: 0, y: 0, w: 0 }, rssiAt: { x: 0, y: 0 }, hidden: false,
-      ...v, dim: !!r && !opt.layoutCheck && !keep.includes(d.nodeId)
+      ...v, dim: !!r && !opt.layoutCheck && !elsewhere && !keep.includes(d.nodeId)
     };
   });
   const geoms = devices.map((d) => ({ d, body: d.body, labelW: Math.max(textWidth(d.name, 20), textWidth(d.status, 17)) + 8 } as { d: StageDeviceView; body: Rect; labelW: number; label?: LabelSpot; rssi?: Spot }));
@@ -273,8 +280,8 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     judge: !r || opt.layoutCheck
       ? { mark: '', tone: 'none', gauge: false, checks: CHECK_NAMES.map((n) => ['none', n] as [CheckResult, string]) }
       : isDecided(r)
-        ? { mark: VERDICT_LABEL[r.verdict], tone: VERDICT_TONE[r.verdict], gauge: false, checks: serverChecks(r, places, requestPlace(s, places)) }
-        : { mark: '판정 중', tone: 'accent', gauge: true, checks: serverChecks(r, places, requestPlace(s, places)) },
+        ? { mark: VERDICT_LABEL[r.verdict], tone: VERDICT_TONE[r.verdict], gauge: false, checks: serverChecks(r, places, reqPlace) }
+        : { mark: '판정 중', tone: 'accent', gauge: true, checks: serverChecks(r, places, reqPlace) },
     owner: !opt.layoutCheck && !!r && r.verdict === 'NEED_APPROVAL' && s.ownerNotified,
     devices,
     visitors: vis,
@@ -283,7 +290,7 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     rssi,
     mcp: !!r && !opt.layoutCheck && !r.respondedAt,
     reply: !!r && !opt.layoutCheck && !!r.respondedAt && secOf(s.lastReceivedAt) - secOf(r.respondedAt) <= REPLY_SHOW_SEC,
-    uplink: scene === 'judging' || scene === 'ask' ? signalOn : !!idlePerson,
+    uplink: scene === 'judging' || scene === 'ask' ? uplinkHere : !!idlePerson,
     cmd: scene === 'flow' && r!.execution === 'sent' && targetHere ? target : null,
     push: scene === 'approval' && s.ownerNotified,
     fault: scene === 'fault' && targetHere ? target : null,
