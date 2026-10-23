@@ -17,6 +17,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 독립 AP 안의 서버와 통신한다 -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -50,6 +51,15 @@
             android:name=".ble.BeaconBroadcastService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+
+        <service
+            android:name=".approval.ApprovalWatchService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="독립 AP 안의 서버에 소유자 승인 요청을 주기적으로 묻고 알린다" />
+        </service>
     </application>
 
 </manifest>
