@@ -981,7 +981,7 @@ class Subject:
 
 @dataclass(frozen=True, slots=True)
 class MonitorEvent:
-    """발행 영역이 넘기는 모니터링 이벤트 하나. fields 의 키는 specs/api-dashboard 2절 형식 표의 camelCase 키다."""
+    """발행 영역이 넘기는 모니터링 이벤트 하나. fields 의 키는 architecture.md §5 WebSocket 형식 표의 camelCase 키다."""
 
     type: str
     at: datetime

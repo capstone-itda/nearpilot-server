@@ -17,6 +17,7 @@ from nearpilot.api.ws.schema import EVENT_TYPES, RESPONSE_KINDS, SchemaError, re
 from nearpilot.shared.enums import (
     Action,
     ApprovalMode,
+    ApprovalStatus,
     Capability,
     DeviceState,
     ExecutionStatus,
@@ -40,6 +41,7 @@ UTC_AT = datetime(2026, 10, 23, 5, 3, 4, 987654, tzinfo=timezone.utc)  # 밀리�
 UTC_ISO = "2026-10-23T05:03:04.987+00:00"
 NAIVE = datetime(2026, 10, 23, 14, 3, 5)  # 시간대가 없다
 SECRET = f"secret-{VISITOR.user_id}"  # 틀린 값 자리에 넣는다. 오류 메시지에 나오면 안 된다
+UNENCODABLE = "x\ud800"  # 짝 없는 서로게이트. UTF-8 로 바꿀 수 없다
 
 DROP = object()  # patched 에서 그 자리를 지운다
 KEEP = object()  # bad_event 에서 정상 사례의 subject 를 그대로 쓴다
@@ -152,8 +154,8 @@ EVENT_CASES = [
     ),
     EventCase(
         "step", "step",
-        {"requestId": "req-1", "step": 3, "result": "stop", "detail": "p=0.62"},
-        {"requestId": "req-1", "step": 3, "result": "stop", "detail": "p=0.62"},
+        {"requestId": "req-1", "step": Step.PROXIMITY, "result": "stop", "detail": "p=0.62"},
+        {"requestId": "req-1", "step": "3", "result": "stop", "detail": "p=0.62"},
         optional=("detail",),
     ),
     EventCase(
@@ -322,8 +324,10 @@ BAD_EVENTS = [
     bad_event("int_for_bool", "transition", "transition.overdue", "overdue", to=1),
     bad_event("bool_for_int", "step", "step.step", "step", to=True),
     bad_event("float_for_int", "step", "step.step", "step", to=3.0),
-    bad_event("step_7", "step", "step.step", "step", to=7),
-    bad_event("step_minus_1", "step", "step.step", "step", to=-1),
+    bad_event("step_7", "step", "step.step", "step", to="7"),
+    bad_event("step_minus_1", "step", "step.step", "step", to="-1"),
+    bad_event("int_for_step", "step", "step.step", "step", to=3),  # Step 의 값 문자열이어야 한다
+    bad_event("step_not_judgment", "step", "step.step", "step", to=Step.EXEC),  # Step 이지만 판정 단계 ⓪~⑥이 아니다
     bad_event("bool_for_num", "posterior", "posterior.threshold", "threshold", to=True),
     bad_event("str_for_num", "posterior", "posterior.threshold", "threshold", to=SECRET),
     bad_event("nan", "posterior", "posterior.threshold", "threshold", to=math.nan),
@@ -340,12 +344,18 @@ BAD_EVENTS = [
     bad_event("nummap_not_mapping", "rssi", "rssi.rssi", "rssi", to=[-50]),
     bad_event("nummap_key_not_str", "rssi", "rssi.rssi", "rssi", to={7: -50}),
     bad_event("nummap_secret_key", "rssi", "rssi.rssi", "rssi", to={SECRET: SECRET}),
+    # UTF-8 로 바꿀 수 없는 문자열
+    bad_event("str_not_utf8", "mcp_result", "mcp_result.requestId", "requestId", to=UNENCODABLE),
+    bad_event("optional_str_not_utf8", "step", "step.detail", "detail", to=UNENCODABLE),
+    bad_event("nummap_key_not_utf8", "rssi", "rssi.rssi", "rssi", to={UNENCODABLE: -50}),
+    bad_event("posteriors_key_not_utf8", "posterior", "posterior.posteriors", "posteriors", to={UNENCODABLE: 0.5}),
     # 중첩 객체
     bad_event("object_not_mapping", "mcp_call", "mcp_call.target", "target", to=SECRET),
     bad_event("nested_missing_key", "transition", "transition.fault.cause", "fault", "cause", to=DROP),
     bad_event("nested_enum_outside", "mcp_call", "mcp_call.target.kind", "target", "kind", to=SECRET),
     bad_event("nested_naive_time", "audit", "audit.row.at", "row", "at", to=NAIVE),
     bad_event("nested_enum_not_str", "audit", "audit.row.step", "row", "step", to=3),
+    bad_event("nested_str_not_utf8", "audit", "audit.row.text", "row", "text", to=UNENCODABLE),
     # 사람
     bad_event("subject_missing", "beacon", "beacon.subject", subject=None),
     bad_event("subject_missing_rssi", "rssi", "rssi.subject", subject=None),
@@ -620,6 +630,7 @@ BAD_RESPONSES = [
     bad_response("audit_enum_outside", "audit", AUDIT, "audit[0].code", (0, "code"), SECRET),
     bad_response("history_target_missing", "history", HISTORY, "history[0].target", (0, "target"), DROP),
     bad_response("history_outcome_missing", "history", HISTORY, "history[1].outcome", (1, "outcome"), DROP),
+    bad_response("str_not_utf8", "audit", AUDIT, "audit[0].text", (0, "text"), UNENCODABLE),  # UTF-8 로 바꿀 수 없다
     # 요청 한 건
     bad_response("six_steps", "request", REQUEST, "request.steps", ("steps", 6), DROP),
     bad_response("eight_steps", "request", REQUEST, "request.steps", ("steps",),
@@ -630,6 +641,8 @@ BAD_RESPONSES = [
     bad_response("tool_outside", "request", REQUEST, "request.tool", ("tool",), "release_use"),
     bad_response("target_missing", "request", REQUEST, "request.target", ("target",), DROP),
     bad_response("execution_outside", "request", REQUEST, "request.execution", ("execution",), "done"),
+    bad_response("execution_sent", "request", REQUEST, "request.execution", ("execution",), "sent"),  # ExecutionStatus 에 없다
+    bad_response("posteriors_key_not_utf8", "request", REQUEST, "request.posteriors", ("posteriors",), {UNENCODABLE: 0.5}),
     bad_response("optional_naive_time", "request", REQUEST, "request.respondedAt", ("respondedAt",), NAIVE),
     # 신뢰도
     bad_response("counts_missing_key", "trust", TRUST, "trust.live.counts",
@@ -637,6 +650,8 @@ BAD_RESPONSES = [
     bad_response("counts_extra_key", "trust", TRUST, "trust.live.counts", ("live", "counts", SECRET), 1),
     bad_response("counts_other_key_instead", "trust", TRUST, "trust.live.counts", ("live", "counts"),
                  {"OK": 30, "BUSY": 4, "ASK": 3, "DENY": 2, SECRET: 1}),  # 개수는 다섯 개로 맞다
+    bad_response("counts_key_not_utf8", "trust", TRUST, "trust.live.counts", ("live", "counts"),
+                 {"OK": 30, "BUSY": 4, "ASK": 3, "DENY": 2, UNENCODABLE: 1}),
     bad_response("counts_bool_value", "trust", TRUST, "trust.live.counts.OK", ("live", "counts", "OK"), True),
     bad_response("counts_not_mapping", "trust", TRUST, "trust.live.counts", ("live", "counts"), [1, 2, 3, 4, 5]),
     bad_response("null_key_missing", "trust", TRUST, "trust.live.latencyP95Sec", ("live", "latencyP95Sec"), DROP),
@@ -654,6 +669,8 @@ BAD_RESPONSES = [
                  ("evaluation", "confusion", "labels"), "locker-1"),
     bad_response("labels_item_int", "trust", TRUST, "trust.evaluation.confusion.labels[1]",
                  ("evaluation", "confusion", "labels", 1), 7),
+    bad_response("labels_item_not_utf8", "trust", TRUST, "trust.evaluation.confusion.labels[1]",
+                 ("evaluation", "confusion", "labels", 1), UNENCODABLE),
     # 대여와 점검
     bad_response("rental_subject_missing", "rental", RENTAL, "rental.subject", ("subject",), DROP),
     bad_response("rental_overdue_missing", "rental", RENTAL, "rental.overdueMinutes", ("overdueMinutes",), DROP),
@@ -673,6 +690,46 @@ def test_FR12A_형식이_틀린_조회는_경로만_담은_SchemaError(kind, dat
     with pytest.raises(SchemaError) as error:
         render_response(kind, data, PersonNames())
     assert str(error.value) == path  # 경로만 있다. 값과 사용자 ID 가 없다
+
+
+def test_FR12B_형식_값은_shared_열거형_값을_쓴다():
+    names = PersonNames()
+
+    def step_event(step: Any) -> dict[str, Any]:
+        return render_event(event("step", {**GOOD["step"].fields, "step": step}), names)
+
+    def approval_event(kind: Any) -> dict[str, Any]:
+        return render_event(event("approval", {**GOOD["approval"].fields, "kind": kind}, VISITOR), names)
+
+    def request_response(execution: Any) -> dict[str, Any]:
+        return render_response("request", {**REQUEST, "execution": execution}, names)
+
+    # step 이벤트의 step: 판정 단계 ⓪~⑥(Step 의 "0"~"6")만 받는다. Step 멤버나 값 문자열로 와서 값 문자열로 나간다
+    judgment = {str(n) for n in range(7)}
+    assert step_event(Step.PROXIMITY)["step"] == step_event("3")["step"] == "3"
+    for member in Step:
+        for value in (member, member.value):
+            if member.value in judgment:
+                assert step_event(value)["step"] == member.value
+            else:  # auth, exec, close, fault, announce, admin
+                with pytest.raises(SchemaError, match=r"^step\.step$"):
+                    step_event(value)
+    for value in (0, 3, 6, True, 3.0):  # 정수, bool, 실수는 받지 않는다
+        with pytest.raises(SchemaError, match=r"^step\.step$"):
+            step_event(value)
+
+    # approval 이벤트의 kind: 소유자 거부는 ApprovalStatus.DENIED 의 값 "denied" 다
+    assert approval_event(ApprovalStatus.DENIED)["kind"] == approval_event("denied")["kind"] == "denied"
+    assert approval_event(ApprovalStatus.APPROVED)["kind"] == "approved"
+    assert [approval_event(kind)["kind"] for kind in ("requested", "expired")] == ["requested", "expired"]
+    with pytest.raises(SchemaError, match=r"^approval\.kind$"):
+        approval_event("rejected")
+
+    # RequestProgress 의 execution: ExecutionStatus 의 값 모두
+    for status in ExecutionStatus:
+        assert request_response(status)["execution"] == request_response(status.value)["execution"] == status.value
+    with pytest.raises(SchemaError, match=r"^request\.execution$"):
+        request_response("sent")
 
 
 def test_FR12B_같은_이름표로_이벤트와_조회가_같은_사람을_내보낸다():

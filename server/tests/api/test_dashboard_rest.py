@@ -14,17 +14,22 @@ from fastapi import FastAPI
 
 from _dashboard import NOW, OWNER, OWNER_TOKEN, VISITOR, VISITOR_TOKEN, FakeAccounts, FakeQueries, FakeSnapshot
 from _dashboard import WsClient, authenticator, http_request, run, settings
+from _mcp_client import FakeCore
+from nearpilot.api.mcp.server import build_app
 from nearpilot.api.ws.hub import MonitorHub
 from nearpilot.api.ws.names import PersonNames
 from nearpilot.api.ws.router import create_dashboard_router
-from nearpilot.api.ws.schema import render_response
-from nearpilot.shared.enums import Verdict
+from nearpilot.api.ws.schema import SchemaError, render_event, render_response
+from nearpilot.shared.enums import ReasonCode, Step, Verdict
 from nearpilot.shared.models import MonitorEvent
 
 REST_LOGGER = "nearpilot.api.rest.dashboard"
+HUB_LOGGER = "nearpilot.api.ws.hub"
 OWNER_HEADERS = {"authorization": f"Bearer {OWNER_TOKEN}"}
 VISITOR_HEADERS = {"authorization": f"Bearer {VISITOR_TOKEN}"}
 PERIOD = urlencode({"period": "오늘"})  # 한글은 퍼센트 인코딩으로 보낸다
+ISO = "2026-10-23T14:03:05.120+09:00"  # NOW
+UNENCODABLE = "x\ud800"  # 짝 없는 서로게이트. UTF-8 로 바꿀 수 없다
 
 
 class Route(NamedTuple):
@@ -54,6 +59,17 @@ ROUTES = [
 ]
 MISSING_ROUTES = [route for route in ROUTES if route.kind in ("request", "rental")]  # 없을 수 있는 한 건
 OTHER_ROUTES = [route for route in ROUTES if route not in MISSING_ROUTES]
+TEXT_AT = {  # 종류 → (표본에서 문자열 값이 있는 자리, 그 값이 틀릴 때 형식 검사가 알리는 경로)
+    "place": (("placeName",), "place.placeName"),
+    "uses": ((0, "nodeId"), "uses[0].nodeId"),
+    "approvals": (("pending", 0, "nodeId"), "approvals.pending[0].nodeId"),
+    "audit": ((0, "text"), "audit[0].text"),
+    "history": ((0, "outcome"), "history[0].outcome"),
+    "request": (("id",), "request.id"),
+    "trust": (("evaluation", "date"), "trust.evaluation.date"),
+    "rental": (("timeline", 0, "text"), "rental.timeline[0].text"),
+    "health": (("server", "model"), "health.server.model"),
+}
 
 
 def kind_of(route: Route) -> str:
@@ -79,6 +95,30 @@ class Rig:
         """(상태 코드, JSON 본문). headers 를 주지 않으면 소유자 토큰이다. 헤더 없이 보내려면 {} 를 준다."""
         return await http_request(
             self.app, method, path, query=query, headers=OWNER_HEADERS if headers is None else headers)
+
+
+class AssembledRig(Rig):
+    """조립한 서버 앱처럼 대시보드 라우터를 먼저 붙이고 MCP 앱을 루트(`/`)에 마운트한다 (runtime/app.py, architecture.md §2)."""
+
+    def __init__(self, **overrides) -> None:
+        super().__init__(**overrides)
+        self.app.mount("/", build_app(FakeCore(), authenticator(self.accounts), lambda: NOW))
+
+
+class HeaderSpy:
+    """ASGI 앱을 감싸서 마지막 응답의 헤더(소문자 이름)를 기록한다. http_request 는 헤더를 돌려주지 않는다."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+        self.headers: dict[str, str] = {}
+
+    async def __call__(self, scope, receive, send) -> None:
+        async def spy(message) -> None:
+            if message["type"] == "http.response.start":
+                self.headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in message["headers"]}
+            await send(message)
+
+        await self.app(scope, receive, spy)
 
 
 class ThreadLog(list):
@@ -113,6 +153,16 @@ def without(data: Any, where: tuple) -> Any:
     for key in where[:-1]:
         holder = holder[key]
     del holder[where[-1]]
+    return data
+
+
+def with_value(data: Any, where: tuple, value: Any) -> Any:
+    """data 를 복사해서 where 가 가리키는 자리를 value 로 바꾼다."""
+    data = copy.deepcopy(data)
+    holder = data
+    for key in where[:-1]:
+        holder = holder[key]
+    holder[where[-1]] = value
     return data
 
 
@@ -227,6 +277,55 @@ def test_FR12A_조회가_실패하면_500(route, failure, caplog):
     assert VISITOR.user_id not in caplog.text
 
 
+@pytest.mark.parametrize("route", ROUTES, ids=kind_of)
+def test_FR12A_인코딩할_수_없는_조회_결과는_500(route, caplog):
+    rig = Rig()
+    where, path = TEXT_AT[route.kind]
+    setattr(rig.queries, route.data, with_value(getattr(rig.queries, route.data), where, UNENCODABLE))
+    # 형식 검사가 거르지 않으면 JSON 본문을 UTF-8 로 만들다 예외가 앱 밖으로 나가 기본 500 본문이 된다
+    assert run(rig.fetch(route.path, route.query)) == (500, {"error": "INTERNAL_ERROR"})
+    [record] = [r for r in caplog.records if r.name == REST_LOGGER]
+    assert record.levelno == logging.ERROR
+    assert f"kind={route.kind} 경로={path}" in record.getMessage()  # 종류와 경로만 남는다
+    assert "\ud800" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("bad", "path"),
+    [
+        pytest.param(
+            MonitorEvent("step", NOW, {"requestId": "r1", "step": Step.PROXIMITY, "result": "stop",
+                                       "detail": UNENCODABLE}),
+            "step.detail", id="detail"),
+        pytest.param(
+            MonitorEvent("audit", NOW, {"row": {"id": "a-1", "at": NOW, "step": Step.EXEC, "text": UNENCODABLE,
+                                                "code": ReasonCode.OK}}),
+            "audit.row.text", id="audit_text"),
+        pytest.param(MonitorEvent("rssi", NOW, {"rssi": {UNENCODABLE: -60}}, VISITOR), "rssi.rssi", id="rssi_key"),
+    ],
+)
+def test_FR12B_인코딩할_수_없는_문자열은_형식_오류다(bad, path, caplog):
+    caplog.set_level(logging.WARNING, logger=HUB_LOGGER)
+    with pytest.raises(SchemaError) as error:
+        render_event(bad, PersonNames())
+    assert str(error.value) == path  # 경로만 있다. 값이 없다
+    rig = Rig()
+    after = MonitorEvent("mcp_result", NOW, {"requestId": "after"})
+
+    async def main():
+        async with WsClient(rig.app, "/dashboard/stream") as ws:
+            await ws.send_json({"type": "auth", "token": OWNER_TOKEN})
+            assert (await ws.receive_json())["events"] == []  # 지금 상태. 비었다
+            rig.hub.publish(bad)  # 그 이벤트만 버려진다. 대기열에 들어가면 보내다 연결이 1011 로 닫힌다
+            rig.hub.publish(after)
+            return await ws.receive_json()
+
+    assert run(main()) == {"v": 1, "events": [{"type": "mcp_result", "at": ISO, "requestId": "after"}]}
+    [record] = [r for r in caplog.records if r.name == HUB_LOGGER]
+    assert record.levelno == logging.WARNING and f"경로={path}" in record.getMessage()
+    assert "\ud800" not in caplog.text
+
+
 @pytest.mark.parametrize(
     ("path", "query"),
     [
@@ -323,9 +422,47 @@ def test_FR12A_이력_조회는_선택_인자가_없으면_None으로_부른다(
 @pytest.mark.parametrize("route", ROUTES, ids=kind_of)
 def test_FR12A_조회_경로는_GET만_받는다(route, method):
     rig = Rig()
-    status, _ = run(rig.fetch(route.path, route.query, method=method))
-    assert status == 405
+    assert run(rig.fetch(route.path, route.query, method=method)) == (405, {"error": "INVALID_INPUT"})
     assert rig.queries.calls == []
+
+
+@pytest.mark.parametrize("headers", [OWNER_HEADERS, {}], ids=["owner", "no_token"])
+def test_FR12A_MCP_앱을_루트에_붙여도_쓰기는_405이고_없는_경로는_404(headers):
+    rig = AssembledRig()
+    spy = HeaderSpy(rig.app)
+    not_get = ["POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE"]  # 조회 경로가 받지 않는 메서드
+    any_method = ["GET", "HEAD", *not_get]
+    query_paths = ["/dashboard/place", "/dashboard/requests/r1"]  # 조회 경로 (경로 인자 자리 포함)
+    missing_paths = ["/dashboard/nope", "/dashboard/place/extra", "/dashboard/requests",
+                     "/dashboard/requests/r1/extra", "/dashboard/"]
+    refused = (405, {"error": "INVALID_INPUT"}, "GET")  # (상태, 본문, Allow 헤더)
+    not_found = (404, {"error": "USE_NOT_FOUND"}, None)
+    invalid_token = (401, {"error": "INVALID_TOKEN"}, None)  # MCP 앱의 미들웨어가 낸다
+    place = (200, render_response("place", rig.queries.place_data, PersonNames()), None)
+
+    async def call(method: str, path: str, headers: dict[str, str] = headers) -> tuple[int, Any, str | None]:
+        status, body = await http_request(spy, method, path, headers=headers)
+        return status, body, spy.headers.get("allow")
+
+    async def main():
+        seen = {(method, path): await call(method, path) for path in query_paths for method in not_get}
+        seen |= {(method, path): await call(method, path) for path in missing_paths for method in any_method}
+        seen["GET", "/dashboard/place"] = await call("GET", "/dashboard/place")  # 조회는 그대로 된다
+        # 받이 경로는 `/dashboard/` 아래만 받는다. 그 밖의 요청은 MCP 앱으로 간다
+        seen["GET", "/dashboard"] = await call("GET", "/dashboard", {})
+        seen["POST", "/mcp"] = await call("POST", "/mcp", {})
+        async with WsClient(rig.app, "/dashboard/stream") as ws:  # 스트림 연결은 받이 경로에 가로채이지 않는다
+            await ws.send_json({"type": "auth", "token": OWNER_TOKEN})
+            return seen, await ws.receive_json()
+
+    seen, first = run(main())
+    expected = {(method, path): refused for path in query_paths for method in not_get}  # 토큰이 없어도 같다
+    expected |= {(method, path): not_found for path in missing_paths for method in any_method}
+    expected["GET", "/dashboard/place"] = place if headers else invalid_token
+    expected["GET", "/dashboard"] = expected["POST", "/mcp"] = invalid_token
+    assert seen == expected
+    assert first == {"v": 1, "events": []}
+    assert rig.queries.calls == ([("place", ())] if headers else [])  # 조회 접점은 GET 조회 하나만 불렀다
 
 
 def test_FR12A_동기_접점은_이벤트_루프_밖의_스레드에서_부른다():

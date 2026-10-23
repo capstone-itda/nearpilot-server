@@ -3,6 +3,7 @@
 소유자 토큰만 받는다. 처리 순서는 인증 → 인자 검사 → 조회 접점 → 형식 검사이고, 어느 단계에서든 실패하면 다음으로 가지 않는다.
 인증을 인자 검사보다 먼저 해서 인증하지 않은 호출이 인자 규칙을 알아내지 못한다 (spec 6절).
 오류 응답은 `{"error": "<사유 코드>"}` 이다 (architecture.md §5 REST 공통 규칙). 응답과 로그에 예외 내용을 쓰지 않는다 — 예외 메시지에 사용자 ID 가 있을 수 있다.
+`/dashboard/` 아래에서 조회 9개가 받지 않은 요청(쓰기 메서드, 없는 경로)은 받이 경로가 405, 404 로 막는다. 인증하지 않는다.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from starlette.routing import Match
 
 from nearpilot.api.auth.authenticator import AuthenticationError, Authenticator
 from nearpilot.api.ws.names import PersonNames
@@ -26,9 +28,11 @@ log = logging.getLogger(__name__)
 
 QUERY_PREFIX = "/dashboard"
 
+_ALL_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE"]
 
-def _error(status: int, reason: ReasonCode) -> JSONResponse:
-    return JSONResponse({"error": reason.value}, status_code=status)
+
+def _error(status: int, reason: ReasonCode, headers: dict[str, str] | None = None) -> JSONResponse:
+    return JSONResponse({"error": reason.value}, status_code=status, headers=headers)
 
 
 async def _authorize(request: Request, authenticator: Authenticator) -> JSONResponse | None:
@@ -77,7 +81,7 @@ def add_query_routes(
     authenticator: Authenticator,
     settings: DashboardSettings,
 ) -> None:
-    """`router` 에 조회 경로 9개를 붙인다. GET 만 둔다 — 대시보드는 서버에 쓰지 않는다. 소유자 토큰만 받는다."""
+    """`router` 에 조회 경로 9개와 받이 경로를 붙인다. GET 만 둔다 — 대시보드는 서버에 쓰지 않는다. 소유자 토큰만 받는다."""
 
     async def serve(
         request: Request,
@@ -112,6 +116,8 @@ def add_query_routes(
             log.error("대시보드 조회 결과의 형식이 틀리다: kind=%s 경로=%s", kind, error)
             return _error(500, ReasonCode.INTERNAL_ERROR)
         return JSONResponse(body)
+
+    first_query = len(router.routes)
 
     @router.get(f"{QUERY_PREFIX}/place")
     async def place(request: Request) -> JSONResponse:
@@ -148,3 +154,16 @@ def add_query_routes(
     @router.get(f"{QUERY_PREFIX}/health")
     async def health(request: Request) -> JSONResponse:
         return await serve(request, "health", queries.health)
+
+    query_routes = router.routes[first_query:]  # 위 조회 경로 9개
+
+    # 조회 9개 뒤에 등록한다. 앞에 두면 GET 조회가 이 경로로 간다.
+    # 조립한 앱은 MCP 앱을 루트(`/`)에 마운트한다. 메서드만 다른 조회 경로는 일부만 맞아서 MCP 앱(완전히 맞음)에 밀린다.
+    # 모든 메서드를 받는 이 경로가 `/dashboard/` 아래를 완전히 맞아야 쓰기와 없는 경로가 MCP 앱으로 가지 않는다.
+    @router.api_route(f"{QUERY_PREFIX}/{{rest:path}}", methods=_ALL_METHODS, include_in_schema=False)
+    async def unrouted(request: Request) -> JSONResponse:
+        """조회 경로가 받지 않은 요청. 인증하지 않고 조회 접점을 부르지 않는다."""
+        # 경로 인자 자리까지 포함해 조회 경로 하나와 경로가 맞으면 메서드만 틀린 것이다 (GET 이면 위 조회 경로가 이미 받았다)
+        if any(route.matches(request.scope)[0] is not Match.NONE for route in query_routes):
+            return _error(405, ReasonCode.INVALID_INPUT, {"Allow": "GET"})
+        return _error(404, ReasonCode.USE_NOT_FOUND)  # 조회 경로가 아닌 `/dashboard/...` 는 메서드와 상관없이 없는 경로다

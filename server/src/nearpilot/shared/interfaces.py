@@ -677,7 +677,10 @@ class RetentionStore(Protocol):
 
 @runtime_checkable
 class MonitorFeed(Protocol):
-    """API → 이벤트가 난 영역 (판정, 상태 관리, IOT, MCP 도구). 모니터링 이벤트를 받는다 (FR-12B)."""
+    """API → 이벤트가 난 영역 (판정, 상태 관리, IOT, MCP 도구). 모니터링 이벤트를 받는다 (FR-12B).
+
+    자유 문자열(detail, 감사 text)과 맵 키에 사용자 ID 를 넣지 않는다 — API 는 키 단위로만 거른다 (FR-11).
+    """
 
     def publish(self, event: MonitorEvent) -> None:
         """어느 스레드에서 불러도 막지 않고 예외를 올리지 않는다 (NFR-07)."""
@@ -697,7 +700,8 @@ class MonitorSnapshot(Protocol):
 class DashboardQueries(Protocol):
     """CORE 조회 서비스 → API. 대시보드 조회 REST 9개의 원천 (FR-12A).
 
-    행의 사람은 키 "subject" 에 Subject 로 담는다. 시각은 datetime 이다. 사용자 ID 는 API 가 지운다 (FR-11).
+    키는 architecture.md §5 "대시보드 조회" 형식 표다. 행의 사람은 키 "subject" 에 Subject 로 담는다. 시각은 시간대가 있는 datetime 이다.
+    API 는 Subject 를 이름으로 바꾸고 형식 밖의 키를 버린다. 허용 키의 값은 그대로 나가므로, 자유 문자열과 맵 키에 사용자 ID 를 넣지 않는다 (FR-11).
     """
 
     def place(self) -> Mapping[str, Any]: ...

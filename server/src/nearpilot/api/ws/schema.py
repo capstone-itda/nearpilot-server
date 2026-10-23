@@ -13,8 +13,10 @@ from nearpilot.api.ws.names import Person, PersonNames
 from nearpilot.shared.enums import (
     Action,
     ApprovalMode,
+    ApprovalStatus,
     Capability,
     DeviceState,
+    ExecutionStatus,
     Occupancy,
     ReasonCode,
     Step,
@@ -34,13 +36,22 @@ class SchemaError(ValueError):
 # (값, 경로, 이름표) → 내보낼 값. 어긋나면 SchemaError(경로). 이름표는 사람이 있는 obj 만 쓴다.
 _Check = Callable[[Any, str, PersonNames], Any]
 
-_STEPS = 7  # 판정 단계 ⓪~⑥ 일곱 칸
+# 판정 단계 ⓪~⑥. Step 의 "0"~"6" 이다. step 이벤트의 step 은 이 일곱 값만 받는다 (감사 행의 step 은 Step 전체다)
+_JUDGMENT_STEPS = (
+    Step.DEDUP, Step.BEACON, Step.CANDIDATE, Step.PROXIMITY, Step.POLICY, Step.DEVICE_OCCUPANCY, Step.USER_OCCUPANCY,
+)
+_STEPS = len(_JUDGMENT_STEPS)  # 요청 한 건의 steps 는 일곱 칸
 
 
 def _str(value: Any, path: str, names: PersonNames) -> str:
     if not isinstance(value, str):
         raise SchemaError(path)
-    return str(value)  # StrEnum 멤버는 값 문자열로
+    text = str(value)  # StrEnum 멤버는 값 문자열로
+    try:
+        text.encode("utf-8")  # 짝 없는 서로게이트는 UTF-8 로 바꿀 수 없다. 본문을 만들 때 실패하므로 여기서 거른다
+    except UnicodeEncodeError:
+        raise SchemaError(path) from None  # 오류 메시지의 값을 잇지 않는다
+    return text
 
 
 def _bool(value: Any, path: str, names: PersonNames) -> bool:
@@ -67,13 +78,6 @@ def _time(value: Any, path: str, names: PersonNames) -> str:
     if not isinstance(value, datetime) or value.utcoffset() is None:  # 시간대가 없는 시각은 받지 않는다
         raise SchemaError(path)
     return value.isoformat(timespec="milliseconds")
-
-
-def _step_number(value: Any, path: str, names: PersonNames) -> int:
-    number = _int(value, path, names)
-    if not 0 <= number < _STEPS:
-        raise SchemaError(path)
-    return number
 
 
 def _lit(*allowed: str) -> _Check:
@@ -105,9 +109,8 @@ def _nummap(value: Any, path: str, names: PersonNames) -> dict[str, int | float]
         raise SchemaError(path)
     out: dict[str, int | float] = {}
     for key, number in value.items():
-        if not isinstance(key, str):
-            raise SchemaError(path)
-        out[str(key)] = _num(number, path, names)  # 키가 사용자 ID 일 수 있어 경로에 쓰지 않는다
+        text = _str(key, path, names)  # 키가 사용자 ID 일 수 있어 경로에 쓰지 않는다
+        out[text] = _num(number, path, names)
     return out
 
 
@@ -280,7 +283,7 @@ _EVENTS: dict[str, _Shape] = {
     ),
     "step": _shape(
         _req("requestId", _str),
-        _req("step", _step_number),
+        _req("step", _lit(*(step.value for step in _JUDGMENT_STEPS))),
         _req("result", _lit("pass", "stop")),
         _opt("detail", _str),
     ),
@@ -305,7 +308,7 @@ _EVENTS: dict[str, _Shape] = {
     "approval": _shape(
         _req("requestId", _str),
         _req("nodeId", _str),
-        _req("kind", _lit("requested", "approved", "rejected", "expired")),
+        _req("kind", _lit("requested", ApprovalStatus.APPROVED.value, ApprovalStatus.DENIED.value, "expired")),
         person=_person_id,
     ),
     "audit": _shape(_req("row", _obj(_AUDIT_ROW))),
@@ -377,7 +380,7 @@ _REQUEST_PROGRESS = _shape(
     _opt("nodeId", _str),
     _opt("posteriors", _nummap),
     _opt("threshold", _num),
-    _opt("execution", _lit("sent", "succeeded", "failed", "unknown")),
+    _opt("execution", _enum(ExecutionStatus)),
     _opt("accessRequestedAt", _time),
     _opt("accessExpiredAt", _time),
     _opt("respondedAt", _time),

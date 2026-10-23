@@ -18,7 +18,7 @@
 - 출력:
   - WebSocket `/dashboard/stream`: 메시지 하나는 `{"v": 1, "events": [...]}`다. 연결 직후 첫 메시지는 지금 상태를 다시 보낸 이벤트 묶음이다.
   - 조회 REST `GET /dashboard/...` 9개: 장소, 점유, 승인, 감사 로그, 이력, 요청 한 건, 신뢰도 지표, 대여 한 건, 점검.
-  - 이벤트와 응답의 모양은 대시보드의 `dashboard/src/model/events.ts`, `types.ts`와 같다. 키는 camelCase다.
+  - 이벤트와 응답의 키와 값은 `docs/architecture.md` §5 "대시보드 조회"와 "WebSocket"의 형식 표다. 기본 모양은 대시보드의 `events.ts`, `types.ts`와 같고, 6절의 차이(시각, 열거형 값, 승인 결정, 도구 6개)는 대시보드 어댑터가 맞춘다.
 - 바뀌는 상태: 서버 저장 상태는 바꾸지 않는다. 메모리에 사람 이름표(사용자 ID → 이름)와 연결별 대기열만 둔다.
 - 약속:
   - 사용자 ID를 지우는 곳은 하나다. 허브와 조회 라우터가 `Subject`를 사람 필드(`personId`, `pseudonym`, `letter`, `role`)로 바꾸고, 형식 표의 허용 키만 남긴다. 이벤트를 만드는 영역이 넘긴 그 밖의 키는 버린다 (FR-11, NFR-08).
@@ -27,43 +27,12 @@
   - 조회 REST는 `GET`만 둔다. 대시보드는 서버에 쓰지 않는다 (FR-12A).
   - 연결 함수 `create_dashboard_router(...)`가 FastAPI 라우터를 만든다. 서버 앱에 붙이는 일은 조립이 한다.
 
-### 메시지 형식 (FR-12B)
+### 형식 (FR-12A, FR-12B)
 
-시각은 모두 ISO 8601 문자열(밀리초, 시간대 포함, 예 `2026-10-23T14:03:05.120+09:00`)이다. 사람 필드는 `personId`(불투명한 `p1`, `p2`, …), `pseudonym`, `letter`(방문자만), `role`(`visitor`, `owner`)이다.
-
-| `type` | 허용 키 (모든 이벤트에 `type`, `at`) | 사람 필드 |
-|---|---|---|
-| `beacon` | `seen` | 모두 |
-| `rssi` | `rssi` (기기 ID → dBm) | `personId` |
-| `mcp_call` | `requestId`, `tool`, `target` (`kind`, `capability`, `nodeId`), `action` | `personId` |
-| `step` | `requestId`, `step` (0~6), `result` (`pass`, `stop`), `detail` | 없음 |
-| `posterior` | `requestId`, `posteriors` (기기 ID → 확률), `threshold` | 없음 |
-| `verdict` | `requestId`, `verdict`, `reason`, `nodeId` | 없음 |
-| `command` | `requestId`, `nodeId`, `action` | 없음 |
-| `exec_result` | `requestId`, `nodeId`, `result` (`succeeded`, `failed`, `unknown`) | 없음 |
-| `mcp_result` | `requestId` | 없음 |
-| `transition` | `nodeId`, `to`, `overdue`, `fault` (`cause`, `action`) | 없음 |
-| `approval` | `requestId`, `nodeId`, `kind` (`requested`, `approved`, `rejected`, `expired`) | `personId` |
-| `audit` | `row` (`id`, `at`, `step`, `nodeId`, `text`, `code`) | 없음 |
-
-- `requestId`는 서버의 내부 요청 ID다. 호스트가 보낸 `request_id`가 아니다.
-- 값이 없는 선택 키는 보내지 않는다.
-
-### 조회 REST (FR-12A)
-
-| 경로 | 응답 (`types.ts`) | 사람 필드 |
-|---|---|---|
-| `GET /dashboard/place` | `PlaceInfo` | 없음 |
-| `GET /dashboard/uses` | `UseRow[]` | `personId` |
-| `GET /dashboard/approvals` | `Approvals` | 행마다 `personId` |
-| `GET /dashboard/audit?limit=` | `AuditRow[]` (최근 것부터) | 없음 |
-| `GET /dashboard/history?period=&verdict=&nodeId=` | `HistoryRow[]` | `personId` |
-| `GET /dashboard/requests/{request_id}` | `RequestProgress` | `personId` |
-| `GET /dashboard/trust` | `TrustReport` | 없음 |
-| `GET /dashboard/rentals/{node_id}` | `RentalInfo` | `personId` |
-| `GET /dashboard/health` | `Health` | `beacons`의 행마다 `personId` |
-
-- 오류 응답은 `{"error": "<사유 코드>"}`다 (architecture.md §5 REST 공통 규칙, #184). 조회 경로가 받지 않는 메서드(405)와 없는 경로(404)는 FastAPI 기본 본문이다.
+- 형식 표는 `docs/architecture.md` §5에 있다. 이 작업은 그 표를 `api/ws/schema.py`에 그대로 옮긴다.
+- 조회 경로: `GET /dashboard/place`, `/uses`, `/approvals`, `/audit?limit=`, `/history?period=&verdict=&nodeId=`, `/requests/{request_id}`, `/trust`, `/rentals/{node_id}`, `/health`.
+- 오류 응답은 `{"error": "<사유 코드>"}`다 (architecture.md §5 REST 공통 규칙, #184). 사유 코드는 `ReasonCode` 값이다.
+- 설정 `DashboardSettings`: `queue_max_events`, `batch_max_events`, `audit_limit_max`는 1 이상의 정수(bool 제외), `auth_timeout_sec`는 0보다 큰 유한한 수다. 아니면 `ValueError`다. 조립이 `[dashboard]` 섹션의 같은 이름 키로 만든다.
 
 ## 3. 제약
 
@@ -128,14 +97,21 @@
 | 요청·대여 한 건이 없다 | 404 `USE_NOT_FOUND` | `test_FR12A_없는_요청과_대여는_404` |
 | 조회 접점이 예외를 내거나 형식이 틀린 결과를 준다 | 500 `INTERNAL_ERROR`. 예외 내용은 응답에 쓰지 않는다 | `test_FR12A_조회가_실패하면_500` |
 | `limit`이 숫자가 아니거나 1 미만, `period`가 없거나 비었음, `verdict`가 판정 값이 아님 | 400 `INVALID_INPUT`. 조회 접점을 부르지 않는다 | `test_FR12A_조회_인자가_틀리면_400` |
-| `limit`이 한도보다 크다 | 한도로 줄여 부른다 | `test_FR12A_감사_조회는_한도로_줄인다` |
-| 쓰기 메서드 (`POST`, `PUT`, `PATCH`, `DELETE`) | 405 | `test_FR12A_조회_경로는_GET만_받는다` |
+| `limit`이 한도보다 크거나 없다 | 한도로 부른다 | `test_FR12A_감사_조회는_한도로_줄인다` |
+| `nodeId`가 비었거나 없다, `verdict`가 없다, 모르는 질의 인자가 있다 | `None`으로 부른다. 모르는 인자는 무시한다. `period`는 고치지 않고 넘긴다 | `test_FR12A_이력_조회는_선택_인자가_없으면_None으로_부른다` |
+| 쓰기 메서드 (`POST`, `PUT`, `PATCH`, `DELETE`) | 405 `INVALID_INPUT`, `Allow: GET` | `test_FR12A_조회_경로는_GET만_받는다` |
+| MCP 앱을 루트에 붙여 조립한 서버에서 쓰기 메서드, 없는 `/dashboard/...` 경로 | 405 `INVALID_INPUT`, 404 `USE_NOT_FOUND`. 인증하지 않고 조회 접점을 부르지 않는다 | `test_FR12A_MCP_앱을_루트에_붙여도_쓰기는_405이고_없는_경로는_404` |
+| 이벤트나 조회 결과의 문자열을 UTF-8로 바꿀 수 없다 | 형식 오류다. 그 이벤트만 버리고, 조회는 500 `INTERNAL_ERROR` | `test_FR12B_인코딩할_수_없는_문자열은_형식_오류다`, `test_FR12A_인코딩할_수_없는_조회_결과는_500` |
+| 발행 영역이 `shared/enums.py` 값(`Step`, `ApprovalStatus`, `ExecutionStatus`)을 그대로 넘긴다 | 받는다 | `test_FR12B_형식_값은_shared_열거형_값을_쓴다` |
+| 인증 뒤 클라이언트가 메시지를 보낸다 (다시 보낸 인증 포함) | 읽고 버린다 | `test_FR12B_인증_뒤_클라이언트가_보낸_메시지는_무시한다` |
+| 이미 본 사용자가 다른 역할로 온다 | 처음 이름표를 그대로 쓴다 | `test_FR12B_이미_본_사용자는_나중에_다른_역할로_와도_처음_이름표를_유지한다` |
+| 허브 안에서 예상하지 못한 예외 | 로그만 남기고 돌아간다 | `test_NFR07_허브_안의_예상하지_못한_예외도_로그만_남기고_돌아간다` |
 
 ## 6. 결정
 
-- 메시지 형식은 대시보드의 `events.ts`와 같은 이벤트 종류와 키로 한다 — 같은 담당이 만든 화면이 이미 이 모양으로 쌓이고, 서버 어댑터가 모양을 바꾸지 않아도 된다.
+- 메시지 형식은 대시보드의 `events.ts`와 같은 이벤트 종류와 키를 바탕으로 한다 — 같은 담당이 만든 화면이 이미 이 모양으로 쌓인다. 값은 `shared/enums.py`를 따르고(단계 `"0"`~`"6"`, 승인 결정 `approved`·`denied`, 실행 `ExecutionStatus`), 화면 값으로 바꾸는 일은 어댑터가 한다 — 발행 영역과 조회 서비스가 열거형 값을 그대로 넘긴다 (spec 3절).
 - 시각은 화면 문자열(`HH:MM:SS.mmm`)이 아니라 ISO 8601로 보낸다 — 날짜가 바뀌는 이력과 조회에서도 같은 형식을 쓰고, 화면 형식은 어댑터가 정한다.
-- 승인 이벤트의 `kind`에 소유자 결정(`approved`, `rejected`)을 더한다 — FR-12B가 소유자 결정을 스트림 항목으로 둔다. 대시보드 리듀서는 아직 `requested`, `expired`만 읽는다 (어댑터 작업에서 맞춘다).
+- 승인 이벤트의 `kind`에 소유자 결정(`approved`, `denied`)을 더한다 — FR-12B가 소유자 결정을 스트림 항목으로 둔다. 대시보드 리듀서는 아직 `requested`, `expired`만 읽는다 (어댑터 작업에서 맞춘다).
 - 사람 이름은 서버 프로세스가 끝날 때까지 유지하고 다시 시작하면 새로 붙인다 — 시연 세션 하나에서 같은 사람이 같은 이름이면 되고, 사용자 ID와 이름의 대응을 저장하지 않는다. `personId`도 같은 기간 동안만 쓰는 불투명한 값이다.
 - 소유자가 여럿이어도 이름은 모두 `소유자`다. `personId`로 구분한다.
 - 스트림 인증은 연결 뒤 첫 메시지 `{"type": "auth", "token": "..."}`로 한다 — 브라우저 WebSocket은 `Authorization` 헤더를 보낼 수 없고, 주소의 질의 문자열에 토큰을 두면 접속 기록에 남는다.
@@ -152,12 +128,15 @@
 - 연결 직후의 지금 상태 메시지는 묶음 크기로 나누지 않는다 — 지금 상태는 한 번에 받아야 대시보드가 같은 순간을 그린다. 그 뒤 메시지는 묶음 크기 이하다.
 - null 허용 키(`latencyMedianSec`, `latencyP95Sec`, 지표의 `pass`, 점검 비콘의 `lastSeenSec`)는 값이 없을 때 조회 서비스가 키를 빼지 않고 `None`을 넣는다. 수는 파이썬 `int`·`float`만 받는다 — 형식 검사가 키 누락과 값 없음을 구분한다.
 - 스트림은 UTF-8로 바꿀 수 없는 토큰을 계정 조회 전에 토큰 오류(4401)로 닫는다 — 해시에서 실패해 서버 오류(1011)로 닫히면 대시보드가 다시 연결을 되풀이한다.
+- 대시보드 라우터 끝에 `/dashboard/...` 받이 경로를 둔다 — 조립이 MCP 앱을 루트에 붙이면 받이가 없는 쓰기 요청과 없는 경로가 MCP 앱으로 간다.
+- 형식 검사는 UTF-8로 바꿀 수 없는 문자열(값, 맵 키)을 형식 오류로 본다 — 보내는 순간 인코딩이 실패해 같은 묶음의 정상 이벤트와 연결까지 잃지 않게 한다.
+- 이름표는 처음 본 역할을 유지하고, 인증 뒤 클라이언트 메시지는 모두 버린다 — 스트림은 서버에서 대시보드로만 흐른다.
 - 테스트는 ASGI 앱을 직접 부른다 — dev 의존성에 `httpx`가 없다 (`tests/api/_mcp_client.py`와 같은 방식).
 
 ## 7. 가정
 
 - 시연은 장소 하나다. 소유자는 스트림과 조회에서 모든 기기를 본다. 장소별로 거르는 일은 장소가 둘 이상이 될 때 정한다 — 미결 (이슈 없음)
-- 감사 행의 `text`, 단계의 `detail`에 사용자 ID를 넣지 않는 것은 발행 영역과 조회 서비스가 지킨다. 이 작업은 키 단위로만 거른다 — 미결 (이슈 없음)
+- 자유 문자열(감사 `text`, 단계 `detail`, 이력 `outcome`, 점유 `sessionNote`, 점검 `note`, 대여 타임라인 `text`, 지표 문구)과 맵 키(`rssi`, `posteriors`)에 사용자 ID를 넣지 않는 것은 값을 만드는 쪽이 지킨다 (architecture.md §4). 이 작업은 키 단위로만 거른다.
 
 ## 8. 테스트
 
@@ -166,6 +145,8 @@
 | FR-11, NFR-08 | 5절의 `test_FR11_*` | 허용 목록 밖의 키와 사용자 ID가 나가지 않는다 |
 | FR-12B | 5절의 `test_FR12B_*` | 이름, 형식 검사, 발행, 지금 상태, 묶음, 대기열, 인증 |
 | FR-12A | 5절의 `test_FR12A_*` | 조회 9개의 인증, 인자, 오류, 쓰기 거부 |
-| FR-12A | `test_FR12A_조회_경로_9개가_접점_결과를_형식대로_돌려준다` | 경로마다 접점을 부르고 `types.ts` 모양으로 돌려준다 |
+| FR-12A | `test_FR12A_조회_경로_9개가_접점_결과를_형식대로_돌려준다` | 경로마다 접점을 기대 인자로 한 번 부르고 형식 검사 결과를 돌려준다 |
+| FR-12A | `test_FR12A_조회_종류마다_형식대로_돌려준다` | 조회 9종의 결과가 architecture.md §5 형식 표의 키와 값이다 (리터럴 기대값) |
 | FR-12B | `test_FR12B_이벤트_종류마다_형식대로_보낸다` | 이벤트 종류 12개가 형식 표의 키로 나간다 |
-| NFR-07 | `test_NFR07_발행자가_예외를_받지_않는다` | 허브 내부 오류가 발행자에게 가지 않는다 |
+| NFR-07 | `test_NFR07_발행자가_예외를_받지_않는다` | 이름표 예외와 닫힌 루프가 발행자에게 가지 않는다 |
+| NFR-07 | `test_NFR07_허브_안의_예상하지_못한_예외도_로그만_남기고_돌아간다` | `publish` 바깥 처리가 그 밖의 예외도 흡수한다 |
