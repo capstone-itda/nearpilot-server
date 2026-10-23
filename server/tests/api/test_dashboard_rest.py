@@ -326,6 +326,31 @@ def test_FR12B_인코딩할_수_없는_문자열은_형식_오류다(bad, path, 
     assert "\ud800" not in caplog.text
 
 
+@pytest.mark.parametrize("big", [2**53, -(2**53), 10**5000], ids=["safe_max_plus_1", "safe_min_minus_1", "huge"])
+def test_FR12B_범위_밖_정수는_형식_오류다(big):
+    for edge in (2**53 - 1, -(2**53 - 1)):  # 경계 안은 받는다
+        render_event(MonitorEvent("posterior", NOW, {"requestId": "r1", "posteriors": {}, "threshold": edge}),
+                     PersonNames())
+    bad = MonitorEvent("posterior", NOW, {"requestId": "r1", "posteriors": {}, "threshold": big})
+    with pytest.raises(SchemaError) as error:
+        render_event(bad, PersonNames())
+    assert str(error.value) == "posterior.threshold"
+    rig = Rig()
+    after = MonitorEvent("mcp_result", NOW, {"requestId": "after"})
+
+    async def main():
+        async with WsClient(rig.app, "/dashboard/stream") as ws:
+            await ws.send_json({"type": "auth", "token": OWNER_TOKEN})
+            assert (await ws.receive_json())["events"] == []
+            rig.hub.publish(bad)  # 그 이벤트만 버려진다. 대기열에 들어가면 보내다 연결이 1011 로 닫힌다
+            rig.hub.publish(after)
+            return await ws.receive_json()
+
+    assert run(main()) == {"v": 1, "events": [{"type": "mcp_result", "at": ISO, "requestId": "after"}]}
+    rig.queries.place_data = {**rig.queries.place_data, "weakRssiDbm": big}
+    assert run(rig.fetch("/dashboard/place")) == (500, {"error": "INTERNAL_ERROR"})
+
+
 @pytest.mark.parametrize(
     ("path", "query"),
     [
@@ -422,7 +447,9 @@ def test_FR12A_이력_조회는_선택_인자가_없으면_None으로_부른다(
 @pytest.mark.parametrize("route", ROUTES, ids=kind_of)
 def test_FR12A_조회_경로는_GET만_받는다(route, method):
     rig = Rig()
-    assert run(rig.fetch(route.path, route.query, method=method)) == (405, {"error": "INVALID_INPUT"})
+    spy = HeaderSpy(rig.app)
+    status, body = run(http_request(spy, method, route.path, query=route.query, headers=OWNER_HEADERS))
+    assert (status, body, spy.headers.get("allow")) == (405, {"error": "INVALID_INPUT"}, "GET")
     assert rig.queries.calls == []
 
 

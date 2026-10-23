@@ -1,4 +1,4 @@
-"""모니터링 이벤트와 조회 결과의 형식 (spec 2절). 허용 목록 밖의 키는 버린다 (FR-11, NFR-08)."""
+"""모니터링 이벤트와 조회 결과의 형식 (architecture.md §5 "대시보드 조회", "WebSocket"). 허용 목록 밖의 키는 버린다 (FR-11, NFR-08)."""
 
 from __future__ import annotations
 
@@ -54,6 +54,9 @@ def _str(value: Any, path: str, names: PersonNames) -> str:
     return text
 
 
+_SAFE_INT = 2**53 - 1
+
+
 def _bool(value: Any, path: str, names: PersonNames) -> bool:
     if not isinstance(value, bool):
         raise SchemaError(path)
@@ -62,6 +65,8 @@ def _bool(value: Any, path: str, names: PersonNames) -> bool:
 
 def _int(value: Any, path: str, names: PersonNames) -> int:
     if isinstance(value, bool) or not isinstance(value, int):  # bool 은 int 의 하위 형이다
+        raise SchemaError(path)
+    if abs(value) > _SAFE_INT:  # 대시보드(JS)가 정확히 읽는 범위. 아주 큰 정수는 json.dumps 도 실패한다
         raise SchemaError(path)
     return value
 
@@ -249,7 +254,7 @@ def _obj(shape: _Shape) -> _Check:
     return check
 
 
-# 이벤트 (spec 2절 메시지 형식)
+# 이벤트 (architecture.md §5 WebSocket 형식 표)
 
 _TARGET = _shape(_req("kind", _enum(TargetKind)), _opt("capability", _enum(Capability)), _opt("nodeId", _str))
 _FAULT = _shape(_req("cause", _enum(ReasonCode)), _opt("action", _enum(Action)))
@@ -314,7 +319,7 @@ _EVENTS: dict[str, _Shape] = {
     "audit": _shape(_req("row", _obj(_AUDIT_ROW))),
 }
 
-# 조회 결과 (spec 2절 조회 형식)
+# 조회 결과 (architecture.md §5 "대시보드 조회" 형식 표)
 
 _DEVICE_INFO = _shape(
     _req("nodeId", _str),

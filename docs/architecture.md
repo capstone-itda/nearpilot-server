@@ -149,7 +149,7 @@ api  ──▶  core  ──▶  db
 | 기능 인터페이스 | CORE | API | MCP 도구 6개와 관리 기능 (계정 등록, 기기 신뢰, 정책, 승인, `FAULT` 복구) |
 | 승인 알림 인터페이스 | API | CORE | 승인 대기가 생기면 CORE가 소유자 앱 알림을 요청한다. 요청에는 승인 요청 식별자를 담는다. 전달 실패는 승인 상태와 판정을 바꾸지 않는다. 전달 수단은 미결이다 (FR-03). |
 | 모니터링 발행 인터페이스 | API (`api/ws`) | 판정, 상태 관리, IOT, MCP 도구 | 사건이 난 영역이 그 자리에서 이벤트를 넘긴다 (`MonitorFeed.publish`). 어느 스레드에서 불러도 막지 않고 예외를 올리지 않는다. 모니터링의 실패는 판정과 실행을 바꾸지 않는다 (NFR-07). 사람은 사용자 ID와 역할(`Subject`)로 넘기고, API가 이름으로 바꾸며 형식 밖의 키를 버린다 (FR-11). 형식은 §5 WebSocket이다. 자유 문자열(`detail`, 감사 `text`)과 맵 키에 사용자 ID를 넣지 않는 것은 발행 영역이 지킨다 (2026-10-23 팀 결정). |
-| 대시보드 조회 인터페이스 | CORE (대시보드 조회 서비스) | API (`api/ws`, `api/rest`) | 스트림 연결 직후의 지금 상태(`MonitorSnapshot.current_events`)와 조회 REST 9개의 결과(`DashboardQueries`)를 준다. 조회 서비스는 저장소의 읽기 메서드 위에서 만든다. DB는 필요한 읽기 메서드를 더한다. 결과는 §5 REST "대시보드 조회" 형식의 키로 담고, 사람은 `Subject`, 시각은 시간대가 있는 `datetime`, 수는 `int`·`float`로 넘긴다. null 허용 키는 값이 없어도 키를 빼지 않고 `None`을 넣는다. API는 형식 밖의 키를 버리지만 허용 키의 값은 그대로 보낸다. 자유 문자열(감사 `text`, 단계 `detail`, 이력 `outcome` 등)과 맵 키에 사용자 ID를 넣지 않는 것은 값을 만드는 쪽이 지킨다 (2026-10-23 팀 결정). |
+| 대시보드 조회 인터페이스 | CORE (대시보드 조회 서비스) | API (`api/ws`, `api/rest`) | 스트림 연결 직후의 지금 상태(`MonitorSnapshot.current_events`)와 조회 REST 9개의 결과(`DashboardQueries`)를 준다. 조회 서비스는 저장소의 읽기 메서드 위에서 만든다. DB는 필요한 읽기 메서드를 더한다. 결과는 §5 REST "대시보드 조회" 형식의 키로 담고, 사람은 `Subject`, 시각은 시간대가 있는 `datetime`, 수는 `int`·`float`로 넘긴다. null 허용 키는 값이 없어도 키를 빼지 않고 `None`을 넣는다. API는 형식 밖의 키를 버리지만 허용 키의 값은 그대로 보낸다. 자유 문자열(감사 `text`, 단계 `detail`, 이력 `outcome`, 점유 `sessionNote`, 점검 `note`, 대여 타임라인 `text`, 지표 문구)과 맵 키에 사용자 ID를 넣지 않는 것은 값을 만드는 쪽이 지킨다 (2026-10-23 팀 결정). |
 | 도메인 모델·열거형 | 공동 | 전체 | 상태 값, 판정 결과 (`OK`, `BUSY`, `ASK`, `DENY`, `NEED_APPROVAL`), 사유 코드, 요청과 판정과 점유 세션의 값 객체 |
 
 - 명령을 보내지 않은 것이 확실한 취소에만 CORE는 예약과 승인 사용분을 자동으로 반환한다.
@@ -1255,7 +1255,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
   - `GET /dashboard/rentals/{node_id}`: 대여 한 건
   - `GET /dashboard/health`: 기기 연결·신뢰, 비콘 수신, 서버 점검
 - 쓰기 메서드는 405 `INVALID_INPUT`(`Allow: GET`), 조회 경로가 아닌 `/dashboard/...`는 404 `USE_NOT_FOUND`다. 조회 처리기와 조회 서비스에 닿지 않는다.
-- 사람은 `personId`(서버 프로세스 동안 쓰는 불투명한 값)로만 보낸다. 표의 키만 보낸다. 선택 키는 값이 없으면 빼고, null 허용 키(∅)는 값이 없으면 `null`이다. 열거형 값은 `shared/enums.py`의 값 문자열이다.
+- 사람은 `personId`(서버 프로세스 동안 쓰는 불투명한 값)로만 보낸다. 표의 키만 보낸다. 선택 키는 값이 없으면 빼고, null 허용 키(∅)는 값이 없으면 `null`이다. 열거형 값은 `shared/enums.py`의 값 문자열이다. 정수는 ±(2^53−1) 안이다. 판정 수(`counts`의 값, `decisions`, `doubleOccupancy`), 점유 행 `uses`, 지표 `id`는 정수이고, 평가 `date`는 문자열이다.
 
 | 형식 | 키 (✔ 필수, ∅ null 허용, 나머지 선택) |
 |---|---|
@@ -1294,6 +1294,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `transition` | `nodeId` ✔, `to` ✔ (`DeviceState`), `overdue`, `fault` [`cause` ✔, `action`] | 없음 |
 | `approval` | `requestId` ✔, `nodeId` ✔, `kind` ✔ (`requested`, `approved`, `denied`, `expired`) | `personId` |
 | `audit` | `row` ✔ (REST 감사 행과 같다) | 없음 |
+
 - 닫기 코드: 4401 토큰 오류, 4403 소유자 아님, 4408 인증 기한, 1011 서버 오류, 1013 대기열 넘침. 1011과 1013이면 대시보드가 다시 연결해 지금 상태를 다시 받는다.
 - 이름은 서버 프로세스가 끝날 때까지 유지한다. 방문자는 처음 나타난 순서로 글자를 받는다. 소유자가 여럿이어도 이름은 모두 `소유자`다.
 

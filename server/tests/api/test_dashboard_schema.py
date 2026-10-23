@@ -209,7 +209,7 @@ def full_expected(case: EventCase) -> dict[str, Any]:
     return {"type": case.type, "at": ISO, **case.expected}
 
 
-def test_FR12A_FR12B_형식_이름_집합이_spec_표와_같다():
+def test_FR12A_FR12B_형식_이름_집합이_architecture_표와_같다():
     assert EVENT_TYPES == {
         "beacon", "rssi", "mcp_call", "step", "posterior", "verdict", "command", "exec_result", "mcp_result",
         "transition", "approval", "audit",
@@ -274,11 +274,11 @@ def test_FR12B_시각은_밀리초까지_시간대와_함께_보낸다(at, text)
     assert render_event(event("mcp_result", {"requestId": "req-1"}, at=at), PersonNames())["at"] == text
 
 
-@pytest.mark.parametrize("threshold", [1, 0, -3, 0.5, -0.0, 1e308, 10**400])
+@pytest.mark.parametrize("threshold", [1, 0, -3, 0.5, -0.0, 1e308, 2**53 - 1])
 def test_FR12B_숫자는_정수와_실수를_그대로_보낸다(threshold):
     fields = {**GOOD["posterior"].fields, "threshold": threshold}
     sent = render_event(event("posterior", fields), PersonNames())["threshold"]
-    assert sent == threshold and type(sent) is type(threshold)  # 큰 정수에서 유한값 검사가 넘치지 않는다
+    assert sent == threshold and type(sent) is type(threshold)  # 범위 안의 가장 큰 정수도 그대로 간다 (범위 밖은 test_FR12B_범위_밖_정수는_형식_오류다)
 
 
 @pytest.mark.parametrize("case", EVENT_CASES, ids=lambda c: c.id)
