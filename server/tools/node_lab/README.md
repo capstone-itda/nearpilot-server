@@ -26,6 +26,7 @@ CORE가 허가한 명령만 기존 MQTT 경로로 보낸다.
 |---|---|
 | `node_configured` | 등록한 시험 기기의 발표를 받아 장소·신뢰·정책을 연결했다 |
 | `inventory_reloaded` | 새 기기를 기존 복원 경로로 읽도록 시험 Runtime을 재시작했다 |
+| `node_readiness` | 연결 ID, 온라인, 신뢰, 장소, `FAULT`, 실행 가능 여부·차단 사유가 바뀌었다. 바뀐 때만 쓴다 |
 | `node_observation` | RSSI, 관측·수신 시각, 물리 상태, 실행 가능 여부와 차단 사유다 |
 | `proximity_pending` | 유효한 현재 비콘 관측이 아직 없다 |
 | `proximity` | 기기별 사후확률, 가장 높은 기기, 임계값과 모델 버전이다 |
@@ -91,7 +92,7 @@ python -m tools.node_lab init --mode hardware --dir var/node-lab-hardware --host
 
 3. 실제 비콘의 UUID·major·minor를 `lab.json`에 넣는다. 처음 생성할 때 `--uuid`, `--major`, `--minor`로 지정해도 된다.
 4. 폐쇄망 시각원과 기기별 최대 시각 오차를 실측한다. `server.toml`의 `[delivery.clock_skew_sec]`에 기기별 초 값을 넣는다.
-5. 펌웨어의 Wi-Fi·MQTT·기기 ID·시각원·검증한 시각 오차를 맞춘다. MQTT 비밀번호는 시험 폴더의 `.env.light-1`처럼 기기별 파일을 쓴다.
+5. 모든 기기에 같은 펌웨어를 올리고, 아래 "USB 설정 주입"으로 기기마다 ID·접속 정보·네트워크를 넣는다.
 6. 첫 터미널에서 `broker --dir var/node-lab-hardware`, 두 번째에서 `run --dir var/node-lab-hardware`를 실행한다.
 7. iBeacon을 송출하고 ESP32 시리얼의 `BLE_BEACON`과 서버의 `node_observation`을 비교한다.
    송출 앱이 없으면 보유 ESP32 한 대를 `firmware/node_lab/`의 선택 `ibeacon` 환경으로 쓴다.
@@ -106,6 +107,54 @@ AP 안의 NTP 서버 운영과 Windows 방화벽의 MQTT 포트 허용은 환경
 합성 모델은 `models/node-lab/synthetic-1.json`이다. 좌표와 파라미터는 초기 예시다.
 실측 모델을 쓸 때는 `server.toml`의 모델 루트와 장소별 버전을 바꾼다.
 장소 ID는 이 도구의 시험 장소인 `node-lab`과 일치해야 한다.
+
+## USB 설정 주입
+
+모든 기기에 같은 펌웨어를 쓴다. 기기 ID, MQTT 계정, Wi-Fi, 서버·시각원 주소와 시각 신뢰 값은 USB로 한 번 넣는다.
+기기는 이 값을 명령 기록과 다른 NVS 영역에 보존한다. 재부팅과 펌웨어 재업로드 뒤에도 남는다.
+`erase_flash`는 명령 기록도 지우므로 쓰지 않는다.
+
+1. 시험 폴더에 `.env.wifi.json`을 만든다. 내용은 `{"ssid": "...", "password": "..."}`다. Git에서 제외된다.
+2. 저장소 루트에서 PlatformIO의 Python으로 실행한다. 시리얼 모니터와 함께 포트를 열지 않는다.
+
+```powershell
+.\firmware\node_lab\.venv\Scripts\python.exe server/tools/node_lab/provision.py --dir server/var/node-lab-hardware --node light-1 --port COM6 --time-server 192.168.0.10 --time-trust-sec 120 --time-resync-sec 60
+```
+
+| 값 | 읽는 곳 |
+|---|---|
+| 기기 ID, MQTT 사용자명 | `--node`. 시험 폴더 `lab.json`의 `nodes`에 있어야 한다 |
+| MQTT 비밀번호 | 시험 폴더의 `.env.<기기 ID>` |
+| Wi-Fi | `.env.wifi.json` 또는 `--wifi-file` |
+| MQTT 주소·포트 | `server.toml`의 `[mqtt]` |
+| 최대 시각 오차 | `server.toml`의 `[delivery.clock_skew_sec]`. 없으면 `-1`(미검증)을 넣는다 |
+| 시각원, 신뢰 기간, 재동기화 간격 | 명령 인자. 검증한 값을 넣는다 |
+
+- 비밀번호는 명령 인자로 받지 않는다. `provision.jsonl`과 화면에는 비밀값과 SSID의 바이트 수만 쓴다.
+- 기기는 값을 검사한 뒤 한 번에 저장하고 다시 읽어 확인한다. 그다음 재시작한다. 도구는 `CONFIG?` 응답으로 저장 값을 대조한다.
+- 명령 기록이 있는 기기의 ID를 바꾸면 기기가 거부한다(`node_id_change_with_records`). 기록을 지워서 우회하지 않는다.
+- 서버나 시각원 주소가 바뀌면 같은 명령으로 다시 주입한다. 재시작한 기기는 새 시각원과 다시 동기화한 뒤에만 시각을 신뢰한다.
+- 이 인증은 기기별 MQTT 계정이다. 앱·호스트 토큰과 다르다. 새 토큰을 만들지 않는다.
+
+## 부팅과 준비 확인
+
+```powershell
+.\firmware\node_lab\.venv\Scripts\python.exe server/tools/node_lab/boot_check.py --port COM6 --output server/var/node-lab-hardware/boot-1.jsonl --duration 90 --reset --stop-when-ready
+```
+
+`--reset`은 USB 신호로 EN 재시작을 대신한다. 전원 재투입과 EN 버튼은 `--reset` 없이 실행한 뒤 직접 누른다.
+도구는 마지막 부팅의 단계 로그를 읽고 아래 순서를 검사한다. 순서가 다르거나 준비에 도달하지 못하면 종료 코드 1이다.
+
+1. `NODE_START` (설정 상태, 재시작 원인)
+2. `WIFI_CONNECTED`
+3. `CLOCK_SYNCED` → `CLOCK_TRUSTED`
+4. `MQTT_CONNECTED` (시각 신뢰와 순서 무관, 새 연결 ID와 구독)
+5. `ANNOUNCED` (그 연결에서 시각 신뢰 뒤)
+6. `NODE_READY`
+
+`--duration`을 길게 주면 이후의 끊김과 회복 시간도 `recoveries`에 남긴다.
+기기의 `NODE_READY`는 연결 조건이다. 서버의 실행 가능 여부는 콘솔의 `node_readiness`로 확인한다.
+`FAULT`인 기기는 연결이 준비돼도 `ready=false`, `fault=true`다. 재부팅과 재주입으로 풀리지 않는다.
 
 ## USB 시각 실측
 

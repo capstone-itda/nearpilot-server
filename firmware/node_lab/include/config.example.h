@@ -1,26 +1,16 @@
 #pragma once
-// Copy to config.local.h. That local file is ignored by Git.
+// Build-time tuning shared by every lab device. Copy to config.local.h only to change it.
+// Device ID, MQTT account, Wi-Fi, server/time-source address and clock trust are NOT here:
+// they are injected over USB (`python -m tools.node_lab provision`) and kept in NVS.
 // No extra board is required. Leave OUTPUT_PIN=-1 for serial-only verification.
-#define NP_WIFI_SSID "REPLACE_WIFI_SSID"
-#define NP_WIFI_PASSWORD "REPLACE_WIFI_PASSWORD"
-#define NP_MQTT_HOST "192.168.0.10"
-#define NP_MQTT_PORT 18883
-#define NP_NODE_ID "light-1"
-#define NP_MQTT_USER "light-1"
-#define NP_MQTT_PASSWORD "REPLACE_FROM_LAB_ENV_FILE"
-// Local AP time source; do not assume that an Internet time server is reachable.
-#define NP_TIME_SERVER ""
-// Remains unverified until a device measurement supplies this bound.
-#define NP_CLOCK_MAX_ERROR_SEC -1.0
-// Choose these only after checking the actual device/time source. Zero disables trust.
-#define NP_TIME_TRUST_MS 0UL
-#define NP_TIME_RESYNC_MS 0UL
 #define NP_OUTPUT_PIN -1
 #define NP_OUTPUT_ACTIVE_HIGH true
 #define NP_RSSI_FRAME_MS 1000UL
 #define NP_STATUS_MS 1000UL
+// Retry starts at these minimums, doubles after each failure and stops at NP_RETRY_MAX_MS.
 #define NP_RECONNECT_MS 2000UL
 #define NP_WIFI_RECONNECT_MS 10000UL
+#define NP_RETRY_MAX_MS 30000UL
 #define NP_MQTT_KEEPALIVE_SEC 30
 #define NP_MQTT_IO_TIMEOUT_MS 2000
 #define NP_MAX_COMMAND_RECORDS 64

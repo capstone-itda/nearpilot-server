@@ -35,20 +35,23 @@ ESP32 한 대만 있으면 비콘 송신과 다른 기기의 실제 수신을 �
 
 ## 보드를 받은 뒤 설정
 
-1. `include/config.example.h`를 `include/config.local.h`로 복사한다. 로컬 파일은 Git에서 제외한다.
-2. Wi-Fi SSID·비밀번호, 서버 AP 주소·MQTT 포트, 기기 ID와 기기별 MQTT 자격정보를 넣는다.
-3. `NP_TIME_SERVER`에 같은 AP의 NTP 주소를 넣는다.
-4. 실측한 기기 최대 시각 오차를 `NP_CLOCK_MAX_ERROR_SEC`와 서버 `delivery.clock_skew_sec`에 넣는다.
-   시각원의 재동기화 간격 `NP_TIME_RESYNC_MS`와 신뢰 기간 `NP_TIME_TRUST_MS`도 검증한 값으로 넣는다.
-5. 보드 모델을 확인하고 업로드한다.
+모든 기기에 같은 펌웨어를 올린다. 기기별 값은 빌드에 넣지 않는다.
+
+1. 보드 모델을 확인하고 업로드한다. 업로드는 NVS를 지우지 않는다.
+2. 처음 부팅한 기기는 `CONFIG_MISSING`을 출력하고 네트워크를 시작하지 않는다.
+3. `server/tools/node_lab/README.md`의 "USB 설정 주입"으로 기기 ID, MQTT 계정, Wi-Fi, 서버·시각원 주소와 시각 신뢰 값을 넣는다.
+   최대 시각 오차는 서버 `delivery.clock_skew_sec`의 값을 그대로 쓴다.
+4. 이후에는 전원을 켜거나 EN을 누르면 자동으로 연결한다.
+
+`include/config.example.h`에는 모든 기기가 공유하는 주기·한도만 있다. 바꿀 때만 `config.local.h`로 복사한다.
 
 ```powershell
 .venv/Scripts/python -m platformio run --target upload
 .venv/Scripts/python -m platformio device monitor
 ```
 
-`NP_CLOCK_MAX_ERROR_SEC=-1`은 미검증이다. 기본값을 임의로 0으로 바꾸지 않는다.
-재동기화 간격과 신뢰 기간의 기본값 0도 미설정이다. 미설정인 동안 새 출력을 차단한다.
+최대 시각 오차 `-1`은 미검증이다. 임의로 0으로 바꾸지 않는다.
+재동기화 간격과 신뢰 기간 0도 미설정이다. 미설정인 동안 새 출력을 차단한다.
 시각 동기화만으로 오차 실측이 끝났다고 보지 않는다.
 동기화와 검증된 오차 한도가 모두 있어야 status·RSSI 전송과 새 명령 출력을 허용한다.
 시각 신뢰 기간이 지나면 새 출력을 다시 차단한다.
@@ -57,10 +60,18 @@ ESP32 한 대만 있으면 비콘 송신과 다른 기기의 실제 수신을 �
 
 | 시리얼 로그 | 뜻 |
 |---|---|
-| `NODE_START` | 기기 ID, 시리얼·GPIO 모드와 NVS 준비 상태다 |
+| `NODE_START` | 기기 ID, 설정 상태·세대, 시리얼·GPIO 모드, NVS 준비 상태와 재시작 원인이다 |
+| `CONFIG_MISSING` | 주입한 설정이 없어 네트워크를 시작하지 않았다 |
+| `CONFIG_STAGED`, `CONFIG_SAVED`, `CONFIG_REJECTED`, `CONFIG_STATE` | USB 설정 주입의 단계와 결과다. 비밀값은 바이트 수와 설정 여부만 쓴다 |
+| `WIFI_CONNECTING`, `WIFI_CONNECTED`, `WIFI_DISCONNECTED`, `WIFI_RETRY` | Wi-Fi 접속, 끊김 원인 코드와 다음 재시도 간격이다 |
+| `CLOCK_SOURCE` | 시각원 주소, 재동기화 간격, 신뢰 기간과 최대 오차다 |
+| `CLOCK_SYNCED`, `CLOCK_TRUSTED`, `CLOCK_TRUST_EXPIRED` | 동기화, 신뢰 시작과 신뢰 만료다 |
+| `MQTT_CONNECT_FAILED` | 브로커 주소, 라이브러리 오류, CONNACK 코드와 다음 재시도 간격이다 |
+| `MQTT_DISCONNECTED` | 끊긴 연결 ID와 오류다 |
+| `ANNOUNCE_DEFERRED`, `ANNOUNCED` | 시각 신뢰 전 발표 보류와 그 연결의 발표다 |
+| `NODE_READY`, `NODE_NOT_READY` | 기기 쪽 연결 조건의 충족과 첫 번째 차단 이유다. 실행 허가가 아니다 |
 | `BLE_BEACON` | UUID·major·minor, 평균 RSSI와 표본 수다 |
-| `CLOCK_UNVERIFIED` | BLE는 스캔하지만 신뢰할 시각이 없어 서버 관측과 새 출력을 막았다 |
-| `MQTT_CONNECTED` | 새 연결 ID로 접속하고 명령 토픽을 구독했다 |
+| `MQTT_CONNECTED` | 새 연결 ID로 접속하고 명령 토픽을 구독했다. 발표는 시각 신뢰 뒤에 한다 |
 | `MQTT_REPORT` | 보고 종류, 발행 순번과 MQTT 발행 결과다 |
 | `COMMAND_RECEIVED` | 명령 ID를 읽었다 |
 | `COMMAND_DUPLICATE` | NVS의 기존 결과를 재보고했다. 다시 출력하지 않는다 |
@@ -80,7 +91,9 @@ GPIO를 썼더라도 제어 신호만으로 실제 켜짐을 증명하지 못하
 - MQTT 3.1.1, QoS·retain과 v1 필드를 기존 계약대로 쓴다.
 - NimBLE에서 Apple iBeacon manufacturer data 25바이트를 읽는다.
 - RSSI는 약 1초 칸으로 평균한다. 비콘 슬롯과 보고 주기는 설정에서 받는다.
-- 연결마다 새 UUID와 토픽별 발행 순번을 쓴다.
+- 연결마다 새 UUID와 토픽별 발행 순번을 쓴다. 연결마다 시각을 신뢰한 뒤 한 번 발표한다.
+- Wi-Fi와 MQTT 재시도 간격은 최소값에서 두 배씩 늘어 `NP_RETRY_MAX_MS`에서 멈춘다.
+- 설정은 `np-config` 이름공간의 JSON 하나로 저장한다. 명령 기록은 `np-node-lab` 이름공간에 따로 둔다.
 - 명령 ID와 내용을 NVS에 저장하고 읽어 확인한 뒤 처리한다.
 - 재전송은 저장한 사건 ID·결과·시각을 유지한다. 재부팅 뒤 미완료 기록은 unknown으로 바꾼다.
 - NVS 슬롯이 차면 새 명령을 차단한다. 중복 방지 기록을 자동 삭제하지 않는다.

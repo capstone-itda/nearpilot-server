@@ -15,7 +15,7 @@ from nearpilot.core.admin.service import DefaultAdminService
 from nearpilot.db.repositories.admin_repository import SqliteAdminRepository
 from nearpilot.runtime import Runtime, load_config
 from nearpilot.shared.enums import (
-    AccessMode, Action, AdminWriteOutcome, AdminWriteReason, ApprovalMode, Capability,
+    AccessMode, Action, AdminWriteOutcome, AdminWriteReason, ApprovalMode, Capability, DeviceState,
     Role, TrustState, Verdict, Visibility,
 )
 from nearpilot.shared.models import BeaconKey, BeaconRegistration, PlaceAssignment, PolicySettings, TargetSpec, UseRequest
@@ -61,6 +61,7 @@ class Lab:
         self.runtime = Runtime(self.config)
         self.evidence = Evidence(self.folder / "evidence.jsonl", console=console)
         self._configured = set()
+        self._readiness = {}
         self._snapshot_lock = threading.RLock()
         self._restart_required = False
         self._stop = threading.Event()
@@ -132,9 +133,11 @@ class Lab:
             for node in nodes:
                 frame = latest.get(node.node_id)
                 status = self.runtime.services.node_events.latest_status(node.node_id)
+                ready = self.runtime.services.restore.can_execute(node.node_id)
+                blockers = self.runtime.services.restore.blockers(node.node_id)
+                self.report_readiness(node, ready=ready, blockers=blockers, current=now())
                 self.evidence.emit("node_observation", node_id=node.node_id, state=node.device_state,
-                    ready=self.runtime.services.restore.can_execute(node.node_id),
-                    blockers=self.runtime.services.restore.blockers(node.node_id),
+                    ready=ready, blockers=blockers,
                     rssi=frame.rssi if frame else None, frame_ts=frame.frame_ts if frame else None,
                     received_at=frame.received_at if frame else None,
                     status_observed_at=status.observed_at if status else None,
@@ -150,6 +153,17 @@ class Lab:
                 model_version=result.model_version, calib_version=result.calib_version,
                 threshold=self.config.settings.threshold_light)
             return dict(result.posteriors)
+
+    def report_readiness(self, node, *, ready: bool, blockers, current):
+        """Log only changes. FAULT stays visible; this log never clears or overrides it."""
+        ttl = timedelta(seconds=self.config.settings.online_ttl_sec)
+        state = dict(session_id=node.session_id,
+            online=node.last_seen_at is not None and current - node.last_seen_at <= ttl,
+            trusted=node.trust_state == TrustState.TRUSTED, place_id=node.place_id,
+            fault=node.device_state == DeviceState.FAULT, ready=ready, blockers=tuple(blockers))
+        if self._readiness.get(node.node_id) != state:
+            self._readiness[node.node_id] = state
+            self.evidence.emit("node_readiness", node_id=node.node_id, **state)
 
     def use(self, action: str, target: str = "nearest:light", *, request_id: str | None = None):
         with self._snapshot_lock:
