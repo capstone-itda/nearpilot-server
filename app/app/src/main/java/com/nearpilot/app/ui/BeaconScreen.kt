@@ -92,7 +92,7 @@ fun BeaconScreen(
 
 @Composable
 private fun IntroCard(onDismiss: () -> Unit) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("처음 오셨나요?", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text("1. '송출 시작'을 누르고 권한을 허용해 주세요.")
@@ -116,7 +116,7 @@ private fun StatusCard(state: BroadcastState, onAction: (StatusAction) -> Unit) 
         StatusTone.PROBLEM -> MaterialTheme.colorScheme.error to MaterialTheme.colorScheme.errorContainer
         StatusTone.IDLE -> MaterialTheme.colorScheme.outline to MaterialTheme.colorScheme.surfaceVariant
     }
-    Card(colors = CardDefaults.cardColors(containerColor = container)) {
+    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = container)) {
         Column(Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.size(14.dp).background(dot, CircleShape))
@@ -147,7 +147,7 @@ private fun IdentifierCard(
 ) {
     var editing by rememberSaveable { mutableStateOf(false) }
 
-    Card {
+    Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("내 비콘 값", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text(
