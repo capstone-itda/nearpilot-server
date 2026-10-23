@@ -152,6 +152,18 @@ describe('App', () => {
     expect(localStorage.getItem('nearpilot-arrangement:lounge')).toBeNull();
   });
 
+  it('FR12A D4 배치 화면의 장소 탭은 연 뒤에 무대의 장소가 바뀌어도 그대로다', async () => {
+    const { source, advance } = storySource('14:43:00');
+    const { container } = render(<App source={source} initialView="layout" />);
+    const tabs = await screen.findByRole('tablist', { name: '장소' });
+    const selected = () => tabs.querySelector('[aria-selected="true"]')!.textContent;
+    expect(selected()).toBe('공용 라운지');
+    // A가 옆방으로 옮겨 무대의 주 장소는 옆방이 되지만, 보던 탭은 그대로다
+    await advance('14:43:46');
+    expect(selected()).toBe('공용 라운지');
+    expect(container.querySelectorAll('[data-component="StageDevice"]').length).toBe(7);
+  });
+
   it('FR12A D4 기본 배치로 되돌리면 이전 열쇠의 배치도 지워 다시 열어도 되살아나지 않는다', async () => {
     localStorage.setItem(LEGACY_KEY, arrangementFile('공용 라운지'));
     const first = render(<App source={createMockSource({ scene: 'idle' })} initialView="layout" />);

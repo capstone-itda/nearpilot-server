@@ -25,8 +25,9 @@ export const NEAR_DWELL_SEC = 2;
 
 function nearOf(p: Person, rssi: Record<string, number>, at: string): Pick<Person, 'near' | 'nearCandidate'> {
   const best = Object.entries(rssi).sort((a, b) => b[1] - a[1])[0]?.[0];
-  if (!best) return { near: undefined, nearCandidate: undefined };
   const cur = p.near;
+  // 빈 묶음은 지금 기기를 그대로 둔다 (비콘이 끊기면 따로 지운다). 지우면 다음 묶음에서 2초 규칙 없이 다른 기기로 정한다
+  if (!best) return { near: cur, nearCandidate: undefined };
   // 처음 받았으면 바로 정한다
   if (!cur) return { near: best, nearCandidate: undefined };
   // 지금 기기의 신호가 한 묶음에서 빠지면 4dB 비교 없이 2초 규칙만 쓴다 (빠짐 하나로 장소가 바뀌지 않게)
