@@ -90,7 +90,7 @@ IR 무드등의 관측 근거가 없으면 `light_on=null`이다. IR 송출만�
 |---|---|---|
 | 1 | node_lab에서 실제 기기로 검증한 공통 동작을 `firmware/`의 모듈로 옮기고 단위 테스트 환경을 만든다 | 완료 (8절) |
 | 2 | 명령 기록의 상태 전이, 전원 차단 복원, 충돌, 저장 실패와 용량 | 구현 완료 (8절). 실제 연결의 재보고 확인 남음 |
-| 3 | 장치 기능·점유 방식의 USB 설정과 기능별 동작 검증 | 대기 |
+| 3 | 장치 기능·점유 방식의 USB 설정과 기능별 동작 검증 | 구현 예정 (2026-10-23 결정) |
 | 4 | 구동부·센서 인터페이스와 증명된 성공·실패·불명 결과 | 대기 |
 | 5 | `safety_check` 검사 기록, 근거 모델, v1 기준 표와 결과 규칙 | 대기 |
 | 6 | 센서 인터페이스로 만드는 상태 보고 | 대기 |
@@ -205,6 +205,16 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
 | 명령 기록이 크기 한도를 넘는다 | 기록하지 않고 `INVALID_MESSAGE`로 거부한다. 구동하지 않는다 | `test_FR06_invalid_message_no_actuation` |
 | node_lab이 남긴 기록의 명령이 다시 온다 | 기존 기록으로 처리하고 다시 구동하지 않는다 | `test_FR22_legacy_records_block_reexecution` |
 
+3단계의 사례와 테스트는 다음과 같다.
+
+| 요구사항 | 테스트 | 확인하는 것 |
+|---|---|---|
+| FR-04 | `test_FR04_announce_uses_configured_capability` | 모든 기능·점유 방식의 설정 값을 발표 본문에 넣는다 |
+| FR-06 | `test_FR06_capability_action_matrix` | 기능별 허용 동작과 검사 순서를 확인한다 |
+| NFR-08 | `test_NFR08_config_rejects_invalid_capability` | 기능 누락·타입·허용 값 오류를 키 이름으로 거부한다 |
+| NFR-08 | `test_NFR08_config_rejects_invalid_occupancy` | 점유 방식 누락·타입·허용 값 오류를 키 이름으로 거부한다 |
+| FR-22 | `test_FR22_changed_capability_preserves_duplicate` | 기능 변경 뒤에도 기존 결과를 재보고하고 구동하지 않는다 |
+
 ## 6. 결정
 
 - 기존 참고 문서 다섯 개를 이 spec으로 합친다 — 담당자가 2026-10-16에 #151의 문서를 spec으로 바꾸도록 지시했다.
@@ -225,6 +235,11 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
   - 설정은 기본 NVS의 `np-config`에 남는다. node_lab의 `np-node-lab` 기록은 읽고, 이미 있는 기록만 제자리에서 갱신한다.
   - 파티션을 열지 못하면 지우지 않고 `storage_unavailable`로 둔다.
 - 명령 처리 상태 전이는 `firmware/lib/np_executor/`에 둔다 — 담당자가 2026-10-23에 골랐다. 검사, 결과 발행, 구동과 시각·ID 생성은 `CommandPort` 인터페이스로 받는다. 테스트는 fake를 쓴다.
+
+- 3단계 설정은 `capability`와 `occupancy`를 필수 문자열로 받는다 — 담당자가 2026-10-23에 확정했다. 기존 설정은 재주입을 요구한다. 기본값을 채우거나 저장된 설정을 지우지 않는다. 재주입 전에는 설정 무효로 새 명령을 받지 않는다.
+- 기록이 있어도 기능과 점유 방식 변경을 허용한다 — 담당자가 2026-10-23에 확정했다. `node_id` 변경 차단과 기존 기록 우선 조회를 유지한다. 같은 명령 ID는 변경 후에도 기존 결과만 재보고한다. 서버의 신뢰 재설정은 FR-04를 따른다.
+- USB 키 목록만 확장한다 — 담당자가 2026-10-23에 확정했다. 주입 도구 변경은 경계 밖이라 멈추고 이슈 초안을 전달했다. 이슈는 생성하지 않는다. node_lab은 추가 키가 든 설정을 읽지만 발표는 고정이며 설정 재저장 시 추가 키를 없앤다. node_lab은 수정하지 않는다.
+- 3단계에서도 모든 기능의 제어 신호 뒤 결과는 `unknown`이다 — 담당자가 2026-10-23에 작업 범위를 정했다. `open`은 시리얼과 선택 GPIO 신호만 낸다. 스피커 완료 검증은 활성화하지 않는다.
 
 ## 7. 가정
 
@@ -288,6 +303,16 @@ MQTT 필드, 검사 기준의 뜻, 공용 설정과 다른 영역의 동작을 �
 | FR-05 | `test_FR05_ibeacon_decode` | iBeacon 제조사 데이터만 UUID·major·minor로 읽는다 |
 | FR-04 | `test_FR04_ready_requires_contract_order` | 준비 사유를 설정, 저장소, Wi-Fi, 시각, MQTT, 발표 순서로 정한다 |
 | FR-04 | `test_FR04_retry_backoff_caps` | 재시도 간격이 두 배씩 늘고 상한에서 멈춘다 |
+
+3단계 검증 계획:
+
+| 요구사항 | 테스트 | 확인하는 것 |
+|---|---|---|
+| FR-04 | `test_FR04_announce_uses_configured_capability` | 모든 기능·점유 방식의 설정 값을 발표 본문에 넣는다 |
+| FR-06 | `test_FR06_capability_action_matrix` | 기능별 허용 동작과 검사 순서를 확인한다 |
+| NFR-08 | `test_NFR08_config_rejects_invalid_capability` | 기능 누락·타입·허용 값 오류를 키 이름으로 거부한다 |
+| NFR-08 | `test_NFR08_config_rejects_invalid_occupancy` | 점유 방식 누락·타입·허용 값 오류를 키 이름으로 거부한다 |
+| FR-22 | `test_FR22_changed_capability_preserves_duplicate` | 기능 변경 뒤에도 기존 결과를 재보고하고 구동하지 않는다 |
 
 1단계 결과 (2026-10-23, ESP32-WROOM-32E):
 
