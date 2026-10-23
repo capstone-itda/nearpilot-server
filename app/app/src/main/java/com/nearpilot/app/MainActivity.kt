@@ -36,6 +36,14 @@ import com.nearpilot.app.account.BeaconSync
 import com.nearpilot.app.account.ReasonMessages
 import com.nearpilot.app.account.ServerAddress
 import com.nearpilot.app.account.UrlConnectionTransport
+import com.nearpilot.app.approval.ApprovalApi
+import com.nearpilot.app.approval.ApprovalChoice
+import com.nearpilot.app.approval.ApprovalItem
+import com.nearpilot.app.approval.ApprovalStore
+import com.nearpilot.app.approval.ApprovalText
+import com.nearpilot.app.approval.ApprovalWatchService
+import com.nearpilot.app.ui.ApprovalScreen
+import com.nearpilot.app.ui.ApprovalUiState
 import com.nearpilot.app.ui.AccountScreen
 import com.nearpilot.app.ui.AccountUiState
 import kotlinx.coroutines.Dispatchers
@@ -57,12 +65,19 @@ class MainActivity : ComponentActivity() {
     private companion object {
         /** Android 17. 이 버전부터 사설 IP 접속에 ACCESS_LOCAL_NETWORK 권한이 필요하다. */
         const val LOCAL_NETWORK_SDK = 37
+        const val LOCAL_NETWORK_DENIED =
+            "같은 Wi-Fi의 서버에 연결하려면 '근처 기기(로컬 네트워크)' 권한이 필요해요. 설정 > 앱 > NearPilot > 권한에서 허용해 주세요."
     }
 
     private enum class Tab(val label: String, val icon: String) {
         BEACON("비콘", "📡"),
         ACCOUNT("계정", "👤"),
+        APPROVAL("승인", "✅"),
     }
+
+    private val tab = mutableStateOf(Tab.BEACON)
+    private lateinit var approvalStore: ApprovalStore
+    private val approvalState = mutableStateOf(ApprovalUiState(connected = false, watching = false))
 
     private lateinit var store: IdentifierStore
     private lateinit var accounts: AccountStore
@@ -72,16 +87,25 @@ class MainActivity : ComponentActivity() {
     private val showPermissionRationale = mutableStateOf(false)
 
     private var pendingNetworkAction: (() -> Unit)? = null
+    private var pendingNetworkDenied: ((String) -> Unit)? = null
 
     private val localNetworkLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             val action = pendingNetworkAction
+            val denied = pendingNetworkDenied
             pendingNetworkAction = null
-            if (granted) {
-                action?.invoke()
+            pendingNetworkDenied = null
+            if (granted) action?.invoke() else denied?.invoke(LOCAL_NETWORK_DENIED)
+        }
+
+    private val watchPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+            if (results.values.all { it }) {
+                ApprovalWatchService.start(this)
+                refreshApprovalState("승인 알림을 켰어요. 새 요청이 오면 알려 드릴게요.")
             } else {
-                refreshAccount(
-                    "같은 Wi-Fi의 서버에 연결하려면 '근처 기기(로컬 네트워크)' 권한이 필요해요. 설정 > 앱 > NearPilot > 권한에서 허용해 주세요.",
+                refreshApprovalState(
+                    "알림과 '근처 기기(로컬 네트워크)' 권한이 있어야 승인 알림을 받을 수 있어요. 설정 > 앱 > NearPilot > 권한에서 허용해 주세요.",
                     isError = true,
                 )
             }
@@ -102,16 +126,19 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         store = IdentifierStore(this)
         accounts = AccountStore(this)
+        approvalStore = ApprovalStore(this)
         identifier.value = store.loadOrCreate()
         showIntro.value = !store.introSeen
         refreshAccount()
+        refreshApprovalState()
+        handleApprovalIntent(intent)
 
         enableEdgeToEdge()
         setContent {
             NearPilotTheme {
                 val state by BroadcastStatus.state.collectAsState()
                 val current by identifier
-                var tab by rememberSaveable { mutableStateOf(Tab.BEACON) }
+                var tab by tab
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     bottomBar = {
@@ -119,7 +146,10 @@ class MainActivity : ComponentActivity() {
                             Tab.entries.forEach { item ->
                                 NavigationBarItem(
                                     selected = tab == item,
-                                    onClick = { tab = item },
+                                    onClick = {
+                                        tab = item
+                                        if (item == Tab.APPROVAL) loadApprovals()
+                                    },
                                     icon = { Text(item.icon) },
                                     label = { Text(item.label) },
                                 )
@@ -151,6 +181,14 @@ class MainActivity : ComponentActivity() {
                             onRegisterBeacon = ::registerBeacon,
                             onClearToken = ::clearToken,
                             onCopy = ::copy,
+                            modifier = contentModifier,
+                        )
+                        Tab.APPROVAL -> ApprovalScreen(
+                            state = approvalState.value,
+                            onToggleWatch = ::toggleWatch,
+                            onRefresh = ::loadApprovals,
+                            onDecide = ::decide,
+                            onGoToAccount = { tab = Tab.ACCOUNT },
                             modifier = contentModifier,
                         )
                     }
@@ -249,15 +287,98 @@ class MainActivity : ComponentActivity() {
         refreshAccount("서버 주소를 저장했어요.")
     }
 
-    private fun withLocalNetwork(action: () -> Unit) {
+    private fun withLocalNetwork(
+        onDenied: (String) -> Unit = { refreshAccount(it, isError = true) },
+        action: () -> Unit,
+    ) {
         if (Build.VERSION.SDK_INT < LOCAL_NETWORK_SDK ||
             checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) == PackageManager.PERMISSION_GRANTED
         ) {
             action()
         } else {
             pendingNetworkAction = action
+            pendingNetworkDenied = onDenied
             localNetworkLauncher.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
         }
+    }
+
+    // ── 승인 ─────────────────────────────────────────────────────────
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleApprovalIntent(intent)
+    }
+
+    private fun handleApprovalIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(ApprovalWatchService.EXTRA_OPEN_APPROVALS, false) != true) return
+        tab.value = Tab.APPROVAL
+        approvalState.value = approvalState.value.copy(
+            highlightId = intent.getStringExtra(ApprovalWatchService.EXTRA_APPROVAL_ID))
+        loadApprovals()
+    }
+
+    private fun refreshApprovalState(message: String? = null, isError: Boolean = false) {
+        approvalState.value = approvalState.value.copy(
+            connected = accounts.serverUrl != null && accounts.token != null,
+            watching = approvalStore.watching,
+            message = message,
+            messageIsError = isError,
+        )
+    }
+
+    private fun approvalApi(): Pair<ApprovalApi, String>? {
+        val server = accounts.serverUrl ?: return null
+        val token = accounts.token ?: return null
+        return ApprovalApi(server, UrlConnectionTransport()) to token
+    }
+
+    private fun loadApprovals() = loadApprovals(keepMessage = false)
+
+    private fun loadApprovals(keepMessage: Boolean) {
+        if (keepMessage) refreshApprovalState(approvalState.value.message, approvalState.value.messageIsError)
+        else refreshApprovalState()
+        val (api, token) = approvalApi() ?: return
+        withLocalNetwork(onDenied = { refreshApprovalState(it, isError = true) }) {
+            approvalState.value = approvalState.value.copy(loading = true)
+            lifecycleScope.launch {
+                val result = withContext(Dispatchers.IO) { api.list(token) }
+                approvalState.value = when (result) {
+                    is ApiResult.Success -> approvalState.value.copy(loading = false, items = result.value)
+                    else -> approvalState.value.copy(
+                        loading = false, message = ApprovalText.failure(result), messageIsError = true)
+                }
+            }
+        }
+    }
+
+    private fun decide(item: ApprovalItem, choice: ApprovalChoice) {
+        val (api, token) = approvalApi() ?: return
+        withLocalNetwork(onDenied = { refreshApprovalState(it, isError = true) }) {
+            approvalState.value = approvalState.value.copy(busyId = item.approvalId)
+            lifecycleScope.launch {
+                val result = withContext(Dispatchers.IO) { api.decide(token, item.approvalId, choice) }
+                approvalState.value = approvalState.value.copy(busyId = null)
+                when (result) {
+                    is ApiResult.Success -> refreshApprovalState(ApprovalText.decided(choice))
+                    else -> refreshApprovalState(ApprovalText.failure(result), isError = true)
+                }
+                // 성공이든 거부든 서버의 현재 목록으로 맞춘다. 결정 결과 문장은 남긴다.
+                loadApprovals(keepMessage = true)
+            }
+        }
+    }
+
+    private fun toggleWatch(enabled: Boolean) {
+        if (!enabled) {
+            ApprovalWatchService.stop(this)
+            refreshApprovalState("승인 알림을 껐어요.")
+            return
+        }
+        val needed = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
+            if (Build.VERSION.SDK_INT >= LOCAL_NETWORK_SDK) add(Manifest.permission.ACCESS_LOCAL_NETWORK)
+        }
+        watchPermissionLauncher.launch(needed.toTypedArray())
     }
 
     private fun createAccount(input: String) = withLocalNetwork {
