@@ -1,6 +1,6 @@
 # ESP32 펌웨어의 MQTT v1 연동과 실제 기기 검증
 
-- 상태: 구현 중 (1단계 완료)
+- 상태: 구현 중 (2단계 진행)
 - 담당: 작업 지시자 (펌웨어). architecture.md §2의 팀 배정은 미결이다 (7절 가정).
 - 후속 구현 브랜치: `feat/firmware-contracts`
 - 요구사항: FR-04, FR-05, FR-06, FR-07, FR-20, FR-22, NFR-03, NFR-04, NFR-07, NFR-08, NFR-10, NFR-11, NFR-12, NFR-14
@@ -89,7 +89,7 @@ IR 무드등의 관측 근거가 없으면 `light_on=null`이다. IR 송출만�
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 1 | node_lab에서 실제 기기로 검증한 공통 동작을 `firmware/`의 모듈로 옮기고 단위 테스트 환경을 만든다 | 완료 (8절) |
-| 2 | 명령 기록의 상태 전이, 전원 차단 복원, 충돌, 저장 실패와 용량 | 대기 |
+| 2 | 명령 기록의 상태 전이, 전원 차단 복원, 충돌, 저장 실패와 용량 | 진행 중 |
 | 3 | 장치 기능·점유 방식의 USB 설정과 기능별 동작 검증 | 대기 |
 | 4 | 구동부·센서 인터페이스와 증명된 성공·실패·불명 결과 | 대기 |
 | 5 | `safety_check` 검사 기록, 근거 모델, v1 기준 표와 결과 규칙 | 대기 |
@@ -101,6 +101,15 @@ IR 무드등의 관측 근거가 없으면 `light_on=null`이다. IR 송출만�
 1단계는 동작을 바꾸지 않는다. 시리얼 설정 명령과 로그 형식은 node_lab과 같다.
 그래서 `server/tools/node_lab`의 `provision`과 `boot_check`를 그대로 쓴다.
 기기 기능은 node_lab처럼 `light`·`shared`로 고정한다. 3단계에서 설정으로 바꾼다.
+
+2단계는 명령 처리를 `np_executor` 모듈로 옮기고 다음을 바꾼다. 시리얼 로그 형식은 유지한다.
+
+- 새 명령 기록은 기록 전용 NVS 파티션에 쓴다 (6절). node_lab이 기본 NVS에 남긴 기록도 계속 조회한다.
+- 접수를 저장한 뒤 재검사에서 걸리면 구동하지 않고 `failed`와 그 거부 코드를 보고한다.
+  구동하지 않았음을 확인한 실행 실패이기 때문이다 (architecture.md §5 MQTT 5절). 1단계는 `unknown`이었다.
+- 새 기록은 기록 본문과 갱신 여유 공간이 남을 때만 만든다. 모자라면 `STORAGE_ERROR`로 거부하고 기존 기록을 지우지 않는다.
+- `running`은 발행만 하고 저장하지 않는다. 재시작 뒤 `accepted`로 남은 기록은 모두 `unknown`으로 바꿔 보고한다.
+- 결과 저장에 실패하면 결과를 발행하지 않는다. 기록은 `accepted`로 남고 다음 연결의 재보고에서 `unknown`이 된다.
 
 ## 3. 제약
 
@@ -188,6 +197,8 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
 | USB 설정 값이 없거나 범위·문자 규칙을 어긴다 | 저장하지 않고 처음 어긴 키 이름으로 거부한다 | `test_NFR08_config_rejects_invalid_values` |
 | 명령의 시각 문자열이 UTC 형식이 아니거나 없는 날짜다 | `INVALID_MESSAGE`로 거부한다 | `test_FR06_rejects_malformed_utc` |
 | 명령 기록이 다른 `node_id`의 것인데 설정의 `node_id`를 바꾼다 | 설정을 거부하고 기록을 그대로 둔다 | `test_FR22_ledger_owner_conflict` |
+| 기록 저장 공간이나 슬롯이 모자란다 | `STORAGE_ERROR`로 거부한다. 기존 기록을 지우지 않는다 | `test_FR22_full_ledger_rejects_without_eviction` |
+| node_lab이 남긴 기록의 명령이 다시 온다 | 기존 기록으로 처리하고 다시 구동하지 않는다 | `test_FR22_legacy_records_block_reexecution` |
 
 ## 6. 결정
 
@@ -199,6 +210,13 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
 - 모듈은 `firmware/lib/`의 순수 C++ 모듈과 장치 인터페이스로 나눈다 — 담당자가 2026-10-23에 골랐다. 모듈은 Arduino 헤더를 쓰지 않는다. 저장소는 `RecordStore` 인터페이스로 넣고 테스트는 fake를 쓴다. `src/main.cpp`는 Wi-Fi, MQTT, BLE, NVS와 시리얼을 모듈에 연결한다.
 - 단위 테스트는 Unity로 쓰고 같은 테스트를 두 환경에서 실행한다 — 담당자가 2026-10-23에 골랐다. `pio test -e esp32dev`는 실제 ESP32에서, `pio test -e native`는 PC에서 실행한다. native는 호스트 C++ 컴파일러가 필요하다. 테스트 이름에 요구사항 ID를 쓴다.
 - 브랜치는 `feat/core-node-lab` 위에서 나눈다 — 담당자가 2026-10-23에 골랐다. 이 브랜치의 PR은 core-node-lab PR 뒤에 올린다.
+- 명령 기록은 기록 전용 NVS 파티션에 저장한다 — 담당자가 2026-10-23에 골랐다. 위의 "저장 방식 미결"을 대체한다.
+  - 기본 NVS 20KB에는 기록이 약 35개만 들어가서 설정한 64개를 다 담지 못했다.
+  - `firmware/partitions.csv`에서 spiffs를 줄여 256KB짜리 `np_records` 파티션을 만든다. 앞쪽 파티션의 위치는 그대로다.
+  - 기록은 `np-records` 이름 공간의 키 하나에 하나씩 쓴다. NVS 키 쓰기는 전원이 꺼져도 이전 값이나 새 값 중 하나만 남는다.
+  - 설정은 기본 NVS의 `np-config`에 남는다. node_lab의 `np-node-lab` 기록은 읽고, 이미 있는 기록만 제자리에서 갱신한다.
+  - 파티션을 열지 못하면 지우지 않고 `storage_unavailable`로 둔다.
+- 명령 처리 상태 전이는 `firmware/lib/np_executor/`에 둔다 — 담당자가 2026-10-23에 골랐다. 검사, 결과 발행, 구동과 시각·ID 생성은 `CommandPort` 인터페이스로 받는다. 테스트는 fake를 쓴다.
 
 ## 7. 가정
 
@@ -213,7 +231,7 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
 | 반납 센서와 측정 | 각 v1 항목의 관측 수단, 측정 순서, 이상 검출 범위와 근거 변환이다 | architecture.md §4·5. 문 닫힘만으로 잠금을 증명하지 않는다 |
 | 동작별 완료 관측 | 사물함 `open`, 조명과 스피커 `on`·`off`의 완료 조건과 오류 검출이다 | 미결 — #142. 증명한 기능만 성공 보고를 활성화한다 |
 | IR 무드등과 스피커 | IR 무드등 관측 수단과 스피커 완료 근거다. 스피커의 새 보고 필드는 별도 계약이다 | 미결 — #142. 확인 불가를 성공으로 대체하지 않는다 |
-| 명령 기록 | 저장 매체, 원자적 저장, 접수·진행·결과 복원과 저장 실패 진단이다 | architecture.md §5 MQTT 4·7절. 구동 전 저장과 재실행 금지는 유지한다. 1단계는 node_lab의 NVS 고정 슬롯 방식을 그대로 옮긴다. 저장 방식은 2단계에서 고른다 |
+| 명령 기록 | 저장 매체, 원자적 저장, 접수·진행·결과 복원과 저장 실패 진단이다 | architecture.md §5 MQTT 4·7절. 구동 전 저장과 재실행 금지는 유지한다. 저장 방식은 6절에 정했다. node_lab은 기본 파티션 표와 `np-node-lab`만 쓰므로 제품 펌웨어의 기록을 모른다. 제품 펌웨어를 쓴 기기에 node_lab을 올리면 이미 쓴 명령 ID를 보내지 않는다 |
 | 검사 기록과 진단 | 검사 ID·요청·결과의 보관·대조, 충돌 대응과 내부 진단 방법이다 | architecture.md §4·5. 비밀번호와 임의의 본문 전체를 로그에 남기지 않는다 |
 | 검사 오류 보고 확장 | 오류 코드, 필수 근거 예외와 오류 사건 ID 규칙이다 | 미결 — #143. 첫 구현은 기존 확인 불능 경로로 검증한다 |
 | 명령 기록의 보존 한도 | 보존기간, 한도 도달 대응과 삭제 뒤 오래된 명령의 거부 기준이다 | FR-22의 미결. 초기에는 명령 중복 방지 기록을 자동 삭제하지 않는다 |
@@ -270,6 +288,24 @@ MQTT 필드, 검사 기준의 뜻, 공용 설정과 다른 영역의 동작을 �
 - 제품 펌웨어를 올린 뒤 node_lab에서 주입한 설정(generation 1)을 그대로 읽었다. `boot_check`에서 순서 위반 없이 4.8초에 `NODE_READY`가 됐다.
 - node_lab이 남긴 명령 기록을 읽어 같은 사건으로 재보고했다. 서버는 새 연결을 온라인으로 확인했고 `FAULT` 차단은 그대로 유지됐다.
 - 연결 직후 MQTT `-9` 끊김이 한 번 있었고 바로 다시 연결됐다. node_lab에서도 본 현상이며 7단계에서 다룬다.
+
+2단계는 명령 처리 상태 전이를 다음 단위 테스트로 고정한다. 마지막 테스트는 실제 ESP32에서만 실행한다.
+
+| 요구사항 | 테스트 | 확인하는 것 |
+|---|---|---|
+| FR-06 | `test_FR06_accepted_then_unknown_without_evidence` | 접수 저장, `accepted`·`running`·`unknown` 순서와 구동 1회를 확인한다 |
+| FR-06 | `test_FR06_invalid_message_no_actuation` | 읽을 수 없는 명령은 보고하지 않고, 검사에서 걸린 명령은 거부 기록을 남긴다 |
+| FR-06 | `test_FR06_duplicate_after_restart` | 새 인스턴스에서도 같은 명령의 기존 결과만 재보고하고 구동하지 않는다 |
+| FR-06 | `test_FR06_command_id_conflict` | 내용이 다른 같은 ID를 거부하고 기존 기록을 바꾸지 않는다 |
+| FR-06 | `test_FR06_concurrent_commands_busy` | 구동 중에 받은 새 명령을 `DEVICE_BUSY`로 거부하고 기록한다 |
+| FR-06 | `test_FR06_receipt_storage_failure` | 접수 저장 실패와 읽을 수 없는 기록에서 `STORAGE_ERROR`로 거부하고 구동하지 않는다 |
+| FR-06 | `test_FR06_session_and_expiry_rechecked` | 접수 뒤 재검사에서 걸리면 구동하지 않고 `failed`와 거부 코드를 보고한다 |
+| FR-07 | `test_FR07_power_loss_restores_unknown` | 재시작 뒤 `accepted` 기록을 `unknown`으로 저장·보고하고 다시 구동하지 않는다 |
+| FR-07 | `test_FR07_no_completion_without_evidence` | 결과 저장에 실패하면 결과를 발행하지 않고 `accepted` 기록을 남긴다 |
+| FR-07 | `test_FR07_result_event_identity` | 재보고가 사건 ID, 상태와 발생 시각을 유지한다 |
+| FR-22 | `test_FR22_full_ledger_rejects_without_eviction` | 슬롯이나 여유 공간이 모자라면 거부하고 기존 기록을 지우지 않는다 |
+| FR-22 | `test_FR22_legacy_records_block_reexecution` | node_lab 기록을 조회·재보고하고 새 기록은 기록 파티션에만 쓴다 |
+| FR-22 | `test_FR22_record_partition_capacity` | 실제 `np_records` 파티션에 최대 크기 접수 기록을 채워 용량과 조회 시간을 잰다 |
 
 실제 기기는 다음 절차로 검증한다.
 
