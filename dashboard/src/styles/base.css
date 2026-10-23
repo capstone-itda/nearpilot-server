@@ -1,0 +1,204 @@
+/* 공통 바탕, 화면 틀(App), 작은 공용 컴포넌트(VerdictTag, KeyValue, Icon, Button) */
+
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; }
+
+.np-app {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+.np-app h1, .np-app h2, .np-app h3, .np-app h4, .np-app p, .np-app ol, .np-app ul, .np-app dl, .np-app dd { margin: 0; }
+.np-app ol, .np-app ul { padding: 0; list-style: none; }
+.np-app button, .np-app input, .np-app select { font: inherit; color: inherit; }
+.np-app :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.np-cap {
+  font-family: var(--font-mono);
+  font-size: var(--fs-cap);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+/* 단위처럼 대소문자가 뜻을 가지는 글자 */
+.np-cap[data-case="keep"] { text-transform: none; }
+.np-code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-cap);
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+}
+.np-mono { font-family: var(--font-mono); }
+/* SVG 글자 정렬 */
+.np-app [data-anchor="start"] { text-anchor: start; }
+.np-app [data-anchor="middle"] { text-anchor: middle; }
+.np-app [data-anchor="end"] { text-anchor: end; }
+
+.np-icon {
+  width: 1.125rem;
+  height: 1.125rem;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.np-app[data-theme="dark"] .np-icon[data-icon="moon"], .np-app[data-theme="light"] .np-icon[data-icon="sun"] { display: none; }
+
+.np-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: var(--hit);
+  min-width: var(--hit);
+  padding: 0 var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--accent-strong);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.np-btn:hover { border-color: var(--accent); }
+.np-btn[aria-pressed="true"], .np-btn[aria-expanded="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.np-btn[data-variant="quiet"] { border-color: transparent; color: var(--ink-2); }
+.np-btn[data-variant="quiet"]:hover { color: var(--ink); border-color: var(--line-soft); }
+
+/* VerdictTag: 쉬운 말 + 코드 */
+.np-verdict {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: 0.2rem 0.55rem;
+  border: 1px solid currentColor;
+  border-radius: var(--radius);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.np-verdict__code { font-family: var(--font-mono); font-size: var(--fs-cap); letter-spacing: 0.06em; }
+.np-verdict[data-verdict="OK"] { color: var(--ok); background: var(--ok-soft); }
+.np-verdict[data-verdict="ASK"] { color: var(--ask); background: var(--ask-soft); }
+.np-verdict[data-verdict="NEED_APPROVAL"] { color: var(--appr); background: var(--appr-soft); }
+.np-verdict[data-verdict="BUSY"] { color: var(--busy); background: var(--busy-soft); }
+.np-verdict[data-verdict="DENY"], .np-verdict[data-verdict="FAULT"] { color: var(--deny); background: var(--deny-soft); }
+.np-verdict[data-verdict="QUERY"], .np-verdict[data-verdict="INFO"] { color: var(--accent-strong); background: var(--accent-soft); }
+.np-verdict[data-verdict="WAIT"] { color: var(--ask); background: var(--ask-soft); }
+
+/* KeyValue */
+.np-kv {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--sp-2) var(--sp-5);
+  font-size: var(--fs-body);
+}
+.np-kv dt { color: var(--ink-2); }
+.np-kv dd { min-width: 0; overflow-wrap: anywhere; }
+.np-kv dd[data-mono="true"] { font-family: var(--font-mono); }
+
+/* MonitorLayout: 폰 · 무대 · 흐름 레일 */
+.np-monitor {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  min-height: 600px;
+  display: grid;
+  grid-template-columns: var(--phone-w) minmax(0, 1fr) var(--side-w);
+  grid-template-rows: var(--topbar-h) minmax(0, 1fr) var(--rail-h);
+  gap: var(--gutter);
+  padding: 0 var(--gutter) var(--gutter);
+  background: var(--board);
+  overflow: hidden;
+}
+/* 영역은 바탕 위의 카드다 (2026-10-23 사용자 결정, VS Code처럼). 상단 바는 바탕에 바로 둔다. */
+.np-monitor > :is(.np-phone, .np-stage, .np-rail, .np-offline) { border: 1px solid var(--line-soft); border-radius: var(--radius); overflow: hidden; }
+/* 사이드 메뉴도 카드다. 연 패널은 이 카드 왼쪽에 이어 붙어 한 카드가 되고, 메뉴와는 경계선 하나로만 나뉜다 (VS Code 탐색기와 활동 막대처럼). */
+.np-monitor > .np-side { border: 1px solid var(--line-soft); border-radius: var(--radius); }
+.np-monitor:is([data-panel="normal"], [data-panel="wide"]) > .np-side { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.np-monitor > .np-stage { background: var(--bg); }
+.np-monitor > .np-topbar, .np-settings > .np-topbar { background: transparent; border-bottom: 0; margin: 0 calc(var(--gutter) * -1); }
+.np-monitor > .np-topbar { grid-column: 1 / -1; grid-row: 1; }
+/* 폰 화면은 상단 바 아래부터 화면 아래까지 써서 크게 보인다. 흐름 레일은 무대 아래에만 둔다. */
+.np-monitor > .np-phone { grid-column: 1; grid-row: 2 / -1; }
+.np-monitor > .np-stage { grid-column: 2; grid-row: 2; }
+.np-monitor > .np-rail { grid-column: 2; grid-row: 3; }
+/* 패널을 열면 흐름 레일도 패널 앞까지 좁아진다. 패널은 메뉴 옆에서 화면 아래까지 내려온다. */
+.np-monitor[data-panel="normal"] { --open-w: var(--panel-w); }
+.np-monitor[data-panel="wide"] { --open-w: var(--panel-wide-w, calc(var(--panel-w) * 1.5)); }
+.np-monitor:is([data-panel="normal"], [data-panel="wide"]) > .np-rail { margin-right: var(--open-w); }
+.np-monitor > .np-side { grid-column: 3; grid-row: 2 / -1; }
+.np-monitor[data-live="false"] { grid-template-rows: var(--topbar-h) auto minmax(0, 1fr) var(--rail-h); }
+.np-monitor[data-live="false"] > .np-stage { grid-row: 3; }
+.np-monitor[data-live="false"] > :is(.np-side, .np-phone) { grid-row: 3 / -1; }
+.np-monitor[data-live="false"] > .np-rail { grid-row: 4; }
+.np-monitor[data-live="false"] > .np-stage,
+.np-monitor[data-live="false"] > .np-rail,
+.np-monitor[data-live="false"] > .np-phone { filter: grayscale(1); }
+
+/* OfflineBanner */
+.np-offline {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  /* 띠를 얇게 두어 무대 높이를 지킨다. 버튼 높이(누르는 자리)가 띠 높이를 정한다 */
+  padding: var(--sp-1) var(--sp-1) var(--sp-1) var(--sp-5);
+  background: var(--surface-2);
+  color: var(--ink);
+  backdrop-filter: blur(6px);
+}
+.np-app[data-theme="light"] .np-offline { backdrop-filter: none; }
+.np-offline__title { color: var(--ink); font-weight: 600; font-size: var(--fs-lead); }
+.np-offline__detail { color: var(--ink-2); flex: 1; min-width: 0; }
+
+@media (max-width: 900px) {
+  .np-monitor {
+    height: auto;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(360px, 60vh) auto;
+  }
+  .np-monitor > .np-phone { display: none; }
+  .np-monitor > .np-stage { grid-column: 1; }
+  .np-monitor > .np-rail { grid-column: 1; }
+  .np-monitor > .np-side { grid-column: 1; grid-row: auto; }
+}
+
+/* 도착 강조: 바뀐 곳은 점이 선을 따라 오는 동안(0.6초, Stage의 ARRIVE_SEC) 흐리게 있다가 나타나며 한 번 빛난다.
+   처음 그린 화면(data-motion="off")에는 쓰지 않는다. */
+@keyframes np-arrive-svg {
+  0%, 37% { opacity: 0.2; }
+  38% { opacity: 1; filter: drop-shadow(0 0 0 transparent); }
+  55% { opacity: 1; filter: drop-shadow(0 0 10px var(--accent-strong)); }
+  100% { opacity: 1; filter: drop-shadow(0 0 0 transparent); }
+}
+@keyframes np-arrive-box {
+  0%, 37% { opacity: 0.35; }
+  38% { opacity: 1; box-shadow: 0 0 0 0 transparent; }
+  55% { opacity: 1; box-shadow: 0 0 0 3px var(--accent), 0 0 24px var(--accent); }
+  100% { opacity: 1; box-shadow: 0 0 0 0 transparent; }
+}
+/* 판정 게이지: 요청 점이 서버에 닿은 뒤(0.6초) 1초 동안 찬다 (pace.ts의 JUDGE_GAUGE_MS) */
+@keyframes np-gauge { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.np-app[data-motion="on"] svg .np-flash { animation: np-arrive-svg 1.6s ease-out; }
+.np-app[data-motion="on"] .np-flash:not(g) { animation: np-arrive-box 1.6s ease-out; }
+/* 꺼지는 노드는 강조하지 않는다 */
+.np-app[data-motion="on"] svg .np-stage__node.np-flash[data-active="false"] { animation: none; }
+/* 라이트 테마는 빛 번짐 없이 나타나기만 한다 */
+@keyframes np-arrive-flat { 0%, 37% { opacity: 0.2; } 38%, 100% { opacity: 1; } }
+.np-app[data-theme="light"][data-motion="on"] svg .np-flash, .np-app[data-theme="light"][data-motion="on"] .np-flash:not(g) { animation-name: np-arrive-flat; }
+@media (prefers-reduced-motion: reduce) {
+  .np-app[data-motion="on"] .np-flash, .np-app[data-motion="on"] svg .np-flash { animation: none; }
+}
+
+/* 테마 전환: 갑자기 번쩍이지 않게 화면 전체를 0.4초 동안 겹쳐 바꾼다 (App의 toggleTheme) */
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 0.4s; animation-timing-function: ease-out; }

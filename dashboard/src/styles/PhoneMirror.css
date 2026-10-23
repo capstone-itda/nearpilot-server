@@ -1,0 +1,118 @@
+/* PhoneMirror: 실제 폰 미러링 영역. 화면 안은 미러링 영상이 들어갈 자리다 */
+
+.np-phone {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: 0;
+  padding: var(--sp-3) var(--sp-4);
+  border-right: 1px solid var(--line-soft);
+  background-color: var(--surface);
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 1.5rem 1.5rem;
+}
+.np-phone__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2); }
+.np-phone__who { font-weight: 500; }
+.np-phone__follow { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); color: var(--ink-2); }
+.np-phone__follow-dot { width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--accent); }
+
+.np-phone__stage { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.np-phone__device {
+  position: relative;
+  height: 100%;
+  aspect-ratio: 9 / 19.5;
+  max-width: 100%;
+  border: 1.5px solid var(--accent);
+  border-radius: 2.6rem;
+  padding: 0.55rem;
+}
+.np-phone__camera {
+  position: absolute;
+  top: 1rem;
+  left: 50%;
+  width: 0.65rem;
+  height: 0.65rem;
+  margin-left: -0.325rem;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+}
+.np-phone__screen {
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--line);
+  border-radius: 2.1rem;
+  background: var(--surface-2);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 2.5rem 0.9rem 0.9rem;
+  gap: 0.8rem;
+}
+.np-phone__screen[data-scene="idle"] { justify-content: center; align-items: center; }
+.np-phone__screen[data-scene="blank"] { justify-content: center; align-items: center; }
+.np-phone__blank { display: flex; flex-direction: column; gap: var(--sp-2); text-align: center; }
+.np-phone__blank-title { font-size: var(--fs-lead); font-weight: 500; }
+.np-phone__blank-text { font-size: var(--fs-sm); color: var(--ink-2); line-height: 1.55; }
+/* 신호를 계속 확인하려고 남겨 둔 영상. 자리를 차지하지 않는다 */
+.np-phone__probe { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.np-phone__idle { font-size: var(--fs-lead); color: var(--ink-2); text-align: center; }
+/* 미러링 영상 (SET-02에서 고른 창) */
+.np-phone__screen[data-scene="video"] { padding: 0; }
+.np-phone__video { width: 100%; height: 100%; object-fit: contain; display: block; background: var(--bg); }
+.np-phone__live {
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  display: block;
+  border: 1.5px solid var(--accent);
+  border-radius: 1.6rem;
+  background: #000;
+}
+.np-phone__msg-me {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 0.55rem 0.85rem;
+  border-radius: 1rem;
+  background: var(--accent-soft);
+  border: 1px solid var(--line-soft);
+  font-size: var(--fs-body);
+}
+.np-phone__tool {
+  align-self: flex-start;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 0.6rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-cap);
+  color: var(--ink-2);
+}
+.np-phone__msg-ai { font-size: var(--fs-body); line-height: 1.55; color: var(--ink); }
+.np-phone__notice {
+  margin-top: var(--sp-4);
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.np-phone__notice-title { font-weight: 500; }
+.np-phone__notice-body { font-size: var(--fs-sm); color: var(--ink-2); }
+.np-phone__notice-hint { margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--appr); font-weight: 600; }
+.np-phone__clock { text-align: center; font-family: var(--font-mono); font-size: 2.25rem; font-weight: 300; }
+.np-phone__spacer { flex: 1; }
+.np-phone__composer {
+  min-height: var(--hit);
+  border: 1px solid var(--line-soft);
+  border-radius: 1.4rem;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--sp-4);
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+}
+.np-phone__foot { display: flex; justify-content: space-between; gap: var(--sp-2); }

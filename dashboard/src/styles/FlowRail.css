@@ -1,0 +1,125 @@
+/* FlowRail: 요청 하나의 다섯 단계. 지금 단계만 밝힌다.
+   FlowStep 상태 data-status: guide | done | current | todo
+   현재 단계 색 data-tone: accent | ok | ask | appr | busy | deny */
+
+.np-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-3) var(--sp-5) var(--sp-4);
+  background: var(--surface);
+  position: relative;
+  z-index: 4;
+}
+.np-rail__head { display: flex; align-items: baseline; gap: var(--sp-4); min-width: 0; }
+.np-rail__title { font-size: var(--fs-lead); font-weight: 600; white-space: nowrap; }
+.np-rail__meta { font-size: var(--fs-body); color: var(--ink-2); white-space: nowrap; flex: none; }
+.np-rail__open { margin-left: auto; margin-block: calc(var(--sp-2) * -1); flex: none; align-self: center; }
+.np-rail__code { font-family: var(--font-mono); font-size: var(--fs-cap); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+.np-rail__steps {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--sp-5);
+}
+
+.np-step {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.np-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: calc(-1 * var(--sp-5));
+  width: var(--sp-5);
+  height: 1px;
+  background: var(--line);
+}
+.np-step__head { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.np-step__num {
+  width: 1.6rem;
+  height: 1.6rem;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.np-step__title { font-size: var(--fs-lead); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.np-step__mark { margin-left: auto; font-size: var(--fs-sm); color: var(--ink-3); white-space: nowrap; }
+.np-step__detail { font-size: var(--fs-body); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-step__code { font-family: var(--font-mono); font-size: var(--fs-cap); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.np-step__detail:empty, .np-step__code:empty { display: none; }
+.np-step__mark { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.np-step__icon { display: none; }
+
+/* 좁아서 글자가 잘리면 단계 제목 대신 아이콘을 크게 보이고, 표시(승인 기다림 등)는 아랫줄에 둔다.
+   숨긴 글자는 화면 읽기와 툴팁(title)으로 남는다. */
+.np-rail[data-compact] :is(.np-step__title, .np-step__detail, .np-step__code, .np-rail__code) {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; text-overflow: clip;
+}
+.np-rail[data-compact] .np-step { align-items: center; justify-content: center; text-align: center; padding: var(--sp-2); }
+.np-rail[data-compact] .np-step__head { flex-wrap: wrap; justify-content: center; }
+.np-rail[data-compact] .np-step__icon { display: grid; place-items: center; }
+.np-rail[data-compact] .np-step__icon .np-icon { width: 1.6rem; height: 1.6rem; }
+.np-rail[data-compact] .np-step__mark { flex-basis: 100%; margin-left: 0; white-space: normal; }
+.np-rail[data-compact] .np-step__mark:empty { display: none; }
+.np-rail[data-compact] .np-rail__steps { gap: var(--sp-3); }
+.np-rail[data-compact="icons"] :is(.np-step__num, .np-step__mark) {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; text-overflow: clip;
+}
+.np-rail[data-compact] .np-step:not(:last-child)::after { right: calc(-1 * var(--sp-3)); width: var(--sp-3); }
+
+
+
+.np-step[data-status="done"] .np-step__num { border-color: var(--accent); color: var(--accent-strong); }
+.np-step[data-status="done"] .np-step__title { color: var(--ink-2); }
+.np-step[data-status="todo"] { border-style: dashed; }
+.np-step[data-status="todo"] .np-step__title, .np-step[data-status="todo"] .np-step__detail, .np-step[data-status="todo"] .np-step__num { color: var(--ink-3); }
+.np-step[data-status="current"] { border-width: 2px; padding: calc(var(--sp-3) - 1px) calc(var(--sp-4) - 1px); }
+.np-step[data-status="current"] .np-step__mark { font-weight: 600; }
+.np-step[data-status="current"][data-tone="accent"] { border-color: var(--accent); background: var(--accent-soft); }
+.np-step[data-status="current"][data-tone="accent"] .np-step__num { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.np-step[data-status="current"][data-tone="accent"] .np-step__mark { color: var(--accent-strong); }
+.np-step[data-status="current"][data-tone="ok"] { border-color: var(--ok); background: var(--ok-soft); }
+.np-step[data-status="current"][data-tone="ok"] .np-step__num { background: var(--ok); border-color: var(--ok); color: var(--on-accent); }
+.np-step[data-status="current"][data-tone="ok"] .np-step__mark { color: var(--ok); }
+.np-step[data-status="current"][data-tone="ask"] { border-color: var(--ask); background: var(--ask-soft); }
+.np-step[data-status="current"][data-tone="ask"] .np-step__num { background: var(--ask); border-color: var(--ask); color: var(--on-accent); }
+.np-step[data-status="current"][data-tone="ask"] .np-step__mark { color: var(--ask); }
+.np-step[data-status="current"][data-tone="appr"] { border-color: var(--appr); background: var(--appr-soft); }
+.np-step[data-status="current"][data-tone="appr"] .np-step__num { background: var(--appr); border-color: var(--appr); color: var(--on-accent); }
+.np-step[data-status="current"][data-tone="appr"] .np-step__mark { color: var(--appr); }
+.np-step[data-status="current"][data-tone="busy"] { border-color: var(--busy); background: var(--busy-soft); }
+.np-step[data-status="current"][data-tone="busy"] .np-step__num { background: var(--busy); border-color: var(--busy); color: var(--on-accent); }
+.np-step[data-status="current"][data-tone="busy"] .np-step__mark { color: var(--busy); }
+.np-step[data-status="current"][data-tone="deny"] { border-color: var(--deny); background: var(--deny-soft); }
+.np-step[data-status="current"][data-tone="deny"] .np-step__num { background: var(--deny); border-color: var(--deny); color: var(--on-accent); }
+.np-step[data-status="current"][data-tone="deny"] .np-step__mark { color: var(--deny); }
+.np-rail[data-mode="guide"] .np-step__detail { color: var(--ink-2); }
+
+/* 지금 단계는 판정 색으로 은은하게 빛난다 (iso-glow). 라이트 테마는 빛 번짐 없이 테두리만 */
+.np-step[data-tone="accent"] { --step-tone: var(--accent); }
+.np-step[data-tone="ok"] { --step-tone: var(--ok); }
+.np-step[data-tone="ask"] { --step-tone: var(--ask); }
+.np-step[data-tone="appr"] { --step-tone: var(--appr); }
+.np-step[data-tone="busy"] { --step-tone: var(--busy); }
+.np-step[data-tone="deny"] { --step-tone: var(--deny); }
+.np-step[data-status="current"] { box-shadow: 0 0 1.5rem -0.5rem var(--step-tone, var(--accent)); }
+.np-step[data-status="current"] .np-step__num { box-shadow: 0 0 0.6rem var(--step-tone, var(--accent)); }
+.np-app[data-theme="light"] .np-step[data-status="current"], .np-app[data-theme="light"] .np-step[data-status="current"] .np-step__num { box-shadow: none; }

@@ -1,0 +1,134 @@
+/* SettingsLayout · SettingsTabs · 설정 화면 부품(SignalTable, PhoneCard, Switch, CheckCard, ReadyBanner)
+   설정 화면은 시연 운영자용이고 서버에 쓰지 않는다. */
+
+.np-settings {
+  width: 100%;
+  height: 100vh;
+  min-height: 600px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: var(--topbar-h) auto minmax(0, 1fr);
+  gap: var(--gutter);
+  padding: 0 var(--gutter) var(--gutter);
+  background: var(--board);
+  overflow: hidden;
+}
+.np-settings > .np-topbar { grid-column: 1 / -1; }
+.np-settings > .np-stabs { grid-column: 1; grid-row: 2; }
+.np-settings > .np-scontent { grid-column: 1; grid-row: 3; }
+.np-settings > :is(.np-stabs, .np-scontent) { border: 1px solid var(--line-soft); border-radius: var(--radius); }
+.np-settings > .np-scontent { background: var(--bg); }
+
+/* SettingsTabs: 설정 화면 위쪽 탭 */
+.np-stabs {
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-4);
+  padding: 0 var(--sp-6);
+  background: var(--surface);
+}
+.np-stabs__list { display: flex; gap: var(--sp-1); }
+.np-stabs__item {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.1rem;
+  min-height: var(--hit);
+  padding: var(--sp-3) var(--sp-4);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+.np-stabs__item:hover { color: var(--ink); }
+.np-stabs__item[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.np-stabs__name { font-size: var(--fs-body); font-weight: 500; }
+.np-stabs__desc { font-size: var(--fs-sm); color: var(--ink-3); }
+.np-stabs__note { align-self: center; font-size: var(--fs-sm); color: var(--ink-3); }
+.np-stabs__credit { align-self: center; font-family: var(--font-mono); font-size: var(--fs-cap); letter-spacing: 0.12em; text-transform: uppercase; }
+.np-stabs__credit a { color: var(--ink-3); text-decoration: none; }
+.np-stabs__credit a:hover { color: var(--ink); }
+.np-stabs__close { align-self: center; margin-left: auto; padding: 0; }
+/* 1500px 이하에서는 탭 설명을 숨겨 탭 줄을 낮춘다 (배치 화면 오른쪽 칸이 넘치지 않게) */
+@media (max-width: 1500px) { .np-stabs__desc { display: none; } }
+
+/* 탭과 내용을 카드로 나눈 만큼 위아래 여백을 줄여, 낮은 화면에서도 배치 화면의 오른쪽 칸이 스크롤 없이 들어간다 */
+.np-scontent { min-height: 0; overflow: auto; padding: var(--sp-5) var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-4); }
+.np-scontent__head { display: flex; flex-direction: column; gap: var(--sp-2); }
+.np-scontent__title { font-size: var(--fs-title); font-weight: 500; }
+.np-scontent__sub { font-size: var(--fs-body); color: var(--ink-2); }
+
+.np-card { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4) var(--sp-5); border: 1px solid var(--line-soft); background: var(--surface); min-width: 0; }
+.np-card__head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+.np-card__title { font-size: var(--fs-lead); font-weight: 600; }
+
+/* SET-01 배치 · 신호 점검 */
+.np-layoutcheck { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 30rem; gap: var(--sp-5); }
+.np-layoutcheck__plan { min-height: 0; border: 1px solid var(--line-soft); background: var(--bg); display: flex; }
+.np-layoutcheck__plan > .np-stage { flex: 1; }
+.np-layoutcheck__side { display: flex; flex-direction: column; gap: var(--sp-4); min-height: 0; overflow: auto; }
+.np-signal__value { font-family: var(--font-mono); }
+.np-signal__value[data-tone="weak"] { color: var(--ink); font-weight: 600; text-decoration: underline; text-decoration-style: dashed; text-underline-offset: 0.2em; }
+.np-warn { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-3) var(--sp-4); border: 1px dashed var(--accent); background: var(--accent-soft); }
+.np-warn__title { color: var(--accent-strong); font-weight: 600; }
+
+/* SET-02 폰 연결 */
+.np-phones { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-5); }
+.np-pcard__preview { align-self: center; height: 16rem; aspect-ratio: 9 / 19.5; border: 1.5px solid var(--accent); border-radius: 1.6rem; padding: 0.35rem; }
+.np-pcard__preview-screen { width: 100%; height: 100%; border-radius: 1.3rem; border: 1px solid var(--line); background: var(--surface-2); display: grid; place-items: center; text-align: center; padding: var(--sp-2); font-size: var(--fs-sm); color: var(--ink-2); }
+.np-pcard__preview[data-linked="false"] { border-style: dashed; border-color: var(--line); }
+.np-pcard__status { font-size: var(--fs-sm); color: var(--ink-2); }
+.np-pcard__status[data-linked="true"] { color: var(--accent-strong); }
+/* 미러링 창 공유가 실패한 이유와 할 일 (MirrorNotice) */
+.np-pcard__fail { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--ask); border-radius: var(--radius); background: var(--ask-soft); font-size: var(--fs-sm); color: var(--ink); }
+.np-pcard__fail strong { font-size: var(--fs-body); }
+.np-switches { display: flex; flex-direction: column; gap: var(--sp-3); }
+.np-switch { display: flex; align-items: center; gap: var(--sp-3); min-height: var(--hit); padding: 0; border: 0; background: transparent; text-align: left; font-size: var(--fs-body); cursor: pointer; }
+.np-switch__track { position: relative; width: 2.75rem; height: 1.5rem; flex: none; border-radius: 999px; background: var(--line-soft); border: 1px solid var(--line); }
+.np-switch__thumb { position: absolute; top: 0.15rem; left: 0.15rem; width: 1.1rem; height: 1.1rem; border-radius: 50%; background: var(--ink-2); }
+.np-switch[aria-checked="true"] .np-switch__track { background: var(--accent-soft); border-color: var(--accent); }
+.np-switch[aria-checked="true"] .np-switch__thumb { left: auto; right: 0.15rem; background: var(--accent); }
+
+/* SET-03 점검 */
+.np-ready { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-4) var(--sp-5); border: 1px dashed var(--accent); background: var(--accent-soft); }
+.np-ready[data-state="ok"] { border-color: var(--accent); background: var(--accent-soft); }
+.np-ready__title { font-size: var(--fs-lead); font-weight: 600; color: var(--accent-strong); }
+.np-ready[data-state="ok"] .np-ready__title { color: var(--accent-strong); }
+.np-ready__body { color: var(--ink-2); }
+.np-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-5); }
+.np-crow { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) 0; border-top: 1px solid var(--line-soft); font-size: var(--fs-body); }
+.np-crow:first-child { border-top: 0; }
+.np-crow__dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; flex: none; background: var(--accent); }
+.np-crow[data-state="warn"] .np-crow__dot { background: transparent; border: 2px solid var(--accent); }
+.np-crow[data-state="bad"] .np-crow__dot { background: var(--deny); }
+.np-crow__right { margin-left: auto; font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--ink-2); text-align: right; }
+.np-crow[data-state="warn"] .np-crow__right { color: var(--accent-strong); font-weight: 600; }
+
+@media (max-width: 900px) {
+  .np-settings { height: auto; grid-template-rows: auto auto minmax(0, 1fr); }
+  .np-settings > .np-stabs { flex-wrap: wrap; }
+  .np-layoutcheck, .np-phones, .np-checks { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* SET-01 배치 파일 버튼 */
+.np-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+
+/* 화면 공유 권한 안내 (MirrorGuide). 브라우저 모달 대화상자라 Esc와 포커스 가두기는 브라우저가 맡는다. */
+.np-guide {
+  width: min(34rem, calc(100vw - var(--sp-5) * 2));
+  padding: var(--sp-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+}
+.np-guide[open] { display: flex; flex-direction: column; gap: var(--sp-3); }
+.np-guide::backdrop { background: rgb(0 0 0 / 0.45); }
+.np-guide__who { font-size: var(--fs-sm); color: var(--ink-2); }
+.np-guide__title { font-size: var(--fs-lead); font-weight: 600; }
+.np-guide__text { font-size: var(--fs-body); color: var(--ink-2); line-height: 1.6; }
+.np-guide__actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-2); }
+.np-guide .np-btn { text-decoration: none; }
+.np-guide .np-btn[data-variant="primary"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }

@@ -1,0 +1,77 @@
+/* TopBar: 브랜드 · 장소 · 연결 상태 · 테마 전환 */
+
+.np-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  height: var(--topbar-h);
+  padding: 0 var(--sp-5);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+  position: relative;
+  z-index: 6;
+}
+.np-topbar__brand { display: flex; align-items: center; gap: var(--sp-3); flex: none; }
+.np-topbar__logo { width: 1.75rem; height: 1.75rem; flex: none; }
+.np-topbar__logo-frame { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.np-topbar__logo-ring { fill: none; stroke: var(--accent); stroke-width: 1; opacity: 0.6; }
+.np-topbar__logo-dot { fill: var(--accent-strong); }
+.np-topbar__name { display: flex; flex-direction: column; line-height: 1.1; }
+.np-topbar__wordmark { font-family: var(--font-mono); font-weight: 600; font-size: var(--fs-body); letter-spacing: 0.18em; }
+.np-topbar__divider { width: 1px; height: 1.75rem; background: var(--line); flex: none; }
+.np-topbar__place { display: flex; flex-direction: column; line-height: 1.15; flex: none; }
+.np-topbar__place-name { font-size: var(--fs-body); }
+.np-topbar__spacer { flex: 1; }
+.np-topbar__live { display: flex; align-items: center; gap: var(--sp-2); flex: none; font-size: var(--fs-sm); color: var(--ink-2); }
+.np-topbar__live-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0.5rem var(--accent); }
+.np-topbar__live[data-live="false"] { color: var(--ink); }
+.np-app[data-theme="light"] .np-topbar__live-dot { box-shadow: none; }
+.np-topbar__live[data-live="false"] .np-topbar__live-dot { background: transparent; border: 2px solid var(--ink-2); box-shadow: none; }
+.np-topbar__clock { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--ink-3); flex: none; }
+.np-topbar__theme { padding: 0; }
+.np-topbar__theme .np-icon { width: 1.5rem; height: 1.5rem; }
+.np-topbar__theme .np-icon[data-icon="sun"] circle { fill: currentColor; }
+.np-topbar__theme .np-icon[data-icon="moon"] path { fill: currentColor; }
+.np-topbar__actions { display: flex; gap: var(--sp-2); flex: none; position: relative; }
+
+/* SideMenu: 화면 오른쪽 끝의 세로 메뉴 (목록 패널, 설정) */
+.np-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-1);
+  background: var(--surface);
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+  z-index: 6;
+}
+.np-side__spacer { flex: 1; }
+.np-side__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  min-height: var(--hit);
+  padding: var(--sp-2) 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.np-side__item .np-icon { width: 1.4rem; height: 1.4rem; }
+.np-side__item:hover { color: var(--ink); border-color: var(--line-soft); }
+.np-side__item[aria-current="page"] { color: var(--accent-strong); border-color: var(--accent); background: var(--accent-soft); }
+.np-side__label { font-size: var(--fs-sm); line-height: 1.1; white-space: nowrap; }
+
+/* 마지막 수신 시각: 스트림이 들어오는 것을 보인다. 화면 낭독기에는 읽히지 않는다(0.5초마다 바뀜). */
+.np-topbar__recv { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.np-topbar__mock { padding: 2px var(--sp-2); border: 1px dashed var(--line); border-radius: var(--radius); color: var(--ink-2); }
+
+@media (max-width: 900px) {
+  .np-side { flex-direction: row; overflow-x: auto; }
+  .np-side__item { min-width: var(--hit); padding: var(--sp-2); }
+  .np-side__spacer { display: none; }
+}

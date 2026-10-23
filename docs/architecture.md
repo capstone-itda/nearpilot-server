@@ -106,14 +106,15 @@ nearpilot-server/
 | **근접 추정** | `src/nearpilot/core/proximity/`, `core/admin/`, `tools/data_collection/` | 관측 모델과 HMM, 사후확률 계산, 근접 추정 인터페이스, 수집 회차와 라벨 기록, `AdminService` (`AdminRepository` 위의 관리 쓰기) |
 | **상태 관리** | `src/nearpilot/core/lifecycle/`, `iot/`, `tools/node_sim/` | 예약 뒤의 상태 전이, 대여 점유 유지와 초과시간 계산, 명시적 해제, `FAULT` 복구, MQTT 게이트웨이, 기기 시뮬레이터, CORE 쪽 `NodeEventSink`, 서버 실행 진입점과 CORE 서비스 조립 |
 | **DB** | `src/nearpilot/db/`, `core/policy/`, `tools/evaluation/` | 스키마, 저장소, 원자적 점유와 승인 사용분, 감사 로그, 평가 스크립트, 접근 정책과 승인 검사, 토큰 해시로 계정 조회 (`AccountLookup`), 관리 쓰기 접점 (`AdminRepository`) |
+| **대시보드** | `src/nearpilot/api/ws/`, `api/rest/`의 대시보드 조회, 저장소 루트의 `dashboard/` | 운영 대시보드 화면, 모니터링 WebSocket과 메시지 형식 (FR-12B), 대시보드 조회 REST (FR-12A) |
 | **공동** | `src/nearpilot/shared/`, `tests/integration/` | 계층 간 계약, 계층을 합친 시나리오 테스트 |
 
 - 이 표는 역할별 담당 범위를 기록한다. 개인 이름은 쓰지 않는다.
 - [#88](https://github.com/capstone-itda/nearpilot-server/issues/88)의 A안을 따른다. 상태 관리는 서버 실행 진입점과 조립 모듈을 만든다. 조립은 설정, DB 저장소, MQTT 게이트웨이와 CORE 서비스를 만들고 연결한다. 판정은 `CoreService`와 MCP 앱을 만드는 연결 함수만 제공한다. 진입점이 이 함수로 MCP 엔드포인트를 붙인다.
 - 조립은 게이트웨이를 구독한 뒤, 요청을 받기 전에 재시작 복원을 한 번 실행한다. 모든 상태 관리 서비스에 같은 복구 서비스와 기기별 잠금을 주입한다. 반납 검사와 이탈 판단의 `tick()`을 주기적으로 호출한다.
 - 서버 실행 진입점은 `nearpilot serve`다 (`src/nearpilot/cli/`). 조립 모듈은 `src/nearpilot/runtime/`에 있다.
-- 미결: `api/rest/`와 `api/ws/`의 담당. 앱과 대시보드의 담당을 정할 때 함께 배정한다.
-- 미결: 앱(`app/`)과 대시보드(`dashboard/`)의 담당. 서버 담당 업무를 먼저 마친 사람이 맡는다.
+- `api/rest/`는 쓰는 쪽으로 나눈다. 대시보드 조회는 대시보드가, 앱용 REST(계정, 승인)는 앱이 맡는다. `FAULT` 복구 두 경로는 상태 관리가 맡는다 (#89).
+- 미결: 앱(`app/`)과 앱용 REST의 담당. 서버 담당 업무를 먼저 마친 사람이 맡는다.
 - 미결: 펌웨어(`firmware/`)의 담당과 IOT 구현의 담당 배정. 팀이 펌웨어 담당을 배정할 때 함께 정한다.
 
 ## 3. 의존 관계
@@ -1208,7 +1209,8 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 |---|---|---|
 | 모니터링 | 대시보드: 판정, 사후확률, 상태 머신, 감사 로그, 기기별 비콘 RSSI, MCP 도구 호출, 승인 신청과 결정, 폰 비콘 수신 상태의 스트림 | FR-12B |
 
-- 미결: 모니터링 메시지 형식
+- 사람은 `방문자 A`, `방문자 B`처럼 글자를 붙인 이름으로 보낸다. 소유자는 `소유자`다. 서버가 이름을 붙이고, 모니터링 스트림과 대시보드 조회 REST에서 같은 사람에게 같은 이름을 쓴다. 사용자 ID와 계정 정보는 보내지 않는다.
+- 미결: 모니터링 메시지 형식과 이름을 유지하는 기간. 대시보드 담당이 정한다.
 
 ## 6. 데이터 계약
 
@@ -1357,6 +1359,9 @@ sequenceDiagram
 | DB | SQLite (WAL) | FR-19 |
 | 테스트 | pytest | NFR-13 |
 | MQTT 브로커 | Mosquitto. 독립 AP 안에서 실행한다. 설정 파일은 `server/config/mosquitto.conf`다. | #19 |
+| 대시보드 | React 18, TypeScript, Vite | `dashboard/package.json` |
+| 대시보드 테스트 | Vitest (단위), Playwright (화면) | `dashboard/package.json` |
+| 대시보드 글꼴 | IBM Plex Sans KR, IBM Plex Mono. 빌드에 넣어 외부 요청 없이 그린다 (NFR-12). | `dashboard/package.json` |
 
 ## 9. 실행 환경
 
