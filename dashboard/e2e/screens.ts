@@ -1,4 +1,4 @@
-// 승인한 화면 설계 목업의 15화면과 이 앱 주소의 대응
+// 승인한 화면 설계 목업의 화면(그 뒤에 더한 화면 포함)과 이 앱 주소의 대응
 export const SCREENS: [string, string][] = [
   ['MON-01 대기', 'scene=idle'],
   ['MON-01·02 판정 중', 'scene=judging'],

@@ -1,4 +1,4 @@
-// FR-12B · D9: 15화면이 네 해상도와 두 테마에서 넘침·잘림·겹침 없이 그려진다
+// FR-12B · D9: screens.ts의 화면이 네 해상도와 두 테마에서 넘침·잘림·겹침 없이 그려진다
 import { expect, test, type Page } from '@playwright/test';
 import { SCREENS, SIZES } from './screens';
 import { inspect, ready } from './inspect';
