@@ -9,7 +9,19 @@ from typing import Any
 
 from nearpilot.api.auth.authenticator import Authenticator
 from nearpilot.api.ws.settings import DashboardSettings
-from nearpilot.shared.enums import Role
+from nearpilot.shared.enums import (
+    Action,
+    ApprovalMode,
+    Capability,
+    Occupancy,
+    ReasonCode,
+    Role,
+    SessionState,
+    Step,
+    TargetKind,
+    TrustState,
+    Verdict,
+)
 from nearpilot.shared.models import Account, MonitorEvent, Subject
 from nearpilot.shared.tokens import hash_token
 
@@ -67,6 +79,129 @@ class FakeSnapshot:
         if self.error:
             raise self.error
         return self.events
+
+
+class FakeQueries:
+    """DashboardQueries fake. 메서드마다 표본 결과 속성(place_data, uses_data, approvals_data, audit_data, history_data,
+    request_data, trust_data, rental_data, health_data)을 돌려준다.
+
+    표본은 조회 형식의 모든 키(선택 키 포함)를 채우고, 사람은 OWNER·VISITOR Subject 를 쓴다. 사람이 있는 목록은
+    OWNER 행이 먼저다. calls 에 (메서드 이름, 인자 튜플)을 쌓는다. error 속성에 예외를 넣으면 모든 메서드가 던진다.
+    request_data / rental_data 를 None 으로 두면 None 을 돌려준다 (없는 요청, 없는 대여).
+    """
+
+    def __init__(self) -> None:
+        early, later = NOW - timedelta(minutes=30), NOW + timedelta(minutes=45)
+        self.error: Exception | None = None
+        self.calls: list[tuple[str, tuple]] = []
+        self.place_data: Any = {
+            "placeName": "시연장", "modelVersion": "model-1", "calibrationVersion": "cal-1", "weakRssiDbm": -80,
+            "devices": [
+                {"nodeId": "locker-1", "name": "사물함 1", "capability": Capability.LOCKER,
+                 "occupancy": Occupancy.RENTAL},
+                {"nodeId": "light-1", "name": "조명 1", "capability": Capability.LIGHT, "occupancy": Occupancy.SHARED},
+            ],
+        }
+        self.uses_data: Any = [
+            {"subject": OWNER, "nodeId": "locker-2", "occupancy": Occupancy.RENTAL, "session": SessionState.RESERVED,
+             "sessionNote": "예약됨", "startedAt": NOW, "overdueMinutes": 0},
+            {"subject": VISITOR, "nodeId": "locker-1", "occupancy": Occupancy.RENTAL, "session": SessionState.ACTIVE,
+             "sessionNote": "반납 확인 중", "startedAt": early, "overdueMinutes": 12.5},
+        ]
+        self.approvals_data: Any = {
+            "pending": [{"subject": VISITOR, "nodeId": "locker-1", "mode": ApprovalMode.ONE_TIME, "requestedAt": NOW}],
+            "active": [{"subject": VISITOR, "nodeId": "light-1", "mode": ApprovalMode.TIME_WINDOW,
+                        "requestedAt": early, "remainingMinutes": 45, "validUntil": later, "uses": 1}],
+            "ended": [{"subject": VISITOR, "nodeId": "locker-2", "mode": ApprovalMode.ONE_TIME, "requestedAt": early,
+                       "uses": 1, "endReason": ReasonCode.APPROVAL_EXHAUSTED}],
+        }
+        self.audit_data: Any = [  # 최근 것부터
+            {"id": "a-2", "at": NOW, "step": Step.EXEC, "nodeId": "locker-1", "text": "명령을 보냈다",
+             "code": ReasonCode.OK},
+            {"id": "a-1", "at": early, "step": Step.PROXIMITY, "nodeId": "locker-1", "text": "후보 확률이 임계값보다 낮다",
+             "code": ReasonCode.LOW_CONFIDENCE},
+        ]
+        self.history_data: Any = [
+            {"subject": OWNER, "requestId": "req-2", "at": NOW,
+             "target": {"kind": TargetKind.EXPLICIT, "nodeId": "light-1"}, "action": Action.ON,
+             "verdict": Verdict.OK, "nodeId": "light-1", "outcome": "succeeded", "code": ReasonCode.OK},
+            {"subject": VISITOR, "requestId": "req-1", "at": early,
+             "target": {"kind": TargetKind.NEAREST, "capability": Capability.LOCKER}, "action": Action.OPEN,
+             "verdict": Verdict.ASK, "nodeId": "locker-1", "outcome": "더 가까이 와야 한다",
+             "code": ReasonCode.LOW_CONFIDENCE},
+        ]
+        self.request_data: Any = {
+            "subject": VISITOR, "id": "req-1", "tool": "request_use",
+            "target": {"kind": TargetKind.NEAREST, "capability": Capability.LOCKER}, "action": Action.OPEN, "at": NOW,
+            "verdict": Verdict.OK, "reason": ReasonCode.OK,
+            "steps": [{"result": "pass", "detail": f"단계 {n}"} for n in range(7)],
+            "nodeId": "locker-1", "posteriors": {"locker-1": 0.97, "light-1": 0.03}, "threshold": 0.9,
+            "execution": "succeeded", "accessRequestedAt": early, "accessExpiredAt": later, "respondedAt": NOW,
+        }
+        self.trust_data: Any = {
+            "live": {
+                "since": early, "decisions": 40, "doubleOccupancy": 0, "latencyMedianSec": 0.84, "latencyP95Sec": 1.9,
+                "counts": {Verdict.OK: 30, Verdict.BUSY: 4, Verdict.ASK: 3, Verdict.DENY: 2, Verdict.NEED_APPROVAL: 1},
+            },
+            "evaluation": {
+                "date": "2026-10-20",
+                "metrics": [
+                    {"id": 1, "name": "올바른 기기 선택", "pass": True, "label": "정확도", "sample": "n=50",
+                     "sampleNote": "시연 장소 기준"},
+                    {"id": 2, "name": "이중 점유", "pass": None, "label": "건수", "sample": "n=0"},
+                ],
+                "confusion": {"labels": ["locker-1", "light-1", "none"],
+                              "values": [[98, 1, 1], [2, 97, 1], [0, 0, 100]]},
+            },
+        }
+        self.rental_data: Any = {
+            "subject": VISITOR, "nodeId": "locker-1", "startedAt": early, "overdueMinutes": 12.5,
+            "timeline": [{"at": early, "text": "대여를 시작했다"}, {"at": NOW, "text": "대여 시간이 지났다", "now": True}],
+        }
+        self.health_data: Any = {
+            "devices": [
+                {"nodeId": "locker-1", "connected": True, "trust": TrustState.TRUSTED},
+                {"nodeId": "light-1", "connected": False, "trust": TrustState.DISCOVERED},
+            ],
+            "beacons": [
+                {"subject": OWNER, "lastSeenSec": 1.5, "note": "신호가 강하다"},
+                {"subject": VISITOR, "lastSeenSec": 2.5, "note": "신호가 약하다"},
+            ],
+            "server": {"database": True, "mqtt": True, "model": "model-1"},
+        }
+
+    def _answer(self, name: str, args: tuple, data: Any) -> Any:
+        self.calls.append((name, args))
+        if self.error:
+            raise self.error
+        return data
+
+    def place(self):
+        return self._answer("place", (), self.place_data)
+
+    def uses(self):
+        return self._answer("uses", (), self.uses_data)
+
+    def approvals(self):
+        return self._answer("approvals", (), self.approvals_data)
+
+    def audit(self, limit):
+        return self._answer("audit", (limit,), self.audit_data)
+
+    def history(self, period, verdict, node_id):
+        return self._answer("history", (period, verdict, node_id), self.history_data)
+
+    def request(self, request_id):
+        return self._answer("request", (request_id,), self.request_data)
+
+    def trust(self):
+        return self._answer("trust", (), self.trust_data)
+
+    def rental(self, node_id):
+        return self._answer("rental", (node_id,), self.rental_data)
+
+    def health(self):
+        return self._answer("health", (), self.health_data)
 
 
 def run(coro, timeout: float = 10.0):
