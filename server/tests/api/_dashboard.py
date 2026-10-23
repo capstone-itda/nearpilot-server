@@ -69,9 +69,16 @@ class FakeSnapshot:
         return self.events
 
 
-def run(coro):
-    """asyncio.run 감싸기. pytest-asyncio 가 없어서 동기 테스트 함수가 비동기 코드를 이렇게 돌린다."""
-    return asyncio.run(coro)
+def run(coro, timeout: float = 10.0):
+    """asyncio.run 감싸기. pytest-asyncio 가 없어서 동기 테스트 함수가 비동기 코드를 이렇게 돌린다.
+
+    고장 난 코드가 테스트를 멈추지 않게 기한을 건다. 넘으면 TimeoutError 다.
+    """
+    async def bounded():
+        async with asyncio.timeout(timeout):
+            return await coro
+
+    return asyncio.run(bounded())
 
 
 async def http_request(
