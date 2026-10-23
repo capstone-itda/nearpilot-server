@@ -119,9 +119,9 @@ def add_query_routes(
 
     first_query = len(router.routes)
 
-    @router.get(f"{QUERY_PREFIX}/place")
-    async def place(request: Request) -> JSONResponse:
-        return await serve(request, "place", queries.place)
+    @router.get(f"{QUERY_PREFIX}/places")
+    async def places(request: Request) -> JSONResponse:
+        return await serve(request, "places", queries.places)
 
     @router.get(f"{QUERY_PREFIX}/uses")
     async def uses(request: Request) -> JSONResponse:

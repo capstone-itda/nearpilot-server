@@ -215,7 +215,7 @@ def test_FR12A_FR12B_형식_이름_집합이_architecture_표와_같다():
         "transition", "approval", "audit",
     }
     assert RESPONSE_KINDS == {
-        "place", "uses", "approvals", "audit", "history", "request", "trust", "rental", "health",
+        "places", "uses", "approvals", "audit", "history", "request", "trust", "rental", "health",
     }
     assert isinstance(EVENT_TYPES, frozenset) and isinstance(RESPONSE_KINDS, frozenset)
     assert {case.type for case in EVENT_CASES} == EVENT_TYPES  # 종류마다 사례가 있다
@@ -381,24 +381,29 @@ class ResponseCase(NamedTuple):
     expected: Any
 
 
-PLACE = {
-    "placeName": "시연장",
-    "modelVersion": "m1",
-    "calibrationVersion": "c1",
+PLACES = {
     "weakRssiDbm": -80,
-    "devices": [
-        {"nodeId": "locker-1", "name": "사물함 1", "capability": Capability.LOCKER, "occupancy": Occupancy.RENTAL},
-        {"nodeId": "light-1", "name": "조명 1", "capability": "light", "occupancy": "shared"},
+    "places": [
+        {"placeId": "lounge", "placeName": "라운지", "modelVersion": "m1", "calibrationVersion": "c1",
+         "devices": [
+             {"nodeId": "locker-1", "name": "사물함 1", "capability": Capability.LOCKER,
+              "occupancy": Occupancy.RENTAL},
+             {"nodeId": "light-1", "name": "조명 1", "capability": "light", "occupancy": "shared"},
+         ]},
+        {"placeId": "side-room", "placeName": "옆방", "modelVersion": "m2", "calibrationVersion": "c2",
+         "devices": [{"nodeId": "mood-1", "name": "무드등", "capability": "light", "occupancy": "shared"}]},
     ],
 }
-PLACE_OUT = {
-    "placeName": "시연장",
-    "modelVersion": "m1",
-    "calibrationVersion": "c1",
+PLACES_OUT = {
     "weakRssiDbm": -80,
-    "devices": [
-        {"nodeId": "locker-1", "name": "사물함 1", "capability": "locker", "occupancy": "rental"},
-        {"nodeId": "light-1", "name": "조명 1", "capability": "light", "occupancy": "shared"},
+    "places": [
+        {"placeId": "lounge", "placeName": "라운지", "modelVersion": "m1", "calibrationVersion": "c1",
+         "devices": [
+             {"nodeId": "locker-1", "name": "사물함 1", "capability": "locker", "occupancy": "rental"},
+             {"nodeId": "light-1", "name": "조명 1", "capability": "light", "occupancy": "shared"},
+         ]},
+        {"placeId": "side-room", "placeName": "옆방", "modelVersion": "m2", "calibrationVersion": "c2",
+         "devices": [{"nodeId": "mood-1", "name": "무드등", "capability": "light", "occupancy": "shared"}]},
     ],
 }
 
@@ -550,8 +555,10 @@ HEALTH_OUT = {
 
 EMPTY_APPROVALS = {"pending": [], "active": [], "ended": []}
 RESPONSE_CASES = [
-    ResponseCase("place", "place", PLACE, PLACE_OUT),
-    ResponseCase("place_no_devices", "place", {**PLACE, "devices": []}, {**PLACE_OUT, "devices": []}),
+    ResponseCase("places", "places", PLACES, PLACES_OUT),
+    ResponseCase("places_no_devices", "places", patched(PLACES, ("places", 1, "devices"), []),
+                 patched(PLACES_OUT, ("places", 1, "devices"), [])),
+    ResponseCase("places_empty", "places", {**PLACES, "places": []}, {**PLACES_OUT, "places": []}),
     ResponseCase("uses", "uses", USES, USES_OUT),
     ResponseCase("uses_tuple", "uses", tuple(USES), USES_OUT),
     ResponseCase("uses_empty", "uses", [], []),
@@ -591,8 +598,14 @@ def test_FR12A_조회_결과에서_허용_목록_밖의_키와_사용자_ID를_�
 
 
 def test_FR12A_dict와_list가_아닌_Mapping과_Sequence도_받는다():
-    place = MappingProxyType({**PLACE, "devices": tuple(MappingProxyType(device) for device in PLACE["devices"])})
-    assert render_response("place", place, PersonNames()) == PLACE_OUT
+    places = MappingProxyType({
+        **PLACES,
+        "places": tuple(
+            MappingProxyType({**place, "devices": tuple(MappingProxyType(device) for device in place["devices"])})
+            for place in PLACES["places"]
+        ),
+    })
+    assert render_response("places", places, PersonNames()) == PLACES_OUT
     request = MappingProxyType({
         **REQUEST,
         "steps": tuple(MappingProxyType(step) for step in REQUEST["steps"]),
@@ -613,17 +626,35 @@ BAD_RESPONSES = [
     pytest.param("uses", {"nodeId": "locker-1"}, "uses", id="mapping_for_list"),
     pytest.param("uses", SECRET, "uses", id="str_for_list"),
     pytest.param("uses", None, "uses", id="none_for_list"),
-    pytest.param("place", [PLACE], "place", id="list_for_object"),
+    pytest.param("places", [PLACES], "places", id="list_for_object"),
     # 목록과 행
     bad_response("row_not_mapping", "uses", USES, "uses[1]", (1,), SECRET),
     bad_response("naive_time_in_list", "uses", [*USES, {**USES[0]}], "uses[2].startedAt", (2, "startedAt"), NAIVE),
     bad_response("row_without_subject", "uses", USES, "uses[1].subject", (1, "subject"), DROP),
     bad_response("subject_is_user_id", "uses", USES, "uses[0].subject", (0, "subject"), VISITOR.user_id),
     bad_response("lit_outside", "uses", USES, "uses[0].session", (0, "session"), "CLOSED"),
-    bad_response("place_list_missing", "place", PLACE, "place.devices", ("devices",), DROP),
-    bad_response("place_bool_for_num", "place", PLACE, "place.weakRssiDbm", ("weakRssiDbm",), True),
-    bad_response("place_nested_enum", "place", PLACE, "place.devices[1].capability",
-                 ("devices", 1, "capability"), "gate"),
+    bad_response("places_missing", "places", PLACES, "places.places", ("places",), DROP),
+    bad_response("places_not_list", "places", PLACES, "places.places", ("places",), PLACES["places"][0]),
+    bad_response("place_row_not_mapping", "places", PLACES, "places.places[1]", ("places", 1), SECRET),
+    bad_response("place_id_missing", "places", PLACES, "places.places[1].placeId", ("places", 1, "placeId"), DROP),
+    bad_response("place_id_int", "places", PLACES, "places.places[1].placeId", ("places", 1, "placeId"), 7),
+    bad_response("place_id_not_utf8", "places", PLACES, "places.places[1].placeId",
+                 ("places", 1, "placeId"), UNENCODABLE),
+    bad_response("place_devices_missing", "places", PLACES, "places.places[0].devices",
+                 ("places", 0, "devices"), DROP),
+    bad_response("place_nested_enum", "places", PLACES, "places.places[0].devices[1].capability",
+                 ("places", 0, "devices", 1, "capability"), "gate"),
+    bad_response("weak_rssi_missing", "places", PLACES, "places.weakRssiDbm", ("weakRssiDbm",), DROP),
+    bad_response("weak_rssi_bool_for_num", "places", PLACES, "places.weakRssiDbm", ("weakRssiDbm",), True),
+    pytest.param(  # 약한 신호 기준은 응답 전체에 하나다. 장소마다 있는 값은 그것을 대신하지 않는다
+        "places", {"places": [{**place, "weakRssiDbm": -80} for place in PLACES["places"]]}, "places.weakRssiDbm",
+        id="weak_rssi_only_in_places"),
+    # 한 기기가 두 장소에 나온다. 경로만 있고 겹친 nodeId 는 없다
+    bad_response("node_in_two_places", "places", PLACES, "places.places",
+                 ("places", 1, "devices", 0, "nodeId"), "locker-1"),
+    bad_response("node_twice_in_place", "places", PLACES, "places.places",
+                 ("places", 0, "devices", 1, "nodeId"), "locker-1"),  # 한 장소 안에서 두 번
+    bad_response("place_id_twice", "places", PLACES, "places.places", ("places", 1, "placeId"), "lounge"),
     bad_response("approvals_list_missing", "approvals", APPROVALS, "approvals.pending", ("pending",), DROP),
     bad_response("end_reason_outside", "approvals", APPROVALS, "approvals.ended[0].endReason",
                  ("ended", 0, "endReason"), "REJECTED"),

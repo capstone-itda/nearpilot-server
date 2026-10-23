@@ -328,12 +328,26 @@ _DEVICE_INFO = _shape(
     _req("occupancy", _enum(Occupancy)),
 )
 _PLACE_INFO = _shape(
+    _req("placeId", _str),
     _req("placeName", _str),
     _req("modelVersion", _str),
     _req("calibrationVersion", _str),
-    _req("weakRssiDbm", _num),
     _req("devices", _list(_obj(_DEVICE_INFO))),
 )
+
+
+def _place_list(value: Any, path: str, names: PersonNames) -> list[dict[str, Any]]:
+    """장소 목록. placeId 와 nodeId 는 목록 전체에서 한 번씩만 나온다 — 대시보드가 nodeId 로 기기의 장소를 찾는다."""
+    places = _list(_obj(_PLACE_INFO))(value, path, names)
+    place_ids = [place["placeId"] for place in places]
+    node_ids = [device["nodeId"] for place in places for device in place["devices"]]
+    if len(set(place_ids)) != len(place_ids) or len(set(node_ids)) != len(node_ids):
+        raise SchemaError(path)  # 겹친 값은 경로에 쓰지 않는다
+    return places
+
+
+# weakRssiDbm (대시보드 배치 화면의 약한 신호 기준)은 장소마다가 아니라 응답 전체에 하나다
+_PLACES = _shape(_req("weakRssiDbm", _num), _req("places", _place_list))
 _USE_ROW = _shape(
     _req("nodeId", _str),
     _req("occupancy", _enum(Occupancy)),
@@ -430,7 +444,7 @@ _HEALTH = _shape(
 )
 
 _RESPONSES: dict[str, _Check] = {
-    "place": _obj(_PLACE_INFO),
+    "places": _obj(_PLACES),
     "uses": _list(_obj(_USE_ROW)),
     "approvals": _obj(_APPROVALS),
     "audit": _list(_obj(_AUDIT_ROW)),

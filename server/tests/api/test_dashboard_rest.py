@@ -44,7 +44,8 @@ class Route(NamedTuple):
 
 
 ROUTES = [
-    Route("place", "/dashboard/place", "", "place", (), "place_data", ("placeName",), "place.placeName"),
+    Route("places", "/dashboard/places", "", "places", (), "places_data", ("places", 0, "placeName"),
+          "places.places[0].placeName"),
     Route("uses", "/dashboard/uses", "", "uses", (), "uses_data", (0, "nodeId"), "uses[0].nodeId"),
     Route("approvals", "/dashboard/approvals", "", "approvals", (), "approvals_data", ("pending",),
           "approvals.pending"),
@@ -60,7 +61,7 @@ ROUTES = [
 MISSING_ROUTES = [route for route in ROUTES if route.kind in ("request", "rental")]  # 없을 수 있는 한 건
 OTHER_ROUTES = [route for route in ROUTES if route not in MISSING_ROUTES]
 TEXT_AT = {  # 종류 → (표본에서 문자열 값이 있는 자리, 그 값이 틀릴 때 형식 검사가 알리는 경로)
-    "place": (("placeName",), "place.placeName"),
+    "places": (("places", 0, "placeName"), "places.places[0].placeName"),
     "uses": ((0, "nodeId"), "uses[0].nodeId"),
     "approvals": (("pending", 0, "nodeId"), "approvals.pending[0].nodeId"),
     "audit": ((0, "text"), "audit[0].text"),
@@ -192,6 +193,32 @@ def test_FR11_조회_응답에서_허용_목록_밖의_키와_사용자_ID를_�
     assert OWNER.user_id not in text and VISITOR.user_id not in text
 
 
+def test_FR12A_장소_조회는_소유자의_장소를_모두_돌려준다():
+    rig = Rig()
+    status, body = run(rig.fetch("/dashboard/places"))
+    assert status == 200
+    assert body == {  # 리터럴 기대값. weakRssiDbm 은 장소마다가 아니라 응답 전체에 하나다
+        "weakRssiDbm": -80,
+        "places": [
+            {"placeId": "lounge", "placeName": "라운지", "modelVersion": "model-1", "calibrationVersion": "cal-1",
+             "devices": [
+                 {"nodeId": "locker-1", "name": "사물함 1", "capability": "locker", "occupancy": "rental"},
+                 {"nodeId": "locker-2", "name": "사물함 2", "capability": "locker", "occupancy": "rental"},
+                 {"nodeId": "locker-3", "name": "사물함 3", "capability": "locker", "occupancy": "rental"},
+                 {"nodeId": "light-1", "name": "조명 1", "capability": "light", "occupancy": "shared"},
+                 {"nodeId": "light-2", "name": "조명 2", "capability": "light", "occupancy": "shared"},
+                 {"nodeId": "light-3", "name": "조명 3", "capability": "light", "occupancy": "shared"},
+                 {"nodeId": "speaker-1", "name": "스피커 1", "capability": "speaker", "occupancy": "shared"},
+             ]},
+            {"placeId": "side-room", "placeName": "옆방", "modelVersion": "model-2", "calibrationVersion": "cal-2",
+             "devices": [{"nodeId": "mood-1", "name": "무드등", "capability": "light", "occupancy": "shared"}]},
+        ],
+    }
+    assert rig.queries.calls == [("places", ())]
+    rig.queries.places_data = {"weakRssiDbm": -80, "places": []}  # 장소가 아직 없다
+    assert run(rig.fetch("/dashboard/places")) == (200, {"weakRssiDbm": -80, "places": []})
+
+
 def test_FR12B_같은_사람은_스트림과_조회에서_같은_이름():
     rig = Rig()
 
@@ -290,6 +317,22 @@ def test_FR12A_인코딩할_수_없는_조회_결과는_500(route, caplog):
     assert "\ud800" not in caplog.text
 
 
+def test_FR12A_두_장소에_같은_기기가_있으면_형식_오류다(caplog):
+    rig = Rig()
+    places = with_value(rig.queries.places_data, ("places", 0, "devices", 0, "nodeId"), "dup-node")
+    places = with_value(places, ("places", 1, "devices", 0, "nodeId"), "dup-node")  # 라운지의 기기와 옆방의 무드등이 같다
+    with pytest.raises(SchemaError) as error:
+        render_response("places", places, PersonNames())
+    assert str(error.value) == "places.places"  # 경로만 있다. 겹친 nodeId 가 없다
+    rig.queries.places_data = places
+    # 대시보드가 nodeId 로 기기의 장소를 찾으므로 겹치면 틀린 결과다
+    assert run(rig.fetch("/dashboard/places")) == (500, {"error": "INTERNAL_ERROR"})
+    [record] = [r for r in caplog.records if r.name == REST_LOGGER]
+    assert record.levelno == logging.ERROR
+    assert record.getMessage().endswith("kind=places 경로=places.places")
+    assert "dup-node" not in caplog.text
+
+
 @pytest.mark.parametrize(
     ("bad", "path"),
     [
@@ -347,8 +390,8 @@ def test_FR12B_범위_밖_정수는_형식_오류다(big):
             return await ws.receive_json()
 
     assert run(main()) == {"v": 1, "events": [{"type": "mcp_result", "at": ISO, "requestId": "after"}]}
-    rig.queries.place_data = {**rig.queries.place_data, "weakRssiDbm": big}
-    assert run(rig.fetch("/dashboard/place")) == (500, {"error": "INTERNAL_ERROR"})
+    rig.queries.places_data = {**rig.queries.places_data, "weakRssiDbm": big}
+    assert run(rig.fetch("/dashboard/places")) == (500, {"error": "INTERNAL_ERROR"})
 
 
 @pytest.mark.parametrize(
@@ -454,18 +497,25 @@ def test_FR12A_조회_경로는_GET만_받는다(route, method):
 
 
 @pytest.mark.parametrize("headers", [OWNER_HEADERS, {}], ids=["owner", "no_token"])
+def test_FR12A_옛_장소_경로는_없는_경로다(headers):
+    rig = AssembledRig()
+    assert run(rig.fetch("/dashboard/place", headers=headers)) == (404, {"error": "USE_NOT_FOUND"})  # 인증하지 않는다
+    assert rig.queries.calls == []
+
+
+@pytest.mark.parametrize("headers", [OWNER_HEADERS, {}], ids=["owner", "no_token"])
 def test_FR12A_MCP_앱을_루트에_붙여도_쓰기는_405이고_없는_경로는_404(headers):
     rig = AssembledRig()
     spy = HeaderSpy(rig.app)
     not_get = ["POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE"]  # 조회 경로가 받지 않는 메서드
     any_method = ["GET", "HEAD", *not_get]
-    query_paths = ["/dashboard/place", "/dashboard/requests/r1"]  # 조회 경로 (경로 인자 자리 포함)
-    missing_paths = ["/dashboard/nope", "/dashboard/place/extra", "/dashboard/requests",
+    query_paths = ["/dashboard/places", "/dashboard/requests/r1"]  # 조회 경로 (경로 인자 자리 포함)
+    missing_paths = ["/dashboard/nope", "/dashboard/places/extra", "/dashboard/requests",
                      "/dashboard/requests/r1/extra", "/dashboard/"]
     refused = (405, {"error": "INVALID_INPUT"}, "GET")  # (상태, 본문, Allow 헤더)
     not_found = (404, {"error": "USE_NOT_FOUND"}, None)
     invalid_token = (401, {"error": "INVALID_TOKEN"}, None)  # MCP 앱의 미들웨어가 낸다
-    place = (200, render_response("place", rig.queries.place_data, PersonNames()), None)
+    places = (200, render_response("places", rig.queries.places_data, PersonNames()), None)
 
     async def call(method: str, path: str, headers: dict[str, str] = headers) -> tuple[int, Any, str | None]:
         status, body = await http_request(spy, method, path, headers=headers)
@@ -474,7 +524,7 @@ def test_FR12A_MCP_앱을_루트에_붙여도_쓰기는_405이고_없는_경로�
     async def main():
         seen = {(method, path): await call(method, path) for path in query_paths for method in not_get}
         seen |= {(method, path): await call(method, path) for path in missing_paths for method in any_method}
-        seen["GET", "/dashboard/place"] = await call("GET", "/dashboard/place")  # 조회는 그대로 된다
+        seen["GET", "/dashboard/places"] = await call("GET", "/dashboard/places")  # 조회는 그대로 된다
         # 받이 경로는 `/dashboard/` 아래만 받는다. 그 밖의 요청은 MCP 앱으로 간다
         seen["GET", "/dashboard"] = await call("GET", "/dashboard", {})
         seen["POST", "/mcp"] = await call("POST", "/mcp", {})
@@ -485,11 +535,11 @@ def test_FR12A_MCP_앱을_루트에_붙여도_쓰기는_405이고_없는_경로�
     seen, first = run(main())
     expected = {(method, path): refused for path in query_paths for method in not_get}  # 토큰이 없어도 같다
     expected |= {(method, path): not_found for path in missing_paths for method in any_method}
-    expected["GET", "/dashboard/place"] = place if headers else invalid_token
+    expected["GET", "/dashboard/places"] = places if headers else invalid_token
     expected["GET", "/dashboard"] = expected["POST", "/mcp"] = invalid_token
     assert seen == expected
     assert first == {"v": 1, "events": []}
-    assert rig.queries.calls == ([("place", ())] if headers else [])  # 조회 접점은 GET 조회 하나만 불렀다
+    assert rig.queries.calls == ([("places", ())] if headers else [])  # 조회 접점은 GET 조회 하나만 불렀다
 
 
 def test_FR12A_동기_접점은_이벤트_루프_밖의_스레드에서_부른다():

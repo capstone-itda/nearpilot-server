@@ -1245,7 +1245,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 #### 대시보드 조회
 
 - 대시보드 조회는 `GET`만 둔다. 소유자 토큰(`Authorization: Bearer`)만 받는다. 응답 키는 camelCase이고, 시각은 ISO 8601(밀리초, 시간대 포함)이다. 오류 본문은 공통 규칙의 `{"error": "<사유 코드>"}`다 (401 `INVALID_TOKEN`, 403 `POLICY_DENIED`, 400 `INVALID_INPUT`, 404 `USE_NOT_FOUND`, 500 `INTERNAL_ERROR`).
-  - `GET /dashboard/place`: 장소 이름, 근접 모델·보정 버전, 약한 신호 기준, 기기 목록
+  - `GET /dashboard/places`: 소유자의 장소 목록 (장소마다 이름, 근접 모델·보정 버전, 기기 목록)과 약한 신호 기준
   - `GET /dashboard/uses`: 점유 목록
   - `GET /dashboard/approvals`: 대기·유효·끝난 승인
   - `GET /dashboard/audit?limit=`: 최근 감사 행. `limit`은 설정 한도로 줄인다
@@ -1259,7 +1259,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 
 | 형식 | 키 (✔ 필수, ∅ null 허용, 나머지 선택) |
 |---|---|
-| 장소 (`place`) | `placeName` ✔, `modelVersion` ✔, `calibrationVersion` ✔, `weakRssiDbm` ✔, `devices` ✔ [`nodeId` ✔, `name` ✔, `capability` ✔, `occupancy` ✔] |
+| 장소 목록 (`places`) | `weakRssiDbm` ✔, `places` ✔ [`placeId` ✔, `placeName` ✔, `modelVersion` ✔, `calibrationVersion` ✔, `devices` ✔ [`nodeId` ✔, `name` ✔, `capability` ✔, `occupancy` ✔]]. `placeId`와 `nodeId`는 목록 전체에서 한 번씩만 나온다 |
 | 점유 행 (`uses`) | `personId` ✔, `nodeId` ✔, `occupancy` ✔, `session` ✔ (`RESERVED`, `ACTIVE`, `CLOSING`), `sessionNote`, `startedAt` ✔, `overdueMinutes` |
 | 승인 (`approvals`) | `pending` ✔, `active` ✔, `ended` ✔. 행: `personId` ✔, `nodeId` ✔, `mode`, `requestedAt`, `remainingMinutes`, `validUntil`, `uses`, `endReason` (`APPROVAL_REJECTED`, `APPROVAL_REQUEST_EXPIRED`, `APPROVAL_EXHAUSTED`, `APPROVAL_EXPIRED`) |
 | 감사 행 (`audit`, 스트림 `audit`의 `row`) | `id` ✔, `at` ✔, `step` ✔ (`Step`), `nodeId`, `text` ✔, `code` ✔ |

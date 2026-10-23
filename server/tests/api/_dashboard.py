@@ -82,7 +82,7 @@ class FakeSnapshot:
 
 
 class FakeQueries:
-    """DashboardQueries fake. 메서드마다 표본 결과 속성(place_data, uses_data, approvals_data, audit_data, history_data,
+    """DashboardQueries fake. 메서드마다 표본 결과 속성(places_data, uses_data, approvals_data, audit_data, history_data,
     request_data, trust_data, rental_data, health_data)을 돌려준다.
 
     표본은 조회 형식의 모든 키(선택 키 포함)를 채우고, 사람은 OWNER·VISITOR Subject 를 쓴다. 사람이 있는 목록은
@@ -94,12 +94,23 @@ class FakeQueries:
         early, later = NOW - timedelta(minutes=30), NOW + timedelta(minutes=45)
         self.error: Exception | None = None
         self.calls: list[tuple[str, tuple]] = []
-        self.place_data: Any = {
-            "placeName": "시연장", "modelVersion": "model-1", "calibrationVersion": "cal-1", "weakRssiDbm": -80,
-            "devices": [
-                {"nodeId": "locker-1", "name": "사물함 1", "capability": Capability.LOCKER,
-                 "occupancy": Occupancy.RENTAL},
-                {"nodeId": "light-1", "name": "조명 1", "capability": Capability.LIGHT, "occupancy": Occupancy.SHARED},
+        lounge = (  # 사물함 3, 조명 3, 스피커 1
+            [{"nodeId": f"locker-{n}", "name": f"사물함 {n}", "capability": Capability.LOCKER,
+              "occupancy": Occupancy.RENTAL} for n in (1, 2, 3)]
+            + [{"nodeId": f"light-{n}", "name": f"조명 {n}", "capability": Capability.LIGHT,
+                "occupancy": Occupancy.SHARED} for n in (1, 2, 3)]
+            + [{"nodeId": "speaker-1", "name": "스피커 1", "capability": Capability.SPEAKER,
+                "occupancy": Occupancy.SHARED}]
+        )
+        self.places_data: Any = {  # 한 소유자가 두 장소를 갖는다. weakRssiDbm 은 응답 전체에 하나다
+            "weakRssiDbm": -80,
+            "places": [
+                {"placeId": "lounge", "placeName": "라운지", "modelVersion": "model-1",
+                 "calibrationVersion": "cal-1", "devices": lounge},
+                {"placeId": "side-room", "placeName": "옆방", "modelVersion": "model-2",
+                 "calibrationVersion": "cal-2",
+                 "devices": [{"nodeId": "mood-1", "name": "무드등", "capability": Capability.LIGHT,
+                              "occupancy": Occupancy.SHARED}]},
             ],
         }
         self.uses_data: Any = [
@@ -176,8 +187,8 @@ class FakeQueries:
             raise self.error
         return data
 
-    def place(self):
-        return self._answer("place", (), self.place_data)
+    def places(self):
+        return self._answer("places", (), self.places_data)
 
     def uses(self):
         return self._answer("uses", (), self.uses_data)
