@@ -104,3 +104,4 @@ MQTT `-9`는 QoS1 발행 뒤 `NP_MQTT_IO_TIMEOUT_MS` 안에 PUBACK을 못 받아
 loop task watchdog은 `NP_WATCHDOG_TIMEOUT_SEC`(15초) 동안 갱신이 없으면 기기를 재시작한다. 부팅 로그 `WATCHDOG`에 기한과 적용 여부가 나온다.
 watchdog은 네트워크 호출마다 갱신한다. 그래서 기한은 TCP 연결 3초와 MQTT 대기 한도의 합보다 길어야 한다(빌드 검사).
 재시작 뒤에도 명령 기록 때문에 다시 구동하지 않는다. 연결 직후 기록 재보고는 loop 한 번에 하나씩 보낸다.
+시험·시연 비콘은 legacy 광고 100ms 간격으로 둔다. 스캔 30%에서 250ms 광고는 1초 구간의 약 37%에 표본이 없었다.
