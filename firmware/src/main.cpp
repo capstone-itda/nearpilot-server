@@ -165,6 +165,8 @@ bool announce() {
     return report("announce", doc, 1, true);
 }
 
+bool commandBusy();
+
 void status() {
     np::CommandContext before = liveContext();
     if (!before.clockTrusted) return;
@@ -176,7 +178,10 @@ void status() {
     JsonDocument doc;
     common(doc, 1);
     doc["observed_at"] = utcNow();
-    np::physicalState(doc, sample, config.capability, measurement.startedAtMs, end, before.nowSec, after.nowSec);
+    // Fields without an installed sensor come from this firmware's own output state (spec 6절).
+    np::StatusFallback board(sensors.sensesActuator(), sensors.detectsFaults(), commandBusy());
+    np::physicalState(doc, sample, config.capability, measurement.startedAtMs, end, before.nowSec, after.nowSec,
+                      board);
     report("status", doc, 1);
 }
 
@@ -268,6 +273,8 @@ public:
 
 BoardCommandPort commandPort;
 np::Executor executor(ledger, commandPort, NP_MAX_COMMAND_ID_BYTES, NP_MAX_RECORD_BYTES);
+
+bool commandBusy() { return executor.busy(); }
 
 class BoardSafetyPort : public np::SafetyPort {
 public:

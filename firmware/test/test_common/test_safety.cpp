@@ -48,6 +48,8 @@ public:
     std::string utcNow() override { return STAMP; }
     std::string newEventId() override { return "00000000-0000-4000-8000-" + std::string(11, '0') + std::to_string(++events); }
     np::Sensors& sensors() override { return *this; }
+    bool sensesActuator() const override { return true; }
+    bool detectsFaults() const override { return true; }
     np::SensorSnapshot read(const np::Measurement& measurement) override {
         ++reads;
         TEST_ASSERT_FALSE(measurement.checkId.empty());
@@ -284,6 +286,35 @@ void test_FR07_status_uses_sensor_observations() {
     TEST_ASSERT_EQUAL_STRING("unknown", doc["physical_state"]["actuator_state"]);
 }
 
+void test_FR07_status_without_sensors_uses_command_state() {
+    np::NoSensors none;
+    JsonDocument doc;
+    double utc;
+    np::parseUtc(STAMP, utc);
+    np::StatusFallback board(none.sensesActuator(), none.detectsFaults(), false);
+    np::physicalState(doc, none.read({"", 100}), "light", 100, 102, utc, utc, board);
+    TEST_ASSERT_EQUAL_STRING("idle", doc["physical_state"]["actuator_state"]);
+    TEST_ASSERT_FALSE(doc["physical_state"]["sensor_fault"].as<bool>());
+    TEST_ASSERT_TRUE(doc["physical_state"]["sensor_fault"].is<bool>());
+    TEST_ASSERT_TRUE(doc["physical_state"]["light_on"].isNull());  // Never filled from command state.
+    board.commandActive = true;
+    np::physicalState(doc, none.read({"", 100}), "light", 100, 102, utc, utc, board);
+    TEST_ASSERT_EQUAL_STRING("busy", doc["physical_state"]["actuator_state"]);
+
+    // Installed sensors win; a failed read stays unknown/null instead of the command state.
+    Port port;
+    np::StatusFallback sensed(port.sensesActuator(), port.detectsFaults(), false);
+    np::physicalState(doc, np::SensorSnapshot(), "light", 100, 102, utc, utc, sensed);
+    TEST_ASSERT_EQUAL_STRING("unknown", doc["physical_state"]["actuator_state"]);
+    TEST_ASSERT_TRUE(doc["physical_state"]["sensor_fault"].isNull());
+    port.values();
+    port.sample.actuatorIdle = {true, false, 101, STAMP, "current-sensor"};
+    port.sample.sensorFault = {true, true, 101, STAMP, "self-test"};
+    np::physicalState(doc, port.sample, "light", 100, 102, utc, utc, board);
+    TEST_ASSERT_EQUAL_STRING("busy", doc["physical_state"]["actuator_state"]);
+    TEST_ASSERT_TRUE(doc["physical_state"]["sensor_fault"].as<bool>());
+}
+
 void test_FR20_full_check_store_preserves_unexpired_and_pending() {
     for (bool interrupted : {false, true}) {
         FakeStore store(1);
@@ -339,6 +370,7 @@ void runSafetyTests() {
     RUN_TEST(test_FR20_invalid_check_no_measurement);
     RUN_TEST(test_FR20_evicted_check_does_not_measure);
     RUN_TEST(test_FR07_status_uses_sensor_observations);
+    RUN_TEST(test_FR07_status_without_sensors_uses_command_state);
     RUN_TEST(test_FR20_full_check_store_preserves_unexpired_and_pending);
     RUN_TEST(test_FR22_check_owner_and_corruption_block_measurement);
 }

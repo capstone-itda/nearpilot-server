@@ -83,8 +83,10 @@ node_lab은 제품 펌웨어의 기록을 모른다. 제품 펌웨어를 쓴 기
 `NP_MAX_CHECK_RECORDS`, `NP_MAX_CHECK_RECORD_BYTES`가 빌드 설정이다. 늘리기 전에 파티션 용량을 검증한다.
 센서는 `Sensors::read(Measurement)`로 연결한다. 반환 관측은 측정 호출 안의 단조 시각, UTC 시각과 출처를 담는다.
 리드 스위치의 문 닫힘을 잠금 관측으로 쓰지 않는다. 조명·스피커 v1은 꺼짐이 아니라 구동부 정지를 검사한다.
-현재 `NoSensors`는 모든 관측을 불명으로 둔다. 상태의 bool은 `null`, `actuator_state`는 `unknown`이다.
-반납 검사도 `unknown`과 빈 근거다. 명령 처리 중 여부나 선택 GPIO 값으로 물리 상태를 추정하지 않는다.
+현재 `NoSensors`는 모든 관측을 불명으로 둔다. 반납 검사 근거와 `door_closed`·`light_on`은 `null`이다.
+상태 보고에서 센서가 없는 항목만 펌웨어 상태로 채운다. `actuator_state`는 명령 처리 중이면 `busy`, 아니면 `idle`이고 `sensor_fault`는 `false`다.
+이 `idle`은 구동부가 실제로 멈췄다는 근거가 아니다. 센서를 설치하면 `sensesActuator()`·`detectsFaults()`를 켜고 센서 값을 쓴다.
+반납 검사는 `unknown`과 빈 근거다. 반납 근거에는 명령 처리 중 여부나 선택 GPIO 값을 쓰지 않는다.
 
 명령·검사 기록은 빈 슬롯을 먼저 쓴다. 가득 차면 완료·만료된 가장 오래된 기록을 새 기록으로 교체한다.
 명령의 `unknown`도 최종 결과다. 접수·실행 중 기록은 교체하지 않는다. 만료 확인에는 시각 오차를 뺀 하한을 쓴다.

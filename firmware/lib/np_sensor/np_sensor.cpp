@@ -14,12 +14,15 @@ bool freshObservation(const BoolObservation& value, uint64_t begin, uint64_t end
 }
 
 void physicalState(JsonDocument& report, const SensorSnapshot& sample, const std::string& capability,
-                   uint64_t begin, uint64_t end, double utcBegin, double utcEnd) {
+                   uint64_t begin, uint64_t end, double utcBegin, double utcEnd,
+                   const StatusFallback& fallback) {
     JsonObject state = report["physical_state"].to<JsonObject>();
     state["door_closed"] = nullptr;
     state["light_on"] = nullptr;
-    state["sensor_fault"] = nullptr;
-    state["actuator_state"] = "unknown";
+    if (fallback.detectsFaults) state["sensor_fault"] = nullptr;
+    else state["sensor_fault"] = false;
+    if (fallback.sensesActuator) state["actuator_state"] = "unknown";
+    else state["actuator_state"] = fallback.commandActive ? "busy" : "idle";
     auto fresh = [&](const BoolObservation& value) {
         return freshObservation(value, begin, end, utcBegin, utcEnd);
     };
