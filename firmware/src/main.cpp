@@ -9,6 +9,7 @@
 #include <WiFi.h>
 #include <esp_sntp.h>
 #include <esp_system.h>
+#include <esp_task_wdt.h>
 #include <esp_timer.h>
 #include <sys/time.h>
 #include <time.h>
@@ -55,6 +56,11 @@ static_assert(NP_LEGACY_COMMAND_RECORDS >= 0 && NP_LEGACY_COMMAND_RECORDS < 1000
 static_assert(NP_MAX_CHECK_RECORDS > 0 && NP_MAX_CHECK_RECORDS < 10000, "check slot limit");
 static_assert(NP_RSSI_FRAME_MS > 0 && NP_STATUS_MS > 0, "report interval");
 static_assert(NP_BLE_SCAN_WINDOW_MS <= NP_BLE_SCAN_INTERVAL_MS, "BLE scan window");
+#ifndef NP_WATCHDOG_TIMEOUT_SEC
+#error "config.local.h needs NP_WATCHDOG_TIMEOUT_SEC (see config.example.h)"
+#endif
+// WiFiClient's default connect timeout is 3 s; the watchdog is fed after each network call.
+static_assert(NP_WATCHDOG_TIMEOUT_SEC * 1000UL > 3000UL + NP_MQTT_IO_TIMEOUT_MS, "watchdog shorter than one wait");
 static_assert(NP_RECONNECT_MS > 0 && NP_WIFI_RECONNECT_MS > 0, "retry interval");
 static_assert(NP_RECONNECT_MS <= NP_RETRY_MAX_MS && NP_WIFI_RECONNECT_MS <= NP_RETRY_MAX_MS, "retry limit");
 
@@ -77,6 +83,12 @@ np::Ledger checkLedger(checkStore, "check_id");
 np::NoSensors sensors;
 String session;
 bool announced = false;
+bool watchdogArmed = false;
+
+// Every network call is bounded (TCP connect or NP_MQTT_IO_TIMEOUT_MS); feed after each one.
+void feedWatchdog() {
+    if (watchdogArmed) esp_task_wdt_reset();
+}
 unsigned long seq[5] = {};
 volatile bool synchronizedClock = false;
 volatile unsigned long lastSync = 0;
@@ -152,9 +164,11 @@ void common(JsonDocument& doc, int channel) {
 bool report(const char* kind, JsonDocument& doc, int qos, bool retained = false) {
     String body;
     serializeJson(doc, body);
+    unsigned long started = millis();
     bool sent = mqtt.publish(String("nearpilot/node/") + config.nodeId.c_str() + "/" + kind, body, retained, qos);
-    Serial.printf("MQTT_REPORT kind=%s seq=%lu published=%d\n", kind,
-        doc["seq"].as<unsigned long>(), sent);
+    feedWatchdog();
+    Serial.printf("MQTT_REPORT kind=%s seq=%lu published=%d ms=%lu\n", kind,
+        doc["seq"].as<unsigned long>(), sent, millis() - started);
     return sent;  // MQTT confirmation alone is not physical success.
 }
 
@@ -296,9 +310,24 @@ public:
 BoardSafetyPort safetyPort;
 np::SafetyChecks safetyChecks(checkLedger, safetyPort, NP_MAX_COMMAND_ID_BYTES, NP_MAX_CHECK_RECORD_BYTES);
 
+// Re-reports are spread over loop iterations so hundreds of records never stall MQTT, BLE or the watchdog.
+bool replaying = false;
+
 void replayRecords() {
-    if (ledger.ready() && clockTrusted()) executor.replay();
-    if (checkLedger.ready() && clockTrusted()) safetyChecks.replay();
+    executor.beginReplay();
+    safetyChecks.beginReplay();
+    replaying = true;
+}
+
+void replayStep() {
+    if (!replaying) return;
+    if (!mqtt.connected() || !clockTrusted()) {
+        replaying = false;  // The next announce or regained clock trust starts again from the first slot.
+        return;
+    }
+    bool more = ledger.ready() && executor.replayNext();
+    if (!more) more = checkLedger.ready() && safetyChecks.replayNext();
+    replaying = more;
 }
 
 // ---- USB provisioning (separate NVS namespace; command records are only read) ----
@@ -477,6 +506,10 @@ void setup() {
         unsigned(recordStore.freeEntries()));
     Serial.printf("CHECK_STORE ready=%d slots=%d record_bytes=%d free_entries=%u\n",
         checkStore.ready(), NP_MAX_CHECK_RECORDS, NP_MAX_CHECK_RECORD_BYTES, unsigned(checkStore.freeEntries()));
+    // Armed after the record indexes are built; a reset keeps every receipt and never re-actuates.
+    watchdogArmed = esp_task_wdt_init(NP_WATCHDOG_TIMEOUT_SEC, true) == ESP_OK;
+    if (watchdogArmed) enableLoopWDT();
+    Serial.printf("WATCHDOG timeout_sec=%d armed=%d\n", NP_WATCHDOG_TIMEOUT_SEC, watchdogArmed);
     if (!configured) {
         Serial.println("CONFIG_MISSING usb_provisioning_required network_not_started");
         return;
@@ -552,8 +585,13 @@ void loop() {
         announced = deferredLogged = false;
         if (mqtt.connect((String("np-") + config.nodeId.c_str()).c_str(), config.mqttUser.c_str(),
                          config.mqttPassword.c_str())) {
+            feedWatchdog();
             String base = String("nearpilot/node/") + config.nodeId.c_str();
-            if (!mqtt.subscribe(base + "/cmd", 1) || !mqtt.subscribe(base + "/safety_check", 1)) {
+            bool subscribed = mqtt.subscribe(base + "/cmd", 1);
+            feedWatchdog();
+            subscribed = subscribed && mqtt.subscribe(base + "/safety_check", 1);
+            feedWatchdog();
+            if (!subscribed) {
                 mqttDelay = backoff(mqttDelay);
                 Serial.printf("MQTT_SUBSCRIBE_FAILED error=%d next_retry_ms=%lu\n", mqtt.lastError(), mqttDelay);
                 mqtt.disconnect();
@@ -568,7 +606,9 @@ void loop() {
                 config.mqttHost.c_str(), config.mqttPort, mqtt.lastError(), mqtt.returnCode(), mqttDelay);
         }
     }
+    feedWatchdog();  // After a failed connect too.
     mqtt.loop();
+    feedWatchdog();
     noteDisconnect();
     bool trusted = clockTrusted();
     static unsigned long lastClockRetry = 0;
@@ -605,6 +645,7 @@ void loop() {
         else if (received.topic.endsWith("/safety_check")) safetyChecks.handle(received.payload.c_str());
     }
     executor.poll();
+    replayStep();
     if (current - lastStatus >= NP_STATUS_MS) {
         lastStatus = current;
         if (mqtt.connected() && announced) status();

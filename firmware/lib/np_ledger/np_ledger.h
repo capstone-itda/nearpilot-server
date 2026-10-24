@@ -40,6 +40,9 @@ public:
     // Records keep the node ID inside their stored content. Never re-home them silently.
     const char* ownerConflict(const std::string& nodeId);
 
+    // Next readable record at or after slot `from`; returns its slot or -1. Unreadable slots are skipped.
+    int next(int from, JsonDocument& record);
+
     // Visits each readable record in slot order; unreadable slots are skipped, never erased.
     template <class Visit>
     void forEach(Visit visit) {

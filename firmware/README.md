@@ -94,3 +94,13 @@ node_lab은 제품 펌웨어의 기록을 모른다. 제품 펌웨어를 쓴 기
 교체할 기록이 없거나 시각을 신뢰하지 못하면 명령은 `STORAGE_ERROR`, 검사는 무응답으로 확인 불능이다.
 교체된 ID의 과거 결과 재응답은 보장하지 않는다. 오래된 요청은 연결·만료 검사로 막으며 다시 구동하거나 측정하지 않는다.
 `include/config.example.h`는 모든 기기가 공유하는 빌드 값이다. 바꿀 때만 `include/config.local.h`로 복사한다.
+
+## 연결 안정성
+
+Wi-Fi와 BLE는 무선 하나를 시간으로 나눠 쓴다. BLE 스캔 창이 길면 MQTT 확인 응답(PUBACK)이 늦는다.
+MQTT `-9`는 QoS1 발행 뒤 `NP_MQTT_IO_TIMEOUT_MS` 안에 PUBACK을 못 받아 라이브러리가 연결을 닫은 것이다.
+그래서 BLE 스캔은 100ms 중 30ms만 쓰고, 대기 한도는 5초다. Wi-Fi 절전은 끌 수 없다. BLE와 함께 쓰면 부팅 중 `abort()`가 난다.
+`MQTT_REPORT ... ms=`는 발행 하나가 응답까지 걸린 시간이다.
+loop task watchdog은 `NP_WATCHDOG_TIMEOUT_SEC`(15초) 동안 갱신이 없으면 기기를 재시작한다. 부팅 로그 `WATCHDOG`에 기한과 적용 여부가 나온다.
+watchdog은 네트워크 호출마다 갱신한다. 그래서 기한은 TCP 연결 3초와 MQTT 대기 한도의 합보다 길어야 한다(빌드 검사).
+재시작 뒤에도 명령 기록 때문에 다시 구동하지 않는다. 연결 직후 기록 재보고는 loop 한 번에 하나씩 보낸다.

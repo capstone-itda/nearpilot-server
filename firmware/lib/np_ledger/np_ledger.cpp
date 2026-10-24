@@ -96,6 +96,17 @@ int Ledger::replacement(bool trusted, double nowSec, double maxErrorSec, size_t 
     return oldestSlot;
 }
 
+int Ledger::next(int from, JsonDocument& record) {
+    if (!store_.ready()) return -1;
+    for (int slot = from < 0 ? 0 : from; slot < store_.capacity(); ++slot) {
+        if (!store_.has(slot)) continue;
+        record.clear();
+        if (deserializeJson(record, store_.read(slot))) continue;
+        return slot;
+    }
+    return -1;
+}
+
 bool Ledger::write(int slot, const std::string& body, const std::string& id) {
     if (!store_.write(slot, body) || store_.read(slot) != body) {
         loaded_ = false;  // The slot may now hold anything; rescan before the next lookup.

@@ -18,7 +18,11 @@
 #define NP_WIFI_RECONNECT_MS 10000UL
 #define NP_RETRY_MAX_MS 30000UL
 #define NP_MQTT_KEEPALIVE_SEC 30
-#define NP_MQTT_IO_TIMEOUT_MS 2000
+// QoS1 PUBACK/CONNACK/SUBACK wait. A miss closes the link (MQTT -9). Measured worst 2,003 ms (spec 7단계).
+#define NP_MQTT_IO_TIMEOUT_MS 5000
+// Loop task watchdog. Fed after every network call, so it must exceed the longest single wait:
+// TCP connect (3 s, WiFiClient default) plus one MQTT reply wait.
+#define NP_WATCHDOG_TIMEOUT_SEC 15
 // Largest stored record. 512 bytes take 18 NVS entries, so 7 fit in a 126-entry page.
 #define NP_MAX_RECORD_BYTES 512
 // Slots in the 64-page np_records partition (partitions.csv): one page is NVS's compaction page and
@@ -35,5 +39,6 @@
 #define NP_MAX_COMMAND_BYTES 2048
 #define NP_MAX_COMMAND_ID_BYTES 128
 #define NP_SERIAL_BAUD 115200
+// Wi-Fi and BLE share one radio. A 90 ms window starved MQTT; 30 ms removed the -9 disconnects (spec 7단계).
 #define NP_BLE_SCAN_INTERVAL_MS 100
-#define NP_BLE_SCAN_WINDOW_MS 90
+#define NP_BLE_SCAN_WINDOW_MS 30

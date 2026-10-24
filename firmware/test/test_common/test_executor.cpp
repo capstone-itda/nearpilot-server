@@ -622,9 +622,35 @@ void test_FR06_busy_rejection_replaces_expired_record() {
     TEST_ASSERT_EQUAL_INT(1, port.actuations);
 }
 
+void test_FR07_replay_spreads_over_loop_iterations() {
+    FakeStore store(5);
+    store.slots[0] = "{\"command_id\":\"a\",\"content\":\"[]\",\"state\":\"unknown\",\"event_id\":\"x\",\"occurred_at\":\"t0\"}";
+    store.slots[2] = "not json";  // Skipped and kept.
+    store.slots[3] = "{\"command_id\":\"b\",\"content\":\"[]\",\"state\":\"accepted\",\"event_id\":\"y\",\"occurred_at\":\"t0\"}";
+    FakePort port;
+    np::Ledger ledger(store);
+    np::Executor executor(ledger, port, 128, 512);
+    TEST_ASSERT_FALSE(executor.replayNext());  // Nothing until a replay starts.
+    executor.beginReplay();
+    TEST_ASSERT_TRUE(executor.replayNext());
+    assertPublished({"unknown"}, port);
+    TEST_ASSERT_TRUE(executor.replayNext());  // One record per call: the restored receipt.
+    assertPublished({"unknown", "unknown"}, port);
+    TEST_ASSERT_EQUAL_STRING("unknown", stored(store, 3).c_str());
+    TEST_ASSERT_FALSE(executor.replayNext());
+    TEST_ASSERT_FALSE(executor.replayNext());
+    TEST_ASSERT_EQUAL_UINT32(2, port.published.size());
+    TEST_ASSERT_EQUAL_STRING("not json", store.slots[2].c_str());
+    executor.beginReplay();  // A new connection starts again from the first slot.
+    TEST_ASSERT_TRUE(executor.replayNext());
+    TEST_ASSERT_EQUAL_STRING("x@t0", port.events.back().c_str());
+    TEST_ASSERT_EQUAL_INT(0, port.actuations);
+}
+
 }  // namespace
 
 void runExecutorTests() {
+    RUN_TEST(test_FR07_replay_spreads_over_loop_iterations);
     RUN_TEST(test_FR06_accepted_then_unknown_without_evidence);
     RUN_TEST(test_FR06_invalid_message_no_actuation);
     RUN_TEST(test_FR06_duplicate_after_restart);

@@ -148,10 +148,22 @@ void SafetyChecks::handle(const std::string& payload) {
 }
 
 void SafetyChecks::replay() {
-    if (!port_.context().clockTrusted) return;
-    ledger_.forEach([this](int slot, JsonDocument& record) {
-        if (recover(slot, record)) port_.publish(record);
-    });
+    beginReplay();
+    while (replayNext()) {
+    }
+}
+
+bool SafetyChecks::replayNext() {
+    if (replayCursor_ < 0) return false;
+    JsonDocument record;
+    int slot = port_.context().clockTrusted ? ledger_.next(replayCursor_, record) : -1;
+    if (slot < 0) {
+        replayCursor_ = -1;
+        return false;
+    }
+    replayCursor_ = slot + 1;
+    if (recover(slot, record)) port_.publish(record);
+    return true;
 }
 
 }  // namespace np

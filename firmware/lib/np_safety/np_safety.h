@@ -24,7 +24,11 @@ public:
         : ledger_(ledger), port_(port), maxIdBytes_(maxIdBytes), maxRecordBytes_(maxRecordBytes) {}
     void handle(const std::string& payload);
     void replay();
+    // replay() spread over loop iterations: one readable record per replayNext() call.
+    void beginReplay() { replayCursor_ = 0; }
+    bool replayNext();
 private:
+    int replayCursor_ = -1;
     bool recover(int slot, JsonDocument& record);
     void result(JsonDocument& record, const char* outcome);
     Ledger& ledger_;

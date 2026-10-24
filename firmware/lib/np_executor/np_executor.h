@@ -42,12 +42,18 @@ public:
     // Restored receipts become unknown; a live execution is kept intact on reconnect.
     void replay();
 
+    // replay() spread over loop iterations: one readable record per replayNext() call.
+    // replayNext() returns false when nothing is left; beginReplay() starts again from the first slot.
+    void beginReplay() { replayCursor_ = 0; }
+    bool replayNext();
+
     bool busy() const { return busy_; }
 
 private:
     void event(JsonDocument& record, const char* state, const char* error = nullptr);
     void reject(JsonDocument& record, const char* code, const char* note);
     void finish(const char* state, const char* error = nullptr);
+    void replayRecord(int slot, JsonDocument& record);
 
     Ledger& ledger_;
     CommandPort& port_;
@@ -59,6 +65,7 @@ private:
     Actuation activeRequest_;
     Device* activeDevice_ = nullptr;
     CompletionPolicy activePolicy_;
+    int replayCursor_ = -1;
 };
 
 }  // namespace np

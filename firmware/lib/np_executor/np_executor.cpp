@@ -132,16 +132,33 @@ void Executor::poll() {
     finish(observation.state == ObservationState::Proven && activePolicy_.successEnabled ? "succeeded" : "unknown");
 }
 
+void Executor::replayRecord(int slot, JsonDocument& record) {
+    // Reconnection during a live execution is not power-loss recovery.
+    if (slot != activeSlot_ && (record["state"].as<std::string>() == "accepted" ||
+                               record["state"].as<std::string>() == "running")) {
+        event(record, "unknown");
+        if (!ledger_.save(slot, record)) return;
+    }
+    port_.publish(record);  // Stable event ID and occurred_at; the port adds a new seq and sent_at.
+}
+
 void Executor::replay() {
-    ledger_.forEach([this](int slot, JsonDocument& record) {
-        // Reconnection during a live execution is not power-loss recovery.
-        if (slot != activeSlot_ && (record["state"].as<std::string>() == "accepted" ||
-                                   record["state"].as<std::string>() == "running")) {
-            event(record, "unknown");
-            if (!ledger_.save(slot, record)) return;
-        }
-        port_.publish(record);  // Stable event ID and occurred_at; the port adds a new seq and sent_at.
-    });
+    beginReplay();
+    while (replayNext()) {
+    }
+}
+
+bool Executor::replayNext() {
+    if (replayCursor_ < 0) return false;
+    JsonDocument record;
+    int slot = ledger_.next(replayCursor_, record);
+    if (slot < 0) {
+        replayCursor_ = -1;
+        return false;
+    }
+    replayCursor_ = slot + 1;
+    replayRecord(slot, record);
+    return true;
 }
 
 }  // namespace np
