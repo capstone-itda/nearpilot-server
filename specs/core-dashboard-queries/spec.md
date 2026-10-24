@@ -59,7 +59,7 @@
 
 ### 고치는 곳
 - `server/src/nearpilot/core/dashboard/` (새 폴더: 조회 서비스, 문구, 따라 읽기)
-- `server/src/nearpilot/db/repositories/` (대시보드 읽기 구현, 시드를 쓰는 `admin_repository.py`의 기기 이름), `db/schema/sql/0006_node_name.sql`, `server/tools/evaluation/db.py`의 `EXPECTED_SCHEMA_VERSION` (마이그레이션 수와 같게 올린다)
+- `server/src/nearpilot/db/repositories/` (대시보드 읽기 구현, 시드를 쓰는 `admin_repository.py`의 기기 이름), `db/schema/sql/0006_node_name.sql`, `server/tools/evaluation/db.py`의 `EXPECTED_SCHEMA_VERSION` (마이그레이션 수와 같게 올린다), `execution_store.py`의 `execution_context` (아래 결정의 예약 시각)
 - `server/src/nearpilot/runtime/` (설정 `[dashboard]`, 조립, 앱에 라우터 붙이기, 모델 보관)
 - `server/src/nearpilot/core/lifecycle/shared_light.py`: 유지 대상자 읽기 메서드 하나를 더한다
 - `server/src/nearpilot/cli/seed.py`와 시드를 저장하는 `core/admin/`: `[[nodes]]`의 선택 키 `name`
@@ -127,6 +127,7 @@
 
 - 조회 서비스, 문구, 따라 읽기는 `core/dashboard/`에 두고 대시보드 담당이 맡는다 — architecture.md §2의 미결을 2026-10-24 담당자가 정했다. 대시보드만 쓰는 읽기라 판정·상태 관리의 서비스와 섞지 않는다.
 - 발행은 사건이 난 자리에서 하지 않고, 따라 읽기가 커밋된 행을 읽어 한다 (2026-10-23 팀 결정의 "사건이 난 영역이 그 자리에서 넘긴다"를 바꾼다, 2026-10-24 담당자 결정) — 감사 행과 상태 쓰기는 DB 트랜잭션 안에 있어 그 자리에서 발행하면 되돌려진 쓰기를 알린다. 저장 결과가 새 상태를 돌려주지 않고, 사람 역할과 내부 요청 ID를 모르는 자리가 많다. 따라 읽기는 다른 영역 코드를 고치지 않고 커밋 순서를 지킨다. 화면까지 최대 `tail_interval_sec`만큼 늦다.
+- 되살린 실행 문맥은 예약이 없는 요청(서버 내부, 승인 없는 공용형)에서 `reserved_at`을 비운다 (2026-10-24, 대시보드 시나리오에서 찾은 결함) — 판정이 넘긴 문맥은 이 둘에 `reserved_at`이 없는데(`specs/state-management/core-execution.md` 제약) 명령 행에는 받은 시각이 남아, 결과 인계가 "같은 내부 요청의 실행 문맥이 다르다"로 거부되고 재시도를 반복했다. 공용 조명의 실행 결과가 대시보드에 늦게 보이지 않게 고친다.
 - 따라 읽는 행과 이벤트:
   - 요청(방문자) → `mcp_call`. `request_access`는 발행하지 않는다.
   - 감사 → `audit`. 요청의 판정이 저장되면 그 요청의 `step`(닿은 단계까지), `posterior`(③을 지났으면), `verdict`를 차례로 발행한다.

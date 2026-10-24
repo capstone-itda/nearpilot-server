@@ -742,6 +742,11 @@ class SqliteExecutionStore:
         if request_row is None:
             raise LookupError(f"요청 {command_row['internal_request_id']} 가 없다")
         is_internal = request_row["request_kind"] == "server_internal"
+        execution_kind = ExecutionKind(command_row["execution_kind"])
+        # 판정이 넘긴 문맥과 같게, 예약이 없는 요청(서버 내부, 승인 없는 공용형)은 예약 시각을 비운다
+        # (core-execution.md "reserved_at 이 None 인 요청"). 명령 행에는 받은 시각이 남는다.
+        no_reservation = is_internal or (
+            execution_kind == ExecutionKind.SHARED and command_row["usage_id"] is None)
         return ExecutionContext(
             internal_request_id=command_row["internal_request_id"],
             request=None if is_internal else self._use_request_from_row(request_row),
@@ -753,8 +758,11 @@ class SqliteExecutionStore:
             use_id=command_row["use_id"],
             usage_id=command_row["usage_id"],
             settings=settings_from_json(request_row["settings_json"]),
-            execution_kind=ExecutionKind(command_row["execution_kind"]),
-            reserved_at=parse_iso(command_row["reserved_at"]) if command_row["reserved_at"] else None,
+            execution_kind=execution_kind,
+            reserved_at=(
+                parse_iso(command_row["reserved_at"])
+                if command_row["reserved_at"] and not no_reservation else None
+            ),
         )
 
     @staticmethod

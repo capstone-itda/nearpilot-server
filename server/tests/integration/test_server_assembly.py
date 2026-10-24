@@ -385,6 +385,23 @@ def test_FR20_runtime_release_and_leave_off(world):
         wait_until(lambda: [c["status"] for c in w.commands("light-1")] == ["succeeded", "succeeded"])
 
 
+def test_FR20_runtime_shared_result_handover_does_not_block_reports(world, caplog):
+    # 공용형 결과를 인계할 때 되살린 실행 문맥이 판정의 문맥과 같아야 한다. 다르면 인계가 거부되고
+    # 같은 기기의 뒤 보고가 줄에 막힌다.
+    w = world()
+    with caplog.at_level(logging.WARNING), running(w.runtime):
+        w.ready("locker-1", "light-1")
+        light = w.use(VISITOR_B, "light-1", "light-on", Action.ON)
+        assert light.verdict is Verdict.OK
+        wait_until(lambda: [c["status"] for c in w.commands("light-1")] == ["succeeded"])
+        seen = query(w.db, "SELECT last_seen_at FROM node WHERE node_id = 'light-1'")[0]["last_seen_at"]
+        time.sleep(0.01)
+        w.broker.status("light-1")  # 결과 뒤의 보고도 인계된다
+        wait_until(lambda: query(w.db, "SELECT last_seen_at FROM node WHERE node_id = 'light-1'")[0][
+            "last_seen_at"] != seen)
+    assert "CORE handover failed" not in caplog.text
+
+
 # ── 종료 ────────────────────────────────────────────────────────────
 
 
