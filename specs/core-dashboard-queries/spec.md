@@ -142,11 +142,11 @@
 - `fault.cause`: 격리 근거 `device_result`의 `unknown` → `EXEC_UNKNOWN`, 그 밖의 결과 → `EXEC_FAILED`, 다른 근거(`sensor_fault`, `announce_changed` 등) → `TARGET_UNAVAILABLE`.
 - 문구는 `core/dashboard/text.py` 한 곳에서 만든다. 지금 대시보드 목 데이터와 같은 짧은 한국어다 (`열림`, `실행 안 함`, `결과 불명 → 고장 격리`, `근접 통과 0.91`, `비콘 수신 없음`).
 - 이력 `period`는 `today`(서버 시간대의 오늘 0시부터) 또는 `HH:MM~HH:MM`(서버 시간대 오늘의 구간)이다 — 대시보드 이력 화면의 두 선택지다. 시각 비교는 UTC로 한다.
-- 지연 시간과 `respondedAt`은 요청을 받은 시각부터 그 요청의 마지막 감사 행까지다 — 응답 시각을 저장하지 않는다. 중앙값과 p95는 시연 세션(서버 시작 뒤)의 판정만으로 센다. `since`는 서버가 시작한 시각이다.
+- 지연 시간과 `respondedAt`은 요청을 받은 시각부터 그 요청의 마지막 감사 행(반납 완료 행은 뺀다)까지다 — 응답 시각을 저장하지 않는다. 반납 완료 행은 대여를 만든 요청의 ID를 달고 반납할 때 붙어서, 넣으면 반납이 늦을수록 지연이 길어진다. 중앙값과 p95는 시연 세션(서버 시작 뒤)의 판정만으로 센다. `since`는 서버가 시작한 시각이다.
 - `doubleOccupancy`는 같은 기기에 끝나지 않은 점유가 둘 이상인 기기 수다 (보통 0).
 - 점유 목록: 대여형은 끝나지 않은 `use_session`, 공용형은 `SharedLightService`의 유지 대상자 (2026-10-24 담당자 결정). `startedAt`은 대여형은 예약 시각, 공용형은 유지 대상자의 마지막 요청 시각이다. `overdueMinutes`는 `ReleaseService`와 같은 규칙(대여 만료 시각부터, 0 이상)이고 0이면 뺀다. `sessionNote`는 기기가 `FAULT`면 `고장으로 보존`, `CLOSING`이면 `반납 확인 중`, 초과면 `대여 시간 초과`.
 - 승인 분류: 대기는 `pending`이고 대기 기한 전, 유효는 `approved`이고 유효 기한 전이며 남은 횟수가 있음, 나머지는 끝남. `endReason`은 `RepositoryPolicyChecker`와 같은 규칙이다. `remainingMinutes`는 대기면 대기 기한까지, 유효면 유효 기한까지다.
-- 점검: `connected`는 판정 ②와 같은 규칙(마지막 수신이 `online_ttl_sec` 안이고 세션이 있음). 비콘은 활성 비콘이 있는 사람만 (2026-10-24 담당자 결정). `lastSeenSec`은 그 비콘의 마지막 관측부터, 없으면 `None`. `note`는 `beacon_recent_sec`을 넘기면 `최근 신호 없음`. `server.database`는 `SELECT 1`의 성공, `mqtt`는 연결 준비 상태, `model`은 장소마다 `{모델} · {보정}`을 ` / `로 이은 문자열이다.
+- 점검: `connected`는 판정 ②와 같은 규칙(마지막 수신이 `online_ttl_sec` 안이고 세션이 있음). 비콘은 활성 비콘이 있는 사람만 (2026-10-24 담당자 결정). `lastSeenSec`은 그 비콘의 마지막 관측부터, 없으면 `None`. `note`는 `beacon_recent_sec`을 넘기거나 관측이 없으면 `최근 신호 없음`. `server.database`는 `SELECT 1`의 성공, `mqtt`는 연결 준비 상태, `model`은 장소마다 `{모델} · {보정}`을 ` / `로 이은 문자열이다.
 - 평가: 설정 파일 폴더 기준 `var/reports/`의 CSV 가운데 `generated_at`이 가장 늦은 것 하나를 읽는다 (2026-10-24 담당자 결정). 지표 행마다 `id`는 1부터의 순번, `name`은 지표 이름의 한국어(`앞 기기 오선택률`, `보정 오차`, `전환 시간`, `흔들림`), `pass`는 통과 여부(비면 `None`), `label`은 `통과`·`✕ 미통과`·`미측정`, `sample`은 시행 수, `sampleNote`는 리포트의 비고다. `date`는 `generated_at`의 날짜다.
 - 기기 이름은 `node.name` 열(마이그레이션 `0006`)과 시드 `[[nodes]].name`으로 받는다. 없으면 `nodeId`를 쓴다 (2026-10-24 담당자 결정). 기기 발표로 새로 생긴 기기는 이름이 없다.
 - 장소별 모델·보정 버전은 서버가 시작할 때 읽은 모델을 `Runtime`이 보관해 조회 서비스에 넘긴다. 없으면 `"없음"`.
