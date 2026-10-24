@@ -59,7 +59,7 @@
 
 ### 고치는 곳
 - `server/src/nearpilot/core/dashboard/` (새 폴더: 조회 서비스, 문구, 따라 읽기)
-- `server/src/nearpilot/db/repositories/` (대시보드 읽기 구현, 시드를 쓰는 `admin_repository.py`의 기기 이름), `db/schema/sql/0006_node_name.sql`
+- `server/src/nearpilot/db/repositories/` (대시보드 읽기 구현, 시드를 쓰는 `admin_repository.py`의 기기 이름), `db/schema/sql/0006_node_name.sql`, `server/tools/evaluation/db.py`의 `EXPECTED_SCHEMA_VERSION` (마이그레이션 수와 같게 올린다)
 - `server/src/nearpilot/runtime/` (설정 `[dashboard]`, 조립, 앱에 라우터 붙이기, 모델 보관)
 - `server/src/nearpilot/core/lifecycle/shared_light.py`: 유지 대상자 읽기 메서드 하나를 더한다
 - `server/src/nearpilot/cli/seed.py`와 시드를 저장하는 `core/admin/`: `[[nodes]]`의 선택 키 `name`

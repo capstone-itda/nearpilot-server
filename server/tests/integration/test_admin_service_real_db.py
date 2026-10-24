@@ -132,6 +132,9 @@ NON_OWNER_CASES = {
     "trust-of-unplaced-node": lambda s: s.set_node_trust("owner1", "loose", TrustState.TRUSTED),
     "policy-of-unplaced-node": lambda s: s.set_policy("owner1", _settings("loose")).result,
     "release-policy-of-unplaced-node": lambda s: s.set_release_policy("owner1", "loose", LOCKER_RETURN),
+    "node-name-by-visitor": lambda s: s.set_node_name("visitor1", "node1", "사물함 1"),
+    "node-name-by-other-owner": lambda s: s.set_node_name("owner2", "node1", "사물함 1"),
+    "node-name-of-unplaced-node": lambda s: s.set_node_name("owner1", "loose", "사물함 1"),
     "assign-actor-is-not-owner": lambda s: s.assign_place(
         "owner2", PlaceAssignment("place1", "owner1", "name-place1", ("loose",))
     ),
@@ -166,6 +169,23 @@ def test_FR12A_admin_owner_writes_node_settings(conn, service):
     assert (other["trust_state"], other["release_policy"]) == ("discovered", "{}")
 
 
+def test_FR12A_admin_owner_names_node(conn, service):
+    _world(conn)
+
+    assert service.set_node_name("owner1", "node1", "사물함 1") == APPLIED
+
+    names = {row["node_id"]: row["name"] for row in conn.execute("SELECT node_id, name FROM node")}
+    assert names == {"node1": "사물함 1", "node2": None, "node3": None, "loose": None}
+    audit = [json.loads(row["payload_json"]) for row in conn.execute("SELECT payload_json FROM audit_log")]
+    assert audit == [{"event": "set_node_name", "node_id": "node1", "name": "사물함 1"}]
+
+    # 행위자 검사를 통과한 뒤 빈 이름은 저장소가 ValueError 로 막는다. 아무것도 쓰지 않는다
+    before = _snapshot(conn)
+    with pytest.raises(ValueError):
+        service.set_node_name("owner1", "node1", "  ")
+    assert _snapshot(conn) == before
+
+
 def test_FR12A_admin_assign_place_by_owner(conn, service):
     _world(conn)
 
@@ -194,9 +214,10 @@ def test_FR12A_admin_assign_place_cannot_take_over_existing_place(conn, service)
         lambda s: s.set_node_trust("owner1", "ghost", TrustState.TRUSTED),
         lambda s: s.set_policy("owner1", _settings("ghost")).result,
         lambda s: s.set_release_policy("owner1", "ghost", LOCKER_RETURN),
+        lambda s: s.set_node_name("owner1", "ghost", "사물함 1"),
         lambda s: s.assign_place("owner1", PlaceAssignment("place1", "owner1", "name-place1", ("ghost",))),
     ],
-    ids=["trust", "policy", "release-policy", "assign-place"],
+    ids=["trust", "policy", "release-policy", "node-name", "assign-place"],
 )
 def test_FR13_admin_unknown_node_rejected(conn, service, call):
     _world(conn)

@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from typing import Any, Mapping, Protocol, runtime_checkable
 
@@ -75,6 +75,15 @@ from nearpilot.shared.models import (
     UseRequest,
     UseSession,
     MonitorEvent,
+    DashboardApproval,
+    DashboardAudit,
+    DashboardBeacon,
+    DashboardCommand,
+    DashboardNode,
+    DashboardPlace,
+    DashboardRequest,
+    DashboardRssi,
+    DashboardSession,
 )
 
 # ── DB 제공 ─────────────────────────────────────────────────────────
@@ -601,6 +610,12 @@ class AdminRepository(Protocol):
         """
         ...
 
+    def set_node_name(self, node_id: str, name: str) -> AdminWriteResult:
+        """node.name 만 바꾼다. 감사와 한 트랜잭션이다 (set_release_policy 와 같다). 없는 기기는 NODE_NOT_FOUND 다.
+        name 이 비었거나 공백뿐이면 ValueError 다.
+        """
+        ...
+
     def start_collection(
         self, collection_id: str, beacon: BeaconKey, label: str, started_at: datetime
     ) -> AdminWriteResult:
@@ -653,6 +668,10 @@ class AdminService(Protocol):
     def set_release_policy(
         self, actor_user_id: str, node_id: str, release_policy: Mapping[str, Any]
     ) -> AdminWriteResult: ...
+
+    def set_node_name(self, actor_user_id: str, node_id: str, name: str) -> AdminWriteResult:
+        """권한 검사는 set_release_policy 와 같다 (행위자가 기기가 속한 장소의 소유자여야 한다)."""
+        ...
 
 
 @runtime_checkable
@@ -716,3 +735,91 @@ class DashboardQueries(Protocol):
     def trust(self) -> Mapping[str, Any]: ...
     def rental(self, node_id: str) -> Mapping[str, Any] | None: ...
     def health(self) -> Mapping[str, Any]: ...
+
+
+@runtime_checkable
+class DashboardReadStore(Protocol):
+    """DB → CORE 대시보드 조회 서비스. 읽기만 한다 (FR-12A). 목록은 아래 정렬 순서다.
+
+    쓰지 않고 트랜잭션도 열지 않는다 — 읽기 트랜잭션은 부르는 쪽이 연다. 현재 시각을 읽지 않는다.
+    분류와 계산(점유, 승인 기한, 단계 결과)은 하지 않고 저장된 값을 그대로 돌려준다.
+    `seq` 는 그 표의 rowid 이고, 따라 읽기가 커서로 쓴다. 비어 있는 ID 목록은 질의하지 않고 빈 결과다.
+    """
+
+    def places(self) -> Sequence[DashboardPlace]:
+        """place_id 순."""
+        ...
+
+    def nodes(self) -> Sequence[DashboardNode]:
+        """node_id 순. 장소 없는 기기도 포함한다."""
+        ...
+
+    def roles(self, user_ids: Iterable[str]) -> Mapping[str, Role]:
+        """없는 ID 는 빠진다."""
+        ...
+
+    def open_sessions(self) -> Sequence[DashboardSession]:
+        """끝나지 않은 점유 세션(RESERVED, ACTIVE, CLOSING). node_id, reserved_at 순."""
+        ...
+
+    def approvals(self) -> Sequence[DashboardApproval]:
+        """created_at, approval_id 순."""
+        ...
+
+    def requests(self, since: datetime | None, until: datetime | None) -> Sequence[DashboardRequest]:
+        """received_at 이 [since, until) 안인 요청. None 이면 그 끝을 열어 둔다. received_at 내림차순."""
+        ...
+
+    def request(self, internal_request_id: str) -> DashboardRequest | None: ...
+
+    def requests_after(self, seq: int) -> Sequence[DashboardRequest]:
+        """rowid > seq, rowid 순."""
+        ...
+
+    def requests_by_ids(self, ids: Iterable[str]) -> Sequence[DashboardRequest]:
+        """rowid 순."""
+        ...
+
+    def commands_of(self, internal_request_ids: Iterable[str]) -> Sequence[DashboardCommand]:
+        """rowid 순."""
+        ...
+
+    def commands_of_use(self, use_id: str) -> Sequence[DashboardCommand]:
+        """node_command.use_id 가 use_id 인 명령. rowid 순."""
+        ...
+
+    def commands_after(self, seq: int) -> Sequence[DashboardCommand]:
+        """rowid > seq, rowid 순."""
+        ...
+
+    def commands_by_ids(self, command_ids: Iterable[str]) -> Sequence[DashboardCommand]:
+        """rowid 순."""
+        ...
+
+    def audit_recent(self, limit: int) -> Sequence[DashboardAudit]:
+        """rowid 내림차순으로 limit 개. 모르는 step 값이 있으면 ValueError 다."""
+        ...
+
+    def audit_after(self, seq: int) -> Sequence[DashboardAudit]:
+        """rowid > seq, rowid 순. 모르는 step 값이 있으면 ValueError 다."""
+        ...
+
+    def audit_of(self, internal_request_ids: Iterable[str]) -> Sequence[DashboardAudit]:
+        """rowid 순. 모르는 step 값이 있으면 ValueError 다."""
+        ...
+
+    def rssi_after(self, seq: int) -> Sequence[DashboardRssi]:
+        """rowid > seq, rowid 순."""
+        ...
+
+    def active_beacons(self) -> Sequence[DashboardBeacon]:
+        """user_id 순."""
+        ...
+
+    def cursors(self) -> Mapping[str, int]:
+        """{"request", "node_command", "audit_log", "rssi_observation"} 의 최대 rowid. 행이 없으면 0."""
+        ...
+
+    def ping(self) -> None:
+        """SELECT 1. 실패하면 sqlite3.Error 다."""
+        ...

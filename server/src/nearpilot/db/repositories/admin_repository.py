@@ -248,6 +248,22 @@ class SqliteAdminRepository:
             )
             return AdminWriteResult(outcome=AdminWriteOutcome.APPLIED, reason=AdminWriteReason.OK)
 
+    def set_node_name(self, node_id: str, name: str) -> AdminWriteResult:
+        """`node.name`만 바꾼다. 기기 발표는 이 열을 쓰지 않으므로 이름이 지워지지 않는다.
+
+        비었거나 공백뿐인 이름은 `ValueError`다 — `AdminWriteReason`에 입력 오류 값이 없다.
+        """
+        if not name.strip():
+            raise ValueError("name 은 비어 있지 않은 문자열이어야 한다")
+        with immediate_transaction(self._conn):
+            updated = self._conn.execute("UPDATE node SET name = ? WHERE node_id = ?", (name, node_id))
+            if updated.rowcount == 0:
+                return AdminWriteResult(
+                    outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.NODE_NOT_FOUND
+                )
+            self._append_audit({"event": "set_node_name", "node_id": node_id, "name": name})
+            return AdminWriteResult(outcome=AdminWriteOutcome.APPLIED, reason=AdminWriteReason.OK)
+
     def start_collection(
         self, collection_id: str, beacon: BeaconKey, label: str, started_at: datetime
     ) -> AdminWriteResult:

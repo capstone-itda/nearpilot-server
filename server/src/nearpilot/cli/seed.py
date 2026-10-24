@@ -9,7 +9,7 @@ SQL을 직접 쓰지 않는다. 모든 쓰기는 `AdminService`를 거쳐 `Admin
   [[accounts]]  user_id, name, role(owner|visitor)
   [[beacons]]   beacon_id, user_id, uuid, major, minor, active(선택, 기본 true)
   [[places]]    place_id, owner, name, nodes(기기 ID 배열)
-  [[nodes]]     node_id, trust(discovered|trusted|revoked, 선택), release_policy(표, 선택)
+  [[nodes]]     node_id, trust(discovered|trusted|revoked, 선택), release_policy(표, 선택), name(선택)
   [[policies]]  node_id, visibility, mode, approval_mode, approver·approval_ttl_sec·max_uses(선택)
 기기 행은 서버가 MQTT 발표로 만든다. `[[nodes]]`와 `[[policies]]`의 기기는 어느 장소의 `nodes`에 있어야 하고,
 그 기기에 쓰는 행위자는 장소의 `owner`다.
@@ -80,6 +80,7 @@ class SeedNode:
     node_id: str
     trust: TrustState | None  # None 이면 신뢰 상태를 건드리지 않는다
     release_policy: Mapping[str, Any] | None  # None 이면 건드리지 않는다. 빈 표는 비우라는 뜻이다
+    name: str | None = None  # 대시보드에 보이는 기기 이름. None 이면 건드리지 않는다
 
 
 @dataclass(frozen=True)
@@ -108,7 +109,10 @@ _SECTIONS: dict[str, tuple[dict[str, Any], tuple[str, ...]]] = {
         ("active",),
     ),
     "places": ({"place_id": str, "owner": str, "name": str, "nodes": list}, ()),
-    "nodes": ({"node_id": str, "trust": TrustState, "release_policy": dict}, ("trust", "release_policy")),
+    "nodes": (
+        {"node_id": str, "trust": TrustState, "release_policy": dict, "name": str},
+        ("trust", "release_policy", "name"),
+    ),
     "policies": (
         {
             "node_id": str, "visibility": Visibility, "mode": AccessMode, "approver": str,
@@ -233,7 +237,9 @@ def _build(rows: _Rows) -> SeedFile:
                        v.get("active", True))
             for _, v in rows["beacons"]),
         places=tuple(SeedPlace(v["place_id"], v["owner"], v["name"], tuple(v["nodes"])) for _, v in rows["places"]),
-        nodes=tuple(SeedNode(v["node_id"], v.get("trust"), v.get("release_policy")) for _, v in rows["nodes"]),
+        nodes=tuple(
+            SeedNode(v["node_id"], v.get("trust"), v.get("release_policy"), v.get("name"))
+            for _, v in rows["nodes"]),
         policies=tuple(
             PolicySettings(v["node_id"], v["visibility"], v["mode"], v.get("approver"), v["approval_mode"],
                            v.get("approval_ttl_sec"), v.get("max_uses"))
@@ -246,7 +252,7 @@ def apply_seed(seed: SeedFile, service: AdminService, repository: Repository,
     """시드를 계정 → 비콘 → 장소 → 기기 → 정책 순서로 반영한다. 항목마다 한 줄을 `write`로 쓴다.
 
     `load_seed_file`이 검사한 파일을 받는다. 항목 하나가 거부되면 사유를 쓰고 나머지를 계속한다.
-    DB에 없는 기기는 거부로 세고, 그 기기의 신뢰·종료 정책·정책은 건너뛴다.
+    DB에 없는 기기는 거부로 세고, 그 기기의 신뢰·종료 정책·이름·정책은 건너뛴다.
     """
     counts = {_APPLIED: 0, _UNCHANGED: 0, _REJECTED: 0}
 
@@ -322,6 +328,9 @@ def _nodes(nodes: Iterable[SeedNode], stored: set[str], owner_of: Mapping[str, s
         if node.release_policy is not None:
             result = service.set_release_policy(owner, node.node_id, node.release_policy)
             yield _written(result, f"기기 {node.node_id} 종료 정책", "반영")
+        if node.name is not None:
+            result = service.set_node_name(owner, node.node_id, node.name)
+            yield _written(result, f"기기 {node.node_id} 이름", node.name)
 
 
 def _policies(policies: Iterable[PolicySettings], stored: set[str], owner_of: Mapping[str, str],
@@ -352,6 +361,8 @@ def _plan_lines(seed: SeedFile) -> Iterator[str]:
             yield f"(dry-run) 기기 {node.node_id} 신뢰 {node.trust.value}"
         if node.release_policy is not None:
             yield f"(dry-run) 기기 {node.node_id} 종료 정책 반영"
+        if node.name is not None:
+            yield f"(dry-run) 기기 {node.node_id} 이름 {node.name}"
     for settings in seed.policies:
         yield f"(dry-run) 정책 {settings.node_id} 반영"
 
