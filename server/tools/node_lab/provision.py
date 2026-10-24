@@ -1,4 +1,6 @@
-"""Inject one device's identity and network settings into the common node_lab firmware over USB.
+"""Inject one device's identity and network settings into the node firmware over USB.
+
+Works with the product firmware (firmware/) and the node_lab firmware (firmware/node_lab/).
 
 Run with PlatformIO's Python (pyserial). Secrets are read from the lab folder's .env files,
 sent hex-encoded to the device and never written to the log or the console.
@@ -16,6 +18,12 @@ from uuid import uuid4
 
 KEYS = ("node_id", "mqtt_user", "mqtt_password", "wifi_ssid", "wifi_password",
         "mqtt_host", "mqtt_port", "time_server", "clock_max_error_sec", "time_trust_ms", "time_resync_ms")
+# Required by the product firmware (firmware/); node_lab firmware answers unknown_key and goes on without them.
+DEVICE_KEYS = ("capability", "occupancy")
+UNKNOWN_KEY = "CONFIG_REJECTED reason=unknown_key"
+# MQTT v1 announce values (architecture.md §5 MQTT 3절); this script runs without the server package.
+CAPABILITIES = frozenset({"locker", "light", "speaker"})
+OCCUPANCIES = frozenset({"rental", "shared"})
 SECRETS = frozenset({"mqtt_password", "wifi_password"})
 STATE = re.compile(
     r"CONFIG_STATE configured=([01]) generation=(\d+) node=(\S*) mqtt_user=(\S*) mqtt_host=(\S*) "
@@ -34,6 +42,11 @@ def build_values(folder: Path, node: str, *, time_server: str, trust_sec: float,
         raise ValueError("시험 목록에 없는 기기다. lab.json의 nodes를 확인한다")
     with (folder / "server.toml").open("rb") as stream:
         server = tomllib.load(stream)
+    # The device announces what the server registered for it, never a value typed at the console.
+    fleet = json.loads((folder / "fleet.json").read_text(encoding="utf-8"))
+    device = next((item for item in fleet.get("devices", []) if item.get("node_id") == node), None)
+    if device is None or device.get("capability") not in CAPABILITIES or device.get("occupancy") not in OCCUPANCIES:
+        raise ValueError("fleet.json에 이 기기의 기능·점유 방식이 없거나 계약 밖의 값이다")
     password_path = folder / f".env.{node}"
     wifi_path = wifi_file or folder / ".env.wifi.json"
     if not password_path.is_file() or not wifi_path.is_file():
@@ -59,7 +72,8 @@ def build_values(folder: Path, node: str, *, time_server: str, trust_sec: float,
                 mqtt_host=str(mqtt["host"]), mqtt_port=str(int(mqtt["port"])), time_server=time_server,
                 # Unmeasured devices get -1: the firmware then never trusts its clock.
                 clock_max_error_sec="-1" if skew is None else repr(float(skew)),
-                time_trust_ms=str(windows[0]), time_resync_ms=str(windows[1]))
+                time_trust_ms=str(windows[0]), time_resync_ms=str(windows[1]),
+                capability=device["capability"], occupancy=device["occupancy"])
 
 
 def public_view(values: dict[str, str]) -> dict[str, object]:
@@ -103,12 +117,14 @@ class Session:
     def send(self, line: str) -> None:
         self.port.write((line + "\n").encode("ascii"))
 
-    def expect(self, accept, *, what: str) -> str:
+    def expect(self, accept, *, what: str, tolerate: str | None = None) -> str:
         deadline = time.monotonic() + self.timeout
         while time.monotonic() < deadline:
             line = self.port.readline().decode("utf-8", errors="replace").strip()
             if not line:
                 continue
+            if tolerate is not None and line == tolerate:
+                return line
             if line.startswith("CONFIG_REJECTED"):
                 self.emit("device_rejected", line=line)
                 raise ValueError(f"기기가 설정을 거부했다: {line}")
@@ -124,10 +140,15 @@ def provision(port, values: dict[str, str], *, timeout: float, emit) -> dict[str
     nonce = uuid4().hex
     session.send(f"CONFIG_BEGIN {nonce}")
     session.expect(lambda line: line == f"CONFIG_READY nonce={nonce}", what="CONFIG_READY")
-    for key in KEYS:
+    for key in KEYS + DEVICE_KEYS:
         encoded = values[key].encode("utf-8")
         session.send(f"CONFIG_SET {key} {encoded.hex()}")
-        session.expect(lambda line: line == f"CONFIG_STAGED key={key} bytes={len(encoded)}", what=key)
+        reply = session.expect(lambda line: line == f"CONFIG_STAGED key={key} bytes={len(encoded)}", what=key,
+                               tolerate=UNKNOWN_KEY if key in DEVICE_KEYS else None)
+        if reply == UNKNOWN_KEY:
+            # node_lab firmware: it keeps the session and announces its fixed capability.
+            emit("key_unsupported", key=key)
+            continue
         emit("staged", key=key, bytes=len(encoded))
     session.send(f"CONFIG_COMMIT {nonce}")
     saved = session.expect(lambda line: line.startswith("CONFIG_SAVED "), what="CONFIG_SAVED")

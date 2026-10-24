@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from nearpilot.shared.enums import Capability, Occupancy
 from tools.node_lab import provision
 
 MQTT_SECRET = "mqtt-secret-0123456789abcdef"
@@ -16,6 +17,8 @@ def lab(tmp_path):
     (folder / "lab.json").write_text(json.dumps({"nodes": ["light-1"]}), encoding="utf-8")
     (folder / "server.toml").write_text(
         '[mqtt]\nhost = "10.0.0.5"\nport = 18883\n[delivery.clock_skew_sec]\n"light-1" = 1.0\n', encoding="utf-8")
+    (folder / "fleet.json").write_text(json.dumps({"devices": [
+        {"node_id": "light-1", "capability": "light", "occupancy": "shared"}]}), encoding="utf-8")
     (folder / ".env.light-1").write_text(MQTT_SECRET + "\n", encoding="utf-8")
     (folder / ".env.wifi.json").write_text(json.dumps({"ssid": "랩 핫스팟", "password": WIFI_SECRET}),
                                            encoding="utf-8")
@@ -30,8 +33,9 @@ def values(folder, **overrides):
 class FakeDevice:
     """Mirrors the firmware's line protocol, including restart after CONFIG_SAVED."""
 
-    def __init__(self, *, reject=None, report=None):
+    def __init__(self, *, reject=None, report=None, unknown=()):
         self.reject = reject
+        self.unknown = set(unknown)  # Keys this firmware does not know, like node_lab's device keys.
         self.report = report or {}
         self.staged = {}
         self.out = [b"BLE_BEACON uuid=x major=1 minor=2 rssi=-60.0 samples=3\n"]
@@ -44,6 +48,9 @@ class FakeDevice:
         if words[0] == "CONFIG_BEGIN":
             self.out.append(f"CONFIG_READY nonce={words[1]}\n".encode())
         elif words[0] == "CONFIG_SET":
+            if words[1] in self.unknown:
+                self.out.append(b"CONFIG_REJECTED reason=unknown_key\n")
+                return
             if words[1] == self.reject:
                 self.out.append(b"CONFIG_REJECTED reason=bad_value\n")
                 return
@@ -124,3 +131,32 @@ def test_FR22_provision_fails_on_reject_or_mismatch(lab, device, reason):
         run(device, values(lab))
     if device.reject:
         assert not any(line.startswith("CONFIG_COMMIT") for line in device.written)
+
+
+def test_FR04_provision_uses_fleet_capability(lab):
+    prepared = values(lab)
+    assert (prepared["capability"], prepared["occupancy"]) == ("light", "shared")
+    assert provision.CAPABILITIES == {item.value for item in Capability}
+    assert provision.OCCUPANCIES == {item.value for item in Occupancy}
+    device = FakeDevice()
+    run(device, prepared)
+    assert device.staged["capability"] == "light" and device.staged["occupancy"] == "shared"
+    for fleet in ({"devices": []},
+                  {"devices": [{"node_id": "light-1", "capability": "lamp", "occupancy": "shared"}]},
+                  {"devices": [{"node_id": "light-1", "capability": "light"}]}):
+        (lab / "fleet.json").write_text(json.dumps(fleet), encoding="utf-8")
+        with pytest.raises(ValueError, match="fleet.json"):
+            values(lab)
+
+
+def test_FR04_provision_skips_keys_unknown_to_node_lab(lab):
+    prepared = values(lab)
+    device = FakeDevice(unknown=provision.DEVICE_KEYS)
+    state, events = run(device, prepared)
+    assert state["node_id"] == "light-1"
+    assert "capability" not in device.staged and "occupancy" not in device.staged
+    assert [event["key"] for event in events if event["event"] == "key_unsupported"] == list(provision.DEVICE_KEYS)
+    with pytest.raises(ValueError, match="거부"):  # Any other rejection of a device key still fails.
+        run(FakeDevice(reject="capability"), prepared)
+    with pytest.raises(ValueError, match="거부"):  # unknown_key is tolerated only for the device keys.
+        run(FakeDevice(unknown={"mqtt_host"}), prepared)

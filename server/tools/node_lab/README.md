@@ -129,6 +129,10 @@ AP 안의 NTP 서버 운영과 Windows 방화벽의 MQTT 포트 허용은 환경
 | MQTT 주소·포트 | `server.toml`의 `[mqtt]` |
 | 최대 시각 오차 | `server.toml`의 `[delivery.clock_skew_sec]`. 없으면 `-1`(미검증)을 넣는다 |
 | 시각원, 신뢰 기간, 재동기화 간격 | 명령 인자. 검증한 값을 넣는다 |
+| 기기 기능, 점유 방식 | 시험 폴더 `fleet.json`에서 그 기기의 `capability`·`occupancy`. 서버가 등록한 값과 같다 |
+
+- 제품 펌웨어(`firmware/`)는 기능과 점유 방식을 필수로 받는다. node_lab 펌웨어는 두 키를 `unknown_key`로 거부하므로 도구가 빼고 계속한다(`key_unsupported` 기록).
+- `CONFIG_STATE`에는 두 키가 없다. 두 키는 저장 성공과 재시작으로만 확인하고, 실제 값은 연결 뒤 `announce`에서 본다.
 
 - 비밀번호는 명령 인자로 받지 않는다. `provision.jsonl`과 화면에는 비밀값과 SSID의 바이트 수만 쓴다.
 - 기기는 값을 검사한 뒤 한 번에 저장하고 다시 읽어 확인한다. 그다음 재시작한다. 도구는 `CONFIG?` 응답으로 저장 값을 대조한다.
