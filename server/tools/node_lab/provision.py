@@ -106,6 +106,10 @@ def mismatches(values: dict[str, str], state: dict[str, object]) -> list[str]:
     return wrong
 
 
+class ResponseTimeout(ValueError):
+    pass
+
+
 class Session:
     """Line protocol over a pyserial-like port: write(bytes), readline() -> bytes."""
 
@@ -117,8 +121,8 @@ class Session:
     def send(self, line: str) -> None:
         self.port.write((line + "\n").encode("ascii"))
 
-    def expect(self, accept, *, what: str, tolerate: str | None = None) -> str:
-        deadline = time.monotonic() + self.timeout
+    def expect(self, accept, *, what: str, tolerate: str | None = None, timeout: float | None = None) -> str:
+        deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
         while time.monotonic() < deadline:
             line = self.port.readline().decode("utf-8", errors="replace").strip()
             if not line:
@@ -132,14 +136,28 @@ class Session:
                 self.emit("device_line", line=line)
             if accept(line):
                 return line
-        raise ValueError(f"기기 응답 시간 초과: {what}")
+        raise ResponseTimeout(f"기기 응답 시간 초과: {what}")
 
 
-def provision(port, values: dict[str, str], *, timeout: float, emit) -> dict[str, object]:
+def begin(session: Session, nonce: str, *, timeout: float, interval: float) -> None:
+    """Opening the port resets the board on Windows; a BEGIN sent while it boots is lost, so resend it."""
+    deadline = time.monotonic() + timeout
+    while True:
+        session.send(f"CONFIG_BEGIN {nonce}")
+        try:
+            session.expect(lambda line: line == f"CONFIG_READY nonce={nonce}", what="CONFIG_READY",
+                           timeout=min(interval, max(deadline - time.monotonic(), 0.0)))
+            return
+        except ResponseTimeout:
+            if time.monotonic() >= deadline:
+                raise
+
+
+def provision(port, values: dict[str, str], *, timeout: float, emit,
+              begin_interval: float = 1.0) -> dict[str, object]:
     session = Session(port, timeout=timeout, emit=emit)
     nonce = uuid4().hex
-    session.send(f"CONFIG_BEGIN {nonce}")
-    session.expect(lambda line: line == f"CONFIG_READY nonce={nonce}", what="CONFIG_READY")
+    begin(session, nonce, timeout=timeout, interval=begin_interval)
     for key in KEYS + DEVICE_KEYS:
         encoded = values[key].encode("utf-8")
         session.send(f"CONFIG_SET {key} {encoded.hex()}")
@@ -173,6 +191,8 @@ def main():
     parser.add_argument("--time-resync-sec", type=float, required=True)
     parser.add_argument("--wifi-file", type=Path, help="기본값: 시험 폴더의 .env.wifi.json")
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument("--begin-interval", type=float, default=1.0,
+                        help="부팅 중 잃은 CONFIG_BEGIN을 다시 보내는 간격(초)")
     args = parser.parse_args()
     values = build_values(args.dir, args.node, time_server=args.time_server, trust_sec=args.time_trust_sec,
                           resync_sec=args.time_resync_sec, wifi_file=args.wifi_file)
@@ -186,7 +206,7 @@ def main():
             print(json.dumps(record, ensure_ascii=False), flush=True)
         emit("provision_started", port=args.port, values=public_view(values))
         try:
-            provision(port, values, timeout=args.timeout, emit=emit)
+            provision(port, values, timeout=args.timeout, emit=emit, begin_interval=args.begin_interval)
         except ValueError as error:
             emit("provision_failed", reason=str(error))
             raise SystemExit(1)

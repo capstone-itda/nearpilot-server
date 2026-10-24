@@ -33,8 +33,9 @@ def values(folder, **overrides):
 class FakeDevice:
     """Mirrors the firmware's line protocol, including restart after CONFIG_SAVED."""
 
-    def __init__(self, *, reject=None, report=None, unknown=()):
+    def __init__(self, *, reject=None, report=None, unknown=(), booting=0):
         self.reject = reject
+        self.booting = booting  # CONFIG_BEGIN lines lost while the board restarts after the port opens.
         self.unknown = set(unknown)  # Keys this firmware does not know, like node_lab's device keys.
         self.report = report or {}
         self.staged = {}
@@ -46,6 +47,9 @@ class FakeDevice:
         self.written.append(line)
         words = line.split(" ")
         if words[0] == "CONFIG_BEGIN":
+            if self.booting:
+                self.booting -= 1
+                return
             self.out.append(f"CONFIG_READY nonce={words[1]}\n".encode())
         elif words[0] == "CONFIG_SET":
             if words[1] in self.unknown:
@@ -74,10 +78,10 @@ class FakeDevice:
         return self.out.pop(0) if self.out else b""
 
 
-def run(device, prepared):
+def run(device, prepared, **options):
     events = []
     state = provision.provision(device, prepared, timeout=0.5,
-                                emit=lambda event, **data: events.append(dict(event=event, **data)))
+                                emit=lambda event, **data: events.append(dict(event=event, **data)), **options)
     return state, events
 
 
@@ -160,3 +164,13 @@ def test_FR04_provision_skips_keys_unknown_to_node_lab(lab):
         run(FakeDevice(reject="capability"), prepared)
     with pytest.raises(ValueError, match="거부"):  # unknown_key is tolerated only for the device keys.
         run(FakeDevice(unknown={"mqtt_host"}), prepared)
+
+
+def test_FR13_provision_resends_begin_while_board_boots(lab):
+    prepared = values(lab)
+    device = FakeDevice(booting=2)  # Opening the port reset the board; the first BEGINs are lost.
+    state, events = run(device, prepared, begin_interval=0.05)
+    assert state["node_id"] == "light-1" and events[-1]["event"] == "provisioned"
+    assert sum(line.startswith("CONFIG_BEGIN") for line in device.written) == 3
+    with pytest.raises(ValueError, match="CONFIG_READY"):  # A board that never answers still fails.
+        run(FakeDevice(booting=1000), prepared, begin_interval=0.05)
