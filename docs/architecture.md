@@ -302,6 +302,7 @@ DB는 승인 이력을 거르지 않고 반환한다. `core/policy`가 승인 �
 | 계정과 비콘 등록 | `user`, `beacon` | 다른 계정에 이미 있는 `(uuid, major, minor)`는 거부한다 (FR-01). |
 | 기기 신뢰 변경 | `node.trust_state` | `trust_state`만 바꾼다. `device_state`와 점유 세션은 바꾸지 않는다. |
 | 장소 배치 | `place`, `node.place_id` | 기기를 장소에 연결한다. |
+| 기기 이름 | `node.name` | 시드가 대시보드에 보일 기기 이름을 쓴다. 빈 이름은 거부한다. 감사 기록(`Step.ADMIN`)과 한 트랜잭션에서 반영한다 (2026-10-24 대시보드 담당 결정). |
 | 정책 변경 | `access_policy`, `policy_revision` | 새 `policy_revision` 행 추가와 `access_policy.current_version` 갱신을 한 트랜잭션에서 한다. 과거 리비전은 바꾸지 않는다. |
 | 종료 정책 변경 | `node.release_policy` | `release_policy`만 바꾼다. 진행 중인 점유 세션은 생성 당시 값을 보존하므로 소급하지 않는다. 감사 기록(`Step.ADMIN`)과 한 트랜잭션에서 반영한다. |
 | 수집 회차 기록 | `collection_run` | 회차를 진행 중으로 만들고, 끝 시각을 기록한다. 구간 규칙은 아래 "RSSI 수집 회차"를 따른다 ([#131](https://github.com/capstone-itda/nearpilot-server/issues/131)). |
@@ -1316,7 +1317,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `user` | PK `user_id`, `name`, UNIQUE `token_hash`, `role` (`visitor`, `owner`). `token_hash`는 토큰의 SHA-256 해시를 소문자 hex 문자열로 쓴 값이다. 토큰 원문은 저장하지 않는다. |
 | `beacon` | PK `beacon_id`, FK `user_id`, `(uuid, major, minor)` 조합 UNIQUE, `is_active` |
 | `place` | PK `place_id`, FK `owner_user_id`, `name` |
-| `node` | TEXT PK `node_id`, FK `place_id`, `capability`, `occupancy`, `trust_state`, `device_state`, `exclusive_group`, JSON `release_policy`, `last_seen_at`, 현재 기기 연결 ID `session_id`, 그 연결의 첫 수신 시각 `session_first_seen_at` |
+| `node` | TEXT PK `node_id`, FK `place_id`, 대시보드에 보일 이름 `name`(없을 수 있다), `capability`, `occupancy`, `trust_state`, `device_state`, `exclusive_group`, JSON `release_policy`, `last_seen_at`, 현재 기기 연결 ID `session_id`, 그 연결의 첫 수신 시각 `session_first_seen_at` |
 | `access_policy` | PK `policy_id`, UNIQUE FK `node_id` (기기당 하나), `current_version`. 현재 접근 정책 리비전을 참조한다. 정책 변경은 새 리비전 추가와 `current_version` 갱신을 한 트랜잭션에서 한다. |
 | `policy_revision` | 복합 PK `(policy_id, version)`, `visibility` (`public`, `private`), `mode` (`open`, `restricted`), FK `approver_user_id`, `approval_ttl_sec`, `approval_mode` (`one_time`, `time_window`), `max_uses` (기간형이 무제한이면 NULL). 과거 리비전은 바꾸지 않는다. |
 | `approval` | PK `approval_id`, FK `node_id`, `requester_user_id`, `internal_request_id`, `approved_by_user_id`, `action`, 정책 리비전 참조, `status` (`pending`, `approved`, `denied`), `created_at`, `pending_until`, `valid_until`, `used_count`. 요청 참조는 승인 신청의 출처다. 허용 범위는 요청자, 기기, 동작, 정책 버전으로 검사한다. |

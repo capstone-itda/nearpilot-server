@@ -64,10 +64,10 @@
 - `server/src/nearpilot/core/lifecycle/shared_light.py`: 유지 대상자 읽기 메서드 하나를 더한다
 - `server/src/nearpilot/cli/seed.py`와 시드를 저장하는 `core/admin/`: `[[nodes]]`의 선택 키 `name`
 - `server/src/nearpilot/api/ws/schema.py`: `evaluation`, `confusion` 선택 키
-- `server/src/nearpilot/shared/interfaces.py`, `shared/models.py`: `DashboardReadStore`와 그 행 모델을 더하기만 한다
+- `server/src/nearpilot/shared/interfaces.py`, `shared/models.py`: `DashboardReadStore`와 그 행 모델, `AdminRepository`·`AdminService`의 `set_node_name`(시드의 기기 이름)을 더하기만 한다
 - `server/tests/` 해당 계층, `server/tests/integration/`
 - `server/config/server.example.toml`, `server/config/README.md`, `server/config/seed/example.toml`
-- `docs/architecture.md` §2 담당(조회 서비스 폴더와 담당), §4 모니터링 발행·대시보드 조회 계약, §5 형식 표 (2026-10-24 담당자 결정)
+- `docs/architecture.md` §2 담당(조회 서비스 폴더와 담당), §4 모니터링 발행·대시보드 조회 계약과 관리 기능의 DB 쓰기 표(기기 이름), §5 형식 표, §6 `node` 엔터티의 `name` (2026-10-24 담당자 결정)
 
 ### 고치지 않는 곳
 - 항상: `docs/` (위 절은 제외), `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/` (위 추가는 제외), `server/pyproject.toml`, `.github/`
@@ -118,7 +118,7 @@
 | 승인 대기가 기한을 넘긴다 | 한 번 `approval` `expired` | `test_FR12B_승인_대기가_만료되면_한_번_발행한다` |
 | 비콘 수신이 끊기거나 다시 잡힌다 | 바뀔 때만 `beacon` | `test_FR12B_비콘_수신이_바뀔_때만_발행한다` |
 | 명령 결과가 `rejected` | `exec_result`의 `failed` | `test_FR12B_거절된_명령은_실패로_발행한다` |
-| 보내지 않고 취소된 명령 (`not_sent`) | `command`도 `exec_result`도 발행하지 않는다 | `test_FR12B_보내지_않은_명령은_발행하지_않는다` |
+| 보내지 않고 취소된 명령 (`not_sent`) | `command`도 `exec_result`도 발행하지 않는다. 전송을 시작한 뒤 미전송 증명으로 취소되면, 그 사이 낸 `command`는 거두지 않고 `exec_result`를 내지 않는다 | `test_FR12B_보내지_않은_명령은_발행하지_않는다` |
 | 비활성 비콘이나 모르는 비콘의 관측 | 저장되지 않으므로 발행할 것이 없다 | (저장소 규칙, 테스트 없음) |
 | 보존 정리로 오래된 감사·이력이 지워졌다 | 남은 행만 돌려준다 | `test_FR12A_정리된_행은_조회에_없다` |
 | 연결 직후 지금 상태 | 기기마다 `transition`, 활성 비콘의 사람마다 `beacon`, 대기 중인 승인마다 `approval` `requested`, 진행 중인 요청의 이벤트 | `test_FR12B_지금_상태는_기기_비콘_승인_진행_중_요청이다` |
@@ -139,15 +139,22 @@
 - `request_use`와 `request_access`는 요청의 첫 감사 행 단계로 가린다. 첫 행이 ④이면 `request_access`다 — `request_use`의 판정 흐름은 ⓪ 또는 ①부터 감사를 남기고, `request_access`는 ④만 남긴다 (`core/decision/access.py`). 요청 행에는 도구를 가리는 열이 없다. 따라 읽기는 첫 감사 행이 나온 뒤 `mcp_call`을 발행한다.
 - 단계 결과: 판정이 멈춘 단계(마지막 판정 행이 남은 단계)는 `stop`, 그 앞은 `pass`, 뒤는 `skip`. OK면 닿은 단계는 `pass`이고, 공용형은 ⑤⑥이 `skip`이다. ⓪은 감사 행이 없어도 ①이 있으면 `pass`이고 시각은 요청을 받은 시각이다. ⑤⑥은 감사 행 하나를 같이 쓰므로 그 행에서 멈추면 사유로 나눈다 (`DEVICE_BUSY`는 ⑤ `stop`, `USER_BUSY`·`APPROVAL_EXHAUSTED`는 ⑤ `pass`·⑥ `stop`). ④에서 나온 `APPROVAL_EXHAUSTED`는 ④ `stop`이다. 판정 중이면 닿지 않은 단계는 `pending`이다. 서버 오류로 판정 행이 없으면 닿은 마지막 단계에서 멈춘 것으로 본다. 오류 뒤 다시 판정한 요청은 마지막 재판정(⓪ `link_request_retry` 행) 뒤의 행만 본다. 요청 한 건 조회와 스트림이 같은 함수로 만든다.
 - 감사 행 `code`: payload의 `reason` 또는 `result`가 `ReasonCode` 값이면 그 값. 실행 결과는 `succeeded` → `OK`, `failed`·`rejected` → `EXEC_FAILED`, `unknown` → `EXEC_UNKNOWN`. 판정 중(`IN_PROGRESS`)은 `COMMAND_IN_PROGRESS`. 그 밖은 `OK`.
-- `fault.cause`: 격리 근거 `device_result`의 `unknown` → `EXEC_UNKNOWN`, 그 밖의 결과 → `EXEC_FAILED`, 다른 근거(`sensor_fault`, `announce_changed` 등) → `TARGET_UNAVAILABLE`.
+- `fault.cause`: 격리 근거 `device_result`의 `unknown` → `EXEC_UNKNOWN`, 그 밖의 결과 → `EXEC_FAILED`, 다른 근거(`sensor_fault`, `announce_changed` 등) → `TARGET_UNAVAILABLE`. 근거는 기기마다 마지막 고장 근거 행이다 (`isolate_device`, 결과 `unknown`·`failed`인 `record_result`). `rejected` 결과는 기기를 격리하지 않으므로 근거가 아니다.
 - 문구는 `core/dashboard/text.py` 한 곳에서 만든다. 지금 대시보드 목 데이터와 같은 짧은 한국어다 (`열림`, `실행 안 함`, `결과 불명 → 고장 격리`, `근접 통과 0.91`, `비콘 수신 없음`).
 - 이력 `period`는 `today`(서버 시간대의 오늘 0시부터) 또는 `HH:MM~HH:MM`(서버 시간대 오늘의 구간)이다 — 대시보드 이력 화면의 두 선택지다. 시각 비교는 UTC로 한다.
 - 지연 시간과 `respondedAt`은 요청을 받은 시각부터 그 요청의 마지막 감사 행(반납 완료 행은 뺀다)까지다 — 응답 시각을 저장하지 않는다. 반납 완료 행은 대여를 만든 요청의 ID를 달고 반납할 때 붙어서, 넣으면 반납이 늦을수록 지연이 길어진다. 중앙값과 p95는 시연 세션(서버 시작 뒤)의 판정만으로 센다. `since`는 서버가 시작한 시각이다.
 - `doubleOccupancy`는 같은 기기에 끝나지 않은 점유가 둘 이상인 기기 수다 (보통 0).
-- 점유 목록: 대여형은 끝나지 않은 `use_session`, 공용형은 `SharedLightService`의 유지 대상자 (2026-10-24 담당자 결정). `startedAt`은 대여형은 예약 시각, 공용형은 유지 대상자의 마지막 요청 시각이다. `overdueMinutes`는 `ReleaseService`와 같은 규칙(대여 만료 시각부터, 0 이상)이고 0이면 뺀다. `sessionNote`는 기기가 `FAULT`면 `고장으로 보존`, `CLOSING`이면 `반납 확인 중`, 초과면 `대여 시간 초과`.
+- 점유 목록: 대여형은 끝나지 않은 `use_session`, 공용형은 `SharedLightService`의 유지 대상자 (2026-10-24 담당자 결정). `startedAt`은 대여형은 예약 시각(없으면 받은 시각), 공용형은 유지 대상자의 마지막 요청 시각이다. `overdueMinutes`는 `ReleaseService`와 같은 규칙(대여 만료 시각부터, 0 이상)이고 0이면 뺀다. `sessionNote`는 기기가 `FAULT`면 `고장으로 보존`, 기기나 세션이 `CLOSING`이면 `반납 확인 중`, 초과면 `대여 시간 초과`.
 - 승인 분류: 대기는 `pending`이고 대기 기한 전, 유효는 `approved`이고 유효 기한 전이며 남은 횟수가 있음, 나머지는 끝남. `endReason`은 `RepositoryPolicyChecker`와 같은 규칙이다. `remainingMinutes`는 대기면 대기 기한까지, 유효면 유효 기한까지다.
 - 점검: `connected`는 판정 ②와 같은 규칙(마지막 수신이 `online_ttl_sec` 안이고 세션이 있음). 비콘은 활성 비콘이 있는 사람만 (2026-10-24 담당자 결정). `lastSeenSec`은 그 비콘의 마지막 관측부터, 없으면 `None`. `note`는 `beacon_recent_sec`을 넘기거나 관측이 없으면 `최근 신호 없음`. `server.database`는 `SELECT 1`의 성공, `mqtt`는 연결 준비 상태, `model`은 장소마다 `{모델} · {보정}`을 ` / `로 이은 문자열이다.
-- 평가: 설정 파일 폴더 기준 `var/reports/`의 CSV 가운데 `generated_at`이 가장 늦은 것 하나를 읽는다 (2026-10-24 담당자 결정). 지표 행마다 `id`는 1부터의 순번, `name`은 지표 이름의 한국어(`앞 기기 오선택률`, `보정 오차`, `전환 시간`, `흔들림`), `pass`는 통과 여부(비면 `None`), `label`은 `통과`·`✕ 미통과`·`미측정`, `sample`은 시행 수, `sampleNote`는 리포트의 비고다. `date`는 `generated_at`의 날짜다.
+- 평가: 설정 파일 폴더의 부모 아래 `var/reports/`(CLI `dirs_for`와 같은 폴더)의 CSV 가운데 `generated_at`이 가장 늦은 것 하나를 읽는다 (2026-10-24 담당자 결정). 지표 행마다 `id`는 1부터의 순번, `name`은 지표 이름의 한국어(`앞 기기 오선택률`, `보정 오차`, `전환 시간`, `흔들림`), `pass`는 통과 여부(비면 `None`), `label`은 `통과`·`✕ 미통과`·`미측정`, `sample`은 시행 수, `sampleNote`는 리포트의 비고다. `date`는 `generated_at`의 날짜다.
+- 그 밖의 규칙 (2026-10-25 검토 1 반영):
+  - 요청 한 건의 `accessRequestedAt`·`accessExpiredAt`은 같은 사람·기기·동작으로 그 요청보다 먼저 만든 승인 가운데 가장 늦은 것의 `created_at`·`pending_until`이다.
+  - 공용 유지 대상자의 점유 행 `session`은 `ACTIVE`다 (유지 대상자는 켜 둔 조명을 쓰는 중이다).
+  - 이력 기간 `HH:MM~HH:MM`은 같은 날 안이다. 끝이 시작보다 늦지 않으면(자정을 넘는 구간 포함) `ValueError`다.
+  - 지금 상태의 진행 중인 요청은 서버가 시작한 뒤 받은 요청만 본다. 그 전의 미완료 요청은 복원이 다룬다.
+  - 사람 역할을 찾지 못한 방문자 요청(계정이 지워짐)은 `Subject`를 만들 수 없어 `mcp_call`과 판정 이벤트를 내지 않고 명령만 낸다.
+  - 문구는 `text.py` 한 곳에 둔다 (평가 지표 이름과 통과 문구 포함).
 - 기기 이름은 `node.name` 열(마이그레이션 `0006`)과 시드 `[[nodes]].name`으로 받는다. 없으면 `nodeId`를 쓴다 (2026-10-24 담당자 결정). 기기 발표로 새로 생긴 기기는 이름이 없다.
 - 장소별 모델·보정 버전은 서버가 시작할 때 읽은 모델을 `Runtime`이 보관해 조회 서비스에 넘긴다. 없으면 `"없음"`.
 - 조회 서비스와 따라 읽기는 `Runtime`을 만들 때 만들고, 서버가 시작한 뒤에야 생기는 값(모델 버전, 연결 상태, 유지 대상자, 시작 시각)은 늦게 읽는 함수로 넘긴다. 시작 전에는 연결 상태가 거짓, 유지 대상자가 빈 목록이다 — 라우터를 MCP 앱보다 먼저 붙여야 하는데 그때는 서비스가 아직 없다. 조회는 접수 문(`CallGate`)을 지나고, 따라 읽기는 주기 작업의 종료 순서를 따르므로 지나지 않는다.
@@ -168,7 +175,8 @@
 | FR-11, NFR-08 | 5절의 `test_FR11_*`, `test_FR11_조회와_이벤트에_사용자_ID가_없다` | 실제 DB로 만든 조회 9종과 이벤트 12종의 직렬화에 사용자 ID와 계정 이름이 없다 |
 | FR-12A | 5절의 `test_FR12A_*` | 조회 9종의 원천, 분류, 문구, 빈 값 |
 | FR-12A | `test_FR12A_조회_9종이_형식_검사를_통과한다` | 실제 DB의 시나리오(대여, 공용, 승인, 거부, 고장)에서 조회 결과가 `api/ws/schema.py` 검사를 통과한다 |
-| FR-12A | `test_FR12A_요청_한_건의_단계는_판정_흐름과_같다` | OK, ASK(③), BUSY(⑤), USER_BUSY(⑥), 공용 OK, ⓪ 한도 초과의 단계 결과. 충돌 재전송은 기존 요청의 단계를 바꾸지 않는다 |
+| FR-12A | `test_FR12A_요청_한_건의_단계는_판정_흐름과_같다` | OK, ASK(③), BUSY(⑤), USER_BUSY(⑥), 공용 OK, ⓪ 한도 초과의 단계 결과 |
+| FR-12A | `test_FR12A_충돌_재전송은_기존_요청의_단계를_바꾸지_않는다` | 충돌 재전송은 기존 요청의 단계를 바꾸지 않는다 |
 | FR-12B | 5절의 `test_FR12B_*` | 따라 읽기의 이벤트 종류, 순서, 바뀔 때만 |
 | FR-12B | `test_FR12B_요청_하나의_이벤트가_순서대로_나간다` | `mcp_call` → `step`… → `posterior` → `verdict` → `command` → `exec_result` → `mcp_result` |
 | FR-12A, FR-12B | `test_FR12B_서버에서_대시보드까지_이어진다` (`tests/integration/`) | `[dashboard]`가 있는 조립 서버에서 MCP `request_use` 하나가 스트림 이벤트로 오고, 조회 REST 9개가 200이다 |
