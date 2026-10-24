@@ -145,7 +145,7 @@ class DashboardQueryService:
             roles = reads.roles({s.user_id for s in sessions} | {h.user_id for h in shared})
         rows = [
             _use_row(Subject(s.user_id, roles[s.user_id]), nodes[s.node_id], s.state,
-                     s.reserved_at or s.received_at, _overdue_minutes(s.rental_due_at, now))
+                     s.reserved_at or s.received_at, overdue_minutes(s.rental_due_at, now))
             for s in sessions
         ]
         rows.extend(
@@ -163,7 +163,7 @@ class DashboardQueryService:
             roles = reads.roles({a.requester_user_id for a in approvals})
         sections: dict[str, list[dict[str, Any]]] = {"pending": [], "active": [], "ended": []}
         for a in approvals:
-            section = _approval_section(a, now)
+            section = approval_section(a, now)
             row: dict[str, Any] = {
                 "subject": Subject(a.requester_user_id, roles[a.requester_user_id]), "nodeId": a.node_id,
                 "mode": a.mode, "requestedAt": a.created_at,
@@ -326,7 +326,7 @@ class DashboardQueryService:
         items[-1]["now"] = True
         return {
             "subject": Subject(session.user_id, role), "nodeId": node_id, "startedAt": started,
-            "overdueMinutes": _overdue_minutes(due, now), "timeline": items,
+            "overdueMinutes": overdue_minutes(due, now), "timeline": items,
         }
 
     def health(self) -> Mapping[str, Any]:
@@ -371,11 +371,11 @@ class DashboardQueryService:
             nodes = reads.nodes()
             sessions = reads.open_sessions()
             beacons = reads.active_beacons()
-            waiting = [a for a in reads.approvals() if _approval_section(a, now) == "pending"]
+            waiting = [a for a in reads.approvals() if approval_section(a, now) == "pending"]
             evidence = reads.fault_evidence([n.node_id for n in nodes if n.device_state is DeviceState.FAULT])
             candidates = sorted(reads.requests(started, None), key=lambda r: (r.received_at, r.seq))
             commands = _by_request(reads.commands_of([r.internal_request_id for r in candidates]))
-            running = [r for r in candidates if _in_progress(r, commands.get(r.internal_request_id, ()))]
+            running = [r for r in candidates if in_progress(r, commands.get(r.internal_request_id, ()))]
             audits = _by_request(reads.audit_of([r.internal_request_id for r in running]))
             roles = reads.roles(
                 {b.user_id for b in beacons} | {a.requester_user_id for a in waiting}
@@ -384,7 +384,7 @@ class DashboardQueryService:
         names = _names(nodes)
         occupancy = {n.node_id: n.occupancy for n in nodes}
         overdue = {
-            s.node_id for s in sessions if s.state is SessionState.ACTIVE and _overdue_minutes(s.rental_due_at, now) > 0
+            s.node_id for s in sessions if s.state is SessionState.ACTIVE and overdue_minutes(s.rental_due_at, now) > 0
         }
 
         events = [
@@ -463,7 +463,7 @@ def _by_request(rows: Iterable[Any]) -> dict[str, list[Any]]:
     return dict(grouped)
 
 
-def _overdue_minutes(due: datetime | None, now: datetime) -> float:
+def overdue_minutes(due: datetime | None, now: datetime) -> float:
     """대여 만료 시각부터 흐른 분. `ReleaseService` 와 같이 0 이상이다."""
     return 0.0 if due is None else max(0.0, (now - due).total_seconds() / 60)
 
@@ -489,7 +489,7 @@ def _connected(node: DashboardNode, now: datetime, ttl: timedelta) -> bool:
     return bool(node.session_id) and node.last_seen_at is not None and now - node.last_seen_at <= ttl
 
 
-def _in_progress(req: DashboardRequest, commands: Sequence[DashboardCommand]) -> bool:
+def in_progress(req: DashboardRequest, commands: Sequence[DashboardCommand]) -> bool:
     """진행 중인 요청: 방문자 요청은 판정이 아직 없거나, 어느 요청이든 끝나지 않은 명령이 있다.
 
     서버 내부 요청은 판정 값을 저장하지 않으므로(`verdict` 가 늘 비어 있다) 판정이 없다는 이유로는 진행 중이라 보지 않는다.
@@ -497,7 +497,7 @@ def _in_progress(req: DashboardRequest, commands: Sequence[DashboardCommand]) ->
     return (req.kind == "visitor" and req.verdict is None) or any(c.status in _RUNNING for c in commands)
 
 
-def _approval_section(a: DashboardApproval, now: datetime) -> str:
+def approval_section(a: DashboardApproval, now: datetime) -> str:
     """`pending`: 대기 기한 전. `active`: 유효 기한 전이고 남은 횟수가 있음. 그 밖은 `ended`."""
     if a.status is ApprovalStatus.PENDING and a.pending_until is not None and now < a.pending_until:
         return "pending"

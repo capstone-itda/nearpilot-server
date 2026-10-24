@@ -10,6 +10,7 @@ from nearpilot.core.dashboard.events import (
 )
 from nearpilot.core.dashboard.queries import DashboardQueryService, ModelVersions, fault_of
 from nearpilot.core.dashboard.steps import StepState, proximity, request_steps, request_tool, responded_at
+from nearpilot.core.dashboard.tail import MonitorTail
 from nearpilot.core.dashboard.text import (
     audit_code,
     audit_text,
@@ -24,6 +25,7 @@ from nearpilot.core.dashboard.text import (
 __all__ = [
     "DashboardQueryService",
     "ModelVersions",
+    "MonitorTail",
     "StepState",
     "approval_event",
     "audit_code",
