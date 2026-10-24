@@ -36,3 +36,5 @@ Thumbs.db
 /server/var/node-lab*/
 /firmware/node_lab/.pio/
 /firmware/node_lab/include/config.local.h
+/firmware/.pio/
+/firmware/include/config.local.h
