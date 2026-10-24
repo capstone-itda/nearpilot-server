@@ -1,7 +1,8 @@
 """FR-11·FR-12A·FR-12B 대시보드 문구와 코드 (specs/core-dashboard-queries/spec.md 6절).
 
 감사 행, 요청 행, 명령 결과를 짧은 한국어 문구와 사유 코드로 바꾼다. 스트림과 조회 REST 가 이 파일의 함수를
-함께 써서 같은 문구를 보인다. 문구에 쓰는 것은 코드, 열거형 값, 수, 기기 이름뿐이다.
+함께 써서 같은 문구를 보인다. 조회 서비스(`queries`)와 평가 리포트(`evaluation`)가 쓰는 고정 문구도 여기에 둔다.
+문구에 쓰는 것은 코드, 열거형 값, 수, 기기 이름뿐이다.
 감사 payload 의 문자열(`user_id`, 계정 이름, `error`)은 옮기지 않는다 (FR-11, NFR-08).
 DB 를 읽지 않고 현재 시각을 읽지 않는다.
 """
@@ -109,6 +110,25 @@ _HISTORY_OUTCOME: dict[str, tuple[str, ReasonCode]] = {  # 성공이 아닌 마�
     CommandOutcome.UNKNOWN.value: ("결과 불명 → 고장 격리", ReasonCode.EXEC_UNKNOWN),
     CommandOutcome.REJECTED.value: ("실행 안 함", ReasonCode.EXEC_FAILED),
 }
+_TIMELINE_FAILED: dict[str, str] = {  # 성공이 아닌 명령 결과 → 대여 타임라인 문구
+    CommandOutcome.FAILED.value: "실패 · 고장 격리",
+    CommandOutcome.UNKNOWN.value: "결과 불명 · 고장 격리",
+    CommandOutcome.REJECTED.value: "거절 · 실행 안 함",
+}
+_METRIC_NAME: dict[str, str] = {  # 평가 리포트의 지표 이름 → 화면 이름
+    "front_misselection_rate": "앞 기기 오선택률",
+    "ece": "보정 오차",
+    "switch_time": "전환 시간",
+    "flicker": "흔들림",
+}
+_METRIC_LABEL: dict[bool | None, str] = {True: "통과", False: "✕ 미통과", None: "미측정"}  # 통과 여부 → 지표 문구
+
+# 조회 서비스와 평가 리포트가 쓰는 고정 문구
+NO_MODEL = "없음"  # 근접 모델이 없는 장소의 모델·보정 버전
+NO_SIGNAL = "최근 신호 없음"  # 점검에서 최근 수신이 없는 비콘의 note
+NO_SAMPLE = "—"  # 시행 수가 없는 평가 지표의 sample
+OVERDUE = "대여 시간 초과"  # 점유 메모(`session_note`)와 대여 타임라인이 함께 쓴다
+TIMELINE_RESERVED = f"예약 · {SessionState.RESERVED.value}"  # 대여 타임라인의 첫 항목
 
 
 def _reason(value: Any) -> ReasonCode | None:
@@ -328,7 +348,7 @@ def session_note(state: SessionState | None, device_state: DeviceState, overdue_
     if state is SessionState.CLOSING or device_state is DeviceState.CLOSING:
         return "반납 확인 중"
     if overdue_minutes > 0:
-        return "대여 시간 초과"
+        return OVERDUE
     return None
 
 
@@ -343,3 +363,23 @@ def fault_cause(evidence: Mapping[str, Any]) -> ReasonCode:
         unknown = evidence.get("state") == NodeResultState.UNKNOWN.value
         return ReasonCode.EXEC_UNKNOWN if unknown else ReasonCode.EXEC_FAILED
     return ReasonCode.TARGET_UNAVAILABLE
+
+
+# ── 대여 타임라인·평가 리포트 ──────────────────────────────────────────
+
+
+def timeline_command(cmd: DashboardCommand) -> str | None:
+    """대여 타임라인에 쓰는 명령 결과 문구. 결과가 없거나 보내지 않고 취소한 명령은 `None`."""
+    if cmd.outcome == CommandOutcome.SUCCEEDED.value:
+        return f"{_DONE_TEXT[cmd.action]} · {SessionState.ACTIVE.value}"
+    return _TIMELINE_FAILED.get(cmd.outcome)
+
+
+def metric_name(metric: str) -> str:
+    """평가 리포트의 지표 이름 → 화면 이름. 모르는 지표는 이름을 그대로 쓴다."""
+    return _METRIC_NAME.get(metric, metric)
+
+
+def metric_label(passed: bool | None) -> str:
+    """평가 지표의 통과 여부 → 문구. 비어 있으면(`None`) 측정하지 못한 것이다."""
+    return _METRIC_LABEL[passed]

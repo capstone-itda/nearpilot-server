@@ -30,11 +30,20 @@ from nearpilot.core.dashboard.events import (
     transition_event,
 )
 from nearpilot.core.dashboard.steps import proximity, request_steps, request_tool, responded_at
-from nearpilot.core.dashboard.text import fault_cause, node_name, outcome, session_note
+from nearpilot.core.dashboard.text import (
+    NO_MODEL,
+    NO_SIGNAL,
+    OVERDUE,
+    TIMELINE_RESERVED,
+    fault_cause,
+    node_name,
+    outcome,
+    session_note,
+    timeline_command,
+)
 from nearpilot.core.lifecycle.shared_light import SharedHolder
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action,
     ApprovalStatus,
     CommandOutcome,
     DeviceState,
@@ -56,17 +65,7 @@ from nearpilot.shared.models import (
 )
 
 _RUNNING = (ExecutionStatus.PENDING, ExecutionStatus.IN_PROGRESS)  # 아직 끝나지 않은 명령
-_NO_MODEL = "없음"
 _PERIOD = re.compile(r"([0-9]{2}):([0-9]{2})~([0-9]{2}):([0-9]{2})")
-_NO_SIGNAL = "최근 신호 없음"
-_OVERDUE = "대여 시간 초과"
-_DONE = {Action.OPEN: "열림", Action.ON: "켜짐", Action.OFF: "꺼짐"}
-# 성공이 아닌 명령 결과 → 대여 타임라인 문구
-_TIMELINE_FAILED = {
-    CommandOutcome.FAILED.value: "실패 · 고장 격리",
-    CommandOutcome.UNKNOWN.value: "결과 불명 · 고장 격리",
-    CommandOutcome.REJECTED.value: "거절 · 실행 안 함",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,8 +122,8 @@ class DashboardQueryService:
             rows.append({
                 "placeId": place.place_id,
                 "placeName": place.name,
-                "modelVersion": _NO_MODEL if version is None else version.model_version,
-                "calibrationVersion": _NO_MODEL if version is None else version.calib_version,
+                "modelVersion": NO_MODEL if version is None else version.model_version,
+                "calibrationVersion": NO_MODEL if version is None else version.calib_version,
                 "devices": [
                     {
                         "nodeId": node.node_id, "name": node_name(names, node.node_id),
@@ -313,14 +312,14 @@ class DashboardQueryService:
             commands = reads.commands_of_use(session.use_id)
             role = reads.roles([session.user_id])[session.user_id]
         started = session.reserved_at or session.received_at
-        timeline = [(started, f"예약 · {SessionState.RESERVED.value}")]
+        timeline = [(started, TIMELINE_RESERVED)]
         for cmd in commands:
-            text = _command_text(cmd)
+            text = timeline_command(cmd)
             if text is not None:
                 timeline.append((cmd.occurred_at or cmd.send_started_at or started, text))
         due = session.rental_due_at
         if due is not None and now > due:
-            timeline.append((due, _OVERDUE))
+            timeline.append((due, OVERDUE))
         timeline.sort(key=lambda item: item[0])
         items = [{"at": at, "text": text} for at, text in timeline]
         items[-1]["now"] = True
@@ -348,18 +347,18 @@ class DashboardQueryService:
             last = None if beacon.last_seen_at is None else max(0.0, (now - beacon.last_seen_at).total_seconds())
             row: dict[str, Any] = {"subject": Subject(beacon.user_id, roles[beacon.user_id]), "lastSeenSec": last}
             if last is None or last > settings.beacon_recent_sec:
-                row["note"] = _NO_SIGNAL
+                row["note"] = NO_SIGNAL
             beacon_rows.append(row)
         versions = [models.get(p.place_id) for p in places]
         model = " / ".join(
-            _NO_MODEL if v is None else f"{v.model_version} · {v.calib_version}" for v in versions
+            NO_MODEL if v is None else f"{v.model_version} · {v.calib_version}" for v in versions
         )
         return {
             "devices": [
                 {"nodeId": n.node_id, "connected": _connected(n, now, ttl), "trust": n.trust_state} for n in nodes
             ],
             "beacons": beacon_rows,
-            "server": {"database": database, "mqtt": mqtt, "model": model or _NO_MODEL},
+            "server": {"database": database, "mqtt": mqtt, "model": model or NO_MODEL},
         }
 
     # ── MonitorSnapshot ──────────────────────────────────────────────
@@ -434,14 +433,17 @@ class DashboardQueryService:
 
 
 def fault_of(row: DashboardAudit | None) -> ReasonCode:
-    """기기의 마지막 고장 근거 감사 행 → `fault.cause` (spec 6절). 근거 행이 없으면 `TARGET_UNAVAILABLE`."""
+    """기기의 마지막 고장 근거 감사 행 → `fault.cause` (spec 6절). 근거 행이 없으면 `TARGET_UNAVAILABLE`.
+
+    `rejected` 결과는 기기를 격리하지 않으므로 근거가 아니다 (`DashboardReadStore.fault_evidence` 가 고르지 않는다).
+    """
     if row is None:
         return ReasonCode.TARGET_UNAVAILABLE
     event, result = row.payload.get("event"), row.payload.get("outcome")
     if event == "record_result":
         if result == CommandOutcome.UNKNOWN.value:
             return ReasonCode.EXEC_UNKNOWN
-        if result in (CommandOutcome.FAILED.value, CommandOutcome.REJECTED.value):
+        if result == CommandOutcome.FAILED.value:
             return ReasonCode.EXEC_FAILED
     if event == "isolate_device":
         evidence = row.payload.get("evidence")
@@ -533,10 +535,3 @@ def _use_row(
     if overdue > 0:
         row["overdueMinutes"] = overdue
     return row
-
-
-def _command_text(cmd: DashboardCommand) -> str | None:
-    """대여 타임라인에 쓰는 명령 결과 문구. 결과가 없거나 보내지 않고 취소한 명령은 `None`."""
-    if cmd.outcome == CommandOutcome.SUCCEEDED.value:
-        return f"{_DONE[cmd.action]} · {SessionState.ACTIVE.value}"
-    return _TIMELINE_FAILED.get(cmd.outcome)

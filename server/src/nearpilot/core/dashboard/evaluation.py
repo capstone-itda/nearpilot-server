@@ -14,21 +14,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from nearpilot.core.dashboard.text import NO_SAMPLE, metric_label, metric_name
+
 log = logging.getLogger(__name__)
 
 _GENERATED_AT = "# generated_at:"
 # 리포트가 꼭 가져야 하는 열
 _COLUMNS = {"metric", "passed", "trials", "note"}
-# 리포트의 지표 이름 → 화면 이름
-_NAMES = {
-    "front_misselection_rate": "앞 기기 오선택률",
-    "ece": "보정 오차",
-    "switch_time": "전환 시간",
-    "flicker": "흔들림",
-}
 # `passed` 칸 → 통과 여부. 비면 측정하지 못한 것이다.
 _PASSED = {"True": True, "False": False, "": None}
-_LABELS = {True: "통과", False: "✕ 미통과", None: "미측정"}
 
 
 def evaluation_of(reports_dir: Path) -> dict[str, Any] | None:
@@ -75,10 +69,10 @@ def _metric(number: int, row: dict[str, str | None]) -> dict[str, Any]:
     trials = row["trials"]
     metric: dict[str, Any] = {
         "id": number,
-        "name": _NAMES.get(row["metric"], row["metric"]),
+        "name": metric_name(row["metric"]),
         "pass": passed,
-        "label": _LABELS[passed],
-        "sample": f"{int(trials):,}" if trials else "—",
+        "label": metric_label(passed),
+        "sample": f"{int(trials):,}" if trials else NO_SAMPLE,
     }
     if row["note"]:
         metric["sampleNote"] = row["note"]

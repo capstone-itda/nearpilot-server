@@ -788,10 +788,6 @@ class DashboardReadStore(Protocol):
         """node_command.use_id 가 use_id 인 명령. rowid 순."""
         ...
 
-    def commands_after(self, seq: int) -> Sequence[DashboardCommand]:
-        """rowid > seq, rowid 순."""
-        ...
-
     def commands_by_ids(self, command_ids: Iterable[str]) -> Sequence[DashboardCommand]:
         """rowid 순."""
         ...
@@ -810,9 +806,9 @@ class DashboardReadStore(Protocol):
 
     def fault_evidence(self, node_ids: Iterable[str]) -> Mapping[str, DashboardAudit]:
         """기기마다 마지막 고장 근거 감사 행. 근거 행은 payload event 가 "isolate_device" 이거나,
-        "record_result" 이고 outcome 이 unknown·failed·rejected 인 행이다. 행의 기기는 payload node_id →
-        internal_request_id 의 request.node_id → command_id 의 node_command.node_id 로 찾는다 (events.audit_node 와 같다).
-        rowid 가 가장 큰 행 하나. 없는 기기는 빠진다. 빈 목록은 질의하지 않는다."""
+        "record_result" 이고 outcome 이 unknown·failed 인 행이다 (rejected 는 기기를 격리하지 않으므로 근거가 아니다).
+        행의 기기는 payload node_id → internal_request_id 의 request.node_id → command_id 의 node_command.node_id 로
+        찾는다 (events.audit_node 와 같다). rowid 가 가장 큰 행 하나. 없는 기기는 빠진다. 빈 목록은 질의하지 않는다."""
         ...
 
     def rssi_after(self, seq: int) -> Sequence[DashboardRssi]:
@@ -824,7 +820,7 @@ class DashboardReadStore(Protocol):
         ...
 
     def cursors(self) -> Mapping[str, int]:
-        """{"request", "node_command", "audit_log", "rssi_observation"} 의 최대 rowid. 행이 없으면 0."""
+        """{"request", "audit_log", "rssi_observation"} 의 최대 rowid. 행이 없으면 0."""
         ...
 
     def ping(self) -> None:

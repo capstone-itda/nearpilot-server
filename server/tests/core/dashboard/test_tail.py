@@ -178,7 +178,6 @@ class FakeReads:
         self._read("cursors")
         return {
             "request": max((r.seq for r in self.request_rows), default=0),
-            "node_command": max((c.seq for c in self.command_rows), default=0),
             "audit_log": max((a.seq for a in self.audit_rows), default=0),
             "rssi_observation": max((o.seq for o in self.rssi_rows), default=0),
         }
@@ -793,6 +792,21 @@ def test_FR12B_비콘_수신이_바뀔_때만_발행한다():
     reads.beacon_rows[:] = [b for b in reads.beacon_rows if b.user_id != OWNER_ID]  # 비활성이 된 사람은 내지 않는다
     tail.tick()
     assert feed.events == []
+
+
+def test_FR12B_따라_읽기의_비콘은_최근_기준과_같은_수신까지_본_것이다():
+    # 지금 상태(`current_events`)의 같은 경계는 test_dashboard_queries.py 의
+    # test_FR12B_비콘은_최근_기준과_같은_수신까지_본_것이다 가 고정한다. 둘은 같은 규칙이다
+    recent = Settings().beacon_recent_sec
+    reads = FakeReads(beacons=[DashboardBeacon(VISITOR_ID, "b1", at(-60)), DashboardBeacon(VISITOR2_ID, "b2", at(-60))])
+    tail, feed, _ = make_tail(reads)  # 시각은 T0 에 선다
+    tail.start()  # 두 사람 모두 수신 중이 아니다
+
+    edit(reads.beacon_rows, lambda b: b.user_id == VISITOR_ID, last_seen_at=at(-recent))  # 정확히 기준만큼 전이다
+    edit(reads.beacon_rows, lambda b: b.user_id == VISITOR2_ID, last_seen_at=at(-recent - 0.001))  # 기준을 조금 넘었다
+    tail.tick()
+
+    assert [(e.subject, dict(e.fields)) for e in feed.take()] == [(VISITOR, {"seen": True})]  # 기준과 같으면 본 것이다
 
 
 def test_FR12B_RSSI는_사람마다_기기별_마지막_값으로_묶는다():

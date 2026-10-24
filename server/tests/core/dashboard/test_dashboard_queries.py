@@ -229,10 +229,6 @@ class FakeReads:
         self._read()
         return sorted((c for c in self.command_rows if c.use_id == use_id), key=lambda c: c.seq)
 
-    def commands_after(self, seq):
-        self._read()
-        return sorted((c for c in self.command_rows if c.seq > seq), key=lambda c: c.seq)
-
     def commands_by_ids(self, command_ids):
         self._read()
         wanted = set(command_ids)
@@ -265,7 +261,7 @@ class FakeReads:
 
     def cursors(self):
         self._read()
-        return {"request": 0, "node_command": 0, "audit_log": 0, "rssi_observation": 0}
+        return {"request": 0, "audit_log": 0, "rssi_observation": 0}
 
     def ping(self):
         self._read()
@@ -650,15 +646,14 @@ def test_FR12A_이력_오늘은_주입한_시간대의_0시부터다():
 
 
 def test_FR12A_이력_기간의_시간대를_주지_않으면_서버_지역_시간대를_쓴다():
-    now = datetime.now(timezone.utc)
     reads = FakeReads(
-        requests=[make_request("req-now", 1, received=now),
-                  make_request("req-old", 2, received=now - timedelta(days=2))],
-        audits=[*trail("req-now", now, *OK_RENTAL, seq0=10),
-                *trail("req-old", now - timedelta(days=2), *OK_RENTAL, seq0=20)],
+        requests=[make_request("req-now", 1, received=NOW),
+                  make_request("req-old", 2, received=NOW - timedelta(days=2))],
+        audits=[*trail("req-now", NOW, *OK_RENTAL, seq0=10),
+                *trail("req-old", NOW - timedelta(days=2), *OK_RENTAL, seq0=20)],
     )
 
-    rows = make_service(reads, tz=None, now=now).history("today", None, None)
+    rows = make_service(reads, tz=None).history("today", None, None)  # 서버가 어느 시간대에 있어도 이틀 전은 오늘이 아니다
 
     assert [row["requestId"] for row in rows] == ["req-now"]
 
@@ -1085,7 +1080,7 @@ def fault_row(payload: dict) -> DashboardAudit:
         (None, ReasonCode.TARGET_UNAVAILABLE),
         (fault_row({"event": "record_result", "outcome": "unknown"}), ReasonCode.EXEC_UNKNOWN),
         (fault_row({"event": "record_result", "outcome": "failed"}), ReasonCode.EXEC_FAILED),
-        (fault_row({"event": "record_result", "outcome": "rejected"}), ReasonCode.EXEC_FAILED),
+        (fault_row({"event": "record_result", "outcome": "rejected"}), ReasonCode.TARGET_UNAVAILABLE),  # 근거가 아니다
         (fault_row({"event": "record_result", "outcome": "succeeded"}), ReasonCode.TARGET_UNAVAILABLE),
         (fault_row({"event": "isolate_device", "node_id": "locker-1",
                     "evidence": {"source": "device_result", "state": NodeResultState.UNKNOWN.value}}),

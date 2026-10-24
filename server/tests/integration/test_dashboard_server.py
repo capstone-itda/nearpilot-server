@@ -35,6 +35,7 @@ from nearpilot.core.dashboard import MonitorTail
 from nearpilot.core.proximity.files import AcceptanceSettings
 from nearpilot.core.proximity.model import load_models
 from nearpilot.db.repositories import SqliteDashboardReads
+from nearpilot.iot.mqtt import MqttConnection
 from nearpilot.runtime import DashboardConfig, Runtime, create_app
 from nearpilot.runtime.database import ThreadDatabase
 from nearpilot.runtime.tasks import NotAccepting
@@ -391,6 +392,22 @@ def test_FR12A_수집_전용_서버에도_대시보드를_붙인다(tmp_path):
         assert server.client.post("/mcp", json={}).status_code == 404
 
 
+def test_FR12A_점검_mqtt는_연결_준비_상태를_따른다(tmp_path, monkeypatch):
+    server = Server(tmp_path)
+    before_start = server.runtime.dashboard.queries._mqtt_ready()  # 조회 서비스는 서버가 시작하기 전에 만든다
+
+    def mqtt() -> bool:
+        return server.get("/dashboard/health").json()["server"]["mqtt"]
+
+    with server:
+        assert before_start is False  # 시작 전에는 연결 상태가 거짓이다 (연결을 만들기 전이라 서비스가 없다)
+        assert mqtt() is True  # 연결이 준비됐다
+        with monkeypatch.context() as patch:
+            patch.setattr(MqttConnection, "ready", property(lambda self: False))
+            assert mqtt() is False  # 서버가 떠 있어도 연결이 준비되지 않았으면 거짓이다
+        assert mqtt() is True
+
+
 def test_FR12A_신뢰도는_설정한_평가_리포트_폴더를_읽는다(tmp_path):
     reports = tmp_path / "reports"  # Server 가 DashboardConfig.reports_dir 로 넘기는 폴더다
     reports.mkdir()
@@ -544,4 +561,26 @@ def test_FR12A_읽기_범위는_연결을_다시_쓰고_트랜잭션을_남기�
     with db.dashboard_reads() as reads:  # 범위 밖에서 부르면 이 읽기가 연결 범위를 연다
         assert db.open_connections == 1
         reads.ping()
+    assert db.open_connections == 0
+
+
+def test_NFR03_대시보드_읽기는_쓰기_잠금을_잡지_않는다(tmp_path):
+    path = tmp_path / "np.db"
+    # 쓰기 잠금을 기다리는 읽기가 오래 붙잡히지 않고 실패로 드러나도록 기다리는 시간을 작게 둔다
+    db = ThreadDatabase(path, settings=Settings(), audit_jsonl=tmp_path / "audit.jsonl", busy_timeout_ms=100)
+    with db.scope():  # 스키마를 만든다
+        pass
+    writer = sqlite3.connect(str(path), isolation_level=None)
+    probe = sqlite3.connect(str(path), timeout=0.1, isolation_level=None)
+    try:
+        writer.execute("BEGIN IMMEDIATE")  # 판정 쪽 쓰기처럼 다른 연결이 쓰기 잠금을 쥐고 있다
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            probe.execute("BEGIN IMMEDIATE")  # 잠금이 실제로 쥐어져 있다
+
+        with db.dashboard_reads() as reads:  # 읽기 트랜잭션이 쓰기 잠금을 얻으려 했다면 여기서 실패한다
+            reads.ping()
+            assert reads.places() == []
+    finally:
+        probe.close()
+        writer.close()
     assert db.open_connections == 0

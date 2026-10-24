@@ -60,7 +60,7 @@ from conftest import (
 )
 
 T0 = datetime(2026, 10, 24, 9, 0, tzinfo=timezone.utc)
-CURSOR_TABLES = ("request", "node_command", "audit_log", "rssi_observation")
+CURSOR_TABLES = ("request", "audit_log", "rssi_observation")
 
 
 def at(minutes: float) -> datetime:
@@ -272,7 +272,7 @@ def test_FR12A_대시보드_읽기_요청_기간과_커서(reads, conn):
     assert reads.requests_after(4) == []
     assert reads.requests_by_ids(["req-internal", "req-b", "req-b", "missing"]) == [request_b, request_internal]
 
-    assert reads.cursors() == {"request": 4, "node_command": 0, "audit_log": 0, "rssi_observation": 0}
+    assert reads.cursors() == {"request": 4, "audit_log": 0, "rssi_observation": 0}
     # 정리로 행이 지워져도 커서는 행 수가 아니라 가장 큰 rowid 다
     conn.execute("DELETE FROM request WHERE internal_request_id = 'req-a'")
     assert reads.cursors()["request"] == 4
@@ -313,9 +313,6 @@ def test_FR12A_대시보드_읽기_명령_감사_RSSI_비콘(reads, conn):
     assert reads.commands_of(["req-2", "req-1", "req-1", "missing"]) == [command_z, command_a, command_m]
     assert reads.commands_of_use("use-1") == [command_z, command_m]
     assert reads.commands_of_use("missing") == []
-    assert reads.commands_after(0) == [command_z, command_a, command_m]
-    assert reads.commands_after(1) == [command_a, command_m]
-    assert reads.commands_after(3) == []
     assert reads.commands_by_ids(["cmd-m", "cmd-z", "cmd-z", "missing"]) == [command_z, command_m]
 
     # 감사: 요청이 없는 행(관리 기록)도 있다
@@ -376,7 +373,7 @@ def test_FR12A_대시보드_읽기_명령_감사_RSSI_비콘(reads, conn):
         DashboardBeacon("visitor3", "beacon-3", None),  # 관측이 없다
     ]
 
-    assert reads.cursors() == {"request": 2, "node_command": 3, "audit_log": 5, "rssi_observation": 4}
+    assert reads.cursors() == {"request": 2, "audit_log": 5, "rssi_observation": 4}
 
 
 def test_FR12A_대시보드_읽기_고장_근거는_기기마다_마지막_행이다(reads, conn):
@@ -386,10 +383,12 @@ def test_FR12A_대시보드_읽기_고장_근거는_기기마다_마지막_행�
     for node_id in ("locker-1", "locker-2", "locker-3", "locker-4", "locker-5", "locker-6"):
         insert_node(conn, node_id=node_id)
     # 기기를 요청으로 찾는 행의 요청과, 명령으로 찾는 행의 명령 (요청의 기기는 비워 두어 경로를 가른다)
+    _add_request(conn, "req-1", 3, user_id="visitor1", node_id="locker-1")
     _add_request(conn, "req-2", 0, user_id="visitor1", node_id="locker-2")
     _add_request(conn, "req-3", 1, user_id="visitor1")
     insert_node_command(conn, command_id="cmd-3", internal_request_id="req-3", node_id="locker-3")
     _add_request(conn, "req-4", 2, user_id="visitor1", node_id="locker-4")
+    _add_request(conn, "req-5", 4, user_id="visitor1", node_id="locker-5")
 
     def isolate(log_id, node_id, minutes):
         insert_audit_log(conn, log_id=log_id, step="fault", created_at=ts(minutes),
@@ -401,13 +400,17 @@ def test_FR12A_대시보드_읽기_고장_근거는_기기마다_마지막_행�
 
     isolate("log-1a", "locker-1", 10)  # payload 의 기기
     result("log-2", "unknown", 11, internal_request_id="req-2")  # 요청의 기기
-    result("log-3", "rejected", 12, internal_request_id=None, command_id="cmd-3")  # 명령의 기기
+    result("log-3", "failed", 12, internal_request_id=None, command_id="cmd-3")  # 명령의 기기
     result("log-4", "succeeded", 13, internal_request_id="req-4")  # 성공은 근거가 아니다
     insert_audit_log(conn, log_id="log-5", internal_request_id="req-4", step="exec", created_at=ts(14),
                      payload={"event": "link_request", "node_id": "locker-5"})  # 근거 행의 event 가 아니다
     result("log-6", "failed", 15, internal_request_id="req-2")  # locker-2 의 더 늦은 행
     result("log-1b", "failed", 5, internal_request_id="req-4")  # locker-4, 시각은 일러도 rowid 는 뒤다
-    isolate("log-1c", "locker-1", 1)  # locker-1 의 마지막 rowid, 시각은 가장 이르다
+    isolate("log-1c", "locker-1", 1)  # locker-1 의 마지막 근거, 시각은 가장 이르다
+    # 거절된 결과는 기기를 격리하지 않으므로 근거가 아니다: 격리 뒤의 거절 행은 앞의 근거를 가리지 못하고,
+    # 거절만 있는 기기는 근거가 없다
+    result("log-8", "rejected", 17, internal_request_id="req-1")
+    result("log-9", "rejected", 18, internal_request_id="req-5")
     isolate("log-7", "locker-6", 16)  # 묻지 않은 기기
 
     evidence = reads.fault_evidence(["locker-1", "locker-2", "locker-3", "locker-4", "locker-5", "missing"])
@@ -482,7 +485,6 @@ def test_FR12A_대시보드_읽기는_쓰지_않는다(reads, conn):
         "requests_by_ids": lambda: reads.requests_by_ids(["req-use-1"]),
         "commands_of": lambda: reads.commands_of(["req-use-1"]),
         "commands_of_use": lambda: reads.commands_of_use("use-1"),
-        "commands_after": lambda: reads.commands_after(0),
         "commands_by_ids": lambda: reads.commands_by_ids(["cmd-1"]),
         "audit_recent": lambda: reads.audit_recent(10),
         "audit_after": lambda: reads.audit_after(0),

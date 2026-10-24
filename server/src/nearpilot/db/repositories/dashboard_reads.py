@@ -54,9 +54,9 @@ _AUDIT_COLUMNS = (
     "rowid AS seq, log_id, internal_request_id, command_id, step, payload_json, created_at"
 )
 # 따라 읽기가 커서로 잡는 표
-_CURSOR_TABLES = ("request", "node_command", "audit_log", "rssi_observation")
-# 기기가 고장이 된 근거인 실행 결과 (`record_result` 감사 행의 outcome)
-_FAULT_OUTCOMES = (CommandOutcome.UNKNOWN.value, CommandOutcome.FAILED.value, CommandOutcome.REJECTED.value)
+_CURSOR_TABLES = ("request", "audit_log", "rssi_observation")
+# 기기가 고장이 된 근거인 실행 결과 (`record_result` 감사 행의 outcome). `rejected` 는 기기를 격리하지 않는다
+_FAULT_OUTCOMES = (CommandOutcome.UNKNOWN.value, CommandOutcome.FAILED.value)
 
 
 def _time(value: str | None) -> datetime | None:
@@ -253,12 +253,6 @@ class SqliteDashboardReads:
     def commands_of_use(self, use_id: str) -> Sequence[DashboardCommand]:
         rows = self._conn.execute(
             f"SELECT {_COMMAND_COLUMNS} FROM node_command WHERE use_id = ? ORDER BY rowid", (use_id,)
-        ).fetchall()
-        return [_command_from_row(row) for row in rows]
-
-    def commands_after(self, seq: int) -> Sequence[DashboardCommand]:
-        rows = self._conn.execute(
-            f"SELECT {_COMMAND_COLUMNS} FROM node_command WHERE rowid > ? ORDER BY rowid", (seq,)
         ).fetchall()
         return [_command_from_row(row) for row in rows]
 

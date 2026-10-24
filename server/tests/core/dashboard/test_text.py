@@ -16,6 +16,7 @@ from nearpilot.core.dashboard.text import (
     outcome,
     session_note,
     step_detail,
+    timeline_command,
 )
 from nearpilot.shared.enums import (
     Action,
@@ -224,6 +225,23 @@ def test_FR12A_기기_이름이_없으면_ID를_쓴다():
     assert node_name(NAMES, "locker-9") == "locker-9"
     assert node_name({"locker-9": ""}, "locker-9") == "locker-9"
     assert node_name(NAMES, None) is None
+
+
+@pytest.mark.parametrize(
+    ("status", "result", "action", "expected"),
+    [
+        pytest.param(ExecutionStatus.SUCCEEDED, "succeeded", Action.OPEN, "열림 · ACTIVE", id="열림"),
+        pytest.param(ExecutionStatus.SUCCEEDED, "succeeded", Action.ON, "켜짐 · ACTIVE", id="켜짐"),
+        pytest.param(ExecutionStatus.SUCCEEDED, "succeeded", Action.OFF, "꺼짐 · ACTIVE", id="꺼짐"),
+        pytest.param(ExecutionStatus.FAILED, "failed", Action.OPEN, "실패 · 고장 격리", id="실패"),
+        pytest.param(ExecutionStatus.UNKNOWN, "unknown", Action.OPEN, "결과 불명 · 고장 격리", id="결과 불명"),
+        pytest.param(ExecutionStatus.REJECTED, "rejected", Action.OPEN, "거절 · 실행 안 함", id="기기가 거절"),
+        pytest.param(ExecutionStatus.NOT_SENT, "not_sent", Action.OPEN, None, id="보내지 않고 취소"),
+        pytest.param(ExecutionStatus.IN_PROGRESS, None, Action.OPEN, None, id="결과 기다림"),
+    ],
+)
+def test_FR12A_대여_타임라인_명령_문구(status, result, action, expected):
+    assert timeline_command(command(1, status, result, action=action)) == expected
 
 
 # ── 이력 outcome ──────────────────────────────────────────────────────
