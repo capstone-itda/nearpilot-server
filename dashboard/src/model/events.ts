@@ -27,8 +27,8 @@ export type StreamEvent = At & (
   | { type: 'mcp_result'; requestId: string }
   /** 기기 상태 전이 */
   | { type: 'transition'; nodeId: string; to: DeviceState; overdue?: boolean; fault?: { cause: ReasonCode; action?: Action } }
-  /** 승인 신청(request_access)과 그 끝 */
-  | { type: 'approval'; requestId: string; nodeId: string; personId: string; kind: 'requested' | 'expired' }
+  /** 승인 신청(request_access)과 그 끝: 소유자가 승인·거부했거나 응답 없이 만료됐다 */
+  | { type: 'approval'; requestId: string; nodeId: string; personId: string; kind: 'requested' | 'approved' | 'denied' | 'expired' }
   /** 감사 로그 한 줄 */
   | { type: 'audit'; row: AuditRow }
   /** 어댑터가 만드는 연결 상태. 서버 이벤트가 아니다 */

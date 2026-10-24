@@ -106,7 +106,7 @@ export interface RequestProgress {
   execution?: 'sent' | 'succeeded' | 'failed' | 'unknown';
   /** NEED_APPROVAL 뒤 AI가 request_access로 신청한 시각 */
   accessRequestedAt?: string;
-  /** 승인 신청이 소유자 응답 없이 만료된 시각 */
+  /** 승인 신청이 끝난 시각: 소유자 응답 없이 만료됐거나, 소유자가 승인·거부했다 */
   accessExpiredAt?: string;
   /** 서버가 AI 호스트에 결과를 돌려준 시각 */
   respondedAt?: string;
@@ -191,11 +191,12 @@ export interface HistoryQuery { period: string; verdict?: Verdict; nodeId?: stri
 
 export interface TrustReport {
   live: { since: string; decisions: number; doubleOccupancy: number; latencyMedianSec: number | null; latencyP95Sec: number | null; counts: Record<Verdict, number> };
-  evaluation: {
+  /** 사전 평가 리포트. 평가 리포트가 없으면 없다 */
+  evaluation?: {
     date: string;
     metrics: { id: number; name: string; pass: boolean | null; label: string; sample: string; sampleNote?: string }[];
-    /** 혼동 행렬 (%) 행 = 실제, 열 = 고름. 마지막 칸은 none */
-    confusion: { labels: string[]; values: number[][] };
+    /** 혼동 행렬 (%) 행 = 실제, 열 = 고름. 마지막 칸은 none. 평가 리포트에 혼동 행렬이 없으면 없다 */
+    confusion?: { labels: string[]; values: number[][] };
   };
 }
 

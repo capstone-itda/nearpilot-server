@@ -202,3 +202,11 @@ body { margin: 0; }
 
 /* 테마 전환: 갑자기 번쩍이지 않게 화면 전체를 0.4초 동안 겹쳐 바꾼다 (App의 toggleTheme) */
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 0.4s; animation-timing-function: ease-out; }
+
+/* TokenGate: 서버 어댑터(?source=server)의 소유자 토큰 입력 화면. 토큰이 없거나 거부됐을 때 모니터 대신 보인다 */
+.np-gate { min-height: 100vh; display: grid; place-items: center; padding: var(--sp-5); background: var(--board); }
+.np-gate__card { display: flex; flex-direction: column; gap: var(--sp-4); width: min(30rem, 100%); padding: var(--sp-5) var(--sp-6); border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--surface); }
+.np-gate__title { font-size: var(--fs-title); font-weight: 600; }
+.np-gate__hint { color: var(--ink-2); }
+.np-gate__error { color: var(--deny); font-weight: 500; }
+.np-gate .np-btn[data-variant="primary"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }

@@ -160,7 +160,9 @@ export function TrustPanel({ onClose }: Close) {
     x += w;
     return seg;
   });
-  const { labels, values } = t.evaluation.confusion;
+  // 평가 리포트가 없으면 evaluation이 없고, 리포트에 혼동 행렬이 없으면 confusion이 없다
+  const ev = t.evaluation;
+  const cm = ev?.confusion;
   return (
     <Panel kind="trust" size="wide" cap="패널 · MON-10" title="신뢰도 지표" onClose={onClose}>
       <Zone kind="live" title="이번 시연" cap="실시간">
@@ -179,29 +181,33 @@ export function TrustPanel({ onClose }: Close) {
           {VERDICTS.map((v) => <span key={v} className="np-legend__item"><span className="np-legend__swatch" data-verdict={v} />{VERDICT_LABEL[v]} {t.live.counts[v]}</span>)}
         </div>
       </Zone>
-      <Zone kind="eval" title="사전 평가 · 시연 숫자와 섞지 않음" cap={`평가일 ${t.evaluation.date}`}>
-        <div className="np-zone__cols">
-          <DataTable label="인수 기준 지표" head={['지표', '결과', '표본']} rows={t.evaluation.metrics.map((m) => ({
-            key: String(m.id),
-            cells: [
-              <Td key="n" main={`${m.id} ${m.name}`} />,
-              <td key="r"><span className="np-pass" data-pass={m.pass === null ? 'none' : String(m.pass)}>{m.label}</span></td>,
-              m.sampleNote ? <Td key="s" main={m.sample} sub={m.sampleNote} /> : <TdMono key="s" v={m.sample} />
-            ]
-          }))} />
-          <div className="np-sec">
-            <div className="np-sec__head"><h3 className="np-sec__title">근접 모델 혼동 행렬 · 지표 8</h3><span className="np-cap">시험셋</span></div>
-            <table className="np-matrix" data-component="ConfusionMatrix" aria-label="근접 모델 혼동 행렬">
-              <thead><tr><th scope="col">실제＼고름</th>{labels.map((h) => <th key={h} scope="col">{h}</th>)}</tr></thead>
-              <tbody>
-                {values.map((r, i) => (
-                  <tr key={labels[i]}><th scope="row">{labels[i]}</th>{r.map((v, j) => <td key={j} data-level={i === j ? 'hi' : v ? 'lo' : 'zero'}>{v}</td>)}</tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="np-sec__hint">값은 %. 1~3 사물함 · 스 스피커 · 조1~3 조명 · 없음 none</p>
+      <Zone kind="eval" title="사전 평가 · 시연 숫자와 섞지 않음" cap={ev ? `평가일 ${ev.date}` : ''}>
+        {ev ? (
+          <div className="np-zone__cols">
+            <DataTable label="인수 기준 지표" head={['지표', '결과', '표본']} rows={ev.metrics.map((m) => ({
+              key: String(m.id),
+              cells: [
+                <Td key="n" main={`${m.id} ${m.name}`} />,
+                <td key="r"><span className="np-pass" data-pass={m.pass === null ? 'none' : String(m.pass)}>{m.label}</span></td>,
+                m.sampleNote ? <Td key="s" main={m.sample} sub={m.sampleNote} /> : <TdMono key="s" v={m.sample} />
+              ]
+            }))} />
+            {cm ? (
+              <div className="np-sec">
+                <div className="np-sec__head"><h3 className="np-sec__title">근접 모델 혼동 행렬 · 지표 8</h3><span className="np-cap">시험셋</span></div>
+                <table className="np-matrix" data-component="ConfusionMatrix" aria-label="근접 모델 혼동 행렬">
+                  <thead><tr><th scope="col">실제＼고름</th>{cm.labels.map((h) => <th key={h} scope="col">{h}</th>)}</tr></thead>
+                  <tbody>
+                    {cm.values.map((r, i) => (
+                      <tr key={cm.labels[i]}><th scope="row">{cm.labels[i]}</th>{r.map((v, j) => <td key={j} data-level={i === j ? 'hi' : v ? 'lo' : 'zero'}>{v}</td>)}</tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="np-sec__hint">값은 %. 1~3 사물함 · 스 스피커 · 조1~3 조명 · 없음 none</p>
+              </div>
+            ) : null}
           </div>
-        </div>
+        ) : <p className="np-sec__hint" role="status">평가 리포트 없음</p>}
       </Zone>
     </Panel>
   );

@@ -106,6 +106,7 @@ function apply(s0: MonitorState, e: StreamEvent): MonitorState {
         }))
       };
     case 'approval': {
+      // 승인·거부·만료는 모두 승인 신청의 끝이다. 소유자 알림을 끝내고, 요청을 내리는 시각을 잰다
       const t = withRequest(s, e.requestId, (r) => (e.kind === 'requested' ? { ...r, accessRequestedAt: clockOf(e.at) } : { ...r, accessExpiredAt: clockOf(e.at) }));
       return { ...t, ownerNotified: e.kind === 'requested' };
     }

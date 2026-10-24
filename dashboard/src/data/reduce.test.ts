@@ -115,6 +115,31 @@ describe('reduce', () => {
     expect(expired.request!.accessExpiredAt).toBe('14:10:05');
   });
 
+  it('FR12B 승인과 거부도 만료처럼 소유자 알림을 끄고 끝난 시각을 남긴다', () => {
+    const asked = reduceAll(s0(), [call, { type: 'verdict', at: '14:00:01.200', requestId: 'r-1', verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED', nodeId: 'locker-1' },
+      { type: 'mcp_result', at: '14:00:01.300', requestId: 'r-1' },
+      { type: 'approval', at: '14:00:05.000', requestId: 'r-1', nodeId: 'locker-1', personId: 'p-a', kind: 'requested' }]);
+    expect(asked.ownerNotified).toBe(true);
+    for (const kind of ['approved', 'denied'] as const) {
+      const ended = reduceAll(asked, [{ type: 'approval', at: '14:00:09.000', requestId: 'r-1', nodeId: 'locker-1', personId: 'p-a', kind }]);
+      expect(ended.ownerNotified, kind).toBe(false);
+      expect(ended.request!.accessRequestedAt, kind).toBe('14:00:05');
+      expect(ended.request!.accessExpiredAt, kind).toBe('14:00:09');
+    }
+  });
+
+  it('FR12B 승인·거부로 끝난 요청도 만료처럼 잠시 남았다가 내려간다', () => {
+    const asked = reduceAll(s0(), [call, { type: 'verdict', at: '14:00:01.200', requestId: 'r-1', verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED' },
+      { type: 'mcp_result', at: '14:00:01.300', requestId: 'r-1' },
+      { type: 'approval', at: '14:00:05.000', requestId: 'r-1', nodeId: 'locker-1', personId: 'p-a', kind: 'requested' }]);
+    const rssiAt = (sec: number): StreamEvent => ({ type: 'rssi', at: `14:00:${String(sec).padStart(2, '0')}.000`, personId: 'p-a', rssi: { 'locker-1': -52 } });
+    for (const kind of ['expired', 'approved', 'denied'] as const) {
+      const ended = reduceAll(asked, [{ type: 'approval', at: '14:00:09.000', requestId: 'r-1', nodeId: 'locker-1', personId: 'p-a', kind }]);
+      expect(reduceAll(ended, [rssiAt(9 + FINISHED_HOLD_SEC)]).request, kind).toBeDefined();
+      expect(reduceAll(ended, [rssiAt(10 + FINISHED_HOLD_SEC)]).request, kind).toBeUndefined();
+    }
+  });
+
   it('FR12B 끝난 요청은 잠시 남았다가 내려가고, 승인을 기다리는 요청은 남는다', () => {
     const done = reduceAll(s0(), [call, { type: 'verdict', at: '14:00:01.200', requestId: 'r-1', verdict: 'DENY', reason: 'POLICY_DENIED' },
       { type: 'mcp_result', at: '14:00:01.300', requestId: 'r-1' }]);
