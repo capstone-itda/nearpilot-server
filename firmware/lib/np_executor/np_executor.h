@@ -6,6 +6,7 @@
 
 #include "np_ledger.h"
 #include "np_device.h"
+#include "np_command.h"
 
 namespace np {
 
@@ -21,6 +22,8 @@ public:
     virtual Device& device() = 0;
     virtual uint64_t monotonicMs() = 0;
     virtual void log(const std::string& line) = 0;
+    // Unset by default: adapters must explicitly provide a verified clock for reclamation.
+    virtual CommandContext retentionContext() { return {}; }
 };
 
 class Executor {

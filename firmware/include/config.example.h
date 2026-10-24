@@ -25,6 +25,10 @@
 // one is kept free for rewrites, so at most 7 x 62 = 434 records of the largest size fit.
 // Verified by test_FR22_record_partition_capacity.
 #define NP_MAX_COMMAND_RECORDS 400
+// Return checks use a separate 96-page partition: 1024 bytes occupy 34 entries,
+// three fit per page. 94 data pages allow 282 records; 256 leaves headroom.
+#define NP_MAX_CHECK_RECORDS 256
+#define NP_MAX_CHECK_RECORD_BYTES 1024
 // node_lab slots in the default nvs; at least node_lab's NP_MAX_COMMAND_RECORDS.
 #define NP_LEGACY_COMMAND_RECORDS 64
 #define NP_MAX_BEACONS 16

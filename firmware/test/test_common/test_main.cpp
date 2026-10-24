@@ -8,6 +8,7 @@ void runLedgerTests();
 void runExecutorTests();
 void runBeaconTests();
 void runReadyTests();
+void runSafetyTests();
 
 void setUp() {}
 void tearDown() {}
@@ -21,6 +22,7 @@ int runAll() {
     runExecutorTests();
     runBeaconTests();
     runReadyTests();
+    runSafetyTests();
     return UNITY_END();
 }
 

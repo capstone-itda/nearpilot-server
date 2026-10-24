@@ -4,6 +4,7 @@
 
 #include "fake_store.h"
 #include "np_ledger.h"
+#include "np_clock.h"
 
 namespace {
 
@@ -86,10 +87,67 @@ void test_FR22_ledger_owner_conflict() {
     TEST_ASSERT_EQUAL_STRING("storage_unavailable", ledger.ownerConflict("light-01"));
 }
 
+void test_FR22_replaces_oldest_expired_terminal() {
+    FakeStore store;
+    np::Ledger ledger(store);
+    for (int i = 0; i < 3; ++i) {
+        JsonDocument doc;
+        record(doc, ("id" + std::to_string(i)).c_str(), "unknown");
+        doc["created_at"] = i == 0 ? "2026-10-23T00:00:02Z" : "2026-10-23T00:00:01Z";
+        TEST_ASSERT_TRUE(ledger.create(i, doc));
+    }
+    double now;
+    np::parseUtc("2026-10-23T00:00:31Z", now);
+    TEST_ASSERT_EQUAL_INT(1, ledger.replacement(true, now, 1, 4));  // Earliest, stable slot tie-break.
+    np::Ledger rebooted(store);
+    TEST_ASSERT_EQUAL_INT(1, rebooted.replacement(true, now, 1, 4));
+    JsonDocument replacement;
+    record(replacement, "new", "accepted");
+    TEST_ASSERT_TRUE(rebooted.save(1, replacement));
+    int empty;
+    JsonDocument found;
+    TEST_ASSERT_EQUAL_INT(np::Ledger::NOT_FOUND, rebooted.find("id1", found, empty));
+    TEST_ASSERT_EQUAL_INT(1, rebooted.find("new", found, empty));
+    TEST_ASSERT_EQUAL_INT(2, rebooted.replacement(true, now, 1, 4));
+}
+
+void test_FR22_retention_preserves_pending_and_untrusted() {
+    FakeStore store;
+    np::Ledger ledger(store);
+    for (int i = 0; i < 3; ++i) {
+        JsonDocument doc;
+        record(doc, ("id" + std::to_string(i)).c_str(), i == 0 ? "accepted" : i == 1 ? "running" : "failed");
+        doc["created_at"] = "2026-10-23T00:00:01Z";
+        TEST_ASSERT_TRUE(ledger.create(i, doc));
+    }
+    double now;
+    np::parseUtc("2026-10-23T00:00:30Z", now);
+    TEST_ASSERT_EQUAL_INT(np::Ledger::NOT_FOUND, ledger.replacement(false, now + 10, 0, 4));
+    TEST_ASSERT_EQUAL_INT(np::Ledger::NOT_FOUND, ledger.replacement(true, now, 0.001, 4));
+    TEST_ASSERT_EQUAL_INT(2, ledger.replacement(true, now, 0, 4));
+    store.slots[2] = "not json";
+    np::Ledger corrupt(store);
+    TEST_ASSERT_EQUAL_INT(np::Ledger::STORAGE_ERROR, corrupt.replacement(true, now + 10, 0, 4));
+    // A read/write verification failure must invalidate the ID index after slot replacement.
+    FakeStore second(1);
+    np::Ledger other(second);
+    JsonDocument doc;
+    record(doc, "a", "unknown");
+    doc["created_at"] = "2026-10-23T00:00:01Z";
+    TEST_ASSERT_TRUE(other.create(0, doc));
+    second.corruptWrite = true;
+    record(doc, "b", "accepted");
+    TEST_ASSERT_FALSE(other.save(0, doc));
+    int empty;
+    TEST_ASSERT_EQUAL_INT(np::Ledger::STORAGE_ERROR, other.find("a", doc, empty));
+}
+
 }  // namespace
 
 void runLedgerTests() {
     RUN_TEST(test_FR06_ledger_finds_record_after_reload);
     RUN_TEST(test_FR06_ledger_unreadable_blocks);
     RUN_TEST(test_FR22_ledger_owner_conflict);
+    RUN_TEST(test_FR22_replaces_oldest_expired_terminal);
+    RUN_TEST(test_FR22_retention_preserves_pending_and_untrusted);
 }

@@ -55,15 +55,26 @@ void Executor::handle(const std::string& payload, bool receivedBusy) {
     }
     record["command_id"] = id;
     record["content"] = content;
-    if (slot == Ledger::STORAGE_ERROR || empty < 0)
+    if (slot == Ledger::STORAGE_ERROR)
         return reject(record, "STORAGE_ERROR", "STORAGE_BLOCKED no_output_no_record_deletion");
     const char* rejection = (receivedBusy || busy_) ? "DEVICE_BUSY" : port_.validate(command);
+    bool replace = false;
+    if (empty < 0) {
+        // Invalid/expired incoming requests never consume an old record just to store a rejection.
+        const char* invalid = (receivedBusy || busy_) ? port_.validate(command) : rejection;
+        if (invalid) return reject(record, invalid, "COMMAND_REJECTED no_record_replacement");
+        CommandContext context = port_.retentionContext();
+        empty = ledger_.replacement(context.clockTrusted, context.nowSec, context.maxErrorSec, 4);
+        replace = true;
+    }
+    if (empty < 0) return reject(record, "STORAGE_ERROR", "STORAGE_BLOCKED no_replaceable_record");
+    record["created_at"] = port_.utcNow();
     event(record, rejection ? "rejected" : "accepted", rejection);
     // Room for the longest error code a result may add. An oversized record is not stored:
     // the same content is always rejected the same way, so no record is needed to repeat it.
     if (measureJson(record) + (rejection ? 0 : ERROR_CODE_ROOM) > maxRecordBytes_)
         return reject(record, "INVALID_MESSAGE", "RECORD_TOO_LARGE not_recorded");
-    if (!ledger_.create(empty, record))
+    if (!(replace ? ledger_.save(empty, record) : ledger_.create(empty, record)))
         return reject(record, "STORAGE_ERROR", "STORAGE_WRITE_FAILED no_output");
     if (rejection) {
         port_.publish(record);

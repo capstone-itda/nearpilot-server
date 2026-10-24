@@ -7,6 +7,7 @@
 #include "fake_store.h"
 #include "np_command.h"
 #include "np_executor.h"
+#include "np_clock.h"
 
 namespace {
 
@@ -27,6 +28,9 @@ public:
     FakeStore* checkStore = nullptr;
     bool successWasStored = false;
     int observations = 0;
+    bool liveValidation = false;
+    np::CommandContext live;
+    np::CommandContext retentionContext() override { return live; }
 
     np::Device& device() override { return attached; }
     uint64_t monotonicMs() override { return now; }
@@ -50,14 +54,15 @@ public:
         observation = {state, id, now, "fake_action_sensor"};
     }
 
-    const char* validate(JsonDocument&) override {
+    const char* validate(JsonDocument& command) override {
+        if (liveValidation) return np::validateCommand(command, live);
         if (checks.empty()) return nullptr;
         const char* code = checks.front();
         checks.pop_front();
         return code;
     }
     std::string newEventId() override { return "e" + std::to_string(++counter); }
-    std::string utcNow() override { return "t" + std::to_string(counter); }
+    std::string utcNow() override { return liveValidation ? "2026-10-23T00:00:10Z" : "t" + std::to_string(counter); }
     void publish(JsonDocument& record) override {
         std::string state = record["state"].as<std::string>();
         if (record["error_code"].is<const char*>()) state += ":" + record["error_code"].as<std::string>();
@@ -561,6 +566,62 @@ void test_NFR10_device_slots_have_no_completion() {
     TEST_ASSERT_TRUE(missing.start({"a", "on", 100}) == np::StartResult::Unknown);
 }
 
+void test_FR06_evicted_command_does_not_actuate() {
+    FakeStore store(1);
+    FakePort port;
+    port.liveValidation = true;
+    port.live.nodeId = "light-01"; port.live.session = "s"; port.live.capability = "light";
+    port.live.clockTrusted = port.live.connected = true;
+    np::parseUtc("2026-10-23T00:00:10Z", port.live.nowSec);
+    np::Ledger ledger(store);
+    np::Executor executor(ledger, port, 128, 512);
+    executor.handle(command("a"), false);
+    TEST_ASSERT_EQUAL_INT(1, port.actuations);
+    port.live.nowSec += 60;
+    JsonDocument next;
+    deserializeJson(next, command("b"));
+    next["issued_at"] = "2026-10-23T00:01:00Z";
+    next["expires_at"] = "2026-10-23T00:01:30Z";
+    std::string payload;
+    serializeJson(next, payload);
+    executor.handle(payload, false);
+    TEST_ASSERT_EQUAL_INT(2, port.actuations);
+    std::string saved = store.slots[0];
+    executor.handle(command("a"), false);
+    TEST_ASSERT_EQUAL_STRING("rejected:COMMAND_EXPIRED", port.published.back().c_str());
+    TEST_ASSERT_EQUAL_STRING(saved.c_str(), store.slots[0].c_str());
+    TEST_ASSERT_EQUAL_INT(2, port.actuations);
+    // The replacement's own duplicate retains the final event without any output.
+    std::string event = port.events[port.events.size() - 2];
+    executor.handle(payload, false);
+    TEST_ASSERT_EQUAL_STRING(event.c_str(), port.events.back().c_str());
+    TEST_ASSERT_EQUAL_INT(2, port.actuations);
+}
+
+void test_FR06_busy_rejection_replaces_expired_record() {
+    FakeStore store(1);
+    FakePort port;
+    port.liveValidation = true;
+    port.live.nodeId = "light-01"; port.live.session = "s"; port.live.capability = "light";
+    port.live.clockTrusted = port.live.connected = true;
+    np::parseUtc("2026-10-23T00:00:10Z", port.live.nowSec);
+    np::Ledger ledger(store);
+    np::Executor executor(ledger, port, 128, 512);
+    executor.handle(command("a"), false);
+    port.live.nowSec += 60;
+    JsonDocument next;
+    deserializeJson(next, command("b"));
+    next["issued_at"] = "2026-10-23T00:01:00Z";
+    next["expires_at"] = "2026-10-23T00:01:30Z";
+    std::string payload;
+    serializeJson(next, payload);
+    executor.handle(payload, true);
+    TEST_ASSERT_EQUAL_STRING("rejected:DEVICE_BUSY", port.published.back().c_str());
+    executor.handle(payload, false);  // No longer busy, but the rejection is durable.
+    TEST_ASSERT_EQUAL_STRING("rejected:DEVICE_BUSY", port.published.back().c_str());
+    TEST_ASSERT_EQUAL_INT(1, port.actuations);
+}
+
 }  // namespace
 
 void runExecutorTests() {
@@ -585,4 +646,6 @@ void runExecutorTests() {
     RUN_TEST(test_FR07_completion_evidence_freshness);
     RUN_TEST(test_NFR03_at_most_once_actuation);
     RUN_TEST(test_NFR10_device_slots_have_no_completion);
+    RUN_TEST(test_FR06_evicted_command_does_not_actuate);
+    RUN_TEST(test_FR06_busy_rejection_replaces_expired_record);
 }

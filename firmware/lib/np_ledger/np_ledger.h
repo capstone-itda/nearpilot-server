@@ -14,7 +14,7 @@ public:
     static constexpr int NOT_FOUND = -1;
     static constexpr int STORAGE_ERROR = -2;
 
-    explicit Ledger(RecordStore& store) : store_(store) {}
+    explicit Ledger(RecordStore& store, const char* idKey = "command_id") : store_(store), idKey_(idKey) {}
 
     bool ready() const { return store_.ready(); }
 
@@ -31,6 +31,11 @@ public:
 
     // Rewrites an existing record and reads it back.
     bool save(int slot, JsonDocument& record);
+
+    // Only primary/writable slots, persisted terminal results and certainly expired requests.
+    // expiryIndex is the position of expires_at in the canonical content array.
+    // Returns an empty slot first, otherwise the oldest eligible slot, or NOT_FOUND/error.
+    int replacement(bool trusted, double nowSec, double maxErrorSec, size_t expiryIndex);
 
     // Records keep the node ID inside their stored content. Never re-home them silently.
     const char* ownerConflict(const std::string& nodeId);
@@ -52,6 +57,7 @@ private:
     bool write(int slot, const std::string& body, const std::string& id);
 
     RecordStore& store_;
+    const char* idKey_;
     bool loaded_ = false;
     bool unreadable_ = false;
     std::vector<bool> used_;

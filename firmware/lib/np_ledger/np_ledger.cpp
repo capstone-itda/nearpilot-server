@@ -1,4 +1,7 @@
 #include "np_ledger.h"
+#include "np_clock.h"
+#include <cmath>
+#include <limits>
 
 namespace np {
 
@@ -19,11 +22,11 @@ bool Ledger::load() {
         if (!store_.has(slot)) continue;
         used_[slot] = true;
         JsonDocument stored;
-        if (deserializeJson(stored, store_.read(slot)) || !stored["command_id"].is<const char*>()) {
+        if (deserializeJson(stored, store_.read(slot)) || !stored[idKey_].is<const char*>()) {
             unreadable_ = true;
             continue;
         }
-        hashes_[slot] = hash(stored["command_id"].as<std::string>());
+        hashes_[slot] = hash(stored[idKey_].as<std::string>());
     }
     return loaded_ = true;
 }
@@ -39,9 +42,9 @@ int Ledger::find(const std::string& id, JsonDocument& record, int& empty) {
         }
         if (hashes_[slot] != wanted) continue;
         JsonDocument stored;
-        if (deserializeJson(stored, store_.read(slot)) || !stored["command_id"].is<const char*>())
+        if (deserializeJson(stored, store_.read(slot)) || !stored[idKey_].is<const char*>())
             return STORAGE_ERROR;
-        if (stored["command_id"].as<std::string>() == id) {
+        if (stored[idKey_].as<std::string>() == id) {
             record.set(stored);
             return slot;
         }
@@ -52,14 +55,45 @@ int Ledger::find(const std::string& id, JsonDocument& record, int& empty) {
 bool Ledger::create(int slot, JsonDocument& record) {
     std::string body;
     serializeJson(record, body);
-    return store_.ready() && slot >= 0 && !store_.has(slot) && store_.canCreate(slot) &&
-           write(slot, body, record["command_id"].as<std::string>());
+    return store_.ready() && slot >= 0 && slot < store_.capacity() && !store_.has(slot) && store_.canCreate(slot) &&
+           write(slot, body, record[idKey_].as<std::string>());
 }
 
 bool Ledger::save(int slot, JsonDocument& record) {
     std::string body;
     serializeJson(record, body);
-    return store_.ready() && write(slot, body, record["command_id"].as<std::string>());
+    return store_.ready() && slot >= 0 && slot < store_.capacity() && write(slot, body, record[idKey_].as<std::string>());
+}
+
+int Ledger::replacement(bool trusted, double nowSec, double maxErrorSec, size_t expiryIndex) {
+    if (!store_.ready() || (!loaded_ && !load()) || unreadable_) return STORAGE_ERROR;
+    if (!trusted || !std::isfinite(nowSec) || !std::isfinite(maxErrorSec) || maxErrorSec < 0)
+        return NOT_FOUND;
+    int oldestSlot = NOT_FOUND;
+    double oldest = std::numeric_limits<double>::infinity();
+    for (int slot = 0; slot < store_.capacity(); ++slot) {
+        if (!store_.canCreate(slot)) continue;  // Never grow/reuse node_lab's small legacy namespace.
+        if (!store_.has(slot)) return slot;
+        JsonDocument record, content;
+        if (deserializeJson(record, store_.read(slot)) ||
+            deserializeJson(content, record["content"].as<std::string>())) return STORAGE_ERROR;
+        std::string state = record["state"].as<std::string>();
+        std::string outcome = record["outcome"].as<std::string>();
+        bool terminal = state == "succeeded" || state == "failed" || state == "rejected" || state == "unknown";
+        // Checks store an explicit final marker, so a partially written receipt is never reclaimed.
+        if (std::string(idKey_) == "check_id")
+            terminal = state == "final" && (outcome == "passed" || outcome == "not_ready" ||
+                                          outcome == "fault" || outcome == "unknown");
+        if (!terminal) continue;
+        double expires, created;
+        std::string firstStored = record["created_at"].is<const char*>() ?
+            record["created_at"].as<std::string>() : record["occurred_at"].as<std::string>();
+        if (!content[expiryIndex].is<const char*>() ||
+            !parseUtc(content[expiryIndex].as<std::string>(), expires) || !parseUtc(firstStored, created)) continue;
+        if (nowSec - maxErrorSec < expires || created > nowSec - maxErrorSec) continue;
+        if (created < oldest) { oldest = created; oldestSlot = slot; }
+    }
+    return oldestSlot;
 }
 
 bool Ledger::write(int slot, const std::string& body, const std::string& id) {

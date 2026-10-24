@@ -13,13 +13,16 @@
 | `lib/np_ledger/` | 명령 기록, ID 해시 색인과 저장소 인터페이스 `RecordStore` |
 | `lib/np_executor/` | 비동기 명령 상태 전이, 완료 근거 검사, 결과 저장과 재보고 |
 | `lib/np_device/` | 구동 시작·완료 관측 인터페이스, 기능별 완료 정책과 관측 없는 세 기능 연결 |
+| `lib/np_sensor/` | 새 물리 관측과 신선도 검사, 센서 기반 상태 보고 |
+| `lib/np_safety/` | 반납 검사 접수 저장, 새 측정, v1 결과, 중복·충돌과 재시작 복원 |
 | `lib/np_nvs/` | ESP32 NVS로 만든 `RecordStore`. PC 테스트에서는 빌드하지 않는다 |
 | `lib/np_beacon/` | iBeacon 제조사 데이터 해석 |
 | `lib/np_ready/` | 준비 사유 순서와 재시도 간격 |
 | `src/main.cpp` | Wi-Fi, MQTT, BLE, NVS, 시리얼을 모듈에 연결한다 |
-| `partitions.csv` | 기본 4MB 배치에서 spiffs를 줄여 명령 기록 전용 `np_records` 파티션(256KB)을 둔다 |
+| `partitions.csv` | spiffs를 줄여 명령 전용 `np_records`(256KiB)와 검사 전용 `np_checks`(384KiB)를 둔다 |
 | `test/test_common/` | 모듈 단위 테스트 (Unity). ESP32와 PC에서 실행한다 |
 | `test/test_esp32_storage/` | 실제 `np_records` 파티션의 용량과 조회 시간 측정. ESP32에서만 실행한다 |
+| `test/test_check_storage/` | 실제 `np_checks` 파티션의 저장·재작성 용량 측정. ESP32에서만 실행한다 |
 
 `lib/`의 모듈은 Arduino 헤더를 쓰지 않는다. 장치 기능은 인터페이스로 넣고 테스트는 fake를 쓴다.
 `np_nvs`만 ESP-IDF NVS API를 쓰며 `native` 환경에서 빼 둔다.
@@ -32,6 +35,7 @@ PlatformIO는 `node_lab/.venv`에 설치한 것을 쓴다. 아래 명령은 `fir
 pio run -e esp32dev
 pio run -e esp32dev -t upload --upload-port COM6
 pio test -e esp32dev -f test_common --upload-port COM6 --test-port COM6
+pio test -e esp32dev -f test_check_storage --upload-port COM6 --test-port COM6
 pio test -e native
 ```
 
@@ -65,4 +69,26 @@ node_lab은 추가 키를 무시하고 설정을 읽는다. 발표는 `light/sha
 node_lab은 제품 펌웨어의 기록을 모른다. 제품 펌웨어를 쓴 기기에 node_lab을 올리면 이미 쓴 명령 ID를 보내지 않는다.
 `np_records` 파티션을 열지 못해도 펌웨어는 지우지 않는다. 부팅 로그 `RECORD_STORE`와 준비 사유 `storage_unavailable`로 알린다.
 `test_esp32_storage`는 같은 파티션의 `np-test` 이름 공간을 채웠다가 지운다. 실제 기록이 쌓이기 전에 실행한다.
+`test_check_storage`는 `np_checks`의 `np-check-test` 이름 공간만 채웠다가 지운다. 운영 검사 기록이 쌓이기 전에 실행한다.
+테스트 프로그램을 올린 뒤 제품을 사용할 때는 제품 펌웨어를 다시 올린다. USB 설정을 다시 주입하지 않는다.
+
+## 반납 검사와 상태 보고
+
+`safety_check`는 기능에 맞는 `locker-return`, `light-return`, `speaker-return`의 버전 1을 지원한다.
+요청의 비교 필드는 `node_id`, `criteria_id`, `criteria_version`, `target_session_id`, `issued_at`, `expires_at`이다.
+같은 ID·같은 요청은 저장된 결과를 반환한다. 내용이 다른 같은 ID에는 응답하지 않고 기존 기록을 보존한다.
+검사 접수를 NVS에 저장하고 확인한 뒤 새로 측정한다. 결과도 저장과 확인 조회를 통과한 뒤 발행한다.
+측정 전에 재시작했거나 결과 저장에 실패한 접수 기록은 다음 복원에서 `unknown`으로 바꾼다. 다시 측정하지 않는다.
+검사 기록은 `np_checks`의 `np-checks`에 최대 256건을 저장한다. 건당 한도는 1,024바이트다.
+`NP_MAX_CHECK_RECORDS`, `NP_MAX_CHECK_RECORD_BYTES`가 빌드 설정이다. 늘리기 전에 파티션 용량을 검증한다.
+센서는 `Sensors::read(Measurement)`로 연결한다. 반환 관측은 측정 호출 안의 단조 시각, UTC 시각과 출처를 담는다.
+리드 스위치의 문 닫힘을 잠금 관측으로 쓰지 않는다. 조명·스피커 v1은 꺼짐이 아니라 구동부 정지를 검사한다.
+현재 `NoSensors`는 모든 관측을 불명으로 둔다. 상태의 bool은 `null`, `actuator_state`는 `unknown`이다.
+반납 검사도 `unknown`과 빈 근거다. 명령 처리 중 여부나 선택 GPIO 값으로 물리 상태를 추정하지 않는다.
+
+명령·검사 기록은 빈 슬롯을 먼저 쓴다. 가득 차면 완료·만료된 가장 오래된 기록을 새 기록으로 교체한다.
+명령의 `unknown`도 최종 결과다. 접수·실행 중 기록은 교체하지 않는다. 만료 확인에는 시각 오차를 뺀 하한을 쓴다.
+기존 node_lab 기록은 계속 조회하고 제자리에서 복원하지만, 새 명령의 교체 슬롯으로 쓰지 않는다.
+교체할 기록이 없거나 시각을 신뢰하지 못하면 명령은 `STORAGE_ERROR`, 검사는 무응답으로 확인 불능이다.
+교체된 ID의 과거 결과 재응답은 보장하지 않는다. 오래된 요청은 연결·만료 검사로 막으며 다시 구동하거나 측정하지 않는다.
 `include/config.example.h`는 모든 기기가 공유하는 빌드 값이다. 바꿀 때만 `include/config.local.h`로 복사한다.

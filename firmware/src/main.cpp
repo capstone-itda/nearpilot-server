@@ -23,6 +23,8 @@
 #include "np_ledger.h"
 #include "np_nvs_store.h"
 #include "np_ready.h"
+#include "np_safety.h"
+#include "np_sensor.h"
 #if __has_include("config.local.h")
 #include "config.local.h"
 #else
@@ -30,6 +32,12 @@
 #endif
 
 // Older local build configurations have no completion settings yet.
+#ifndef NP_MAX_CHECK_RECORDS
+#define NP_MAX_CHECK_RECORDS 256
+#endif
+#ifndef NP_MAX_CHECK_RECORD_BYTES
+#define NP_MAX_CHECK_RECORD_BYTES 1024
+#endif
 #ifndef NP_LOCKER_COMPLETION_TIMEOUT_MS
 #define NP_LOCKER_COMPLETION_TIMEOUT_MS 0ULL
 #endif
@@ -44,6 +52,7 @@ static_assert(NP_LOCKER_COMPLETION_TIMEOUT_MS >= 0 && NP_LIGHT_COMPLETION_TIMEOU
 
 static_assert(NP_MAX_COMMAND_RECORDS > 0 && NP_MAX_COMMAND_RECORDS < 10000, "NVS slot limit");
 static_assert(NP_LEGACY_COMMAND_RECORDS >= 0 && NP_LEGACY_COMMAND_RECORDS < 10000, "NVS slot limit");
+static_assert(NP_MAX_CHECK_RECORDS > 0 && NP_MAX_CHECK_RECORDS < 10000, "check slot limit");
 static_assert(NP_RSSI_FRAME_MS > 0 && NP_STATUS_MS > 0, "report interval");
 static_assert(NP_BLE_SCAN_WINDOW_MS <= NP_BLE_SCAN_INTERVAL_MS, "BLE scan window");
 static_assert(NP_RECONNECT_MS > 0 && NP_WIFI_RECONNECT_MS > 0, "retry interval");
@@ -63,7 +72,9 @@ np::NvsRecordStore recordStore("np_records", "np-records", NP_MAX_COMMAND_RECORD
 np::NvsRecordStore legacyStore("nvs", "np-node-lab", NP_LEGACY_COMMAND_RECORDS);
 np::LayeredRecordStore records(recordStore, legacyStore);
 np::Ledger ledger(records);
-bool commandBusy();
+np::NvsRecordStore checkStore("np_checks", "np-checks", NP_MAX_CHECK_RECORDS);
+np::Ledger checkLedger(checkStore, "check_id");
+np::NoSensors sensors;
 String session;
 bool announced = false;
 unsigned long seq[5] = {};
@@ -110,6 +121,20 @@ bool clockConfigured() { return np::clockConfigured(configured, config); }
 
 bool clockTrusted() { return np::clockTrusted(configured, config, synchronizedClock, lastSync, millis()); }
 
+np::CommandContext liveContext() {
+    timeval current;
+    gettimeofday(&current, nullptr);
+    np::CommandContext context;
+    context.nodeId = config.nodeId;
+    context.capability = config.capability;
+    context.session = session.c_str();
+    context.connected = mqtt.connected();
+    context.clockTrusted = clockTrusted();
+    context.nowSec = current.tv_sec + current.tv_usec / 1e6;
+    context.maxErrorSec = config.clockMaxErrorSec;
+    return context;
+}
+
 void onSync(timeval*) {
     lastSync = millis();
     synchronizedClock = true;
@@ -141,15 +166,17 @@ bool announce() {
 }
 
 void status() {
-    if (!clockTrusted()) return;
+    np::CommandContext before = liveContext();
+    if (!before.clockTrusted) return;
+    np::Measurement measurement("", uint64_t(esp_timer_get_time()) / 1000);
+    np::SensorSnapshot sample = sensors.read(measurement);
+    uint64_t end = uint64_t(esp_timer_get_time()) / 1000;
+    np::CommandContext after = liveContext();
+    if (!after.clockTrusted || before.session != after.session) return;
     JsonDocument doc;
     common(doc, 1);
     doc["observed_at"] = utcNow();
-    JsonObject state = doc["physical_state"].to<JsonObject>();
-    state["door_closed"] = nullptr;
-    state["light_on"] = nullptr;  // No light sensor exists on the bare ESP32.
-    state["actuator_state"] = commandBusy() ? "busy" : "idle";
-    state["sensor_fault"] = false; // No external sensors are attached yet.
+    np::physicalState(doc, sample, config.capability, measurement.startedAtMs, end, before.nowSec, after.nowSec);
     report("status", doc, 1);
 }
 
@@ -224,18 +251,9 @@ np::SignalDevices devices(signalOutput, NP_LOCKER_COMPLETION_TIMEOUT_MS,
 class BoardCommandPort : public np::CommandPort {
 public:
     const char* validate(JsonDocument& command) override {
-        timeval current;
-        gettimeofday(&current, nullptr);
-        np::CommandContext context;
-        context.nodeId = config.nodeId;
-        context.capability = config.capability;
-        context.session = session.c_str();
-        context.connected = mqtt.connected();
-        context.clockTrusted = clockTrusted();
-        context.nowSec = current.tv_sec + current.tv_usec / 1e6;
-        context.maxErrorSec = config.clockMaxErrorSec;
-        return np::validateCommand(command, context);
+        return np::validateCommand(command, liveContext());
     }
+    np::CommandContext retentionContext() override { return liveContext(); }
     std::string newEventId() override { return newUuid().c_str(); }
     std::string utcNow() override { return ::utcNow().c_str(); }
     void publish(JsonDocument& record) override { result(record); }
@@ -251,10 +269,29 @@ public:
 BoardCommandPort commandPort;
 np::Executor executor(ledger, commandPort, NP_MAX_COMMAND_ID_BYTES, NP_MAX_RECORD_BYTES);
 
-bool commandBusy() { return executor.busy(); }
+class BoardSafetyPort : public np::SafetyPort {
+public:
+    np::CommandContext context() override { return liveContext(); }
+    uint64_t monotonicMs() override { return uint64_t(esp_timer_get_time()) / 1000; }
+    std::string utcNow() override { return ::utcNow().c_str(); }
+    std::string newEventId() override { return newUuid().c_str(); }
+    np::Sensors& sensors() override { return ::sensors; }
+    void publish(JsonDocument& record) override {
+        if (!clockTrusted() || !mqtt.connected() || !announced) return;
+        JsonDocument doc;
+        common(doc, 4);
+        for (const char* key : {"check_id", "event_id", "criteria_id", "criteria_version", "checked_at", "outcome", "evidence"})
+            doc[key] = record[key];
+        report("safety_check_result", doc, 1);
+    }
+    void log(const std::string& line) override { Serial.println(line.c_str()); }
+};
+BoardSafetyPort safetyPort;
+np::SafetyChecks safetyChecks(checkLedger, safetyPort, NP_MAX_COMMAND_ID_BYTES, NP_MAX_CHECK_RECORD_BYTES);
 
 void replayRecords() {
     if (ledger.ready() && clockTrusted()) executor.replay();
+    if (checkLedger.ready() && clockTrusted()) safetyChecks.replay();
 }
 
 // ---- USB provisioning (separate NVS namespace; command records are only read) ----
@@ -299,6 +336,7 @@ void commitConfig(const String& nonce) {
         return;
     }
     const char* conflict = settingsReady ? ledger.ownerConflict(candidate.nodeId) : "storage_unavailable";
+    if (!conflict) conflict = checkLedger.ownerConflict(candidate.nodeId);
     if (conflict) {
         staged.clear();
         return configReject(conflict);
@@ -398,7 +436,7 @@ unsigned long backoff(unsigned long current) { return np::backoff(current, NP_RE
 const char* notReadyReason(bool trusted) {
     np::ReadinessInputs in;
     in.configured = configured;
-    in.storageReady = ledger.ready();
+    in.storageReady = ledger.ready() && checkLedger.ready();
     in.wifiUp = WiFi.status() == WL_CONNECTED;
     in.clockConfigured = clockConfigured();
     in.trusted = trusted;
@@ -414,6 +452,9 @@ void setup() {
     tzset();
     bool storageReady = recordStore.begin() & legacyStore.begin();  // Open both even if one fails.
     if (storageReady) ledger.load();  // One full read now instead of on the first command.
+    bool checksReady = checkStore.begin();
+    if (checksReady) checkLedger.load();
+    storageReady = storageReady && checksReady;
     settingsReady = settings.begin("np-config", false);
     const char* loaded = loadConfig();
     if (NP_OUTPUT_PIN >= 0) {
@@ -427,6 +468,8 @@ void setup() {
     Serial.printf("RECORD_STORE primary=%d legacy=%d slots=%d legacy_slots=%d free_entries=%u\n",
         recordStore.ready(), legacyStore.ready(), NP_MAX_COMMAND_RECORDS, NP_LEGACY_COMMAND_RECORDS,
         unsigned(recordStore.freeEntries()));
+    Serial.printf("CHECK_STORE ready=%d slots=%d record_bytes=%d free_entries=%u\n",
+        checkStore.ready(), NP_MAX_CHECK_RECORDS, NP_MAX_CHECK_RECORD_BYTES, unsigned(checkStore.freeEntries()));
     if (!configured) {
         Serial.println("CONFIG_MISSING usb_provisioning_required network_not_started");
         return;
@@ -552,7 +595,7 @@ void loop() {
         Incoming received = inbox.front();
         inbox.erase(inbox.begin());
         if (received.topic.endsWith("/cmd")) executor.handle(received.payload.c_str(), received.receivedBusy);
-        else Serial.println("SAFETY_CHECK_UNSUPPORTED no_sensor_evidence_no_pass_result");
+        else if (received.topic.endsWith("/safety_check")) safetyChecks.handle(received.payload.c_str());
     }
     executor.poll();
     if (current - lastStatus >= NP_STATUS_MS) {
