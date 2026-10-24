@@ -202,6 +202,7 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
 | USB 설정 값이 없거나 범위·문자 규칙을 어긴다 | 저장하지 않고 처음 어긴 키 이름으로 거부한다 | `test_NFR08_config_rejects_invalid_values` |
 | 명령의 시각 문자열이 UTC 형식이 아니거나 없는 날짜다 | `INVALID_MESSAGE`로 거부한다 | `test_FR06_rejects_malformed_utc` |
 | 명령 기록이 다른 `node_id`의 것인데 설정의 `node_id`를 바꾼다 | 설정을 거부하고 기록을 그대로 둔다 | `test_FR22_ledger_owner_conflict` |
+| 센서가 없는 기기가 상태를 보고한다 | 명령 처리 상태로 `idle`·`busy`를 보고하고 `sensor_fault=false`다. 센서가 있으면 센서 값을 쓴다 | `test_FR07_status_without_sensors_uses_command_state` |
 | 기록 슬롯이 모자란다 | 완료·만료된 가장 오래된 기록을 교체한다. 교체 대상이 없으면 새 처리를 막는다 | `test_FR22_full_ledger_rejects_without_eviction`, `test_FR22_replaces_oldest_expired_terminal` |
 | 명령 기록이 크기 한도를 넘는다 | 기록하지 않고 `INVALID_MESSAGE`로 거부한다. 구동하지 않는다 | `test_FR06_invalid_message_no_actuation` |
 | node_lab이 남긴 기록의 명령이 다시 온다 | 기존 기록으로 처리하고 다시 구동하지 않는다 | `test_FR22_legacy_records_block_reexecution` |
@@ -258,6 +259,13 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
 - 실제 `locker`, `light`, `speaker`는 완료 관측을 제공하지 않는다 — 4단계에서도 기존 시리얼·선택 GPIO 신호만 낸다. 성공 보고는 기능별로 모두 꺼 둔다. 문 닫힘과 IR 송출을 완료 근거로 만들지 않는다.
 
 - 5·6단계는 별도 순수 C++ 검사 모듈과 공통 센서 인터페이스로 구현한다 — 담당자가 2026-10-24에 골랐다. 반납 검사는 요청 뒤 새로 측정한다. 상태 보고는 명령 처리 상태를 물리 관측으로 바꾸지 않는다. 실제 센서는 미설치 상태다.
+- 상태 보고는 센서가 없는 항목을 펌웨어 상태로 채운다 — 담당자가 2026-10-24에 골랐다. 위 결정의 상태 보고 부분을 대체한다.
+  - 실기기 시험에서 서버 복원은 `actuator_state=idle`과 `sensor_fault=false`인 신선한 상태만 정상으로 봤다 (`server/src/nearpilot/core/lifecycle/restore.py`). 센서 없는 기기는 `unknown`·`null`을 보고해서 실행 가능이 되지 않았다.
+  - 구동부를 관측하는 센서가 없으면 `actuator_state`는 펌웨어의 명령 처리 상태다. 처리 중이 아니면 `idle`, 처리 중이면 `busy`다. 구동부가 실제로 멈췄다는 근거는 아니다.
+  - 고장을 검출하는 센서가 없으면 `sensor_fault=false`다. 고장 날 센서가 없다는 뜻이다.
+  - 센서가 있는 항목은 센서 값을 쓴다. 센서를 읽지 못하면 `unknown`·`null`이고 펌웨어 상태로 채우지 않는다.
+  - 반납 검사의 근거(`actuator_idle`)에는 쓰지 않는다. 반납 검사는 계속 요청 뒤의 새 측정만 쓴다.
+  - architecture.md §5 MQTT 3절의 "확인할 수 없는 값"을 센서 없는 기기에서는 이렇게 해석한다. 담당자는 하드웨어가 와도 구동 여부를 출력 전류 같은 전기 신호로 볼 가능성이 크다고 했다. 그 관측 수단은 #142의 미결이다.
 - 검사 기록은 별도 `np_checks` NVS 파티션의 `np-checks` 이름 공간에 보존한다 — 담당자가 2026-10-24에 골랐다. 파티션은 384KiB, 슬롯은 256개, 건당 한도는 1,024바이트다. `spiffs`만 줄이고 기존 파티션 위치를 유지한다. 이론상 96페이지 중 2페이지를 빼고 34항목 기록을 페이지당 3개 넣으면 282개다. 실제 용량과 재작성은 별도 시험으로 확인한다.
 - 검사 요청을 측정 전에 저장한다. 비교 필드는 `node_id`, `criteria_id`, `criteria_version`, `target_session_id`, `issued_at`, `expires_at`이다. 저장 확인 실패 때 측정하지 않는다. 결과 저장과 확인 조회를 통과한 뒤에만 발행한다. 재시작 때 측정 전 접수 기록은 근거 없는 `unknown`으로 복원하며 다시 측정하지 않는다.
 - 명령과 검사 모두 빈 슬롯을 먼저 쓴다. 가득 차면 저장된 최종 결과가 있고 요청이 만료된 가장 오래된 기록을 교체한다 — 담당자가 2026-10-24에 확정했다. `unknown`도 최종 결과다. 접수·실행 중 기록은 교체하지 않는다. 시각 하한 `now - max_error`로 만료를 확인한다. 보관 중인 중복은 기존 결과를 돌려준다. 교체된 ID의 과거 결과는 보장하지 않으며 오래된 요청을 다시 실행하거나 측정하지 않는다.
@@ -364,6 +372,7 @@ MQTT 필드, 검사 기준의 뜻, 공용 설정과 다른 영역의 동작을 �
 | FR-20 | `test_FR20_missing_evidence_unconfirmed` | 미지원 기준, 측정 실패, 항목 누락과 오래된 근거는 통과하지 않는다 |
 | FR-07 | `test_FR07_verified_fault_report`, `test_FR07_status_uses_sensor_observations` | 고장 근거와 상태 관측을 확인한다. 구동 상태를 추정하지 않는다 |
 | FR-07 | `test_FR07_check_storage_and_recovery` | 측정 전 저장, 결과 저장 실패와 재시작 불명 복원을 확인한다 |
+| FR-07 | `test_FR07_status_without_sensors_uses_command_state` | 센서 없는 항목만 명령 처리 상태와 `sensor_fault=false`로 채우고 반납 근거에는 쓰지 않는다 |
 | FR-22 | `test_FR22_replaces_oldest_expired_terminal` | 완료·만료된 가장 오래된 기록과 `unknown`을 교체한다 |
 | FR-22 | `test_FR22_retention_preserves_pending_and_untrusted` | 진행 중, 미만료, 손상, 미신뢰 시각과 시각 오차 경계에서 기록을 보존한다 |
 | FR-06 | `test_FR06_evicted_command_does_not_actuate` | 교체된 과거 요청을 다시 실행하지 않는다 |
