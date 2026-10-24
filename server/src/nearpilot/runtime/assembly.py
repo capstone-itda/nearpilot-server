@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -16,7 +17,10 @@ from typing import Any
 import paho.mqtt.client as mqtt
 
 from nearpilot.api.auth.authenticator import Authenticator
+from nearpilot.api.ws.hub import MonitorHub
+from nearpilot.api.ws.names import PersonNames
 from nearpilot.core.allocation.window import AllocationWindow
+from nearpilot.core.dashboard import DashboardQueryService, ModelVersions, MonitorTail
 from nearpilot.core.decision.core_service import build_core_service
 from nearpilot.core.decision.recheck import Rechecker
 from nearpilot.core.lifecycle.execution import ExecutionService
@@ -24,14 +28,15 @@ from nearpilot.core.lifecycle.fault_recovery import FaultRecoveryService
 from nearpilot.core.lifecycle.node_events import NodeEventService
 from nearpilot.core.lifecycle.release import ReleaseService
 from nearpilot.core.lifecycle.restore import RestoreService
-from nearpilot.core.lifecycle.shared_light import SharedLightService
+from nearpilot.core.lifecycle.shared_light import SharedHolder, SharedLightService
 from nearpilot.core.policy.checker import RepositoryPolicyChecker
 from nearpilot.core.proximity.estimator import HmmProximityEstimator
 from nearpilot.core.proximity.model import ProximityModel, load_models
+from nearpilot.db.repositories import SqliteDashboardReads
 from nearpilot.iot.mqtt import ConnectionFailure, MqttCommandGateway, MqttConnection, ReportDelivery
-from nearpilot.runtime.config import ServerConfig
+from nearpilot.runtime.config import DashboardConfig, ServerConfig
 from nearpilot.runtime.database import ThreadDatabase
-from nearpilot.runtime.tasks import CallGate, Late, NodeLocks, PeriodicTask
+from nearpilot.runtime.tasks import CallGate, Late, NodeLocks, NotAccepting, PeriodicTask
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import Action, ExecutionStatus
 from nearpilot.shared.interfaces import CoreService, ProximityEstimator, RetentionStore
@@ -71,6 +76,15 @@ class Services:
     node_events: NodeEventService
     retention: RetentionStore
     core: CoreService
+
+
+@dataclass(frozen=True)
+class DashboardParts:
+    """`[dashboard]` 가 있을 때만 만드는 대시보드 조립 결과. `create_app` 이 라우터에, `_build` 가 주기 작업에 쓴다."""
+
+    hub: MonitorHub
+    queries: DashboardQueryService
+    tail: MonitorTail
 
 
 class GuardedCore:
@@ -168,6 +182,7 @@ class Runtime:
     """서버 한 번의 시작과 종료. 다시 시작하려면 새 객체를 만든다.
 
     `collect_only` 는 수집 전용이다. 근접 모델을 읽지 않고, `create_app` 이 MCP 를 열지 않는다.
+    `dashboard` 는 설정에 `[dashboard]` 가 있을 때만 있다 (수집 전용이어도 있다).
     """
 
     def __init__(
@@ -194,6 +209,10 @@ class Runtime:
         self.tasks: list[PeriodicTask] = []
         self._started: list[str] = []
         self._state = "new"
+        self._started_at: datetime | None = None  # start() 가 기록한다. 대시보드가 "서버가 시작한 뒤"를 셀 기준이다
+        self._models: Mapping[str, ModelVersions] = {}  # 시작할 때 읽은 장소별 모델 버전. 수집 전용이면 빈 표다
+        self.dashboard: DashboardParts | None = (
+            None if config.dashboard is None else self._dashboard_parts(config.dashboard))
 
     @property
     def clock(self) -> Callable[[], datetime]:
@@ -209,6 +228,7 @@ class Runtime:
         if self._state != "new":
             raise RuntimeError("Runtime 은 한 번만 시작한다")
         self._state = "starting"
+        self._started_at = self._clock()  # 모델을 읽기 전의 시각이다
         try:
             self._start()
         except BaseException:
@@ -232,6 +252,8 @@ class Runtime:
         for place_id, model in models.items():
             log.info("근접 모델: place=%s model=%s calib=%s", place_id, model.model_version,
                      model.calib_version)
+        self._models = {place_id: ModelVersions(model.model_version, model.calib_version)
+                        for place_id, model in models.items()}
         proximity = self._proximity_factory(models, s)
         # 2. DB — 연결이 스키마를 최신으로 맞춘다
         with self.db.scope():
@@ -251,7 +273,10 @@ class Runtime:
         # 7. 시작 정리
         with self.db.scope():
             svc.retention.cleanup(self._clock())
-        # 8. 보고 검증·인계 작업과 주기 작업
+        # 8. 보고 검증·인계 작업과 주기 작업. 대시보드 따라 읽기는 쓰는 작업이 돌기 전에 커서를 잡는다
+        if self.dashboard is not None:
+            with self.db.scope():
+                self.dashboard.tail.start()
         self._started.append("delivery")
         svc.delivery.start()
         for task in self.tasks:
@@ -334,8 +359,44 @@ class Runtime:
             PeriodicTask("retention", s.retention_cleanup_interval_sec,
                          lambda: retention.cleanup(clock()), scope=db.scope),
         ]
+        if self.dashboard is not None:
+            self.tasks.append(PeriodicTask("dashboard_tail", cfg.dashboard.tail_interval_sec,
+                                           self.dashboard.tail.tick, scope=db.scope))
         return Services(connection, delivery, gateway, proximity, window, execution, release,
                         restore, recovery, shared_light, node_events, retention, core)
+
+    def _dashboard_parts(self, dashboard: DashboardConfig) -> DashboardParts:
+        """조회 서비스와 따라 읽기를 만든다. `create_app` 이 서버를 시작하기 전에 라우터를 붙이므로 여기서 만든다.
+
+        시작 뒤에야 생기는 값(모델 버전, 연결 상태, 유지 대상자, 시작 시각)은 늦게 읽는 함수로 넘긴다.
+        """
+
+        @contextmanager
+        def open_reads() -> Iterator[SqliteDashboardReads]:
+            # 종료가 조회를 기다린다: 접수 문 → 연결 범위 → 읽기 트랜잭션 순으로 연다. 문이 닫혔으면 연결을 열지 않는다
+            with self.gate.enter(), self.db.dashboard_reads() as reads:
+                yield reads
+
+        def mqtt_ready() -> bool:
+            return self.services is not None and self.services.connection.ready
+
+        def holders() -> list[SharedHolder]:
+            return [] if self.services is None else self.services.shared_light.holders()
+
+        def started_at() -> datetime:
+            if self._started_at is None:
+                raise NotAccepting("서버가 시작하지 않았다")
+            return self._started_at
+
+        hub = MonitorHub(PersonNames(), dashboard.api)
+        queries = DashboardQueryService(
+            open_reads=open_reads, settings=lambda: self.settings, weak_rssi_dbm=dashboard.weak_rssi_dbm,
+            models=lambda: self._models, mqtt_ready=mqtt_ready, holders=holders,
+            reports_dir=dashboard.reports_dir, clock=self._clock, started_at=started_at)
+        # 따라 읽기는 주기 작업이 멈추는 종료 순서를 따르므로 접수 문을 지나지 않는다
+        tail = MonitorTail(open_reads=self.db.dashboard_reads, feed=hub, settings=lambda: self.settings,
+                           clock=self._clock)
+        return DashboardParts(hub, queries, tail)
 
     # ── 종료 ────────────────────────────────────────────────────────
 

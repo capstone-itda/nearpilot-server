@@ -2,7 +2,7 @@
 
 최상위 동기 호출마다 그 스레드에서 연결을 열고, 중첩 호출은 같은 연결을 쓴다.
 최상위 호출이 끝나면 같은 스레드에서 JSONL 내보내기 등록을 해제하고 연결을 닫는다.
-트랜잭션은 각 DB 함수가 연다. 연결 범위는 트랜잭션이 아니다.
+트랜잭션은 각 DB 함수가 연다. 연결 범위는 트랜잭션이 아니다. 예외는 대시보드 읽기(`dashboard_reads`)다.
 서비스에는 `shared` Protocol 모양의 위임 객체를 넘긴다. 위임 객체는 호출마다 현재 범위의 구현을 쓴다.
 """
 
@@ -18,10 +18,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from nearpilot.db.repositories import SqliteExecutionStore, SqliteRepository, SqliteRetentionStore
+from nearpilot.db.repositories import (
+    SqliteDashboardReads, SqliteExecutionStore, SqliteRepository, SqliteRetentionStore,
+)
 from nearpilot.db.audit import SqliteAuditLog
 from nearpilot.db.audit.jsonl import JsonlExporter
-from nearpilot.db.repositories._common import unregister_jsonl_export
+from nearpilot.db.repositories._common import deferred_transaction, unregister_jsonl_export
 from nearpilot.db.schema import connect
 from nearpilot.shared.config import Settings
 from nearpilot.shared.interfaces import (
@@ -107,6 +109,15 @@ class ThreadDatabase:
                 "SELECT uuid, major, minor FROM beacon WHERE is_active = 1 ORDER BY uuid, major, minor"
             ).fetchall()
         return [BeaconKey(row["uuid"], row["major"], row["minor"]) for row in rows]
+
+    @contextmanager
+    def dashboard_reads(self) -> Iterator[SqliteDashboardReads]:
+        """범위 안에서 읽기 트랜잭션 하나(`deferred_transaction`)를 열어 준다. 쓰지 않고 끝나면 롤백한다.
+
+        이미 범위 안(주기 작업)이면 같은 연결을 쓴다. 그 연결에는 열린 트랜잭션이 없어야 한다.
+        """
+        with self.scope() as bound, deferred_transaction(bound.conn):
+            yield SqliteDashboardReads(bound.conn)
 
     # ── 위임 객체 ──────────────────────────────────────────────────
 

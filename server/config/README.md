@@ -41,6 +41,16 @@ keepalive, 접속·시작·종료 제한 시간, 재접속 최소·최대 대기
 - `[proximity.models]`에 장소별 모델 버전을 명시한다. 파일은 `<model_root>/<place_id>/<model_version>.json`이다.
 - `[mqtt]`와 `[delivery]`는 모든 키가 필수다. `password_file`은 서버 계정의 원문 비밀번호 파일이다.
 - `[delivery.clock_skew_sec]`에 없는 기기의 관측과 검사는 쓰지 않는다. 0은 같은 PC의 시뮬레이터에만 쓴다.
+- `[dashboard]`는 선택이다. 있으면 서버가 소유자 토큰으로 대시보드의 모니터링 WebSocket(`/dashboard/stream`)과
+  조회 REST(`/dashboard/...`)를 연다. 없으면 대시보드를 열지 않는다. 라우터, 조회 서비스, 따라 읽기를 만들지 않고 서버의 다른 동작은 같다.
+  `serve --collect-only`에서도 있으면 연다. 이때 장소의 모델 버전은 `없음`이다.
+  - 키 6개가 모두 필수이고 기본값이 없다. 빠지거나 값이 틀리거나 모르는 키가 있으면 시작을 막는다.
+  - `queue_max_events`는 연결마다 쌓아 둘 이벤트 수다. 넘으면 그 연결을 닫고 대시보드가 다시 연결한다.
+    `batch_max_events`는 메시지 하나에 담는 이벤트 수, `auth_timeout_sec`은 연결한 뒤 인증 메시지를 기다리는 시간이다.
+    `audit_limit_max`는 감사 조회 한 번의 최대 행 수다.
+  - `weak_rssi_dbm`은 장소 목록의 `weakRssiDbm`이다. `tail_interval_sec`은 따라 읽기 간격이고, 사건이 화면에 보이기까지 최대 이만큼 늦다.
+  - 예시 값은 시연용 초기값이다. `-80`은 시뮬레이터 예시 기기(`tools/node_sim/fleet.example.json`)의 수신(-58~-71)보다 약한 값이고 `0.5`는 다른 주기 작업(0.25~1초)과 같은 규모다. 시연 장소에서 보고 고친다.
+  - 평가 리포트는 `var/reports/`(설정 파일 폴더의 부모)의 CSV 가운데 `generated_at`이 가장 늦은 하나를 읽는다. 없으면 신뢰도 조회에 `evaluation`이 없다.
 - 설정 변경은 재시작으로 적용한다. 진행 중인 요청과 점유는 저장한 설정 스냅샷을 그대로 쓴다.
 
 시작은 설정·모델 검증, DB 준비, 근접 관측 복원, MQTT 구독 확인, 재시작 복원, 보존기간 정리 순서다.
