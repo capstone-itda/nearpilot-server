@@ -97,6 +97,7 @@
 | 기기가 주입을 거부하거나 다시 읽은 값이 다르다 | 실패로 끝낸다 | `test_FR22_provision_fails_on_reject_or_mismatch` |
 | 기기 목록에 그 기기의 기능·점유 방식이 없거나 계약 밖의 값이다 | 주입하지 않는다 | `test_FR04_provision_uses_fleet_capability` |
 | 기능 설정 키를 모르는 node_lab 펌웨어다 | 두 키를 빼고 주입을 계속한다. 다른 거부는 실패다 | `test_FR04_provision_skips_keys_unknown_to_node_lab` |
+| 포트를 열 때 보드가 재시작해서 첫 주입 시작 신호를 잃는다 | 응답이 올 때까지 간격마다 다시 보낸다. 제한 시간 안에 응답이 없으면 실패다 | `test_FR13_provision_resends_begin_while_board_boots` |
 | 명령 기록이 있는 기기의 ID를 바꾼다 | 기기가 거부한다. 기록을 지우지 않는다 | 펌웨어 검토와 실제 보드 확인 |
 | Wi-Fi·브로커·시각원에 닿지 않는다 | 실패 코드와 다음 시도 간격을 기록하고 상한까지 늘려 재시도한다 | 실제 보드 확인 |
 | 시각 신뢰가 만료된다 | `CLOCK_TRUST_EXPIRED`와 `NODE_NOT_READY`를 기록하고 보고·출력을 차단한다 | 실제 보드 확인 |
