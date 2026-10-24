@@ -136,7 +136,7 @@
   - 승인 → 새 행은 `requested`, 상태가 `approved`·`denied`로 바뀌면 그 값, 대기가 기한을 넘기면 `expired`.
 - 판정 값은 판정 단계가 저장한 값(`request.verdict`)이다. 실행 결과는 이력 `outcome`·`code`와 `exec_result`로 보인다 — 대시보드 설계가 `OK` 판정 뒤 실행 결과를 따로 그린다. 스트림과 이력이 같은 값을 보인다.
 - `request_use`와 `request_access`는 요청의 첫 감사 행 단계로 가린다. 첫 행이 ④이면 `request_access`다 — `request_use`의 판정 흐름은 ⓪ 또는 ①부터 감사를 남기고, `request_access`는 ④만 남긴다 (`core/decision/access.py`). 요청 행에는 도구를 가리는 열이 없다. 따라 읽기는 첫 감사 행이 나온 뒤 `mcp_call`을 발행한다.
-- 단계 결과: 판정이 멈춘 단계는 `stop`, 그 앞은 `pass`, 뒤는 `skip`. OK면 닿은 단계는 `pass`이고, 공용형은 ⑤⑥이 `skip`이다. ⓪은 감사 행이 없어도 ①이 있으면 `pass`다. ⑤⑥은 감사 행 하나를 같이 쓰므로 사유로 나눈다 (`DEVICE_BUSY`는 ⑤ `stop`, `USER_BUSY`·`APPROVAL_EXHAUSTED`는 ⑤ `pass`·⑥ `stop`). 판정 중이면 닿지 않은 단계는 `pending`이다. 요청 한 건 조회와 스트림이 같은 함수로 만든다.
+- 단계 결과: 판정이 멈춘 단계(마지막 판정 행이 남은 단계)는 `stop`, 그 앞은 `pass`, 뒤는 `skip`. OK면 닿은 단계는 `pass`이고, 공용형은 ⑤⑥이 `skip`이다. ⓪은 감사 행이 없어도 ①이 있으면 `pass`이고 시각은 요청을 받은 시각이다. ⑤⑥은 감사 행 하나를 같이 쓰므로 그 행에서 멈추면 사유로 나눈다 (`DEVICE_BUSY`는 ⑤ `stop`, `USER_BUSY`·`APPROVAL_EXHAUSTED`는 ⑤ `pass`·⑥ `stop`). ④에서 나온 `APPROVAL_EXHAUSTED`는 ④ `stop`이다. 판정 중이면 닿지 않은 단계는 `pending`이다. 서버 오류로 판정 행이 없으면 닿은 마지막 단계에서 멈춘 것으로 본다. 오류 뒤 다시 판정한 요청은 마지막 재판정(⓪ `link_request_retry` 행) 뒤의 행만 본다. 요청 한 건 조회와 스트림이 같은 함수로 만든다.
 - 감사 행 `code`: payload의 `reason` 또는 `result`가 `ReasonCode` 값이면 그 값. 실행 결과는 `succeeded` → `OK`, `failed`·`rejected` → `EXEC_FAILED`, `unknown` → `EXEC_UNKNOWN`. 판정 중(`IN_PROGRESS`)은 `COMMAND_IN_PROGRESS`. 그 밖은 `OK`.
 - `fault.cause`: 격리 근거 `device_result`의 `unknown` → `EXEC_UNKNOWN`, 그 밖의 결과 → `EXEC_FAILED`, 다른 근거(`sensor_fault`, `announce_changed` 등) → `TARGET_UNAVAILABLE`.
 - 문구는 `core/dashboard/text.py` 한 곳에서 만든다. 지금 대시보드 목 데이터와 같은 짧은 한국어다 (`열림`, `실행 안 함`, `결과 불명 → 고장 격리`, `근접 통과 0.91`, `비콘 수신 없음`).
@@ -166,7 +166,7 @@
 | FR-11, NFR-08 | 5절의 `test_FR11_*`, `test_FR11_조회와_이벤트에_사용자_ID가_없다` | 실제 DB로 만든 조회 9종과 이벤트 12종의 직렬화에 사용자 ID와 계정 이름이 없다 |
 | FR-12A | 5절의 `test_FR12A_*` | 조회 9종의 원천, 분류, 문구, 빈 값 |
 | FR-12A | `test_FR12A_조회_9종이_형식_검사를_통과한다` | 실제 DB의 시나리오(대여, 공용, 승인, 거부, 고장)에서 조회 결과가 `api/ws/schema.py` 검사를 통과한다 |
-| FR-12A | `test_FR12A_요청_한_건의_단계는_판정_흐름과_같다` | OK, ASK(③), BUSY(⑤), USER_BUSY(⑥), 공용 OK, ⓪ 충돌의 단계 결과 |
+| FR-12A | `test_FR12A_요청_한_건의_단계는_판정_흐름과_같다` | OK, ASK(③), BUSY(⑤), USER_BUSY(⑥), 공용 OK, ⓪ 한도 초과의 단계 결과. 충돌 재전송은 기존 요청의 단계를 바꾸지 않는다 |
 | FR-12B | 5절의 `test_FR12B_*` | 따라 읽기의 이벤트 종류, 순서, 바뀔 때만 |
 | FR-12B | `test_FR12B_요청_하나의_이벤트가_순서대로_나간다` | `mcp_call` → `step`… → `posterior` → `verdict` → `command` → `exec_result` → `mcp_result` |
 | FR-12A, FR-12B | `test_FR12B_서버에서_대시보드까지_이어진다` (`tests/integration/`) | `[dashboard]`가 있는 조립 서버에서 MCP `request_use` 하나가 스트림 이벤트로 오고, 조회 REST 9개가 200이다 |
