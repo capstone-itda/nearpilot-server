@@ -379,6 +379,57 @@ def test_FR12A_대시보드_읽기_명령_감사_RSSI_비콘(reads, conn):
     assert reads.cursors() == {"request": 2, "node_command": 3, "audit_log": 5, "rssi_observation": 4}
 
 
+def test_FR12A_대시보드_읽기_고장_근거는_기기마다_마지막_행이다(reads, conn):
+    insert_user(conn, user_id="owner1", token_hash="hash-owner1", role="owner")
+    insert_user(conn, user_id="visitor1", token_hash="hash-visitor1")
+    insert_place(conn, owner_user_id="owner1")
+    for node_id in ("locker-1", "locker-2", "locker-3", "locker-4", "locker-5", "locker-6"):
+        insert_node(conn, node_id=node_id)
+    # 기기를 요청으로 찾는 행의 요청과, 명령으로 찾는 행의 명령 (요청의 기기는 비워 두어 경로를 가른다)
+    _add_request(conn, "req-2", 0, user_id="visitor1", node_id="locker-2")
+    _add_request(conn, "req-3", 1, user_id="visitor1")
+    insert_node_command(conn, command_id="cmd-3", internal_request_id="req-3", node_id="locker-3")
+    _add_request(conn, "req-4", 2, user_id="visitor1", node_id="locker-4")
+
+    def isolate(log_id, node_id, minutes):
+        insert_audit_log(conn, log_id=log_id, step="fault", created_at=ts(minutes),
+                         payload={"event": "isolate_device", "node_id": node_id, "evidence": {"why": log_id}})
+
+    def result(log_id, outcome, minutes, **ids):
+        insert_audit_log(conn, log_id=log_id, step="exec", created_at=ts(minutes), **ids,
+                         payload={"event": "record_result", "outcome": outcome, "evidence": {"why": log_id}})
+
+    isolate("log-1a", "locker-1", 10)  # payload 의 기기
+    result("log-2", "unknown", 11, internal_request_id="req-2")  # 요청의 기기
+    result("log-3", "rejected", 12, internal_request_id=None, command_id="cmd-3")  # 명령의 기기
+    result("log-4", "succeeded", 13, internal_request_id="req-4")  # 성공은 근거가 아니다
+    insert_audit_log(conn, log_id="log-5", internal_request_id="req-4", step="exec", created_at=ts(14),
+                     payload={"event": "link_request", "node_id": "locker-5"})  # 근거 행의 event 가 아니다
+    result("log-6", "failed", 15, internal_request_id="req-2")  # locker-2 의 더 늦은 행
+    result("log-1b", "failed", 5, internal_request_id="req-4")  # locker-4, 시각은 일러도 rowid 는 뒤다
+    isolate("log-1c", "locker-1", 1)  # locker-1 의 마지막 rowid, 시각은 가장 이르다
+    isolate("log-7", "locker-6", 16)  # 묻지 않은 기기
+
+    evidence = reads.fault_evidence(["locker-1", "locker-2", "locker-3", "locker-4", "locker-5", "missing"])
+
+    assert evidence.keys() == {"locker-1", "locker-2", "locker-3", "locker-4"}
+    assert {node_id: (row.log_id, row.step) for node_id, row in evidence.items()} == {
+        "locker-1": ("log-1c", Step.FAULT),
+        "locker-2": ("log-6", Step.EXEC),
+        "locker-3": ("log-3", Step.EXEC),
+        "locker-4": ("log-1b", Step.EXEC),
+    }
+    row = evidence["locker-2"]
+    assert row == DashboardAudit(row.seq, "log-6", "req-2", None, Step.EXEC,
+                                 {"event": "record_result", "outcome": "failed", "evidence": {"why": "log-6"}},
+                                 at(15))
+    assert evidence["locker-3"].command_id == "cmd-3" and evidence["locker-3"].internal_request_id is None
+    # 같은 기기를 두 번 물어도, 같은 값을 두 번 넘겨도 같다
+    assert reads.fault_evidence(["locker-1", "locker-1"]) == {"locker-1": evidence["locker-1"]}
+    assert reads.fault_evidence(["locker-6"]).keys() == {"locker-6"}
+    assert reads.fault_evidence(["locker-5", "missing"]) == {}
+
+
 def test_FR12A_대시보드_읽기_모르는_감사_단계는_ValueError(reads, conn):
     insert_user(conn, user_id="visitor1", token_hash="hash-visitor1")
     _add_request(conn, "req-1", 0, user_id="visitor1")
@@ -436,6 +487,7 @@ def test_FR12A_대시보드_읽기는_쓰지_않는다(reads, conn):
         "audit_recent": lambda: reads.audit_recent(10),
         "audit_after": lambda: reads.audit_after(0),
         "audit_of": lambda: reads.audit_of(["req-use-1"]),
+        "fault_evidence": lambda: reads.fault_evidence(["locker-1"]),
         "rssi_after": lambda: reads.rssi_after(0),
         "active_beacons": lambda: reads.active_beacons(),
         "cursors": lambda: reads.cursors(),
@@ -470,6 +522,7 @@ def test_FR12A_대시보드_읽기_빈_ID는_질의하지_않는다(reads, conn)
     assert reads.commands_of(iter(())) == []
     assert reads.commands_by_ids(()) == []
     assert reads.audit_of([]) == []
+    assert reads.fault_evidence([]) == {}
 
     conn.set_trace_callback(None)
     assert statements == []

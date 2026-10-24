@@ -572,6 +572,10 @@ RESPONSE_CASES = [
     ResponseCase("request_stopped", "request", REQUEST_STOPPED, REQUEST_STOPPED_OUT),
     ResponseCase("request_pending", "request", REQUEST_PENDING, REQUEST_PENDING_OUT),
     ResponseCase("trust", "trust", TRUST, TRUST_OUT),
+    ResponseCase("trust_no_evaluation", "trust", patched(TRUST, ("evaluation",), DROP),
+                 patched(TRUST_OUT, ("evaluation",), DROP)),
+    ResponseCase("trust_no_confusion", "trust", patched(TRUST, ("evaluation", "confusion"), DROP),
+                 patched(TRUST_OUT, ("evaluation", "confusion"), DROP)),
     ResponseCase("rental", "rental", RENTAL, RENTAL_OUT),
     ResponseCase("health", "health", HEALTH, HEALTH_OUT),
 ]

@@ -19,6 +19,7 @@ from nearpilot.shared.enums import (
     ApprovalStatus,
     ApprovalUsageState,
     Capability,
+    CommandOutcome,
     DeviceState,
     ExecutionStatus,
     Occupancy,
@@ -54,6 +55,8 @@ _AUDIT_COLUMNS = (
 )
 # 따라 읽기가 커서로 잡는 표
 _CURSOR_TABLES = ("request", "node_command", "audit_log", "rssi_observation")
+# 기기가 고장이 된 근거인 실행 결과 (`record_result` 감사 행의 outcome)
+_FAULT_OUTCOMES = (CommandOutcome.UNKNOWN.value, CommandOutcome.FAILED.value, CommandOutcome.REJECTED.value)
 
 
 def _time(value: str | None) -> datetime | None:
@@ -283,6 +286,29 @@ class SqliteDashboardReads:
             f"SELECT {_AUDIT_COLUMNS} FROM audit_log", "internal_request_id", internal_request_ids
         )
         return [_audit_from_row(row) for row in rows]
+
+    def fault_evidence(self, node_ids: Iterable[str]) -> Mapping[str, DashboardAudit]:
+        # 행의 기기는 `events.audit_node` 와 같은 순서로 찾는다: payload 의 node_id(문자열), 요청의 node_id, 명령의 node_id.
+        # 근거 행은 보통 몇 건이라 기기별 마지막 행을 파이썬에서 고른다 (rowid 순으로 읽어 뒤 행이 앞 행을 덮는다).
+        unique = list(dict.fromkeys(node_ids))
+        if not unique:
+            return {}
+        rows = self._conn.execute(
+            "SELECT seq, log_id, internal_request_id, command_id, step, payload_json, created_at, fault_node FROM ("
+            "SELECT a.rowid AS seq, a.log_id, a.internal_request_id, a.command_id, a.step, a.payload_json, "
+            "a.created_at, COALESCE("
+            "CASE WHEN json_type(a.payload_json, '$.node_id') = 'text' "
+            "THEN json_extract(a.payload_json, '$.node_id') END, r.node_id, c.node_id) AS fault_node "
+            "FROM audit_log a "
+            "LEFT JOIN request r ON r.internal_request_id = a.internal_request_id "
+            "LEFT JOIN node_command c ON c.command_id = a.command_id "
+            "WHERE json_extract(a.payload_json, '$.event') = ? "
+            "OR (json_extract(a.payload_json, '$.event') = ? "
+            f"AND json_extract(a.payload_json, '$.outcome') IN ({_marks(_FAULT_OUTCOMES)}))"
+            f") WHERE fault_node IN ({_marks(unique)}) ORDER BY seq",
+            ["isolate_device", "record_result", *_FAULT_OUTCOMES, *unique],
+        ).fetchall()
+        return {row["fault_node"]: _audit_from_row(row) for row in rows}
 
     # ── 비콘 수신 ───────────────────────────────────────────────────
 

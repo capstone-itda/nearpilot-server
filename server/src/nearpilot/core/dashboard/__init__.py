@@ -1,3 +1,4 @@
+from nearpilot.core.dashboard.evaluation import evaluation_of
 from nearpilot.core.dashboard.events import (
     approval_event,
     audit_node,
@@ -7,6 +8,7 @@ from nearpilot.core.dashboard.events import (
     target_of,
     transition_event,
 )
+from nearpilot.core.dashboard.queries import DashboardQueryService, ModelVersions, fault_of
 from nearpilot.core.dashboard.steps import StepState, proximity, request_steps, request_tool, responded_at
 from nearpilot.core.dashboard.text import (
     audit_code,
@@ -20,6 +22,8 @@ from nearpilot.core.dashboard.text import (
 )
 
 __all__ = [
+    "DashboardQueryService",
+    "ModelVersions",
     "StepState",
     "approval_event",
     "audit_code",
@@ -27,8 +31,10 @@ __all__ = [
     "audit_row",
     "audit_text",
     "beacon_event",
+    "evaluation_of",
     "exec_result",
     "fault_cause",
+    "fault_of",
     "node_name",
     "outcome",
     "proximity",

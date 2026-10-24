@@ -808,6 +808,13 @@ class DashboardReadStore(Protocol):
         """rowid 순. 모르는 step 값이 있으면 ValueError 다."""
         ...
 
+    def fault_evidence(self, node_ids: Iterable[str]) -> Mapping[str, DashboardAudit]:
+        """기기마다 마지막 고장 근거 감사 행. 근거 행은 payload event 가 "isolate_device" 이거나,
+        "record_result" 이고 outcome 이 unknown·failed·rejected 인 행이다. 행의 기기는 payload node_id →
+        internal_request_id 의 request.node_id → command_id 의 node_command.node_id 로 찾는다 (events.audit_node 와 같다).
+        rowid 가 가장 큰 행 하나. 없는 기기는 빠진다. 빈 목록은 질의하지 않는다."""
+        ...
+
     def rssi_after(self, seq: int) -> Sequence[DashboardRssi]:
         """rowid > seq, rowid 순."""
         ...

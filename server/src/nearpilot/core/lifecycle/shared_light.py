@@ -28,6 +28,15 @@ from nearpilot.shared.models import (
 _UNFINISHED = (ExecutionStatus.PENDING, ExecutionStatus.IN_PROGRESS)
 
 
+@dataclass(frozen=True, slots=True)
+class SharedHolder:
+    """유지 대상자 한 명의 읽기용 복사본 (대시보드 점유 목록)."""
+
+    node_id: str
+    user_id: str
+    last_received_at: datetime
+
+
 @dataclass
 class _Holder:
     settings: Settings
@@ -253,6 +262,21 @@ class SharedLightService:
                 node.last_seen_at <= now <= node.last_seen_at + ttl
                 and status.received_at <= now <= status.received_at + ttl
             )
+
+    def holders(self) -> list[SharedHolder]:
+        """지금 유지 대상자. node_id, user_id 순. 기기별 잠금 안에서 복사한다.
+
+        만료는 검사하지 않는다. 이탈한 사람은 tick이 지운다.
+        """
+        copied = []
+        for node_id in sorted(self._node_ids()):
+            with self._lock_for(node_id):
+                light = self._light(node_id)
+                copied.extend(
+                    SharedHolder(node_id, user_id, light.holders[user_id].last_received_at)
+                    for user_id in sorted(light.holders)
+                )
+        return copied
 
     def _expire_holders(self, node_id: str, light: _Light, now: datetime) -> None:
         expired = []
