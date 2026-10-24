@@ -106,7 +106,7 @@ nearpilot-server/
 | **근접 추정** | `src/nearpilot/core/proximity/`, `core/admin/`, `tools/data_collection/` | 관측 모델과 HMM, 사후확률 계산, 근접 추정 인터페이스, 수집 회차와 라벨 기록, `AdminService` (`AdminRepository` 위의 관리 쓰기) |
 | **상태 관리** | `src/nearpilot/core/lifecycle/`, `iot/`, `tools/node_sim/` | 예약 뒤의 상태 전이, 대여 점유 유지와 초과시간 계산, 명시적 해제, `FAULT` 복구, MQTT 게이트웨이, 기기 시뮬레이터, CORE 쪽 `NodeEventSink`, 서버 실행 진입점과 CORE 서비스 조립 |
 | **DB** | `src/nearpilot/db/`, `core/policy/`, `tools/evaluation/` | 스키마, 저장소, 원자적 점유와 승인 사용분, 감사 로그, 평가 스크립트, 접근 정책과 승인 검사, 토큰 해시로 계정 조회 (`AccountLookup`), 관리 쓰기 접점 (`AdminRepository`) |
-| **대시보드** | `src/nearpilot/api/ws/`, `api/rest/`의 대시보드 조회, 저장소 루트의 `dashboard/` | 운영 대시보드 화면, 모니터링 WebSocket과 메시지 형식 (FR-12B), 대시보드 조회 REST (FR-12A) |
+| **대시보드** | `src/nearpilot/api/ws/`, `api/rest/`의 대시보드 조회, `core/dashboard/`, 저장소 루트의 `dashboard/` | 운영 대시보드 화면, 모니터링 WebSocket과 메시지 형식 (FR-12B), 대시보드 조회 REST (FR-12A), 대시보드 조회 서비스와 모니터링 따라 읽기 |
 | **공동** | `src/nearpilot/shared/`, `tests/integration/` | 계층 간 계약, 계층을 합친 시나리오 테스트 |
 
 - 이 표는 역할별 담당 범위를 기록한다. 개인 이름은 쓰지 않는다.
@@ -114,8 +114,8 @@ nearpilot-server/
 - 조립은 게이트웨이를 구독한 뒤, 요청을 받기 전에 재시작 복원을 한 번 실행한다. 모든 상태 관리 서비스에 같은 복구 서비스와 기기별 잠금을 주입한다. 반납 검사와 이탈 판단의 `tick()`을 주기적으로 호출한다.
 - 서버 실행 진입점은 `nearpilot serve`다 (`src/nearpilot/cli/`). 조립 모듈은 `src/nearpilot/runtime/`에 있다.
 - `api/rest/`는 쓰는 쪽으로 나눈다. 대시보드 조회는 대시보드가, 앱용 REST(계정, 승인)는 앱이 맡는다. `FAULT` 복구 두 경로는 상태 관리가 맡는다 (#89).
-- 조립은 서버 설정에 선택 섹션 `[dashboard]`가 있을 때만 대시보드 라우터(`create_dashboard_router`)를 붙인다. MCP 앱이 루트(`/`)를 잡으므로 그보다 먼저 붙인다. 섹션의 값은 대기열 크기, 묶음 크기, 인증 기한, 감사 조회 한도다 (2026-10-23 팀 결정).
-- 미결: 대시보드 조회 서비스(CORE)의 폴더와 담당.
+- 조립은 서버 설정에 선택 섹션 `[dashboard]`가 있을 때만 대시보드 라우터(`create_dashboard_router`)를 붙인다. MCP 앱이 루트(`/`)를 잡으므로 그보다 먼저 붙인다. 섹션의 값은 대기열 크기, 묶음 크기, 인증 기한, 감사 조회 한도다 (2026-10-23 팀 결정). 약한 신호 기준(`weak_rssi_dbm`)과 따라 읽기 간격(`tail_interval_sec`)도 이 섹션에서 받는다 (2026-10-24 대시보드 담당 결정).
+- 대시보드 조회 서비스와 모니터링 따라 읽기는 `core/dashboard/`에 두고 대시보드 담당이 맡는다. 판정·상태 관리의 서비스와 섞지 않는다 (2026-10-24 대시보드 담당 결정).
 - 미결: 앱(`app/`)과 앱용 REST의 담당. 서버 담당 업무를 먼저 마친 사람이 맡는다.
 - 미결: 펌웨어(`firmware/`)의 담당과 IOT 구현의 담당 배정. 팀이 펌웨어 담당을 배정할 때 함께 정한다.
 
@@ -148,8 +148,8 @@ api  ──▶  core  ──▶  db
 | 기기 이벤트 인터페이스 | CORE | IOT | CORE는 기능 발표, RSSI 프레임, 원시 물리 관측, 실행 결과, 반납 검사 결과를 받는다 (`NodeEventSink`). IOT는 안전을 자체 판정하지 않는다. 반납의 종료는 CORE가 결정한다. |
 | 기능 인터페이스 | CORE | API | MCP 도구 6개와 관리 기능 (계정 등록, 기기 신뢰, 정책, 승인, `FAULT` 복구) |
 | 승인 알림 인터페이스 | API | CORE | 승인 대기가 생기면 CORE가 소유자 앱 알림을 요청한다. 요청에는 승인 요청 식별자를 담는다. 전달 실패는 승인 상태와 판정을 바꾸지 않는다. 전달 수단은 미결이다 (FR-03). |
-| 모니터링 발행 인터페이스 | API (`api/ws`) | 판정, 상태 관리, IOT, MCP 도구 | 사건이 난 영역이 그 자리에서 이벤트를 넘긴다 (`MonitorFeed.publish`). 어느 스레드에서 불러도 막지 않고 예외를 올리지 않는다. 모니터링의 실패는 판정과 실행을 바꾸지 않는다 (NFR-07). 사람은 사용자 ID와 역할(`Subject`)로 넘기고, API가 이름으로 바꾸며 형식 밖의 키를 버린다 (FR-11). 형식은 §5 WebSocket이다. 자유 문자열(`detail`, 감사 `text`)과 맵 키에 사용자 ID를 넣지 않는 것은 발행 영역이 지킨다 (2026-10-23 팀 결정). |
-| 대시보드 조회 인터페이스 | CORE (대시보드 조회 서비스) | API (`api/ws`, `api/rest`) | 스트림 연결 직후의 지금 상태(`MonitorSnapshot.current_events`)와 조회 REST 9개의 결과(`DashboardQueries`)를 준다. 조회 서비스는 저장소의 읽기 메서드 위에서 만든다. DB는 필요한 읽기 메서드를 더한다. 결과는 §5 REST "대시보드 조회" 형식의 키로 담고, 사람은 `Subject`, 시각은 시간대가 있는 `datetime`, 수는 `int`·`float`로 넘긴다. null 허용 키는 값이 없어도 키를 빼지 않고 `None`을 넣는다. API는 형식 밖의 키를 버리지만 허용 키의 값은 그대로 보낸다. 자유 문자열(감사 `text`, 단계 `detail`, 이력 `outcome`, 점유 `sessionNote`, 점검 `note`, 대여 타임라인 `text`, 지표 문구)과 맵 키에 사용자 ID를 넣지 않는 것은 값을 만드는 쪽이 지킨다 (2026-10-23 팀 결정). |
+| 모니터링 발행 인터페이스 | API (`api/ws`) | 대시보드 따라 읽기 (`core/dashboard/`) | 따라 읽기가 커밋된 DB 행을 주기마다 읽어 이벤트로 바꿔 넘긴다 (`MonitorFeed.publish`). 되돌려진 쓰기는 발행하지 않고, 같은 테이블의 행은 커밋 순서대로 낸다. 판정, 상태 관리, IOT, MCP 도구는 발행을 부르지 않는다 (2026-10-24 대시보드 담당 결정. 2026-10-23 팀 결정의 "사건이 난 영역이 그 자리에서 넘긴다"를 바꾼다). 어느 스레드에서 불러도 막지 않고 예외를 올리지 않는다. 모니터링의 실패는 판정과 실행을 바꾸지 않는다 (NFR-07). 사람은 사용자 ID와 역할(`Subject`)로 넘기고, API가 이름으로 바꾸며 형식 밖의 키를 버린다 (FR-11). 형식은 §5 WebSocket이다. 자유 문자열(`detail`, 감사 `text`)과 맵 키에 사용자 ID를 넣지 않는 것은 따라 읽기가 지킨다 (2026-10-23 팀 결정). |
+| 대시보드 조회 인터페이스 | CORE (`core/dashboard/` 대시보드 조회 서비스) | API (`api/ws`, `api/rest`) | 스트림 연결 직후의 지금 상태(`MonitorSnapshot.current_events`)와 조회 REST 9개의 결과(`DashboardQueries`)를 준다. 조회 서비스는 저장소의 읽기 접점(`DashboardReadStore`) 위에서 만들고, 조회 하나를 읽기 트랜잭션 하나에서 읽는다. 결과는 §5 REST "대시보드 조회" 형식의 키로 담고, 사람은 `Subject`, 시각은 시간대가 있는 `datetime`, 수는 `int`·`float`로 넘긴다. null 허용 키는 값이 없어도 키를 빼지 않고 `None`을 넣는다. API는 형식 밖의 키를 버리지만 허용 키의 값은 그대로 보낸다. 자유 문자열(감사 `text`, 단계 `detail`, 이력 `outcome`, 점유 `sessionNote`, 점검 `note`, 대여 타임라인 `text`, 지표 문구)과 맵 키에 사용자 ID를 넣지 않는 것은 값을 만드는 쪽이 지킨다 (2026-10-23 팀 결정). |
 | 도메인 모델·열거형 | 공동 | 전체 | 상태 값, 판정 결과 (`OK`, `BUSY`, `ASK`, `DENY`, `NEED_APPROVAL`), 사유 코드, 요청과 판정과 점유 세션의 값 객체 |
 
 - 명령을 보내지 않은 것이 확실한 취소에만 CORE는 예약과 승인 사용분을 자동으로 반환한다.
@@ -874,7 +874,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 
 - 근접 추정의 장소 전체 목록, 신뢰 정보와 명시 지정 임계값 설정은 `shared`에 반영했다.
 - 복원·복구의 공동 모델과 접점은 `shared`에 반영했다. DB와 API의 실제 구현은 후속 작업이다.
-- 대시보드 모니터링의 공동 모델(`Subject`, `MonitorEvent`)과 접점(`MonitorFeed`, `MonitorSnapshot`, `DashboardQueries`)은 `shared`에 반영했다. 발행 호출, 대시보드 조회 서비스, 저장소의 읽기 메서드, 조립의 연결은 각 영역의 후속 작업이다.
+- 대시보드 모니터링의 공동 모델(`Subject`, `MonitorEvent`)과 접점(`MonitorFeed`, `MonitorSnapshot`, `DashboardQueries`)은 `shared`에 반영했다. 대시보드 읽기 접점(`DashboardReadStore`), 조회 서비스, 따라 읽기, 조립의 연결은 `core/dashboard/`와 `runtime/`에 반영했다.
 - 실행 인계, 진행 상태, 사건별 저장 접점과 `UseSession`의 `rental_due_at`, `closed_at`, 종료 정책은 `shared`에 반영했다.
 - 기기 보고의 공통 정보, 실행 결과와 반납 검사의 모델과 접점, `close_result`, 기기 연결의 저장 접점, 반납 검사의 시간 설정은 `shared`에 반영했다.
 - IOT는 `iot/messages/`에 `safety_check`와 `safety_check_result`의 스키마, 거부 코드 `DEVICE_BUSY`를 구현한다.
@@ -1263,13 +1263,13 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 
 | 형식 | 키 (✔ 필수, ∅ null 허용, 나머지 선택) |
 |---|---|
-| 장소 목록 (`places`) | `weakRssiDbm` ✔, `places` ✔ [`placeId` ✔, `placeName` ✔, `modelVersion` ✔, `calibrationVersion` ✔, `devices` ✔ [`nodeId` ✔, `name` ✔, `capability` ✔, `occupancy` ✔]]. `placeId`와 `nodeId`는 목록 전체에서 한 번씩만 나온다 |
+| 장소 목록 (`places`) | `weakRssiDbm` ✔, `places` ✔ [`placeId` ✔, `placeName` ✔, `modelVersion` ✔, `calibrationVersion` ✔, `devices` ✔ [`nodeId` ✔, `name` ✔, `capability` ✔, `occupancy` ✔]]. `placeId`와 `nodeId`는 목록 전체에서 한 번씩만 나온다. `name`은 시드의 기기 이름(`node.name`)이고 없으면 `nodeId`다 |
 | 점유 행 (`uses`) | `personId` ✔, `nodeId` ✔, `occupancy` ✔, `session` ✔ (`RESERVED`, `ACTIVE`, `CLOSING`), `sessionNote`, `startedAt` ✔, `overdueMinutes` |
 | 승인 (`approvals`) | `pending` ✔, `active` ✔, `ended` ✔. 행: `personId` ✔, `nodeId` ✔, `mode`, `requestedAt`, `remainingMinutes`, `validUntil`, `uses`, `endReason` (`APPROVAL_REJECTED`, `APPROVAL_REQUEST_EXPIRED`, `APPROVAL_EXHAUSTED`, `APPROVAL_EXPIRED`) |
 | 감사 행 (`audit`, 스트림 `audit`의 `row`) | `id` ✔, `at` ✔, `step` ✔ (`Step`), `nodeId`, `text` ✔, `code` ✔ |
 | 이력 행 (`history`) | `requestId` ✔, `at` ✔, `personId` ✔, `target` ✔ [`kind` ✔, `capability`, `nodeId`], `action` ✔, `verdict` ✔, `nodeId`, `outcome` ✔, `code` |
 | 요청 한 건 (`requests/{id}`) | `id` ✔, `personId` ✔, `tool` ✔ (`request_use`), `target` ✔, `action` ✔, `at` ✔, `verdict`, `reason`, `steps` ✔ (⓪~⑥ 일곱 칸 [`result` ✔ (`pending`, `pass`, `stop`, `skip`), `detail`]), `nodeId`, `posteriors`, `threshold`, `execution` (`ExecutionStatus`), `accessRequestedAt`, `accessExpiredAt`, `respondedAt` |
-| 신뢰도 (`trust`) | `live` ✔ [`since` ✔, `decisions` ✔, `doubleOccupancy` ✔, `latencyMedianSec` ∅, `latencyP95Sec` ∅, `counts` ✔ (판정 값 다섯 개 모두)], `evaluation` ✔ [`date` ✔, `metrics` ✔ [`id` ✔, `name` ✔, `pass` ∅, `label` ✔, `sample` ✔, `sampleNote`], `confusion` ✔ [`labels` ✔, `values` ✔]] |
+| 신뢰도 (`trust`) | `live` ✔ [`since` ✔, `decisions` ✔, `doubleOccupancy` ✔, `latencyMedianSec` ∅, `latencyP95Sec` ∅, `counts` ✔ (판정 값 다섯 개 모두)], `evaluation` [`date` ✔, `metrics` ✔ [`id` ✔, `name` ✔, `pass` ∅, `label` ✔, `sample` ✔, `sampleNote`], `confusion` [`labels` ✔, `values` ✔]]. `evaluation`은 평가 리포트가 없으면 빠지고, 평가 리포트에 혼동 행렬이 없어 `confusion`은 빠진다 |
 | 대여 한 건 (`rentals/{node_id}`) | `nodeId` ✔, `personId` ✔, `startedAt` ✔, `overdueMinutes` ✔, `timeline` ✔ [`at` ✔, `text` ✔, `now`] |
 | 점검 (`health`) | `devices` ✔ [`nodeId` ✔, `connected` ✔, `trust` ✔], `beacons` ✔ [`personId` ✔, `label` ✔ (서버가 사람 이름으로 채운다), `lastSeenSec` ∅, `note`], `server` ✔ [`database` ✔, `mqtt` ✔, `model` ✔] |
 
