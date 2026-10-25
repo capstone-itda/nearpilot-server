@@ -966,3 +966,27 @@ class PolicyWriteResult:
     result: AdminWriteResult
     version: int | None  # 호출 뒤 현재 정책 버전. 정책이 없으면 None
     changed: bool  # 새 리비전을 추가했으면 True
+
+
+# ── 대시보드 모니터링 (FR-12A, FR-12B, 2026-10-23 팀 결정) ─────────────
+
+
+@dataclass(frozen=True, slots=True)
+class Subject:
+    """이벤트·조회 행의 사람. 사용자 ID 는 API 밖으로 나가지 않는다 (FR-11). repr 에도 쓰지 않는다 (NFR-08)."""
+
+    user_id: str = field(repr=False)
+    role: Role
+
+
+@dataclass(frozen=True, slots=True)
+class MonitorEvent:
+    """발행 영역이 넘기는 모니터링 이벤트 하나. fields 의 키는 architecture.md §5 WebSocket 형식 표의 camelCase 키다."""
+
+    type: str
+    at: datetime
+    fields: Mapping[str, Any]
+    subject: Subject | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "fields", _freeze(self.fields))

@@ -114,6 +114,8 @@ nearpilot-server/
 - 조립은 게이트웨이를 구독한 뒤, 요청을 받기 전에 재시작 복원을 한 번 실행한다. 모든 상태 관리 서비스에 같은 복구 서비스와 기기별 잠금을 주입한다. 반납 검사와 이탈 판단의 `tick()`을 주기적으로 호출한다.
 - 서버 실행 진입점은 `nearpilot serve`다 (`src/nearpilot/cli/`). 조립 모듈은 `src/nearpilot/runtime/`에 있다.
 - `api/rest/`는 쓰는 쪽으로 나눈다. 대시보드 조회는 대시보드가, 앱용 REST(계정, 승인)는 앱이 맡는다. `FAULT` 복구 두 경로는 상태 관리가 맡는다 (#89).
+- 조립은 서버 설정에 선택 섹션 `[dashboard]`가 있을 때만 대시보드 라우터(`create_dashboard_router`)를 붙인다. MCP 앱이 루트(`/`)를 잡으므로 그보다 먼저 붙인다. 섹션의 값은 대기열 크기, 묶음 크기, 인증 기한, 감사 조회 한도다 (2026-10-23 팀 결정).
+- 미결: 대시보드 조회 서비스(CORE)의 폴더와 담당.
 - 미결: 앱(`app/`)과 앱용 REST의 담당. 서버 담당 업무를 먼저 마친 사람이 맡는다.
 - 미결: 펌웨어(`firmware/`)의 담당과 IOT 구현의 담당 배정. 팀이 펌웨어 담당을 배정할 때 함께 정한다.
 
@@ -146,6 +148,8 @@ api  ──▶  core  ──▶  db
 | 기기 이벤트 인터페이스 | CORE | IOT | CORE는 기능 발표, RSSI 프레임, 원시 물리 관측, 실행 결과, 반납 검사 결과를 받는다 (`NodeEventSink`). IOT는 안전을 자체 판정하지 않는다. 반납의 종료는 CORE가 결정한다. |
 | 기능 인터페이스 | CORE | API | MCP 도구 6개와 관리 기능 (계정 등록, 기기 신뢰, 정책, 승인, `FAULT` 복구) |
 | 승인 알림 인터페이스 | API | CORE | 승인 대기가 생기면 CORE가 소유자 앱 알림을 요청한다. 요청에는 승인 요청 식별자를 담는다. 전달 실패는 승인 상태와 판정을 바꾸지 않는다. 전달 수단은 미결이다 (FR-03). |
+| 모니터링 발행 인터페이스 | API (`api/ws`) | 판정, 상태 관리, IOT, MCP 도구 | 사건이 난 영역이 그 자리에서 이벤트를 넘긴다 (`MonitorFeed.publish`). 어느 스레드에서 불러도 막지 않고 예외를 올리지 않는다. 모니터링의 실패는 판정과 실행을 바꾸지 않는다 (NFR-07). 사람은 사용자 ID와 역할(`Subject`)로 넘기고, API가 이름으로 바꾸며 형식 밖의 키를 버린다 (FR-11). 형식은 §5 WebSocket이다. 자유 문자열(`detail`, 감사 `text`)과 맵 키에 사용자 ID를 넣지 않는 것은 발행 영역이 지킨다 (2026-10-23 팀 결정). |
+| 대시보드 조회 인터페이스 | CORE (대시보드 조회 서비스) | API (`api/ws`, `api/rest`) | 스트림 연결 직후의 지금 상태(`MonitorSnapshot.current_events`)와 조회 REST 9개의 결과(`DashboardQueries`)를 준다. 조회 서비스는 저장소의 읽기 메서드 위에서 만든다. DB는 필요한 읽기 메서드를 더한다. 결과는 §5 REST "대시보드 조회" 형식의 키로 담고, 사람은 `Subject`, 시각은 시간대가 있는 `datetime`, 수는 `int`·`float`로 넘긴다. null 허용 키는 값이 없어도 키를 빼지 않고 `None`을 넣는다. API는 형식 밖의 키를 버리지만 허용 키의 값은 그대로 보낸다. 자유 문자열(감사 `text`, 단계 `detail`, 이력 `outcome`, 점유 `sessionNote`, 점검 `note`, 대여 타임라인 `text`, 지표 문구)과 맵 키에 사용자 ID를 넣지 않는 것은 값을 만드는 쪽이 지킨다 (2026-10-23 팀 결정). |
 | 도메인 모델·열거형 | 공동 | 전체 | 상태 값, 판정 결과 (`OK`, `BUSY`, `ASK`, `DENY`, `NEED_APPROVAL`), 사유 코드, 요청과 판정과 점유 세션의 값 객체 |
 
 - 명령을 보내지 않은 것이 확실한 취소에만 CORE는 예약과 승인 사용분을 자동으로 반환한다.
@@ -870,6 +874,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 
 - 근접 추정의 장소 전체 목록, 신뢰 정보와 명시 지정 임계값 설정은 `shared`에 반영했다.
 - 복원·복구의 공동 모델과 접점은 `shared`에 반영했다. DB와 API의 실제 구현은 후속 작업이다.
+- 대시보드 모니터링의 공동 모델(`Subject`, `MonitorEvent`)과 접점(`MonitorFeed`, `MonitorSnapshot`, `DashboardQueries`)은 `shared`에 반영했다. 발행 호출, 대시보드 조회 서비스, 저장소의 읽기 메서드, 조립의 연결은 각 영역의 후속 작업이다.
 - 실행 인계, 진행 상태, 사건별 저장 접점과 `UseSession`의 `rental_due_at`, `closed_at`, 종료 정책은 `shared`에 반영했다.
 - 기기 보고의 공통 정보, 실행 결과와 반납 검사의 모델과 접점, `close_result`, 기기 연결의 저장 접점, 반납 검사의 시간 설정은 `shared`에 반영했다.
 - IOT는 `iot/messages/`에 `safety_check`와 `safety_check_result`의 스키마, 거부 코드 `DEVICE_BUSY`를 구현한다.
@@ -1205,7 +1210,6 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 복구 승인: `POST /admin/nodes/{node_id}/recovery/{recovery_id}/approve`
 - 두 복구 경로에는 인증과 장소 소유권 검사를 적용한다. 약속은 §4 "복구 준비 조회와 복구 승인"에 있다.
 - 두 복구 경로는 상태 관리가 구현한다 (#89).
-- 미결: 대시보드 조회 REST의 경로와 응답 형식 (FR-12A)
 
 #### 공통 규칙
 
@@ -1242,6 +1246,33 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 승인 결과는 실행 허가가 아니다. 방문자는 AI 호스트로 `request_use`를 다시 호출한다 (FR-03).
 - 대기 승인의 알림 수단은 미결이다 (FR-03). 앱은 알림 수단이 정해지기 전까지 `GET /approvals`를 주기적으로 호출할 수 있다.
 
+#### 대시보드 조회
+
+- 대시보드 조회는 `GET`만 둔다. 소유자 토큰(`Authorization: Bearer`)만 받는다. 응답 키는 camelCase이고, 시각은 ISO 8601(밀리초, 시간대 포함)이다. 오류 본문은 공통 규칙의 `{"error": "<사유 코드>"}`다 (401 `INVALID_TOKEN`, 403 `POLICY_DENIED`, 400 `INVALID_INPUT`, 404 `USE_NOT_FOUND`, 500 `INTERNAL_ERROR`).
+  - `GET /dashboard/places`: 등록된 장소 목록 (장소마다 이름, 근접 모델·보정 버전, 기기 목록)과 약한 신호 기준
+  - `GET /dashboard/uses`: 점유 목록
+  - `GET /dashboard/approvals`: 대기·유효·끝난 승인
+  - `GET /dashboard/audit?limit=`: 최근 감사 행. `limit`은 설정 한도로 줄인다
+  - `GET /dashboard/history?period=&verdict=&nodeId=`: 요청·판정 이력
+  - `GET /dashboard/requests/{request_id}`: 요청 한 건의 판정 단계별 결과. `request_id`는 서버의 내부 요청 ID다
+  - `GET /dashboard/trust`: 시연 세션 지표와 사전 평가 결과
+  - `GET /dashboard/rentals/{node_id}`: 대여 한 건
+  - `GET /dashboard/health`: 기기 연결·신뢰, 비콘 수신, 서버 점검
+- 쓰기 메서드는 405 `INVALID_INPUT`(`Allow: GET`), 조회 경로가 아닌 `/dashboard/...`는 404 `USE_NOT_FOUND`다. 조회 처리기와 조회 서비스에 닿지 않는다.
+- 사람은 `personId`(서버 프로세스 동안 쓰는 불투명한 값)로만 보낸다. 표의 키만 보낸다. 선택 키는 값이 없으면 빼고, null 허용 키(∅)는 값이 없으면 `null`이다. 열거형 값은 `shared/enums.py`의 값 문자열이다. 정수는 ±(2^53−1) 안이다. 판정 수(`counts`의 값, `decisions`, `doubleOccupancy`), 승인 행 `uses`, 지표 `id`는 정수이고, 평가 `date`는 문자열이다.
+
+| 형식 | 키 (✔ 필수, ∅ null 허용, 나머지 선택) |
+|---|---|
+| 장소 목록 (`places`) | `weakRssiDbm` ✔, `places` ✔ [`placeId` ✔, `placeName` ✔, `modelVersion` ✔, `calibrationVersion` ✔, `devices` ✔ [`nodeId` ✔, `name` ✔, `capability` ✔, `occupancy` ✔]]. `placeId`와 `nodeId`는 목록 전체에서 한 번씩만 나온다 |
+| 점유 행 (`uses`) | `personId` ✔, `nodeId` ✔, `occupancy` ✔, `session` ✔ (`RESERVED`, `ACTIVE`, `CLOSING`), `sessionNote`, `startedAt` ✔, `overdueMinutes` |
+| 승인 (`approvals`) | `pending` ✔, `active` ✔, `ended` ✔. 행: `personId` ✔, `nodeId` ✔, `mode`, `requestedAt`, `remainingMinutes`, `validUntil`, `uses`, `endReason` (`APPROVAL_REJECTED`, `APPROVAL_REQUEST_EXPIRED`, `APPROVAL_EXHAUSTED`, `APPROVAL_EXPIRED`) |
+| 감사 행 (`audit`, 스트림 `audit`의 `row`) | `id` ✔, `at` ✔, `step` ✔ (`Step`), `nodeId`, `text` ✔, `code` ✔ |
+| 이력 행 (`history`) | `requestId` ✔, `at` ✔, `personId` ✔, `target` ✔ [`kind` ✔, `capability`, `nodeId`], `action` ✔, `verdict` ✔, `nodeId`, `outcome` ✔, `code` |
+| 요청 한 건 (`requests/{id}`) | `id` ✔, `personId` ✔, `tool` ✔ (`request_use`), `target` ✔, `action` ✔, `at` ✔, `verdict`, `reason`, `steps` ✔ (⓪~⑥ 일곱 칸 [`result` ✔ (`pending`, `pass`, `stop`, `skip`), `detail`]), `nodeId`, `posteriors`, `threshold`, `execution` (`ExecutionStatus`), `accessRequestedAt`, `accessExpiredAt`, `respondedAt` |
+| 신뢰도 (`trust`) | `live` ✔ [`since` ✔, `decisions` ✔, `doubleOccupancy` ✔, `latencyMedianSec` ∅, `latencyP95Sec` ∅, `counts` ✔ (판정 값 다섯 개 모두)], `evaluation` ✔ [`date` ✔, `metrics` ✔ [`id` ✔, `name` ✔, `pass` ∅, `label` ✔, `sample` ✔, `sampleNote`], `confusion` ✔ [`labels` ✔, `values` ✔]] |
+| 대여 한 건 (`rentals/{node_id}`) | `nodeId` ✔, `personId` ✔, `startedAt` ✔, `overdueMinutes` ✔, `timeline` ✔ [`at` ✔, `text` ✔, `now`] |
+| 점검 (`health`) | `devices` ✔ [`nodeId` ✔, `connected` ✔, `trust` ✔], `beacons` ✔ [`personId` ✔, `label` ✔ (서버가 사람 이름으로 채운다), `lastSeenSec` ∅, `note`], `server` ✔ [`database` ✔, `mqtt` ✔, `model` ✔] |
+
 ### WebSocket
 
 | 그룹 | 사용처 | 요구사항 |
@@ -1249,7 +1280,27 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | 모니터링 | 대시보드: 판정, 사후확률, 상태 머신, 감사 로그, 기기별 비콘 RSSI, MCP 도구 호출, 승인 신청과 결정, 폰 비콘 수신 상태의 스트림 | FR-12B |
 
 - 사람은 `방문자 A`, `방문자 B`처럼 글자를 붙인 이름으로 보낸다. 소유자는 `소유자`다. 서버가 이름을 붙이고, 모니터링 스트림과 대시보드 조회 REST에서 같은 사람에게 같은 이름을 쓴다. 사용자 ID와 계정 정보는 보내지 않는다.
-- 미결: 모니터링 메시지 형식과 이름을 유지하는 기간. 대시보드 담당이 정한다.
+- 경로는 `/dashboard/stream`이다. 연결 뒤 첫 메시지 `{"type": "auth", "token": "<소유자 토큰>"}`로 인증한다. 브라우저 WebSocket은 `Authorization` 헤더를 보낼 수 없다.
+- 서버가 보내는 메시지는 `{"v": 1, "events": [...]}` 텍스트 프레임이다. 연결 직후 첫 메시지는 지금 상태를 다시 보낸 이벤트 묶음이다. 그 뒤 이벤트가 난 순서대로 묶어 보낸다.
+- 모든 이벤트에 `type`과 `at`(ISO 8601, 밀리초, 시간대 포함)이 있다. 표의 키만 보내고, 선택 키는 값이 없으면 뺀다. 사람 필드는 `personId`, `pseudonym`(`방문자 A`, `소유자`), `letter`(방문자만), `role`이다. `requestId`는 서버의 내부 요청 ID다.
+
+| `type` | 키 (✔ 필수, 나머지 선택) | 사람 필드 |
+|---|---|---|
+| `beacon` | `seen` ✔ | 모두 |
+| `rssi` | `rssi` ✔ (기기 ID → dBm) | `personId` |
+| `mcp_call` | `requestId` ✔, `tool` ✔ (MCP 도구 6개), `target` [`kind` ✔, `capability`, `nodeId`], `action` | `personId` |
+| `step` | `requestId` ✔, `step` ✔ (`Step`의 `"0"`~`"6"`), `result` ✔ (`pass`, `stop`), `detail` | 없음 |
+| `posterior` | `requestId` ✔, `posteriors` ✔ (기기 ID → 확률), `threshold` ✔ | 없음 |
+| `verdict` | `requestId` ✔, `verdict` ✔, `reason` ✔, `nodeId` | 없음 |
+| `command` | `requestId` ✔, `nodeId` ✔, `action` ✔ | 없음 |
+| `exec_result` | `requestId` ✔, `nodeId` ✔, `result` ✔ (`succeeded`, `failed`, `unknown`) | 없음 |
+| `mcp_result` | `requestId` ✔ | 없음 |
+| `transition` | `nodeId` ✔, `to` ✔ (`DeviceState`), `overdue`, `fault` [`cause` ✔, `action`] | 없음 |
+| `approval` | `requestId` ✔, `nodeId` ✔, `kind` ✔ (`requested`, `approved`, `denied`, `expired`) | `personId` |
+| `audit` | `row` ✔ (REST 감사 행과 같다) | 없음 |
+
+- 닫기 코드: 4401 토큰 오류, 4403 소유자 아님, 4408 인증 기한, 1011 서버 오류, 1013 대기열 넘침. 1011과 1013이면 대시보드가 다시 연결해 지금 상태를 다시 받는다.
+- 이름은 서버 프로세스가 끝날 때까지 유지한다. 방문자는 처음 나타난 순서로 글자를 받는다. 소유자가 여럿이어도 이름은 모두 `소유자`다.
 
 ## 6. 데이터 계약
 
