@@ -114,6 +114,7 @@ nearpilot-server/
 - 조립은 게이트웨이를 구독한 뒤, 요청을 받기 전에 재시작 복원을 한 번 실행한다. 모든 상태 관리 서비스에 같은 복구 서비스와 기기별 잠금을 주입한다. 반납 검사와 이탈 판단의 `tick()`을 주기적으로 호출한다.
 - 서버 실행 진입점은 `nearpilot serve`다 (`src/nearpilot/cli/`). 조립 모듈은 `src/nearpilot/runtime/`에 있다.
 - `api/rest/`는 쓰는 쪽으로 나눈다. 대시보드 조회는 대시보드가, 앱용 REST(계정, 승인)는 앱이 맡는다. `FAULT` 복구 두 경로는 상태 관리가 맡는다 (#89).
+- 승인 REST가 부르는 `ApprovalService`의 구현(`core/approval/`)은 앱이 맡는다 (#186).
 - 조립은 서버 설정에 선택 섹션 `[dashboard]`가 있을 때만 대시보드 라우터(`create_dashboard_router`)를 붙인다. MCP 앱이 루트(`/`)를 잡으므로 그보다 먼저 붙인다. 섹션의 값은 대기열 크기, 묶음 크기, 인증 기한, 감사 조회 한도다 (2026-10-23 팀 결정). 약한 신호 기준(`weak_rssi_dbm`)과 따라 읽기 간격(`tail_interval_sec`)도 이 섹션에서 받는다 (2026-10-24 대시보드 담당 결정).
 - 대시보드 조회 서비스와 모니터링 따라 읽기는 `core/dashboard/`에 두고 대시보드 담당이 맡는다. 판정·상태 관리의 서비스와 섞지 않는다 (2026-10-24 대시보드 담당 결정).
 - 미결: 앱(`app/`)과 앱용 REST의 담당. 서버 담당 업무를 먼저 마친 사람이 맡는다.
@@ -134,7 +135,8 @@ api  ──▶  core  ──▶  db
 | 계약 | 제공 | 사용 | 약속 |
 |---|---|---|---|
 | 저장소 인터페이스 | DB | CORE (API는 계정 식별만) | 계정과 비콘, 기기, 정책 이력과 승인 사용분, 외부 키와 내부 요청 ID와 명령 ID의 연결, 점유 세션, RSSI 관측, 원자적 점유와 승인 예약 (`reserve_if_free`). 판정은 대여형과 공용형 모두 `reserve_if_free` 하나로 예약한다. |
-| 승인 저장 인터페이스 | DB | CORE | 접근 승인 요청을 저장한다 (`Repository.create_approval_request`). 소유자의 결정을 조건부로 반영한다 (`Repository.decide_approval`). 요청자·기기의 승인 이력을 조회한다 (`Repository.approvals_in_scope`). `FAULT` 복구의 소유자 승인에는 쓰지 않는다. |
+| 승인 저장 인터페이스 | DB | CORE | 접근 승인 요청을 저장한다 (`Repository.create_approval_request`). 소유자의 결정을 조건부로 반영한다 (`Repository.decide_approval`). 요청자·기기의 승인 이력을 조회한다 (`Repository.approvals_in_scope`). 소유자가 승인 권한을 가진 기기의 대기 승인을 조회한다 (#186). `FAULT` 복구의 소유자 승인에는 쓰지 않는다. |
+| 승인 인터페이스 | CORE (`core/approval`) | API (`api/rest/`) | 소유자의 대기 승인 목록, 승인 한 건 조회, 결정 전달을 `CoreService`와 따로 제공한다 (`ApprovalService`, #186). 승인 권한, 대기 상태, 정책 버전은 CORE가 검증한다. API는 결과를 바꾸지 않는다 (NFR-07). 상세는 아래 "승인 요청과 소유자 결정"에 있다. |
 | 판정 기록 인터페이스 | DB | CORE (판정) | 판정 한 건마다 판정과 `DecisionRecord`를 한 번 저장한다 (`Repository.save_decision`). |
 | 계정 조회 인터페이스 | DB | API (`api/auth`) | `api/auth`가 토큰의 SHA-256 해시를 계산해서 넘긴다. DB는 저장한 해시와 비교해서 계정을 반환한다 (`AccountLookup.account_by_token_hash`). |
 | 관리 쓰기 인터페이스 | DB | 관리 기능 (`AdminService`), 수집 도구 (`tools/data_collection`) | 계정과 비콘 등록, 기기 신뢰 변경, 장소 배치, 정책 변경, 종료 정책 변경, 수집 회차 기록을 저장한다 (`AdminRepository`). 시드 스크립트는 `AdminService`를 거쳐 쓴다. `AdminService` (`core/admin/`)는 이 접점 위에서 행위자를 검사하고 쓴다. 관리 쓰기 REST는 두지 않는다. |
@@ -258,6 +260,21 @@ api  ──▶  core  ──▶  db
 - 승인할 때 DB가 `valid_until`을 계산해서 저장한다. `valid_until`은 승인 시각에 `approval_ttl_sec`를 더한 값이다. `approval_ttl_sec`는 승인을 만든 당시 정책 리비전의 값이다.
 - 승인 권한, 대기 상태, 정책 버전은 CORE가 검증한다. DB의 조건부 갱신은 경합한 결정 가운데 하나만 반영한다.
 - 대기 승인의 만료 시간과 승인 유효시간의 값은 `requirements.md` FR-03, FR-14를 따른다 (#15).
+
+[#186](https://github.com/capstone-itda/nearpilot-server/issues/186)의 A안을 따른다. 승인 REST가 부르는 CORE 접점은 `CoreService`와 따로 둔다.
+
+| 함수 | 입력 | 반환하거나 반영할 내용 |
+|---|---|---|
+| `ApprovalService.pending_for` | 인증 소유자 계정 ID | 소유자가 승인 권한을 가진 기기의 대기 승인 가운데 만료되지 않은 것 |
+| `ApprovalService.get` | 인증 소유자 계정 ID, 승인 ID | 승인 한 건 |
+| `ApprovalService.decide` | 인증 소유자 계정 ID, 승인 ID, 결정 | 결정 결과와 `ApprovalDecisionReason` |
+
+- `ApprovalService`는 `shared/interfaces.py`에 Protocol로 둔다. MCP 도구 계약(`CoreService`)은 바꾸지 않는다. 복구의 `RecoveryService`와 같은 방식이다.
+- 대기 목록을 위해 `Repository`에 소유자별 대기 승인 조회를 더한다.
+- 결정은 `Repository.decide_approval`이 반영한다. 승인 권한, 대기 상태, 정책 버전은 CORE가 검증한다 (FR-03).
+- 서버 조립이 `ApprovalService`를 만들어 승인 라우터에 넘긴다.
+- 반환에 요청자 정보를 넣지 않는다 (NFR-08).
+- 미결: 세 함수의 반환 모델 (REST 응답의 `node_id`를 담는다), 승인 한 건 조회의 저장소 접점, 소유자별 대기 승인 조회의 함수 이름과 시그니처
 
 ### 승인 이력과 승인 필요 사유
 
@@ -1243,6 +1260,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 승인 요청 한 건은 `approval_id`, `node_id`, `action`, `status`, `created_at`, `pending_expires_at`, `valid_until`을 담는다. 요청자의 계정 정보는 담지 않는다.
 - `GET /approvals`는 토큰 계정이 승인 권한을 가진 기기의 대기 승인 가운데 만료되지 않은 것을 반환한다. 권한이 없으면 빈 목록이다.
 - `POST /approvals/{approval_id}/decision`은 결정을 CORE에 전달한다. 승인 권한, 대기 상태, 정책 버전은 CORE가 검증한다 (FR-03).
+- 세 경로는 토큰으로 계정을 식별해 `ApprovalService`의 `pending_for`, `get`, `decide`에 하나씩 넘긴다 (#186). 접점은 §4 "승인 요청과 소유자 결정"에 있다.
 - 같은 결정의 재전송(`ALREADY_APPLIED`)은 `200`과 기존 결과를 반환한다.
 - 승인 결과는 실행 허가가 아니다. 방문자는 AI 호스트로 `request_use`를 다시 호출한다 (FR-03).
 - 대기 승인의 알림 수단은 미결이다 (FR-03). 앱은 알림 수단이 정해지기 전까지 `GET /approvals`를 주기적으로 호출할 수 있다.
