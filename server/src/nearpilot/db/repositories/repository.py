@@ -52,6 +52,7 @@ from nearpilot.shared.models import (
     DecisionRecord,
     NodeAnnounce,
     NodeInfo,
+    OwnerApproval,
     PolicyRevision,
     RequestLink,
     ReserveRequest,
@@ -650,6 +651,65 @@ class SqliteRepository:
             return ApprovalDecisionResult(
                 applied=True, reason=ApprovalDecisionReason.OK, status=req.decision, valid_until=valid_until
             )
+
+    # ── 승인 권한자의 조회 (FR-03, #186) ─────────────────────────────
+
+    _OWNER_APPROVAL_COLUMNS = (
+        "a.approval_id, a.node_id, a.action, a.status, a.created_at, a.pending_until, a.valid_until"
+    )
+
+    def pending_approvals_for(self, user_id: str, now: datetime) -> Sequence[OwnerApproval]:
+        """승인이 만들어진 정책 리비전의 권한자 기준이다. 대기 만료는 `decide_approval`과 같게
+
+        결정 시각이 `pending_until`보다 늦을 때부터로 본다. 그래서 `pending_until`과 같은 시각은 넣는다.
+        """
+        try:
+            rows = self._conn.execute(
+                f"SELECT {self._OWNER_APPROVAL_COLUMNS} FROM approval a "
+                "JOIN policy_revision pr ON pr.policy_id = a.policy_id AND pr.version = a.policy_version "
+                "WHERE pr.approver_user_id = ? AND a.status = ? "
+                "AND (a.pending_until IS NULL OR a.pending_until >= ?) "
+                "ORDER BY a.created_at, a.approval_id",
+                (user_id, ApprovalStatus.PENDING.value, iso(now)),
+            ).fetchall()
+        except sqlite3.Error as error:
+            raise StoreError(str(error)) from error
+        return [self._owner_approval_from_row(row) for row in rows]
+
+    def approval(self, approval_id: str) -> OwnerApproval | None:
+        try:
+            row = self._conn.execute(
+                f"SELECT {self._OWNER_APPROVAL_COLUMNS} FROM approval a WHERE a.approval_id = ?",
+                (approval_id,),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise StoreError(str(error)) from error
+        return self._owner_approval_from_row(row) if row is not None else None
+
+    def is_approver(self, user_id: str, approval_id: str) -> bool:
+        """권한자 ID는 반환하지 않는다. 승인이 없거나 권한자가 없으면 `JOIN`·비교가 `False`를 만든다."""
+        try:
+            row = self._conn.execute(
+                "SELECT pr.approver_user_id FROM approval a "
+                "JOIN policy_revision pr ON pr.policy_id = a.policy_id AND pr.version = a.policy_version "
+                "WHERE a.approval_id = ?",
+                (approval_id,),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise StoreError(str(error)) from error
+        return row is not None and row["approver_user_id"] is not None and row["approver_user_id"] == user_id
+
+    @staticmethod
+    def _owner_approval_from_row(row: sqlite3.Row) -> OwnerApproval:
+        return OwnerApproval(
+            approval_id=row["approval_id"],
+            node_id=row["node_id"],
+            action=Action(row["action"]),
+            status=ApprovalStatus(row["status"]),
+            created_at=parse_iso(row["created_at"]),
+            pending_until=parse_iso(row["pending_until"]) if row["pending_until"] else None,
+            valid_until=parse_iso(row["valid_until"]) if row["valid_until"] else None,
+        )
 
     # ── ⑤⑥ 원자적 예약 (FR-19, NFR-03) ────────────────────────────────
 

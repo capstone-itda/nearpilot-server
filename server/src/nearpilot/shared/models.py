@@ -887,6 +887,31 @@ class ApprovalDecisionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class OwnerApproval:
+    """승인 권한자에게 보이는 승인 한 건 (#186, FR-03). 요청자 정보를 담지 않는다 (NFR-08)."""
+
+    approval_id: str
+    node_id: str
+    action: Action
+    status: ApprovalStatus
+    created_at: datetime
+    pending_until: datetime | None  # 대기 신청 만료 시각
+    valid_until: datetime | None  # 승인 전이면 None
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerApprovalResult:
+    """`ApprovalService.get`·`decide` 의 결과 (#186). 권한이 없거나 승인이 없으면 approval 은 None 이다."""
+
+    reason: ApprovalDecisionReason
+    approval: OwnerApproval | None
+
+    @property
+    def succeeded(self) -> bool:
+        return self.reason in (ApprovalDecisionReason.OK, ApprovalDecisionReason.ALREADY_APPLIED)
+
+
+@dataclass(frozen=True, slots=True)
 class DecisionRecord:
     """판정에 적용한 값의 불변 스냅샷 (FR-22). 근접 전에 끝났으면 버전·구간은 None 이다."""
 
