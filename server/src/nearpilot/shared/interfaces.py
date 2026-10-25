@@ -696,7 +696,7 @@ class RetentionStore(Protocol):
 
 @runtime_checkable
 class MonitorFeed(Protocol):
-    """API → 이벤트가 난 영역 (판정, 상태 관리, IOT, MCP 도구). 모니터링 이벤트를 받는다 (FR-12B).
+    """API → 대시보드 따라 읽기 (커밋된 행을 읽어 넘긴다, architecture.md §4). 모니터링 이벤트를 받는다 (FR-12B).
 
     자유 문자열(detail, 감사 text)과 맵 키에 사용자 ID 를 넣지 않는다 — API 는 키 단위로만 거른다 (FR-11).
     """

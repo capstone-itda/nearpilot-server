@@ -714,7 +714,7 @@ def test_FR12A_요청_한_건은_단계_결과와_근접_실행_접근_신청을
     ("status", "pending_until", "ended"),
     [
         pytest.param(ApprovalStatus.PENDING, NOW + timedelta(seconds=300), {}, id="대기 중"),
-        pytest.param(ApprovalStatus.PENDING, None, {}, id="대기 기한 없음"),
+        pytest.param(ApprovalStatus.PENDING, None, {"accessEnd": "expired"}, id="대기 기한 없음"),
         pytest.param(ApprovalStatus.PENDING, NOW, {"accessEnd": "expired", "accessExpiredAt": NOW}, id="기한과 같은 순간"),
         pytest.param(ApprovalStatus.PENDING, ago(300), {"accessEnd": "expired", "accessExpiredAt": ago(300)},
                      id="기한 지난 대기"),

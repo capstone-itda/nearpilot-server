@@ -33,7 +33,10 @@
 ### 형식 변경 (FR-12A)
 
 - 신뢰도의 `evaluation`은 선택 키, 그 안의 `confusion`도 선택 키로 바꾼다. 평가 리포트가 없으면 `evaluation`을 뺀다. 리포트에는 혼동 행렬이 없어 `confusion`은 늘 뺀다 (6절 결정).
-- architecture.md §5 형식 표와 `api/ws/schema.py`를 함께 고친다.
+- 요청 한 건에 선택 키 `accessEnd`(`approved`, `denied`, `expired`)를 더하고, `accessExpiredAt`은 `expired`일 때만 낸다 (6절 그 밖의 규칙).
+- WebSocket `exec_result`의 `result`에 `rejected`를 더한다 (기기가 실행 전에 거절, 격리 없음. 5절).
+- 대시보드 조회 경로 목록에 이력 `period`의 두 형식을 적는다 (6절).
+- architecture.md §5 형식 표·경로 목록과 `api/ws/schema.py`를 함께 고친다.
 
 ### 설정 `[dashboard]`
 
@@ -63,11 +66,12 @@
 - `server/src/nearpilot/runtime/` (설정 `[dashboard]`, 조립, 앱에 라우터 붙이기, 모델 보관)
 - `server/src/nearpilot/core/lifecycle/shared_light.py`: 유지 대상자 읽기 메서드 하나를 더한다
 - `server/src/nearpilot/cli/seed.py`와 시드를 저장하는 `core/admin/`: `[[nodes]]`의 선택 키 `name`
-- `server/src/nearpilot/api/ws/schema.py`: `evaluation`, `confusion` 선택 키
+- `server/src/nearpilot/api/ws/schema.py`: `evaluation`, `confusion`, `accessEnd` 선택 키와 `exec_result`의 `rejected`
 - `server/src/nearpilot/shared/interfaces.py`, `shared/models.py`: `DashboardReadStore`와 그 행 모델, `AdminRepository`·`AdminService`의 `set_node_name`(시드의 기기 이름)을 더하기만 한다
 - `server/tests/` 해당 계층, `server/tests/integration/`
 - `server/config/server.example.toml`, `server/config/README.md`, `server/config/seed/example.toml`
-- `docs/architecture.md` §2 담당(조회 서비스 폴더와 담당), §4 모니터링 발행·대시보드 조회 계약과 관리 기능의 DB 쓰기 표(기기 이름), §5 형식 표, §6 `node` 엔터티의 `name` (2026-10-24 담당자 결정)
+- `docs/architecture.md` §2 담당(조회 서비스 폴더와 담당), §4 모니터링 발행·대시보드 조회 계약과 관리 기능의 DB 쓰기 표(기기 이름), §5 형식 표와 대시보드 조회 경로 목록, §6 `node` 엔터티의 `name` (2026-10-24 담당자 결정)
+- `specs/api-dashboard/spec.md`의 발행 주체 행과 `MonitorFeed` 독스트링: 발행을 따라 읽기로 바꾼 결정에 맞춘다
 
 ### 고치지 않는 곳
 - 항상: `docs/` (위 절은 제외), `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/` (위 추가는 제외), `server/pyproject.toml`, `.github/`
@@ -126,6 +130,7 @@
 
 ## 6. 결정
 
+- 대시보드에 필요한 서버 쪽 일은 다른 역할의 폴더여도 이 작업에 넣는다 (2026-10-24 담당자 결정) — 4절 고치는 곳의 `db/`, `runtime/`, `core/lifecycle/shared_light.py`, `core/admin/`, `cli/seed.py`, `shared/`가 그 범위다. 대시보드가 실제 서버로 동작해야 끝나는 작업이라, 다른 담당의 일정을 기다리지 않는다. 각 폴더의 담당 확인은 팀 결정 대상으로 남긴다.
 - 조회 서비스, 문구, 따라 읽기는 `core/dashboard/`에 두고 대시보드 담당이 맡는다 — architecture.md §2의 미결을 2026-10-24 담당자가 정했다. 대시보드만 쓰는 읽기라 판정·상태 관리의 서비스와 섞지 않는다.
 - 발행은 사건이 난 자리에서 하지 않고, 따라 읽기가 커밋된 행을 읽어 한다 (2026-10-23 팀 결정의 "사건이 난 영역이 그 자리에서 넘긴다"를 바꾼다, 2026-10-24 담당자 결정) — 감사 행과 상태 쓰기는 DB 트랜잭션 안에 있어 그 자리에서 발행하면 되돌려진 쓰기를 알린다. 저장 결과가 새 상태를 돌려주지 않고, 사람 역할과 내부 요청 ID를 모르는 자리가 많다. 따라 읽기는 다른 영역 코드를 고치지 않고 커밋 순서를 지킨다. 화면까지 최대 `tail_interval_sec`만큼 늦다.
 - 되살린 실행 문맥은 예약이 없는 요청(서버 내부, 승인 없는 공용형)에서 `reserved_at`을 비운다 (2026-10-24, 대시보드 시나리오에서 찾은 결함) — 판정이 넘긴 문맥은 이 둘에 `reserved_at`이 없는데(`specs/state-management/core-execution.md` 제약) 명령 행에는 받은 시각이 남아, 결과 인계가 "같은 내부 요청의 실행 문맥이 다르다"로 거부되고 재시도를 반복했다. 공용 조명의 실행 결과가 대시보드에 늦게 보이지 않게 고친다.
@@ -150,7 +155,7 @@
 - 점검: `connected`는 판정 ②와 같은 규칙(마지막 수신이 `online_ttl_sec` 안이고 세션이 있음). 비콘은 활성 비콘이 있는 사람만 (2026-10-24 담당자 결정). `lastSeenSec`은 그 비콘의 마지막 관측부터, 없으면 `None`. `note`는 `beacon_recent_sec`을 넘기거나 관측이 없으면 `최근 신호 없음`. `server.database`는 `SELECT 1`의 성공, `mqtt`는 연결 준비 상태, `model`은 장소마다 `{모델} · {보정}`을 ` / `로 이은 문자열이다.
 - 평가: 설정 파일 폴더의 부모 아래 `var/reports/`(CLI `dirs_for`와 같은 폴더)의 CSV 가운데 `generated_at`이 가장 늦은 것 하나를 읽는다 (2026-10-24 담당자 결정). 지표 행마다 `id`는 1부터의 순번, `name`은 지표 이름의 한국어(`앞 기기 오선택률`, `보정 오차`, `전환 시간`, `흔들림`), `pass`는 통과 여부(비면 `None`), `label`은 `통과`·`✕ 미통과`·`미측정`, `sample`은 시행 수, `sampleNote`는 리포트의 비고다. `date`는 `generated_at`의 날짜다.
 - 그 밖의 규칙 (2026-10-25 검토 1 반영):
-  - 요청 한 건의 `accessRequestedAt`은 같은 사람·기기·동작으로 그 요청보다 먼저 만든 승인 가운데 가장 늦은 것의 `created_at`이다. `accessEnd`는 그 승인이 끝난 까닭이다: `approved`, `denied`, 대기 기한이 지난 `pending`은 `expired`, 대기 중이면 없다. `accessExpiredAt`은 `expired`일 때만 그 `pending_until`이다 — 승인·거절 시각은 저장하지 않는다 (2026-10-25 실제 시연 뒤 담당자 위임 결정: 대기 중인 신청을 대시보드가 만료로 그렸다).
+  - 요청 한 건의 `accessRequestedAt`은 같은 사람·기기·동작으로 그 요청보다 먼저 만든 승인 가운데 가장 늦은 것의 `created_at`이다. `accessEnd`는 그 승인이 끝난 까닭이다: `approved`, `denied`, 대기가 아닌 `pending`(승인 분류와 같이 기한이 지났거나 기한이 없음)은 `expired`, 대기 중이면 없다. `accessExpiredAt`은 `expired`일 때만 그 `pending_until`이다 — 승인·거절 시각은 저장하지 않는다 (2026-10-25 실제 시연 뒤 담당자 위임 결정: 대기 중인 신청을 대시보드가 만료로 그렸다).
   - 공용 유지 대상자의 점유 행 `session`은 `ACTIVE`다 (유지 대상자는 켜 둔 조명을 쓰는 중이다).
   - 이력 기간 `HH:MM~HH:MM`은 같은 날 안이다. 끝이 시작보다 늦지 않으면(자정을 넘는 구간 포함) `ValueError`다.
   - 지금 상태의 진행 중인 요청은 서버가 시작한 뒤 받은 요청만 본다. 그 전의 미완료 요청은 복원이 다룬다.

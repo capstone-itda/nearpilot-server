@@ -36,6 +36,7 @@ from nearpilot.core.dashboard.text import (
     OVERDUE,
     TIMELINE_RESERVED,
     fault_cause,
+    model_text,
     node_name,
     outcome,
     session_note,
@@ -267,7 +268,7 @@ class DashboardQueryService:
             end = _access_end(access, now)
             if end is not None:
                 result["accessEnd"] = end
-            if end == "expired":
+            if end == "expired" and access.pending_until is not None:
                 result["accessExpiredAt"] = access.pending_until
         answered = _answered_at(audits)
         if req.verdict is not None and answered is not None:
@@ -354,9 +355,7 @@ class DashboardQueryService:
                 row["note"] = NO_SIGNAL
             beacon_rows.append(row)
         versions = [models.get(p.place_id) for p in places]
-        model = " / ".join(
-            NO_MODEL if v is None else f"{v.model_version} · {v.calib_version}" for v in versions
-        )
+        model = model_text([None if v is None else (v.model_version, v.calib_version) for v in versions])
         return {
             "devices": [
                 {"nodeId": n.node_id, "connected": _connected(n, now, ttl), "trust": n.trust_state} for n in nodes
@@ -529,13 +528,11 @@ def _end_reason(a: DashboardApproval, now: datetime) -> ReasonCode:
 def _access_end(a: DashboardApproval, now: datetime) -> str | None:
     """요청 한 건의 `accessEnd`: 승인 신청이 끝난 까닭. 승인은 `approved`, 거절은 `denied`, 대기 기한이 지난 대기는 `expired`.
 
-    아직 대기 중이면 `None` 이다. 대기 기한이 없는 대기도 끝나지 않은 것으로 본다.
+    대기 기한 전의 대기면 `None` 이다. 대기 기한이 없는 대기는 승인 분류(`approval_section`)처럼 끝난 것(`expired`)으로 본다.
     """
     if a.status is not ApprovalStatus.PENDING:
         return a.status.value
-    if a.pending_until is not None and now >= a.pending_until:
-        return "expired"
-    return None
+    return None if approval_section(a, now) == "pending" else "expired"
 
 
 def _use_row(

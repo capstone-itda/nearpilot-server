@@ -375,6 +375,11 @@ def timeline_command(cmd: DashboardCommand) -> str | None:
     return _TIMELINE_FAILED.get(cmd.outcome)
 
 
+def model_text(versions: Sequence[tuple[str, str] | None]) -> str:
+    """점검 `model`: 장소마다 `{모델} · {보정}`(모델이 없으면 `없음`)을 ` / `로 잇는다."""
+    return " / ".join(NO_MODEL if v is None else f"{v[0]} · {v[1]}" for v in versions)
+
+
 def metric_name(metric: str) -> str:
     """평가 리포트의 지표 이름 → 화면 이름. 모르는 지표는 이름을 그대로 쓴다."""
     return _METRIC_NAME.get(metric, metric)
