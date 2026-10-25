@@ -701,13 +701,44 @@ def test_FR12A_요청_한_건은_단계_결과와_근접_실행_접근_신청을
         "subject": VISITOR, "id": "req-ok", "tool": "request_use", "target": LOCKER_TARGET, "action": Action.OPEN,
         "at": received, "verdict": Verdict.OK, "reason": ReasonCode.OK, "nodeId": "locker-1",
         "posteriors": {"locker-1": 0.91, "locker-2": 0.05}, "threshold": 0.5, "execution": ExecutionStatus.SUCCEEDED,
-        "accessRequestedAt": ago(900), "accessExpiredAt": ago(300),
+        "accessRequestedAt": ago(900), "accessEnd": "approved",  # 승인은 대기 기한이 있어도 만료 시각이 없다
         "respondedAt": received + timedelta(seconds=6),  # 반납 완료 행은 응답 시각이 아니다
     }
     assert [step["result"] for step in steps] == ["pass"] * 7
     assert steps[0] == {"result": "pass"}  # 감사 행이 없는 ⓪ 은 문구가 없다
     assert steps[3] == {"result": "pass", "detail": "근접 통과 0.91"}
     assert steps[5] == {"result": "pass", "detail": "비어 있음"}
+
+
+@pytest.mark.parametrize(
+    ("status", "pending_until", "ended"),
+    [
+        pytest.param(ApprovalStatus.PENDING, NOW + timedelta(seconds=300), {}, id="대기 중"),
+        pytest.param(ApprovalStatus.PENDING, None, {}, id="대기 기한 없음"),
+        pytest.param(ApprovalStatus.PENDING, NOW, {"accessEnd": "expired", "accessExpiredAt": NOW}, id="기한과 같은 순간"),
+        pytest.param(ApprovalStatus.PENDING, ago(300), {"accessEnd": "expired", "accessExpiredAt": ago(300)},
+                     id="기한 지난 대기"),
+        pytest.param(ApprovalStatus.APPROVED, NOW + timedelta(seconds=300), {"accessEnd": "approved"}, id="승인"),
+        pytest.param(ApprovalStatus.APPROVED, ago(300), {"accessEnd": "approved"}, id="기한 뒤의 승인"),
+        pytest.param(ApprovalStatus.DENIED, NOW + timedelta(seconds=300), {"accessEnd": "denied"}, id="거절"),
+        pytest.param(ApprovalStatus.DENIED, ago(300), {"accessEnd": "denied"}, id="기한 뒤의 거절"),
+    ],
+)
+def test_FR12A_요청_한_건의_승인_끝_까닭(status, pending_until, ended):
+    reads = FakeReads(
+        nodes=[make_node("locker-1")],
+        requests=[make_request("req-ok")],
+        audits=trail("req-ok", ago(600), *OK_RENTAL),
+        approvals=[make_approval("earlier", status=status, created=ago(900), pending_until=pending_until)],
+    )
+
+    result = make_service(reads).request("req-ok")
+
+    access = {key: value for key, value in result.items() if key.startswith("access")}
+    assert access == {"accessRequestedAt": ago(900), **ended}  # 만료 시각은 만료일 때만 있고, 대기 중이면 끝 까닭이 없다
+    sent = render_response("request", result, PersonNames())  # 형식 검사를 통과한다
+    assert {key for key in sent if key.startswith("access")} == access.keys()
+    assert sent.get("accessEnd") == access.get("accessEnd")
 
 
 def test_FR12A_멈춘_요청은_멈춘_단계와_사유를_담는다():

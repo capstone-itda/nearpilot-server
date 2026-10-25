@@ -444,7 +444,7 @@ def test_FR12B_결과_불명은_고장_격리로_보인다(make_world):
     assert transition["fault"] == {"cause": "EXEC_UNKNOWN"} and transition["to"] == "FAULT"
 
 
-def test_FR12B_기기가_거절한_명령은_실패로_보인다(make_world):
+def test_FR12B_기기가_거절한_명령은_거절로_보인다(make_world):
     w, decision = ok_rental(make_world)
     iid = decision.internal_request_id
     store, command = started_command(w, decision)
@@ -454,7 +454,7 @@ def test_FR12B_기기가_거절한_명령은_실패로_보인다(make_world):
     req, audits, _ = read(w, iid)
     commands = w.reads.commands_of([iid])
     assert outcome(req, commands) == ("실행 안 함", ReasonCode.EXEC_FAILED)
-    assert [e.fields["result"] for e in events_of(w, iid) if e.type == "exec_result"] == ["failed"]
+    assert [e.fields["result"] for e in events_of(w, iid) if e.type == "exec_result"] == ["rejected"]
     row = audits[-1]
     assert (audit_text(row, {}), audit_code(row)) == ("기기가 실행을 거절", ReasonCode.EXEC_FAILED)
     assert fault_cause(commands[0].evidence) is ReasonCode.EXEC_FAILED  # 거절은 결과 불명이 아니다

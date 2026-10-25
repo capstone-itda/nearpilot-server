@@ -301,7 +301,8 @@ _EVENTS: dict[str, _Shape] = {
     ),
     "command": _shape(_req("requestId", _str), _req("nodeId", _str), _req("action", _enum(Action))),
     "exec_result": _shape(
-        _req("requestId", _str), _req("nodeId", _str), _req("result", _lit("succeeded", "failed", "unknown"))
+        _req("requestId", _str), _req("nodeId", _str),
+        _req("result", _lit("succeeded", "failed", "rejected", "unknown")),
     ),
     "mcp_result": _shape(_req("requestId", _str)),
     "transition": _shape(
@@ -401,6 +402,7 @@ _REQUEST_PROGRESS = _shape(
     _opt("threshold", _num),
     _opt("execution", _enum(ExecutionStatus)),
     _opt("accessRequestedAt", _time),
+    _opt("accessEnd", _lit("approved", "denied", "expired")),
     _opt("accessExpiredAt", _time),
     _opt("respondedAt", _time),
     person=_person_id,

@@ -117,7 +117,8 @@
 | 대여 시간을 넘긴다 | 한 번 `transition` (`to` 지금 상태, `overdue` 참) | `test_FR12B_대여_시간을_넘기면_한_번_발행한다` |
 | 승인 대기가 기한을 넘긴다 | 한 번 `approval` `expired` | `test_FR12B_승인_대기가_만료되면_한_번_발행한다` |
 | 비콘 수신이 끊기거나 다시 잡힌다 | 바뀔 때만 `beacon` | `test_FR12B_비콘_수신이_바뀔_때만_발행한다` |
-| 명령 결과가 `rejected` | `exec_result`의 `failed` | `test_FR12B_거절된_명령은_실패로_발행한다` |
+| 명령 결과가 `rejected` (기기가 실행 전에 거절, 격리 없음) | `exec_result`의 `rejected` | `test_FR12B_거절된_명령은_거절로_발행한다` |
+| 요청 한 건의 앞선 승인이 아직 대기 중 (대기 기한 전 `pending`) | `accessEnd`와 `accessExpiredAt`을 뺀다 | `test_FR12A_요청_한_건의_승인_끝_까닭` |
 | 보내지 않고 취소된 명령 (`not_sent`) | `command`도 `exec_result`도 발행하지 않는다. 전송을 시작한 뒤 미전송 증명으로 취소되면, 그 사이 낸 `command`는 거두지 않고 `exec_result`를 내지 않는다 | `test_FR12B_보내지_않은_명령은_발행하지_않는다` |
 | 비활성 비콘이나 모르는 비콘의 관측 | 저장되지 않으므로 발행할 것이 없다 | (저장소 규칙, 테스트 없음) |
 | 보존 정리로 오래된 감사·이력이 지워졌다 | 남은 행만 돌려준다 | `test_FR12A_정리된_행은_조회에_없다` |
@@ -149,7 +150,7 @@
 - 점검: `connected`는 판정 ②와 같은 규칙(마지막 수신이 `online_ttl_sec` 안이고 세션이 있음). 비콘은 활성 비콘이 있는 사람만 (2026-10-24 담당자 결정). `lastSeenSec`은 그 비콘의 마지막 관측부터, 없으면 `None`. `note`는 `beacon_recent_sec`을 넘기거나 관측이 없으면 `최근 신호 없음`. `server.database`는 `SELECT 1`의 성공, `mqtt`는 연결 준비 상태, `model`은 장소마다 `{모델} · {보정}`을 ` / `로 이은 문자열이다.
 - 평가: 설정 파일 폴더의 부모 아래 `var/reports/`(CLI `dirs_for`와 같은 폴더)의 CSV 가운데 `generated_at`이 가장 늦은 것 하나를 읽는다 (2026-10-24 담당자 결정). 지표 행마다 `id`는 1부터의 순번, `name`은 지표 이름의 한국어(`앞 기기 오선택률`, `보정 오차`, `전환 시간`, `흔들림`), `pass`는 통과 여부(비면 `None`), `label`은 `통과`·`✕ 미통과`·`미측정`, `sample`은 시행 수, `sampleNote`는 리포트의 비고다. `date`는 `generated_at`의 날짜다.
 - 그 밖의 규칙 (2026-10-25 검토 1 반영):
-  - 요청 한 건의 `accessRequestedAt`·`accessExpiredAt`은 같은 사람·기기·동작으로 그 요청보다 먼저 만든 승인 가운데 가장 늦은 것의 `created_at`·`pending_until`이다.
+  - 요청 한 건의 `accessRequestedAt`은 같은 사람·기기·동작으로 그 요청보다 먼저 만든 승인 가운데 가장 늦은 것의 `created_at`이다. `accessEnd`는 그 승인이 끝난 까닭이다: `approved`, `denied`, 대기 기한이 지난 `pending`은 `expired`, 대기 중이면 없다. `accessExpiredAt`은 `expired`일 때만 그 `pending_until`이다 — 승인·거절 시각은 저장하지 않는다 (2026-10-25 실제 시연 뒤 담당자 위임 결정: 대기 중인 신청을 대시보드가 만료로 그렸다).
   - 공용 유지 대상자의 점유 행 `session`은 `ACTIVE`다 (유지 대상자는 켜 둔 조명을 쓰는 중이다).
   - 이력 기간 `HH:MM~HH:MM`은 같은 날 안이다. 끝이 시작보다 늦지 않으면(자정을 넘는 구간 포함) `ValueError`다.
   - 지금 상태의 진행 중인 요청은 서버가 시작한 뒤 받은 요청만 본다. 그 전의 미완료 요청은 복원이 다룬다.

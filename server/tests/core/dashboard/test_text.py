@@ -172,7 +172,7 @@ def test_FR12A_모든_사유_코드에_문구가_있다():
 
 @pytest.mark.parametrize(
     ("result", "expected"),
-    [("succeeded", "succeeded"), ("failed", "failed"), ("rejected", "failed"), ("unknown", "unknown"),
+    [("succeeded", "succeeded"), ("failed", "failed"), ("rejected", "rejected"), ("unknown", "unknown"),
      ("not_sent", None), (None, None), ("모르는 값", None)],
 )
 def test_FR12A_실행_결과_변환(result, expected):

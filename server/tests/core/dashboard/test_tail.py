@@ -419,7 +419,7 @@ def test_FR12B_접근_신청_요청은_도구_호출로_발행하지_않는다()
     assert all("ask" not in ids for ids in reads.lookups)  # 판정이 저장돼서 추적을 마쳤다
 
 
-def test_FR12B_거절된_명령은_실패로_발행한다():
+def test_FR12B_거절된_명령은_거절로_발행한다():
     reads = FakeReads(nodes=[make_node("locker-1")])
     tail, feed, _ = make_tail(reads)
     tail.start()
@@ -432,7 +432,7 @@ def test_FR12B_거절된_명령은_실패로_발행한다():
     taken = feed.take()
     assert [e.type for e in taken if e.type in ("command", "exec_result", "mcp_result")] == [
         "command", "exec_result", "mcp_result"]
-    assert of(taken, "exec_result")[0].fields["result"] == "failed"
+    assert of(taken, "exec_result")[0].fields["result"] == "rejected"
 
 
 def test_FR12B_보내지_않은_명령은_발행하지_않는다():

@@ -99,10 +99,10 @@ _CODE_OF_RESULT: dict[str, ReasonCode] = {  # 실행 결과 → 감사 행 code 
     CommandOutcome.REJECTED.value: ReasonCode.EXEC_FAILED,
     CommandOutcome.UNKNOWN.value: ReasonCode.EXEC_UNKNOWN,
 }
-_EXEC_RESULT: dict[str, str] = {  # CommandOutcome → exec_result 이벤트의 result. 거절은 실패로 본다
+_EXEC_RESULT: dict[str, str] = {  # CommandOutcome → exec_result 이벤트의 result. 거절은 격리하지 않아 실패와 따로 보인다
     CommandOutcome.SUCCEEDED.value: "succeeded",
     CommandOutcome.FAILED.value: "failed",
-    CommandOutcome.REJECTED.value: "failed",
+    CommandOutcome.REJECTED.value: "rejected",
     CommandOutcome.UNKNOWN.value: "unknown",
 }
 _HISTORY_OUTCOME: dict[str, tuple[str, ReasonCode]] = {  # 성공이 아닌 마지막 명령 결과 → (문구, code)

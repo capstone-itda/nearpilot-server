@@ -226,6 +226,7 @@ class DashboardQueryService:
 
     def request(self, request_id: str) -> Mapping[str, Any] | None:
         """방문자 `request_use` 한 건의 판정 흐름. 없거나 그 밖의 요청이면 `None`."""
+        now = self._clock()
         with self._open_reads() as reads:
             req = reads.request(request_id)
             if req is None or req.kind != "visitor":
@@ -263,7 +264,10 @@ class DashboardQueryService:
         if earlier:
             access = max(earlier, key=lambda a: (a.created_at, a.approval_id))
             result["accessRequestedAt"] = access.created_at
-            if access.pending_until is not None:
+            end = _access_end(access, now)
+            if end is not None:
+                result["accessEnd"] = end
+            if end == "expired":
                 result["accessExpiredAt"] = access.pending_until
         answered = _answered_at(audits)
         if req.verdict is not None and answered is not None:
@@ -520,6 +524,18 @@ def _end_reason(a: DashboardApproval, now: datetime) -> ReasonCode:
     if a.valid_until is not None and now >= a.valid_until:
         return ReasonCode.APPROVAL_EXPIRED
     return ReasonCode.APPROVAL_EXHAUSTED
+
+
+def _access_end(a: DashboardApproval, now: datetime) -> str | None:
+    """요청 한 건의 `accessEnd`: 승인 신청이 끝난 까닭. 승인은 `approved`, 거절은 `denied`, 대기 기한이 지난 대기는 `expired`.
+
+    아직 대기 중이면 `None` 이다. 대기 기한이 없는 대기도 끝나지 않은 것으로 본다.
+    """
+    if a.status is not ApprovalStatus.PENDING:
+        return a.status.value
+    if a.pending_until is not None and now >= a.pending_until:
+        return "expired"
+    return None
 
 
 def _use_row(

@@ -261,9 +261,9 @@ def test_FR12B_보내지_않고_취소한_명령은_이벤트가_없다():
     assert types(request_events(OK, OK_RENTAL, [never_started], VISITOR, Occupancy.RENTAL, NAMES))[-1] == "mcp_result"
 
 
-def test_FR12B_실행_결과_이벤트는_거절을_failed로_바꾼다():
+def test_FR12B_실행_결과_이벤트는_거절을_rejected로_보낸다():
     for status, outcome, expected in [
-        (ExecutionStatus.REJECTED, "rejected", "failed"),
+        (ExecutionStatus.REJECTED, "rejected", "rejected"),
         (ExecutionStatus.FAILED, "failed", "failed"),
         (ExecutionStatus.UNKNOWN, "unknown", "unknown"),
     ]:
@@ -498,5 +498,5 @@ def test_FR12B_직렬화한_이벤트의_값_종류():
     steps = [r["step"] for r in rendered if r["type"] == "step"]
     assert set(steps) <= {"0", "1", "2", "3", "4", "5", "6"}  # step 이벤트는 판정 단계 일곱 값만
     results = {r["result"] for r in rendered if r["type"] == "exec_result"}
-    assert results == {"succeeded", "failed"}  # 거절은 실패로 나간다
+    assert results == {"succeeded", "rejected"}  # 거절은 실패와 따로 나간다
     assert {r["result"] for r in rendered if r["type"] == "step"} == {"pass", "stop"}

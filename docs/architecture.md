@@ -1269,7 +1269,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | 승인 (`approvals`) | `pending` ✔, `active` ✔, `ended` ✔. 행: `personId` ✔, `nodeId` ✔, `mode`, `requestedAt`, `remainingMinutes`, `validUntil`, `uses`, `endReason` (`APPROVAL_REJECTED`, `APPROVAL_REQUEST_EXPIRED`, `APPROVAL_EXHAUSTED`, `APPROVAL_EXPIRED`) |
 | 감사 행 (`audit`, 스트림 `audit`의 `row`) | `id` ✔, `at` ✔, `step` ✔ (`Step`), `nodeId`, `text` ✔, `code` ✔ |
 | 이력 행 (`history`) | `requestId` ✔, `at` ✔, `personId` ✔, `target` ✔ [`kind` ✔, `capability`, `nodeId`], `action` ✔, `verdict` ✔, `nodeId`, `outcome` ✔, `code` |
-| 요청 한 건 (`requests/{id}`) | `id` ✔, `personId` ✔, `tool` ✔ (`request_use`), `target` ✔, `action` ✔, `at` ✔, `verdict`, `reason`, `steps` ✔ (⓪~⑥ 일곱 칸 [`result` ✔ (`pending`, `pass`, `stop`, `skip`), `detail`]), `nodeId`, `posteriors`, `threshold`, `execution` (`ExecutionStatus`), `accessRequestedAt`, `accessExpiredAt`, `respondedAt` |
+| 요청 한 건 (`requests/{id}`) | `id` ✔, `personId` ✔, `tool` ✔ (`request_use`), `target` ✔, `action` ✔, `at` ✔, `verdict`, `reason`, `steps` ✔ (⓪~⑥ 일곱 칸 [`result` ✔ (`pending`, `pass`, `stop`, `skip`), `detail`]), `nodeId`, `posteriors`, `threshold`, `execution` (`ExecutionStatus`), `accessRequestedAt`, `accessEnd` (`approved`, `denied`, `expired`. 승인 신청이 끝났을 때만), `accessExpiredAt` (`expired`일 때만), `respondedAt` |
 | 신뢰도 (`trust`) | `live` ✔ [`since` ✔, `decisions` ✔, `doubleOccupancy` ✔, `latencyMedianSec` ∅, `latencyP95Sec` ∅, `counts` ✔ (판정 값 다섯 개 모두)], `evaluation` [`date` ✔, `metrics` ✔ [`id` ✔, `name` ✔, `pass` ∅, `label` ✔, `sample` ✔, `sampleNote`], `confusion` [`labels` ✔, `values` ✔]]. `evaluation`은 평가 리포트가 없으면 빠지고, 평가 리포트에 혼동 행렬이 없어 `confusion`은 빠진다 |
 | 대여 한 건 (`rentals/{node_id}`) | `nodeId` ✔, `personId` ✔, `startedAt` ✔, `overdueMinutes` ✔, `timeline` ✔ [`at` ✔, `text` ✔, `now`] |
 | 점검 (`health`) | `devices` ✔ [`nodeId` ✔, `connected` ✔, `trust` ✔], `beacons` ✔ [`personId` ✔, `label` ✔ (서버가 사람 이름으로 채운다), `lastSeenSec` ∅, `note`], `server` ✔ [`database` ✔, `mqtt` ✔, `model` ✔] |
@@ -1294,7 +1294,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `posterior` | `requestId` ✔, `posteriors` ✔ (기기 ID → 확률), `threshold` ✔ | 없음 |
 | `verdict` | `requestId` ✔, `verdict` ✔, `reason` ✔, `nodeId` | 없음 |
 | `command` | `requestId` ✔, `nodeId` ✔, `action` ✔ | 없음 |
-| `exec_result` | `requestId` ✔, `nodeId` ✔, `result` ✔ (`succeeded`, `failed`, `unknown`) | 없음 |
+| `exec_result` | `requestId` ✔, `nodeId` ✔, `result` ✔ (`succeeded`, `failed`, `rejected`, `unknown`. `rejected`는 기기가 실행 전에 거절했고 격리하지 않았다) | 없음 |
 | `mcp_result` | `requestId` ✔ | 없음 |
 | `transition` | `nodeId` ✔, `to` ✔ (`DeviceState`), `overdue`, `fault` [`cause` ✔, `action`] | 없음 |
 | `approval` | `requestId` ✔, `nodeId` ✔, `kind` ✔ (`requested`, `approved`, `denied`, `expired`) | `personId` |
