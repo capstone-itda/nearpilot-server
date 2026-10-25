@@ -11,13 +11,14 @@
 
 ## 2. 무엇
 
-- 입력: 방문자가 입력한 비콘 식별자 `(uuid, major, minor)`
-- 출력: 입력한 식별자의 iBeacon 광고. 화면과 알림에 표시하는 송출 상태
+- 입력: 비콘 식별자 `(uuid, major, minor)`. 처음 켤 때 앱이 만들고, 방문자가 새로 만들거나 직접 입력해서 바꿀 수 있다
+- 출력: 입력한 식별자의 iBeacon 광고. 화면과 알림에 표시하는 송출 상태, 상태별 안내와 해결 동작
 - 바뀌는 상태: 폰에 저장한 비콘 식별자. 송출 상태(`중지`, `시작 중`, `송출 중`, `시작 못 함`, `중단됨`)
 - 약속:
   - 앱은 송출을 시작하면 화면을 끄거나 다른 앱으로 가도 송출을 계속한다 (FR-02).
   - 앱은 송출 상태를 표시한다. 앱은 송출이 끊기면 `중단됨`과 사유를 표시한다 (FR-02).
   - 앱은 인터넷이나 서버 연결 없이 송출한다 (NFR-12).
+  - 앱은 송출을 시작하지 못하거나 송출이 끊기면 사유와 함께 사용자가 할 일을 안내한다 (FR-02).
 
 ## 3. 제약
 
@@ -63,6 +64,10 @@
 | 송출 중에 서비스가 종료됐다 | `중단됨`과 사유를 표시한다 | `FR02_service_stop_while_broadcasting_marks_interrupted` |
 | 송출 중에 사용자가 시작을 다시 눌렀다 | 광고를 하나만 유지한다. 송출 중에는 화면이 시작 대신 중지 버튼을 보여 준다 | `FR02_start_twice_keeps_single_advertisement` |
 | 알림 권한을 거부했다 | 송출은 계속한다. 상태는 앱 화면에서만 보인다 | 수동 확인 |
+| 블루투스 꺼짐으로 시작하지 못했거나 멈췄다 | 상태 카드에 "블루투스 설정 열기" 버튼을 보여 준다 | `FR02_every_problem_offers_a_fix_or_explanation` |
+| 광고 권한이 없다 | 권한이 왜 필요한지 설명한 뒤 요청한다. '다시 묻지 않음'이면 앱 설정 화면을 연다 | `FR02_every_problem_offers_a_fix_or_explanation`, 수동 확인 |
+| 광고 시작 실패, 서비스 종료 | 상태 카드에 "다시 시도" 버튼과 원인별 안내를 보여 준다. 시작 실패는 오류 코드를 함께 보여 준다 | `FR02_every_problem_offers_a_fix_or_explanation`, `FR02_start_failure_shows_error_code` |
+| 송출 중에 비콘 값을 바꾸려 했다 | 값 변경 버튼을 숨기고, 먼저 중지하라고 안내한다 | 수동 확인 |
 
 ## 6. 결정
 
@@ -77,11 +82,16 @@
 - 포그라운드 서비스 유형은 `connectedDevice`다 — Android 14부터 유형이 필요하고, BLE 광고 권한으로 허용된다.
 - 화면은 Jetpack Compose로 만든다 — Android Studio 기본 템플릿을 따른다.
 - 송출을 시작하지 못한 경우(`시작 못 함`)와 시작한 송출이 끊긴 경우(`중단됨`)를 다른 상태로 둔다 — FR-02의 송출 중단 감지는 뒤의 경우다.
+- 상태는 색 점과 제목, 안내 문장, 해결 버튼이 있는 카드로 보여 준다. 초록은 `송출 중`만 쓴다 — 확인하지 않은 송출을 성공처럼 보이지 않게 한다. 상태→문장·버튼 변환(`presentation()`)은 Android API와 분리해 JVM 테스트로 확인한다.
+- 처음 켤 때 무작위 UUID, major 1, 무작위 minor(1~65535)를 만들어 저장한다 — 방문자가 UUID 형식을 몰라도 바로 송출할 수 있다. 직접 입력은 "고급"으로 접어 둔다.
+- 비콘 값은 하나씩 또는 세 값을 한 번에 복사할 수 있다 — 서버 등록이나 시드 파일에 그대로 옮긴다.
+- 처음 켤 때 사용 순서를 알려 주는 안내 카드를 한 번 보여 준다.
+- 권한은 요청 전에 용도를 설명하는 창을 먼저 띄운다. '다시 묻지 않음'은 권한을 한 번 물은 뒤 `shouldShowRequestPermissionRationale`이 거짓인 경우로 판단한다.
 
 ## 7. 가정
 
 - 담당자가 앱 담당을 맡는다 — 담당자가 팀에 알렸다. architecture.md §2에는 아직 미결이다.
-- 서버에 등록할 식별자는 방문자가 직접 입력한다 — 계정 등록 REST 경로는 미결이다. 경로가 정해지면 입력 대신 등록 결과를 저장하도록 후속 작업에서 바꾼다.
+- 서버에 등록할 식별자는 앱이 만들거나 방문자가 직접 입력한다 — 계정 등록 REST(#183)를 앱에 붙이는 일은 후속 작업이다.
 
 ## 8. 테스트
 
@@ -99,4 +109,9 @@
 | FR-02 | `FR02_late_start_callback_after_stop_is_ignored` | 중지 뒤 늦은 시작 콜백이 상태를 바꾸지 않는다 |
 | FR-02 | `FR02_service_stop_while_broadcasting_marks_interrupted` | 송출 중 서비스 종료를 `중단됨`으로 바꾼다 |
 | FR-02 | `FR02_bluetooth_off_while_stopped_changes_nothing` | 송출하지 않을 때 블루투스 꺼짐은 상태를 바꾸지 않는다 |
+| FR-02 | `FR02_broadcasting_is_shown_as_ok` | `송출 중`을 초록 상태로 보여 준다 |
+| FR-02 | `FR02_only_confirmed_broadcast_is_ok` | `송출 중` 말고는 초록 상태가 아니다 |
+| FR-02 | `FR02_every_problem_offers_a_fix_or_explanation` | 문제 상태마다 안내 문장과 맞는 해결 버튼이 있다 |
+| FR-02 | `FR02_start_failure_shows_error_code` | 광고 시작 실패 안내에 오류 코드가 있다 |
+| FR-02 | `FR02_generated_identifier_is_valid` | 자동으로 만든 식별자가 검증을 통과한다 |
 | FR-02, NFR-12 | 수동: ESP32 BLE 스캔 스케치 | 화면을 끄고 인터넷을 끊어도 ESP32 시리얼에 입력한 `uuid`·`major`·`minor`가 계속 찍힌다 |
