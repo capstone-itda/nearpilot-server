@@ -17,6 +17,7 @@ from typing import Any, Mapping, Protocol, runtime_checkable
 
 from nearpilot.shared.enums import (
     Action,
+    ApprovalStatus,
     Capability,
     CommandOutcome,
     EndReason,
@@ -36,6 +37,8 @@ from nearpilot.shared.models import (
     ApprovalRequestResult,
     ApprovalDecisionRequest,
     ApprovalDecisionResult,
+    OwnerApproval,
+    OwnerApprovalResult,
     DecisionRecord,
     AccountRegistration,
     BeaconRegistration,
@@ -209,6 +212,25 @@ class Repository(Protocol):
         호출 시각은 비교하지 않는다. applied 는 False, succeeded 는 True 다.
         기존 상태와 valid_until 을 반환한다. 결정·유효시간·감사를 다시 쓰지 않는다.
         반대 결정 또는 다른 결정자의 호출은 ALREADY_DECIDED 다. 기존 기록을 보존한다.
+        """
+        ...
+
+    # 승인 권한자의 조회 (#186) — 저장소를 바꾸지 않는다
+    def pending_approvals_for(self, user_id: str, now: datetime) -> Sequence[OwnerApproval]:
+        """user_id 가 승인 권한자인 pending 승인 가운데 대기 만료 전인 것을 반환한다 (FR-03).
+
+        승인 권한자는 승인이 만들어진 정책 리비전의 approver_user_id 다. 생성 시각, 승인 ID 순이다.
+        """
+        ...
+
+    def approval(self, approval_id: str) -> OwnerApproval | None:
+        """승인 한 건. 없으면 None 이다. 권한은 검사하지 않는다 (#186)."""
+        ...
+
+    def is_approver(self, user_id: str, approval_id: str) -> bool:
+        """승인이 만들어진 정책 리비전의 approver_user_id 가 user_id 인지 반환한다 (FR-14, #186).
+
+        승인이 없거나 리비전에 승인 권한자가 없으면 False 다. 권한자 ID 는 반환하지 않는다.
         """
         ...
 
@@ -565,6 +587,21 @@ class RecoveryService(Protocol):
     def readiness(self, user_id: str, node_id: str) -> RecoveryReadiness: ...
 
     def approve(self, user_id: str, node_id: str, recovery_id: str) -> RecoveryApprovalResult: ...
+
+
+@runtime_checkable
+class ApprovalService(Protocol):
+    """CORE → API 승인 접점 (FR-03, #186). `CoreService` 와 따로 둔다.
+
+    user_id 는 API 가 토큰으로 식별해 넘긴다. 승인 권한, 대기 상태, 정책 버전은 CORE 가 검증한다.
+    반환값에는 요청자 정보가 없다 (NFR-08). API 는 결과를 바꾸지 않는다 (NFR-07).
+    """
+
+    def pending_for(self, user_id: str) -> Sequence[OwnerApproval]: ...
+
+    def get(self, user_id: str, approval_id: str) -> OwnerApprovalResult: ...
+
+    def decide(self, user_id: str, approval_id: str, decision: ApprovalStatus) -> OwnerApprovalResult: ...
 
 
 @runtime_checkable

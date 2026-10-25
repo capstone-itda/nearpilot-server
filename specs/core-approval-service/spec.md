@@ -85,7 +85,10 @@
 
 | 요구사항 | 테스트 | 확인하는 것 |
 |---|---|---|
-| FR-03, NFR-08 | `test_FR03_approval_service_contract` (shared) | 세 함수의 시그니처와 반환 모델에 요청자 필드가 없다 |
+| FR-03 | `test_FR03_approval_service_contract` (shared) | `ApprovalService`와 저장소 조회 세 함수의 시그니처 |
+| FR-03 | `test_FR03_approval_service_is_separate_from_core_service` (shared) | `CoreService`에 승인 함수를 더하지 않는다 |
+| NFR-08 | `test_NFR08_owner_approval_has_no_requester` (shared) | 반환 모델에 요청자 필드가 없다 |
+| FR-03 | `test_FR03_implementations_follow_protocols` (shared) | 구현이 Protocol을 따른다 |
 | FR-03 | `test_FR03_pending_for_only_approver` (db) | 승인 권한자의 대기 승인만 반환한다 |
 | FR-03 | `test_FR03_pending_excludes_expired_and_decided` (db) | 만료·결정한 승인을 뺀다 |
 | FR-03 | `test_FR03_pending_order` (db) | 생성 시각, 승인 ID 순이다 |
