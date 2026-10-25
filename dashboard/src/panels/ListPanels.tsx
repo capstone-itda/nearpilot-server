@@ -18,7 +18,8 @@ export function UsesPanel({ onClose, onOpenDevice }: Close & { onOpenDevice: (id
       <Section title="지금 쓰는 기기" hint="대여형 기기의 점유 세션과 공용 조명을 지금 쓰는 사람을 보여요">
         {q.data ? (
           <DataTable label="점유·대여 목록" head={['기기', '사용자', '세션', '시작', '초과']} rows={q.data.map((u) => ({
-            key: u.nodeId,
+            // 공용 조명 하나를 여럿이 쓰면 같은 기기가 사람마다 한 행씩 온다
+            key: `${u.nodeId}:${u.personId}`,
             cells: [
               <TdLink key="d" main={deviceName(u.nodeId)} sub={u.nodeId} onClick={() => onOpenDevice(u.nodeId)} />,
               <Td key="p" main={personName(u.personId)} sub={u.occupancy} />,

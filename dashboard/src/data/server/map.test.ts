@@ -89,6 +89,16 @@ describe('서버 어댑터 스트림 이벤트 변환', () => {
     expect(mapEvent({ type: 'approval', at: AT, requestId: 'r1', nodeId: 'locker-2', personId: 'p1', kind: 'withdrawn' })).toBeUndefined();
   });
 
+  it('FR12B exec_result의 결과 넷(succeeded, failed, rejected, unknown)을 모두 옮기고, 그 밖의 값은 버린다', () => {
+    for (const result of ['succeeded', 'failed', 'rejected', 'unknown']) {
+      expect(mapEvent({ type: 'exec_result', at: AT, requestId: 'r1', nodeId: 'locker-1', result }), result)
+        .toEqual({ type: 'exec_result', at: AT_MS, requestId: 'r1', nodeId: 'locker-1', result });
+    }
+    for (const result of ['pending', 'not_sent', 'teleported', '', null]) {
+      expect(mapEvent({ type: 'exec_result', at: AT, requestId: 'r1', nodeId: 'locker-1', result }), String(result)).toBeUndefined();
+    }
+  });
+
   it('FR12B step은 "0"~"6" 문자열만 받아 칸 번호로 바꾼다', () => {
     for (const s of ['0', '1', '2', '3', '4', '5', '6']) {
       expect(mapEvent({ type: 'step', at: AT, requestId: 'r1', step: s, result: 'pass' })).toMatchObject({ step: Number(s) });

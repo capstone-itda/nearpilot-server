@@ -451,6 +451,20 @@ describe('서버 어댑터 스트림 연결', () => {
     expect(bundles).toEqual([[{ type: 'beacon', at: '14:28:10.123', personId: 'p1', pseudonym: '방문자 A', letter: 'A', role: 'visitor', seen: true }]]);
   });
 
+  it('FR12B 다시 연결하면 link connected가 지금 상태 묶음보다 먼저 온다 (리듀서가 연결 이벤트에서 끊기기 전의 요청을 지우므로, 순서가 어긋나면 지금 상태가 지워진다)', () => {
+    const { source, timers } = setup();
+    const { bundles } = listen(source);
+    last().open();
+    last().message({ v: 1, events: [BEACON] });
+    last().drop(1013);
+    timers.flush();
+    bundles.length = 0;
+    last().open();
+    last().message({ v: 1, events: [BEACON, RSSI] });
+    expect(bundles.map((b) => b.map((e) => e.type))).toEqual([['link'], ['beacon', 'rssi']]);
+    expect(links(bundles)).toEqual([{ type: 'link', at: expect.any(String), connected: true, reconnectAttempts: 0 }]);
+  });
+
   it('FR12B reconnect()는 기다리는 재연결을 바로 한다. 연결이 열려 있으면 아무것도 하지 않는다', () => {
     const { source, timers } = setup();
     listen(source);

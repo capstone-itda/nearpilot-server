@@ -113,8 +113,9 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   const focusRef = useRef<StageFocus>();
   const focus = useMemo(() => (info && snapshot ? nextFocus(focusRef.current, snapshot, info.places, lock) : undefined), [info, snapshot, lock]);
   focusRef.current = focus;
-  // 배치 화면을 열면 그때의 무대 장소로 탭을 정한다. 그 뒤로는 무대의 장소가 바뀌어도 탭은 그대로다.
-  useEffect(() => { if (view === 'layout' && layoutPlace === undefined && focus?.primary) setLayoutPlace(focus.primary); }, [view, layoutPlace, focus?.primary]);
+  // 배치 화면을 처음 열면 그때의 무대 장소로 탭을 정한다. 그 뒤로는 무대의 장소가 바뀌어도 탭은 그대로다.
+  // 효과가 아니라 그리는 중에 정한다. 효과는 그린 뒤에 돌아서, 그 사이에 다음 묶음이 반영되면 탭이 바뀐 장소로 정해질 수 있다. 첫 화면부터 정한 장소를 쓴다.
+  if (view === 'layout' && layoutPlace === undefined && focus?.primary) setLayoutPlace(focus.primary);
   /** 장소마다 표시 배치를 입힌 것 (placeId → 배치된 장소) */
   const layouts = useMemo(() => Object.fromEntries((info?.places ?? []).map((p) => [p.placeId, withArrangement(p, arrangements[p.placeId] ?? {}, info!.weakRssiDbm)])) as Record<string, FloorLayout>, [info, arrangements]);
   // 받은 이벤트 묶음을 차례로 쌓는다. 기기 목록이 있어야 처음 상태를 만들 수 있어서 장소를 받은 뒤 구독한다.

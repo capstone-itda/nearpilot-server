@@ -248,17 +248,39 @@ test('FR12A FR12B 같은 탭에서 다시 열면 저장한 토큰으로 입력 �
   expect(fake.streamIn).toEqual([{ type: 'auth', token: TOKEN }, { type: 'auth', token: TOKEN }]);
 });
 
-test('FR12B 스트림이 끊기면 끊김을 알리고, 다시 연결 버튼이나 자동 재연결로 지금 상태를 다시 받는다', async ({ page }) => {
-  const fake = await fakeServer(page);
+/**
+ * 시계를 직접 다룬다: 페이지를 열기 전에 가짜 시계를 깔고, 연결이 끝난 뒤 멈춘다.
+ * 멈춘 시계에서는 자동 재연결(첫 대기 1초)이 실제 시간에 밀려 시험이 보려는 순서보다 먼저 일어나지 않는다.
+ */
+async function connectedWithFrozenClock(page: Page) {
+  await page.clock.install();
   await page.goto('/?source=server');
   await enterToken(page);
   await expect(stage(page)).toBeVisible();
+  await page.clock.pauseAt(Date.now() + 1000);
+}
+
+/** 페이지가 만든 WebSocket 수를 페이지 안에서 센다. fakeServer 다음에 불러야 가짜 서버의 대역을 감싼다 */
+async function countSockets(page: Page) {
+  await page.addInitScript(() => {
+    let count = 0;
+    Object.defineProperty(window, '__sockets', { get: () => count });
+    window.WebSocket = new Proxy(window.WebSocket, { construct(target, args, newTarget) { count += 1; return Reflect.construct(target, args, newTarget); } });
+  });
+  return () => page.evaluate(() => (window as unknown as { __sockets: number }).__sockets);
+}
+
+test('FR12B 스트림이 끊기면 끊김을 알리고, 다시 연결 버튼을 누르면 기다리지 않고 바로 다시 연결해 지금 상태를 다시 받는다', async ({ page }) => {
+  const fake = await fakeServer(page);
+  await connectedWithFrozenClock(page);
   await expect(device(page, '사물함 2').locator('.np-stage__device-status')).toHaveText('사용 중');
 
   fake.close(1013);
   const banner = page.locator('[data-component="OfflineBanner"]');
   await expect(banner).toContainText('서버와 연결이 끊겼어요');
   await expect(page.locator('[data-component="TopBar"]')).not.toContainText('목 데이터');
+  // 시계가 멈춰 있으니 자동 재연결은 아직이다. 누르면 바로 다시 연결한다
+  expect(fake.connections).toBe(1);
   await banner.getByRole('button', { name: '다시 연결' }).click();
   await expect(banner).toHaveCount(0);
   expect(fake.connections).toBe(2);
@@ -267,16 +289,45 @@ test('FR12B 스트림이 끊기면 끊김을 알리고, 다시 연결 버튼이�
   await expect(device(page, '사물함 2').locator('.np-stage__device-status')).toHaveText('사용 중');
 });
 
+test('FR12B 스트림이 끊기면 끊김을 알리고, 버튼을 누르지 않아도 첫 재연결 대기(1초)가 지나면 다시 연결한다. 끊기기 전에 진행 중이던 요청이 지금 상태에 없으면 사라진다', async ({ page }) => {
+  const fake = await fakeServer(page);
+  await connectedWithFrozenClock(page);
+  // 사물함 열림 요청이 진행 중이다: 판정이 났고 명령을 보냈다 (실행 결과는 아직 없다). 판정까지 한 묶음이라 판정 게이지가 늦추지 않는다
+  fake.send([CALL, ...JUDGING]);
+  const railTitle = page.locator('.np-rail__title');
+  await expect(railTitle).toHaveText('방문자 A · 사물함 열기');
+  await expect(page.locator('[data-component="FlowStep"]').nth(3).locator('.np-step__mark')).toHaveText('실행 중');
+
+  fake.close(1013);
+  const banner = page.locator('[data-component="OfflineBanner"]');
+  await expect(banner).toContainText('서버와 연결이 끊겼어요');
+  // 끊기기만 했을 때는 마지막 화면을 그대로 둔다. 시계가 멈춰 있으니 자동 재연결도 아직이다
+  await expect(railTitle).toHaveText('방문자 A · 사물함 열기');
+  expect(fake.connections).toBe(1);
+
+  // 첫 재연결 대기(1초)가 지나면 다시 연결한다. 서버가 보낸 지금 상태에는 그 요청이 없으니 사라진다
+  await page.clock.runFor(1000);
+  await expect(banner).toHaveCount(0);
+  expect(fake.connections).toBe(2);
+  expect(fake.streamIn).toEqual([{ type: 'auth', token: TOKEN }, { type: 'auth', token: TOKEN }]);
+  await expect(railTitle).toHaveText('요청 대기');
+  await expect(device(page, '사물함 2').locator('.np-stage__device-status')).toHaveText('사용 중');
+});
+
 test('FR12B 스트림이 4401로 닫히면 다시 연결하지 않고 토큰을 지운 뒤 이유와 함께 입력 화면으로 돌아간다', async ({ page }) => {
   const fake = await fakeServer(page, { streamClose: 4401 });
+  const sockets = await countSockets(page);
+  await page.clock.install();
   await page.goto('/?source=server');
   await enterToken(page);
   await expect(gate(page).getByRole('alert')).toContainText('토큰이 올바르지 않아요');
   await expect(stage(page)).toHaveCount(0);
   expect(await page.evaluate(() => sessionStorage.length)).toBe(0);
   expect(page.url()).not.toContain(TOKEN);
-  // 다시 연결하지 않는다 (재연결을 예약했다면 1초 뒤에 연결이 늘어난다)
-  await page.waitForTimeout(1500);
+  // 다시 연결하지 않는다. 재연결을 예약했다면 첫 대기(1초)가 지나는 이때 소켓이 늘어난다 (센 수가 1인 것으로 센 자리가 맞는지 먼저 본다)
+  expect(await sockets()).toBe(1);
+  await page.clock.runFor(10_000);
+  expect(await sockets()).toBe(1);
   expect(fake.connections).toBe(1);
   await expect(gate(page).locator('input')).toHaveValue('');
 

@@ -89,7 +89,7 @@ const EVENTS = {
   posterior: event('posterior', obj({ requestId: str, posteriors: rec(num), threshold: num })),
   verdict: event('verdict', obj({ requestId: str, verdict: VERDICT, reason }, { nodeId: str })),
   command: event('command', obj({ requestId: str, nodeId: str, action: ACTION })),
-  exec_result: event('exec_result', obj({ requestId: str, nodeId: str, result: lit<'succeeded' | 'failed' | 'unknown'>('succeeded', 'failed', 'unknown') })),
+  exec_result: event('exec_result', obj({ requestId: str, nodeId: str, result: lit<'succeeded' | 'failed' | 'rejected' | 'unknown'>('succeeded', 'failed', 'rejected', 'unknown') })),
   mcp_result: event('mcp_result', obj({ requestId: str })),
   transition: event('transition', obj({ nodeId: str, to: DEVICE_STATE }, { overdue: bool, fault: obj({ cause: reason }, { action: ACTION }) })),
   approval: event('approval', obj({ requestId: str, nodeId: str, personId: str, kind: lit<'requested' | 'approved' | 'denied' | 'expired'>('requested', 'approved', 'denied', 'expired') })),

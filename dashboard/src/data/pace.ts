@@ -13,12 +13,18 @@ const passes = (e: StreamEvent) => e.type === 'rssi' || e.type === 'beacon' || e
 /**
  * 도구 호출 뒤의 이벤트를 게이지가 찰 때까지 모아 두었다가 순서대로 넘긴다.
  * 같은 묶음에 판정까지 들어 있으면(다시 연결해 받은 지금 상태) 늦추지 않는다.
+ * 다시 연결되면 모아 둔 이벤트를 버린다 — 끊기기 전의 이벤트이고, 아직 진행 중인 것은 지금 상태가 다시 보낸다.
  */
 export function paceJudging(listener: (events: StreamEvent[]) => void, gaugeMs = JUDGE_GAUGE_MS) {
   let held: StreamEvent[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const push = (events: StreamEvent[]) => {
+    if (timer && events.some((e) => e.type === 'link' && e.connected)) {
+      clearTimeout(timer);
+      timer = undefined;
+      held = [];
+    }
     if (timer) {
       const now = events.filter(passes);
       held.push(...events.filter((e) => !passes(e)));

@@ -110,8 +110,12 @@ function apply(s0: MonitorState, e: StreamEvent): MonitorState {
       const t = withRequest(s, e.requestId, (r) => (e.kind === 'requested' ? { ...r, accessRequestedAt: clockOf(e.at) } : { ...r, accessExpiredAt: clockOf(e.at), accessEnd: e.kind }));
       return { ...t, ownerNotified: e.kind === 'requested' };
     }
-    case 'link':
-      return { ...s0, connected: e.connected, reconnectAttempts: e.reconnectAttempts };
+    case 'link': {
+      // 끊겼다 다시 연결되면 끊기기 전의 진행 중 요청과 소유자 알림을 지운다. 이어서 오는 지금 상태가 아직 진행 중인 것만 다시 세운다
+      // (끊긴 동안 끝난 요청과 승인 신청이 남지 않는다). 사람과 기기는 지금 상태가 덮으므로 두고, 처음 연결은 앞 상태가 이미 연결이라 지우지 않는다
+      const back = !s0.connected && e.connected;
+      return { ...s0, connected: e.connected, reconnectAttempts: e.reconnectAttempts, ...(back ? { request: undefined, ownerNotified: false } : {}) };
+    }
     case 'mock_phone': {
       const phones = s.mockPhones ?? [];
       return { ...s0, mockPhones: phones.some((m) => m.personId === e.screen.personId) ? phones.map((m) => (m.personId === e.screen.personId ? e.screen : m)) : [...phones, e.screen] };

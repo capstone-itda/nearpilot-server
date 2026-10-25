@@ -1,14 +1,14 @@
 // MON-06: 점유 패널은 서버 어댑터가 준 대여형 점유 세션과 공용 조명 점유자를 함께 그린다
 // MON-09: 이력의 기기 거르기는 모든 장소의 기기를 고를 수 있다
 // MON-10: 신뢰도 패널은 평가 리포트나 혼동 행렬이 없어도 그린다
-import { cleanup, render, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DataCtx } from '../data/context';
 import { PLACES, TRUST, TRUST_BASE } from '../data/mock/fixtures';
 import { createMockSource } from '../data/mock/mockSource';
 import { createServerSource } from '../data/server/serverSource';
 import { SCENES } from '../data/mock/story';
-import type { TrustReport } from '../model/types';
+import type { MonitorState, TrustReport } from '../model/types';
 import { HistoryPanel, TrustPanel, UsesPanel } from './ListPanels';
 
 afterEach(cleanup);
@@ -55,6 +55,65 @@ describe('UsesPanel 공용 조명', () => {
     expect(rental.textContent).toContain('방문자 A');
     expect(rental.textContent).toContain('rental');
     expect(rental.textContent).toContain('3분 초과');
+  });
+});
+
+describe('UsesPanel 한 기기에 여러 행', () => {
+  const NOW = '2026-10-24T05:28:10.123+00:00';
+  const NAMES = new Map(PLACES.flatMap((p) => p.devices).map((d) => [d.nodeId, d.name]));
+  const WHO: Record<string, string> = { 'p-a': '방문자 A', 'p-b': '방문자 B', 'p-c': '방문자 C' };
+  const row = (nodeId: string, personId: string, occupancy: 'rental' | 'shared') => ({ nodeId, personId, occupancy, session: 'ACTIVE', startedAt: NOW });
+  /** 사물함 하나를 C가 빌렸고, 공용 조명 하나를 A와 B가 함께 쓴다. 서버는 공용 조명의 유지 대상자마다 한 행을 준다 */
+  const FIRST = [row('locker-1', 'p-c', 'rental'), row('light-1', 'p-a', 'shared'), row('light-1', 'p-b', 'shared')];
+
+  /** 서버가 주는 목록은 시험이 바꾼다. 모니터 상태가 바뀌면 패널이 다시 조회한다 */
+  function setup(first: unknown[]) {
+    let body = first;
+    const source = createServerSource({
+      origin: 'http://dash.test', token: 'np_owner_tok', onRejected: () => undefined,
+      fetch: (async () => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
+    });
+    const ui = (snapshot: MonitorState) => (
+      <DataCtx.Provider value={{ source, places: PLACES, snapshot, personName: (id) => WHO[id] ?? id, deviceName: (id) => NAMES.get(id) ?? id }}>
+        <UsesPanel onClose={() => {}} onOpenDevice={() => {}} />
+      </DataCtx.Provider>
+    );
+    const view = render(ui(SCENES.later()));
+    /** 표의 행마다 [기기 이름, 사람 이름] */
+    const rows = () => within(screen.getByRole('table', { name: '점유·대여 목록' })).getAllByRole('row').slice(1)
+      .map((r) => [/사물함 1|조명 1/.exec(r.textContent ?? '')?.[0], /방문자 [ABC]/.exec(r.textContent ?? '')?.[0]]);
+    return {
+      rows,
+      /** 첫 조회가 끝나 표가 나올 때까지 기다린다 */
+      loaded: async () => { await screen.findByRole('table', { name: '점유·대여 목록' }); return rows(); },
+      /** 서버의 목록을 바꾸고 모니터 상태를 바꿔 패널이 다시 조회하게 한다 */
+      change: (next: unknown[]) => { body = next; view.rerender(ui(SCENES.idle())); }
+    };
+  }
+
+  it('FR12A 같은 공용 조명을 둘이 쓰면 사람마다 한 행씩 그리고 React 열쇠 경고가 없다', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const panel = setup(FIRST);
+      expect(await panel.loaded()).toEqual([['사물함 1', '방문자 C'], ['조명 1', '방문자 A'], ['조명 1', '방문자 B']]);
+      expect(error.mock.calls.flat().join(' ')).not.toMatch(/same key/);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('FR12A 다시 조회해 목록이 줄면 표도 준다 (지난 행이 남지 않는다)', async () => {
+    const panel = setup(FIRST);
+    expect(await panel.loaded()).toHaveLength(3);
+    panel.change([row('light-1', 'p-a', 'shared'), row('light-1', 'p-b', 'shared')]);
+    await waitFor(() => expect(panel.rows()).toEqual([['조명 1', '방문자 A'], ['조명 1', '방문자 B']]));
+  });
+
+  it('FR12A 같은 조명을 쓰는 사람이 바뀌면 행도 그 사람으로 바뀐다', async () => {
+    const panel = setup(FIRST);
+    await panel.loaded();
+    panel.change([row('light-1', 'p-b', 'shared'), row('light-1', 'p-c', 'shared')]);
+    await waitFor(() => expect(panel.rows()).toEqual([['조명 1', '방문자 B'], ['조명 1', '방문자 C']]));
   });
 });
 

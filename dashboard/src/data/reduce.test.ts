@@ -173,6 +173,62 @@ describe('reduce', () => {
     const s = reduceAll(s0(), [{ type: 'link', at: '14:00:09.000', connected: false, reconnectAttempts: 2 }]);
     expect(s).toMatchObject({ connected: false, reconnectAttempts: 2, lastReceivedAt: '14:00:00' });
   });
+
+  describe('다시 연결', () => {
+    const link = (connected: boolean, reconnectAttempts: number): StreamEvent => ({ type: 'link', at: '14:00:09.000', connected, reconnectAttempts });
+    /** 승인을 기다리는 중: 진행 중인 요청과 소유자 알림이 있다 */
+    const waiting = () => reduceAll(s0(), [call, { type: 'verdict', at: '14:00:01.200', requestId: 'r-1', verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED', nodeId: 'locker-1' },
+      { type: 'mcp_result', at: '14:00:01.300', requestId: 'r-1' },
+      { type: 'approval', at: '14:00:05.000', requestId: 'r-1', nodeId: 'locker-1', personId: 'p-a', kind: 'requested' }]);
+
+    it('FR12B 끊겼다 다시 연결하면 끊기기 전의 진행 중 요청과 소유자 알림을 지운다. 사람, 기기, 수신 시각은 그대로다', () => {
+      const asked = waiting();
+      expect(asked.request).toBeDefined();
+      expect(asked.ownerNotified).toBe(true);
+
+      // 끊기는 것만으로는 마지막 화면을 지우지 않는다
+      const down = reduceAll(asked, [link(false, 1)]);
+      expect(down).toMatchObject({ connected: false, ownerNotified: true });
+      expect(down.request).toBe(asked.request);
+
+      const back = reduceAll(down, [link(true, 0)]);
+      expect(back).toMatchObject({ connected: true, reconnectAttempts: 0, ownerNotified: false, lastReceivedAt: asked.lastReceivedAt });
+      expect(back.request).toBeUndefined();
+      expect(back.people).toEqual(asked.people);
+      expect(back.devices).toEqual(asked.devices);
+    });
+
+    it('FR12B 연결된 상태에서 오는 연결 이벤트는 요청과 소유자 알림을 지우지 않는다 (처음 연결은 앞 상태가 이미 연결이다)', () => {
+      const asked = waiting();
+      expect(asked.connected).toBe(true);
+      const same = reduceAll(asked, [link(true, 0)]);
+      expect(same.request).toBe(asked.request);
+      expect(same.ownerNotified).toBe(true);
+    });
+
+    it('FR12B 끊김이 이어지는 동안(다시 연결 시도가 거듭 실패)에는 지울 것이 없고, 마지막에 연결되면 지운다', () => {
+      let s = reduceAll(waiting(), [link(false, 1), link(false, 2), link(false, 3)]);
+      expect(s.request).toBeDefined();
+      s = reduceAll(s, [link(true, 0)]);
+      expect(s.request).toBeUndefined();
+      expect(s.ownerNotified).toBe(false);
+    });
+
+    it('FR12B 다시 연결한 뒤 오는 지금 상태가 진행 중인 요청과 대기 중인 승인을 다시 보내면 그것이 다시 선다', () => {
+      const back = reduceAll(waiting(), [link(false, 1), link(true, 0)]);
+      expect(back.request).toBeUndefined();
+      expect(back.ownerNotified).toBe(false);
+
+      const now = reduceAll(back, [
+        { type: 'approval', at: '14:00:12.000', requestId: 'r-1', nodeId: 'locker-1', personId: 'p-a', kind: 'requested' },
+        { ...call, at: '14:00:12.100' },
+        { type: 'verdict', at: '14:00:12.200', requestId: 'r-1', verdict: 'OK', reason: 'OK', nodeId: 'locker-1' },
+        { type: 'command', at: '14:00:12.300', requestId: 'r-1', nodeId: 'locker-1', action: 'open' }
+      ]);
+      expect(now.ownerNotified).toBe(true);
+      expect(now.request).toMatchObject({ id: 'r-1', verdict: 'OK', execution: 'sent' });
+    });
+  });
 });
 
 describe('reduce 감사', () => {

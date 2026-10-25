@@ -217,6 +217,21 @@ describe('App', () => {
     expect(container.querySelectorAll('[data-component="StageDevice"]').length).toBe(7);
   });
 
+  it('FR12A D4 모니터에서 설정을 열면 그 순간 무대의 장소로 탭을 정하고, 무대의 장소를 바꿔도 탭은 그대로다', async () => {
+    const { container } = render(<App source={createMockSource({ scene: 'side-room' })} />);
+    // 옆방 요청이 진행 중이라 무대는 옆방이다. 라운지로 고정하고 설정을 연다
+    fireEvent.click(within(await screen.findByRole('banner')).getByRole('button', { name: '공용 라운지' }));
+    expect(stage(container).dataset.place).toBe('lounge');
+    fireEvent.click(screen.getByRole('button', { name: '설정' }));
+    const tabs = await screen.findByRole('tablist', { name: '장소' });
+    const selected = () => tabs.querySelector('[aria-selected="true"]')!.textContent;
+    expect(selected()).toBe('공용 라운지');
+    // 설정 화면의 상단 바에서 무대를 옆방으로 바꿔도 탭은 열 때의 장소다
+    fireEvent.click(within(screen.getByRole('banner')).getByRole('button', { name: '옆방' }));
+    expect(within(screen.getByRole('banner')).getByRole('button', { name: '옆방' }).getAttribute('aria-pressed')).toBe('true');
+    expect(selected()).toBe('공용 라운지');
+  });
+
   it('FR12A D4 기본 배치로 되돌리면 이전 열쇠의 배치도 지워 다시 열어도 되살아나지 않는다', async () => {
     localStorage.setItem(LEGACY_KEY, arrangementFile('공용 라운지'));
     const first = render(<App source={createMockSource({ scene: 'idle' })} initialView="layout" />);

@@ -21,8 +21,8 @@ export type StreamEvent = At & (
   | { type: 'verdict'; requestId: string; verdict: Verdict; reason: ReasonCode; nodeId?: string }
   /** 서버가 MQTT로 기기에 명령을 보냄 */
   | { type: 'command'; requestId: string; nodeId: string; action: Action }
-  /** 기기 실행 결과. unknown은 기한 안에 결과를 받지 못함 */
-  | { type: 'exec_result'; requestId: string; nodeId: string; result: 'succeeded' | 'failed' | 'unknown' }
+  /** 기기 실행 결과. rejected는 기기가 실행 전에 거절함(격리 없음). unknown은 기한 안에 결과를 받지 못함 */
+  | { type: 'exec_result'; requestId: string; nodeId: string; result: 'succeeded' | 'failed' | 'rejected' | 'unknown' }
   /** 서버가 AI 호스트에 도구 호출의 결과를 돌려줌 */
   | { type: 'mcp_result'; requestId: string }
   /** 기기 상태 전이 */
