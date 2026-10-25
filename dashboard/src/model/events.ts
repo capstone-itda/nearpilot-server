@@ -1,4 +1,4 @@
-// FR-12B 모니터링 스트림의 이벤트. 메시지 형식은 미결이라 이 형태는 가정이다 (spec 7절).
+// FR-12B 모니터링 스트림의 이벤트. 서버 메시지(architecture.md §5 "WebSocket")는 어댑터가 이 형태로 옮긴다 (spec 7절).
 // 서버 어댑터는 WebSocket 메시지를 이 형태로 바꿔 넘긴다. 시각은 서버 시각 (HH:MM:SS.mmm).
 import type {
   Action, AuditRow, DeviceState, MockPhoneScreen, Person, ReasonCode, RequestProgress, Verdict
@@ -21,14 +21,14 @@ export type StreamEvent = At & (
   | { type: 'verdict'; requestId: string; verdict: Verdict; reason: ReasonCode; nodeId?: string }
   /** 서버가 MQTT로 기기에 명령을 보냄 */
   | { type: 'command'; requestId: string; nodeId: string; action: Action }
-  /** 기기 실행 결과. unknown은 기한 안에 결과를 받지 못함 */
-  | { type: 'exec_result'; requestId: string; nodeId: string; result: 'succeeded' | 'failed' | 'unknown' }
+  /** 기기 실행 결과. rejected는 기기가 실행 전에 거절함(격리 없음). unknown은 기한 안에 결과를 받지 못함 */
+  | { type: 'exec_result'; requestId: string; nodeId: string; result: 'succeeded' | 'failed' | 'rejected' | 'unknown' }
   /** 서버가 AI 호스트에 도구 호출의 결과를 돌려줌 */
   | { type: 'mcp_result'; requestId: string }
   /** 기기 상태 전이 */
   | { type: 'transition'; nodeId: string; to: DeviceState; overdue?: boolean; fault?: { cause: ReasonCode; action?: Action } }
-  /** 승인 신청(request_access)과 그 끝 */
-  | { type: 'approval'; requestId: string; nodeId: string; personId: string; kind: 'requested' | 'expired' }
+  /** 승인 신청(request_access)과 그 끝: 소유자가 승인·거부했거나 응답 없이 만료됐다 */
+  | { type: 'approval'; requestId: string; nodeId: string; personId: string; kind: 'requested' | 'approved' | 'denied' | 'expired' }
   /** 감사 로그 한 줄 */
   | { type: 'audit'; row: AuditRow }
   /** 어댑터가 만드는 연결 상태. 서버 이벤트가 아니다 */

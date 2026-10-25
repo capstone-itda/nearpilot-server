@@ -5,7 +5,7 @@ import { Stage } from '../components/Stage';
 import { Loading } from '../components/Panel';
 import { MirrorVideo } from '../components/PhoneMirror';
 import type { SettingsKey } from '../components/TopBar';
-import type { Spot } from '../model/types';
+import type { FloorLayout, PlaceInfo, Spot } from '../model/types';
 import { applyFile, parseFile, toFile, type Arrangement } from '../view/arrange';
 import { useData, useQuery } from '../data/context';
 import type { FollowSettings } from '../view/phone';
@@ -36,28 +36,53 @@ export function SettingsTabs({ current, onPick, onClose }: { current: SettingsKe
   );
 }
 
-export function SettingsContent({ title, sub, children }: { title: string; sub: string; children: ReactNode }) {
+/** aside는 제목 줄 오른쪽에 둔다 (배치 화면의 장소 탭) */
+export function SettingsContent({ title, sub, aside, children }: { title: string; sub: string; aside?: ReactNode; children: ReactNode }) {
   return (
     <main className="np-scontent" data-component="SettingsContent">
-      <div className="np-scontent__head"><h1 className="np-scontent__title">{title}</h1><p className="np-scontent__sub">{sub}</p></div>
+      <div className="np-scontent__head">
+        <div className="np-scontent__titles"><h1 className="np-scontent__title">{title}</h1><p className="np-scontent__sub">{sub}</p></div>
+        {aside}
+      </div>
       {children}
     </main>
+  );
+}
+
+/** 배치 화면의 장소 탭: 장소마다 배치를 따로 저장하므로 편집·내보내기·불러오기·초기화는 고른 장소에 적용된다 */
+function PlaceTabs({ places, current, onPick }: { places: PlaceInfo[]; current: string; onPick: (placeId: string) => void }) {
+  return (
+    <div className="np-ptabs" data-component="PlaceTabs" role="tablist" aria-label="장소">
+      {places.map((p) => (
+        <button key={p.placeId} className="np-ptabs__item" type="button" role="tab" aria-selected={p.placeId === current ? 'true' : 'false'} onClick={() => onPick(p.placeId)}>{p.placeName}</button>
+      ))}
+    </div>
   );
 }
 
 const fmtDbm = (v: number) => String(v).replace('-', '−');
 
 export interface LayoutCheckProps {
+  /** 장소 탭에 보이는 장소 */
+  places: PlaceInfo[];
+  /** 고른 장소와 그 장소의 표시 배치. 장소가 없으면 undefined */
+  layout?: FloorLayout;
+  onPlace: (placeId: string) => void;
   arrangement: Arrangement;
   canPlace: (nodeId: string, s: Spot) => boolean;
   onChange: (next: Arrangement) => void;
   onReset: () => void;
 }
 
-export function LayoutCheck({ arrangement, canPlace, onChange, onReset }: LayoutCheckProps) {
-  const { snapshot, layout } = useData();
+export function LayoutCheck({ places, layout, onPlace, arrangement, canPlace, onChange, onReset }: LayoutCheckProps) {
+  const { snapshot } = useData();
   const file = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState('');
+  // 장소 탭을 바꾸면 앞 장소의 결과 안내는 지운다
+  const [statusPlace, setStatusPlace] = useState(layout?.placeId);
+  if (statusPlace !== layout?.placeId) { setStatusPlace(layout?.placeId); setStatus(''); }
+  const sub = '기기를 끌어다 놓아 무대의 배치를 정해요. 이 PC에만 저장하고 서버는 바꾸지 않아요.';
+  if (!layout) return <SettingsContent title="배치" sub={sub}><p className="np-sec__hint" role="status">장소 없음</p></SettingsContent>;
   const weakDbm = layout.weakRssiDbm;
   const visitors = snapshot.people.filter((p) => p.role === 'visitor' && p.beaconSeen);
   // 사람별로 묶어서 한 문장으로 쓴다
@@ -69,7 +94,7 @@ export function LayoutCheck({ arrangement, canPlace, onChange, onReset }: Layout
     if (names.length) weak.push(`${p.pseudonym}의 신호가 ${names.join(', ')}에서 약해요.`);
   }
   const exportFile = () => {
-    const blob = new Blob([JSON.stringify(toFile(layout.placeName, arrangement), null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(toFile(layout.placeId, arrangement, layout.placeName), null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -91,13 +116,14 @@ export function LayoutCheck({ arrangement, canPlace, onChange, onReset }: Layout
       }
       if (a.moved === 0) { setStatus('불러오지 못했어요. 파일에 지금 장소의 기기가 없어요. 배치는 그대로예요.'); return; }
       onChange(a.next);
-      const other = r.place && r.place !== layout.placeName ? ` 다른 장소(${r.place})의 파일이라 이름이 같은 기기만 옮겼어요.` : '';
+      // 이전 버전의 파일은 place가 장소 이름이다. 같은 장소로 본다.
+      const other = r.place && r.place !== layout.placeId && r.place !== layout.placeName ? ` 다른 장소(${r.placeName ?? r.place})의 파일이라 이름이 같은 기기만 옮겼어요.` : '';
       const skipped = a.unknown ? ` 지금 장소에 없는 기기 ${a.unknown}대는 건너뛰었어요.` : '';
       setStatus(`기기 ${a.moved}대의 자리를 불러왔어요.${other}${skipped}`);
     }, () => setStatus('파일을 읽지 못했어요.'));
   };
   return (
-    <SettingsContent title="배치" sub="기기를 끌어다 놓아 무대의 배치를 정해요. 이 PC에만 저장하고 서버는 바꾸지 않아요.">
+    <SettingsContent title="배치" sub={sub} aside={<PlaceTabs places={places} current={layout.placeId} onPick={onPlace} />}>
       <div className="np-layoutcheck">
         <div className="np-layoutcheck__plan">
           <Stage v={stageView(snapshot, layout, { panelOpen: false, layoutCheck: true })} edit={{ canPlace, onMove: (id, s) => onChange({ ...arrangement, [id]: s }) }} />

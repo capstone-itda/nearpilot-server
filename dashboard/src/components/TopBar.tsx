@@ -10,11 +10,18 @@ export interface TopBarProps {
   receivedAt: string;
   /** 목 어댑터의 데이터다 */
   mock?: boolean;
-  placeName: string;
+  /** 고를 수 있는 장소. 비어 있으면 자동만 남고 누를 수 없다. */
+  places: { placeId: string; placeName: string }[];
+  /** 지금 무대에 크게 그리는 장소 */
+  current?: string;
+  /** 사람이 고정한 장소. 자동이면 undefined */
+  locked?: string;
+  /** 장소를 고정한다. undefined면 자동으로 푼다. */
+  onLock: (placeId: string | undefined) => void;
   onToggleTheme: () => void;
 }
 
-export function TopBar({ theme, live, receivedAt, mock, placeName, onToggleTheme }: TopBarProps) {
+export function TopBar({ theme, live, receivedAt, mock, places, current, locked, onLock, onToggleTheme }: TopBarProps) {
   const toLight = theme === 'dark';
   return (
     <header className="np-topbar" data-component="TopBar">
@@ -27,7 +34,18 @@ export function TopBar({ theme, live, receivedAt, mock, placeName, onToggleTheme
         <div className="np-topbar__name"><span className="np-topbar__wordmark">NEARPILOT</span><span className="np-cap">운영 모니터</span></div>
       </div>
       <span className="np-topbar__divider" aria-hidden="true" />
-      <div className="np-topbar__place"><span className="np-cap">장소</span><span className="np-topbar__place-name">{placeName}</span></div>
+      <div className="np-topbar__place" data-component="PlaceChooser" data-locked={locked ? 'true' : 'false'}>
+        <span className="np-cap" id="np-place-cap">장소</span>
+        {/* 고르면 그 장소로 고정하고, 자동을 누르면 푼다. 폭이 변하지 않게 지금 보이는 장소의 점 자리를 늘 둔다. */}
+        <div className="np-topbar__chooser" role="group" aria-labelledby="np-place-cap">
+          <button className="np-btn np-topbar__pick" type="button" aria-pressed={!locked} disabled={!places.length} onClick={() => onLock(undefined)}>자동</button>
+          {places.map((p) => (
+            <button key={p.placeId} className="np-btn np-topbar__pick" type="button" data-place={p.placeId} aria-pressed={locked === p.placeId} aria-current={current === p.placeId ? 'true' : undefined} onClick={() => onLock(p.placeId)}>
+              <span className="np-topbar__pick-dot" aria-hidden="true" />{p.placeName}
+            </button>
+          ))}
+        </div>
+      </div>
       <span className="np-topbar__spacer" />
       <div className="np-topbar__live" data-live={live ? 'true' : 'false'} role="status">
         <span className="np-topbar__live-dot" aria-hidden="true" /><span>{live ? '실시간 연결됨' : '연결 끊김'}</span>

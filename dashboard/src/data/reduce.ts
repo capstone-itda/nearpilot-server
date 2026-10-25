@@ -25,20 +25,22 @@ export const NEAR_DWELL_SEC = 2;
 
 function nearOf(p: Person, rssi: Record<string, number>, at: string): Pick<Person, 'near' | 'nearCandidate'> {
   const best = Object.entries(rssi).sort((a, b) => b[1] - a[1])[0]?.[0];
-  if (!best) return { near: undefined, nearCandidate: undefined };
   const cur = p.near;
-  // 처음 받았거나 지금 기기의 신호가 없으면 바로 정한다
-  if (!cur || rssi[cur] === undefined) return { near: best, nearCandidate: undefined };
-  if (best === cur || rssi[best] - rssi[cur] < NEAR_MARGIN_DB) return { near: cur, nearCandidate: undefined };
+  // 빈 묶음은 지금 기기를 그대로 둔다 (비콘이 끊기면 따로 지운다). 지우면 다음 묶음에서 2초 규칙 없이 다른 기기로 정한다
+  if (!best) return { near: cur, nearCandidate: undefined };
+  // 처음 받았으면 바로 정한다
+  if (!cur) return { near: best, nearCandidate: undefined };
+  // 지금 기기의 신호가 한 묶음에서 빠지면 4dB 비교 없이 2초 규칙만 쓴다 (빠짐 하나로 장소가 바뀌지 않게)
+  if (rssi[cur] !== undefined && (best === cur || rssi[best] - rssi[cur] < NEAR_MARGIN_DB)) return { near: cur, nearCandidate: undefined };
   const c = p.nearCandidate?.nodeId === best ? p.nearCandidate : { nodeId: best, since: at };
   return secOf(at) - secOf(c.since) >= NEAR_DWELL_SEC ? { near: best, nearCandidate: undefined } : { near: cur, nearCandidate: c };
 }
 
-/** 연결 직후의 빈 상태: 장소의 기기는 모두 사용 가능, 사람은 비콘 이벤트가 오면 생긴다 */
-export function initialState(place: PlaceInfo): MonitorState {
+/** 연결 직후의 빈 상태: 모든 장소의 기기는 모두 사용 가능, 사람은 비콘 이벤트가 오면 생긴다 */
+export function initialState(places: PlaceInfo[]): MonitorState {
   return {
     connected: true, lastReceivedAt: '', reconnectAttempts: 0,
-    devices: place.devices.map((d) => ({ nodeId: d.nodeId, state: 'AVAILABLE', online: true, trust: 'trusted', overdue: false })),
+    devices: places.flatMap((p) => p.devices).map((d) => ({ nodeId: d.nodeId, state: 'AVAILABLE', online: true, trust: 'trusted', overdue: false })),
     people: [], ownerNotified: false
   };
 }
@@ -104,11 +106,16 @@ function apply(s0: MonitorState, e: StreamEvent): MonitorState {
         }))
       };
     case 'approval': {
-      const t = withRequest(s, e.requestId, (r) => (e.kind === 'requested' ? { ...r, accessRequestedAt: clockOf(e.at) } : { ...r, accessExpiredAt: clockOf(e.at) }));
+      // 승인·거부·만료는 모두 승인 신청의 끝이다. 소유자 알림을 끝내고, 끝난 까닭과 요청을 내리는 시각을 잰다
+      const t = withRequest(s, e.requestId, (r) => (e.kind === 'requested' ? { ...r, accessRequestedAt: clockOf(e.at) } : { ...r, accessExpiredAt: clockOf(e.at), accessEnd: e.kind }));
       return { ...t, ownerNotified: e.kind === 'requested' };
     }
-    case 'link':
-      return { ...s0, connected: e.connected, reconnectAttempts: e.reconnectAttempts };
+    case 'link': {
+      // 끊겼다 다시 연결되면 끊기기 전의 진행 중 요청과 소유자 알림을 지운다. 이어서 오는 지금 상태가 아직 진행 중인 것만 다시 세운다
+      // (끊긴 동안 끝난 요청과 승인 신청이 남지 않는다). 사람과 기기는 지금 상태가 덮으므로 두고, 처음 연결은 앞 상태가 이미 연결이라 지우지 않는다
+      const back = !s0.connected && e.connected;
+      return { ...s0, connected: e.connected, reconnectAttempts: e.reconnectAttempts, ...(back ? { request: undefined, ownerNotified: false } : {}) };
+    }
     case 'mock_phone': {
       const phones = s.mockPhones ?? [];
       return { ...s0, mockPhones: phones.some((m) => m.personId === e.screen.personId) ? phones.map((m) => (m.personId === e.screen.personId ? e.screen : m)) : [...phones, e.screen] };

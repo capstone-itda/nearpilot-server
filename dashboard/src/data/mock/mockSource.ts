@@ -1,11 +1,11 @@
-// 목 어댑터: 서버 없이 화면을 그린다. 서버 어댑터는 경로와 형식이 정해진 뒤 같은 인터페이스로 만든다.
+// 목 어댑터: 서버 없이 화면을 그린다. 서버 어댑터는 따로 같은 인터페이스로 만든다.
 // 스트림은 story.ts의 이벤트를 보낸다. 조회는 마지막으로 보낸 이벤트 시각까지의 기록만 준다.
 import type { DataSource } from '../source';
 import type { StreamEvent } from '../../model/events';
 import type { HistoryQuery, HistoryRow, MonitorState, RequestProgress, UseRow } from '../../model/types';
 import { FINISHED_HOLD_SEC, initialState, reduceAll } from '../reduce';
 import {
-  APPROVAL_WAIT_MIN, APPROVALS, AUDIT, HEALTH, HISTORY, PLACE, RENTAL_DUE, RENTALS, TRUST, TRUST_BASE, USES, type Since
+  APPROVAL_WAIT_MIN, APPROVALS, AUDIT, HEALTH, HISTORY, PLACES, RENTAL_DUE, RENTALS, TRUST, TRUST_BASE, USES, WEAK_RSSI_DBM, type Since
 } from './fixtures';
 import { PLAY_ORDER, SCENE_TIME, STORY, finishedRequest, rssiEvents, sec, stamp, storyBetween, storyUntil, type SceneName } from './story';
 
@@ -76,7 +76,7 @@ const AUDIT_AT: Record<string, string> = Object.fromEntries(STORY.flatMap((e) =>
 
 /** 스트림 연결 전(14:05 전)의 요청은 이야기에 이벤트가 없다. 이력 줄에서 끝난 요청 상세를 만든다. */
 function earlierRequest(h: HistoryRow): RequestProgress {
-  const shared = PLACE.devices.find((d) => d.nodeId === h.nodeId)?.occupancy === 'shared';
+  const shared = PLACES.flatMap((p) => p.devices).find((d) => d.nodeId === h.nodeId)?.occupancy === 'shared';
   const steps: RequestProgress['steps'] = Array.from({ length: 7 }, (_, i) =>
     h.verdict === 'NEED_APPROVAL' ? { result: i < 4 ? 'pass' : i === 4 ? 'stop' : 'skip' }
       : { result: shared && i >= 5 ? 'skip' : 'pass' });
@@ -103,7 +103,7 @@ export function createMockSource(opt: MockOptions): DataSource {
   /** 연결 직후 서버가 다시 보내는 지금 상태 */
   const replay = () => [...storyUntil(now), ...(link ? [link] : [])];
   /** 조회 결과를 그 시각에 맞추려고 어댑터도 같은 상태를 쌓는다 */
-  let current: MonitorState = reduceAll(initialState(PLACE), replay());
+  let current: MonitorState = reduceAll(initialState(PLACES), replay());
   let index = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
   let liveStarted: number | undefined;
@@ -172,7 +172,7 @@ export function createMockSource(opt: MockOptions): DataSource {
       link = { type: 'link', at: stamp(t), connected: true, reconnectAttempts: 0 };
       advance(t, true, [link]);
     },
-    place: () => copy(PLACE),
+    places: () => copy({ weakRssiDbm: WEAK_RSSI_DBM, places: PLACES }),
     // 조회는 마지막으로 보낸 이벤트 시각에 서버가 줄 결과를 흉내 낸다
     uses: () => copy(USES.filter((u) => {
       const st = current.devices.find((d) => d.nodeId === u.nodeId)?.state;

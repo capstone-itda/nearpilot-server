@@ -1,5 +1,5 @@
 // 화면이 쓰는 값. 이름과 값은 server/src/nearpilot/shared/enums.py를 따른다.
-// 서버 메시지 형식은 미결이다 (FR-12A, FR-12B). 스트림 이벤트는 events.ts, 조회 결과는 아래 형태로 어댑터가 바꿔 넘긴다.
+// 서버 메시지 형식은 architecture.md §5에 있다 (FR-12A, FR-12B). 스트림 이벤트는 events.ts, 조회 결과는 아래 형태로 어댑터가 바꿔 넘긴다.
 
 export type Verdict = 'OK' | 'BUSY' | 'ASK' | 'DENY' | 'NEED_APPROVAL';
 export type DeviceState = 'AVAILABLE' | 'RESERVED' | 'ACTIVE' | 'CLOSING' | 'FAULT';
@@ -26,14 +26,20 @@ export interface DeviceInfo {
   occupancy: Occupancy;
 }
 
-/** 조회 REST의 장소 정보. 좌표는 없다. */
+/** 조회 REST의 장소 하나. 좌표는 없다. */
 export interface PlaceInfo {
+  placeId: string;
   placeName: string;
   modelVersion: string;
   calibrationVersion: string;
+  devices: DeviceInfo[];
+}
+
+/** 조회 REST의 장소 목록 (GET /dashboard/places). 약한 신호 기준은 응답 전체에 하나다. */
+export interface PlacesInfo {
   /** 배치 화면에서 약한 신호로 표시할 기준 (dBm). 설정에서 받는다. 판정에는 쓰지 않는다. */
   weakRssiDbm: number;
-  devices: DeviceInfo[];
+  places: PlaceInfo[];
 }
 
 /** 무대 위 표시 자리 (SVG 단위). 실제 위치가 아니고 이 PC에서 정한다. */
@@ -41,7 +47,7 @@ export interface Spot { x: number; y: number }
 
 export interface LayoutDevice extends DeviceInfo { spot: Spot }
 /** 장소 정보에 이 PC의 표시 배치를 입힌 것 */
-export interface FloorLayout extends Omit<PlaceInfo, 'devices'> { devices: LayoutDevice[] }
+export interface FloorLayout extends Omit<PlaceInfo, 'devices'> { weakRssiDbm: number; devices: LayoutDevice[] }
 
 export interface DeviceStatus {
   nodeId: string;
@@ -96,12 +102,14 @@ export interface RequestProgress {
   posteriors?: Record<string, number>;
   /** 이 요청에 적용한 근접 임계값 (설정값) */
   threshold?: number;
-  /** 실행: 보냄(결과 대기), 완료, 결과 불명 */
-  execution?: 'sent' | 'succeeded' | 'failed' | 'unknown';
+  /** 실행: 보냄(결과 대기), 완료, 실패, 결과 불명, 기기가 실행 전에 거절(고장 격리 아님) */
+  execution?: 'sent' | 'succeeded' | 'failed' | 'unknown' | 'rejected';
   /** NEED_APPROVAL 뒤 AI가 request_access로 신청한 시각 */
   accessRequestedAt?: string;
-  /** 승인 신청이 소유자 응답 없이 만료된 시각 */
+  /** 승인 신청이 끝난 시각: 소유자 응답 없이 만료됐거나, 소유자가 승인·거부했다 */
   accessExpiredAt?: string;
+  /** 승인 신청이 끝난 까닭. 스트림에서는 accessExpiredAt과 함께 생긴다. 조회 REST의 승인·거절은 끝난 시각 없이 온다 (서버가 저장하지 않는다) */
+  accessEnd?: 'approved' | 'denied' | 'expired';
   /** 서버가 AI 호스트에 결과를 돌려준 시각 */
   respondedAt?: string;
 }
@@ -185,11 +193,12 @@ export interface HistoryQuery { period: string; verdict?: Verdict; nodeId?: stri
 
 export interface TrustReport {
   live: { since: string; decisions: number; doubleOccupancy: number; latencyMedianSec: number | null; latencyP95Sec: number | null; counts: Record<Verdict, number> };
-  evaluation: {
+  /** 사전 평가 리포트. 평가 리포트가 없으면 없다 */
+  evaluation?: {
     date: string;
     metrics: { id: number; name: string; pass: boolean | null; label: string; sample: string; sampleNote?: string }[];
-    /** 혼동 행렬 (%) 행 = 실제, 열 = 고름. 마지막 칸은 none */
-    confusion: { labels: string[]; values: number[][] };
+    /** 혼동 행렬 (%) 행 = 실제, 열 = 고름. 마지막 칸은 none. 평가 리포트에 혼동 행렬이 없으면 없다 */
+    confusion?: { labels: string[]; values: number[][] };
   };
 }
 

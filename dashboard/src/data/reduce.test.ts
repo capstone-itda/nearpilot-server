@@ -2,9 +2,9 @@
 import { describe, expect, it } from 'vitest';
 import type { StreamEvent } from '../model/events';
 import { FINISHED_HOLD_SEC, initialState, reduceAll } from './reduce';
-import { PLACE } from './mock/fixtures';
+import { LOUNGE, PLACES } from './mock/fixtures';
 
-const s0 = () => reduceAll(initialState(PLACE), [
+const s0 = () => reduceAll(initialState([LOUNGE]), [
   { type: 'beacon', at: '14:00:00.000', personId: 'p-a', pseudonym: '방문자 A', letter: 'A', role: 'visitor', seen: true },
   { type: 'rssi', at: '14:00:00.000', personId: 'p-a', rssi: { 'locker-1': -52 } }
 ]);
@@ -15,6 +15,20 @@ describe('reduce', () => {
     expect(s0().people).toEqual([{ id: 'p-a', pseudonym: '방문자 A', letter: 'A', role: 'visitor', beaconSeen: true, rssi: { 'locker-1': -52 }, near: 'locker-1', nearCandidate: undefined }]);
     const gone = reduceAll(s0(), [{ type: 'beacon', at: '14:00:02.000', personId: 'p-a', pseudonym: '방문자 A', letter: 'A', role: 'visitor', seen: false }]);
     expect(gone.people[0]).toMatchObject({ beaconSeen: false, rssi: {}, near: undefined });
+  });
+
+  it('FR12B 처음 상태는 모든 장소의 기기를 사용 가능으로 둔다', () => {
+    const s = initialState(PLACES);
+    expect(s.devices.map((d) => d.nodeId)).toEqual(PLACES.flatMap((p) => p.devices.map((d) => d.nodeId)));
+    expect(s.devices.every((d) => d.state === 'AVAILABLE')).toBe(true);
+  });
+
+  it('FR12B 무대에 세우는 기기는 장소와 상관없이 신호가 가장 센 기기다', () => {
+    const s = reduceAll(initialState(PLACES), [
+      { type: 'beacon', at: '14:00:00.000', personId: 'p-a', pseudonym: '방문자 A', letter: 'A', role: 'visitor', seen: true },
+      { type: 'rssi', at: '14:00:00.000', personId: 'p-a', rssi: { 'locker-1': -70, 'mood-1': -50 } }
+    ]);
+    expect(s.people[0].near).toBe('mood-1');
   });
 
   it('FR12B 무대에 세우는 기기는 다른 기기 신호가 4dB 이상 센 상태가 2초 이어질 때만 바뀐다', () => {
@@ -29,6 +43,18 @@ describe('reduce', () => {
     // 중간에 차이가 줄면 처음부터 다시 잰다
     expect(near([at('14:00:01.000', { 'locker-1': -56, 'locker-2': -50 }), at('14:00:02.000', { 'locker-1': -53, 'locker-2': -52 }),
       at('14:00:03.500', { 'locker-1': -56, 'locker-2': -50 })])).toBe('locker-1');
+  });
+
+  it('FR12B 지금 기기의 신호가 한 묶음에서 빠져도 바로 옮기지 않고, 다른 기기가 2초 이어 가장 세면 옮긴다', () => {
+    const at = (t: string, rssi: Record<string, number>): StreamEvent => ({ type: 'rssi', at: t, personId: 'p-a', rssi });
+    const near = (events: StreamEvent[]) => reduceAll(s0(), events).people[0].near;
+    // 한 묶음만 빠지고 돌아오면 그대로
+    expect(near([at('14:00:01.000', { 'mood-1': -78 }), at('14:00:01.500', { 'locker-1': -52, 'mood-1': -78 })])).toBe('locker-1');
+    expect(near([at('14:00:01.000', { 'mood-1': -78 })])).toBe('locker-1');
+    // 빈 묶음이 끼어도 그대로다
+    expect(near([at('14:00:01.000', {}), at('14:00:01.500', { 'mood-1': -78 })])).toBe('locker-1');
+    // 빠진 채 2초 이어지면 옮긴다
+    expect(near([at('14:00:01.000', { 'mood-1': -78 }), at('14:00:03.000', { 'mood-1': -78 })])).toBe('mood-1');
   });
 
   it('FR12B 도구 호출이 오면 판정 전 요청이 생기고 단계는 기다림이다', () => {
@@ -89,6 +115,47 @@ describe('reduce', () => {
     expect(expired.request!.accessExpiredAt).toBe('14:10:05');
   });
 
+  it('FR12B 승인·거절·만료는 끝난 까닭(accessEnd)을 남기고, 신청 중이거나 다른 요청의 끝이면 남기지 않는다', () => {
+    const asked = reduceAll(s0(), [call, { type: 'verdict', at: '14:00:01.200', requestId: 'r-1', verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED', nodeId: 'locker-1' },
+      { type: 'mcp_result', at: '14:00:01.300', requestId: 'r-1' },
+      { type: 'approval', at: '14:00:05.000', requestId: 'r-1', nodeId: 'locker-1', personId: 'p-a', kind: 'requested' }]);
+    // 신청 중에는 끝난 까닭이 없다
+    expect(asked.request).not.toHaveProperty('accessEnd');
+    expect(asked.request).not.toHaveProperty('accessExpiredAt');
+    for (const kind of ['approved', 'denied', 'expired'] as const) {
+      const ended = reduceAll(asked, [{ type: 'approval', at: '14:00:09.000', requestId: 'r-1', nodeId: 'locker-1', personId: 'p-a', kind }]);
+      expect(ended.request, kind).toMatchObject({ accessRequestedAt: '14:00:05', accessExpiredAt: '14:00:09', accessEnd: kind });
+      // 다른 요청 번호의 끝은 지금 요청을 바꾸지 않는다
+      const other = reduceAll(asked, [{ type: 'approval', at: '14:00:09.000', requestId: 'r-x', nodeId: 'locker-1', personId: 'p-a', kind }]);
+      expect(other.request, kind).not.toHaveProperty('accessEnd');
+    }
+  });
+
+  it('FR12B 승인과 거부도 만료처럼 소유자 알림을 끄고 끝난 시각을 남긴다', () => {
+    const asked = reduceAll(s0(), [call, { type: 'verdict', at: '14:00:01.200', requestId: 'r-1', verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED', nodeId: 'locker-1' },
+      { type: 'mcp_result', at: '14:00:01.300', requestId: 'r-1' },
+      { type: 'approval', at: '14:00:05.000', requestId: 'r-1', nodeId: 'locker-1', personId: 'p-a', kind: 'requested' }]);
+    expect(asked.ownerNotified).toBe(true);
+    for (const kind of ['approved', 'denied'] as const) {
+      const ended = reduceAll(asked, [{ type: 'approval', at: '14:00:09.000', requestId: 'r-1', nodeId: 'locker-1', personId: 'p-a', kind }]);
+      expect(ended.ownerNotified, kind).toBe(false);
+      expect(ended.request!.accessRequestedAt, kind).toBe('14:00:05');
+      expect(ended.request!.accessExpiredAt, kind).toBe('14:00:09');
+    }
+  });
+
+  it('FR12B 승인·거부로 끝난 요청도 만료처럼 잠시 남았다가 내려간다', () => {
+    const asked = reduceAll(s0(), [call, { type: 'verdict', at: '14:00:01.200', requestId: 'r-1', verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED' },
+      { type: 'mcp_result', at: '14:00:01.300', requestId: 'r-1' },
+      { type: 'approval', at: '14:00:05.000', requestId: 'r-1', nodeId: 'locker-1', personId: 'p-a', kind: 'requested' }]);
+    const rssiAt = (sec: number): StreamEvent => ({ type: 'rssi', at: `14:00:${String(sec).padStart(2, '0')}.000`, personId: 'p-a', rssi: { 'locker-1': -52 } });
+    for (const kind of ['expired', 'approved', 'denied'] as const) {
+      const ended = reduceAll(asked, [{ type: 'approval', at: '14:00:09.000', requestId: 'r-1', nodeId: 'locker-1', personId: 'p-a', kind }]);
+      expect(reduceAll(ended, [rssiAt(9 + FINISHED_HOLD_SEC)]).request, kind).toBeDefined();
+      expect(reduceAll(ended, [rssiAt(10 + FINISHED_HOLD_SEC)]).request, kind).toBeUndefined();
+    }
+  });
+
   it('FR12B 끝난 요청은 잠시 남았다가 내려가고, 승인을 기다리는 요청은 남는다', () => {
     const done = reduceAll(s0(), [call, { type: 'verdict', at: '14:00:01.200', requestId: 'r-1', verdict: 'DENY', reason: 'POLICY_DENIED' },
       { type: 'mcp_result', at: '14:00:01.300', requestId: 'r-1' }]);
@@ -105,6 +172,62 @@ describe('reduce', () => {
   it('FR12B 연결 상태는 링크 이벤트가 바꾸고 수신 시각은 그대로 둔다', () => {
     const s = reduceAll(s0(), [{ type: 'link', at: '14:00:09.000', connected: false, reconnectAttempts: 2 }]);
     expect(s).toMatchObject({ connected: false, reconnectAttempts: 2, lastReceivedAt: '14:00:00' });
+  });
+
+  describe('다시 연결', () => {
+    const link = (connected: boolean, reconnectAttempts: number): StreamEvent => ({ type: 'link', at: '14:00:09.000', connected, reconnectAttempts });
+    /** 승인을 기다리는 중: 진행 중인 요청과 소유자 알림이 있다 */
+    const waiting = () => reduceAll(s0(), [call, { type: 'verdict', at: '14:00:01.200', requestId: 'r-1', verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED', nodeId: 'locker-1' },
+      { type: 'mcp_result', at: '14:00:01.300', requestId: 'r-1' },
+      { type: 'approval', at: '14:00:05.000', requestId: 'r-1', nodeId: 'locker-1', personId: 'p-a', kind: 'requested' }]);
+
+    it('FR12B 끊겼다 다시 연결하면 끊기기 전의 진행 중 요청과 소유자 알림을 지운다. 사람, 기기, 수신 시각은 그대로다', () => {
+      const asked = waiting();
+      expect(asked.request).toBeDefined();
+      expect(asked.ownerNotified).toBe(true);
+
+      // 끊기는 것만으로는 마지막 화면을 지우지 않는다
+      const down = reduceAll(asked, [link(false, 1)]);
+      expect(down).toMatchObject({ connected: false, ownerNotified: true });
+      expect(down.request).toBe(asked.request);
+
+      const back = reduceAll(down, [link(true, 0)]);
+      expect(back).toMatchObject({ connected: true, reconnectAttempts: 0, ownerNotified: false, lastReceivedAt: asked.lastReceivedAt });
+      expect(back.request).toBeUndefined();
+      expect(back.people).toEqual(asked.people);
+      expect(back.devices).toEqual(asked.devices);
+    });
+
+    it('FR12B 연결된 상태에서 오는 연결 이벤트는 요청과 소유자 알림을 지우지 않는다 (처음 연결은 앞 상태가 이미 연결이다)', () => {
+      const asked = waiting();
+      expect(asked.connected).toBe(true);
+      const same = reduceAll(asked, [link(true, 0)]);
+      expect(same.request).toBe(asked.request);
+      expect(same.ownerNotified).toBe(true);
+    });
+
+    it('FR12B 끊김이 이어지는 동안(다시 연결 시도가 거듭 실패)에는 지울 것이 없고, 마지막에 연결되면 지운다', () => {
+      let s = reduceAll(waiting(), [link(false, 1), link(false, 2), link(false, 3)]);
+      expect(s.request).toBeDefined();
+      s = reduceAll(s, [link(true, 0)]);
+      expect(s.request).toBeUndefined();
+      expect(s.ownerNotified).toBe(false);
+    });
+
+    it('FR12B 다시 연결한 뒤 오는 지금 상태가 진행 중인 요청과 대기 중인 승인을 다시 보내면 그것이 다시 선다', () => {
+      const back = reduceAll(waiting(), [link(false, 1), link(true, 0)]);
+      expect(back.request).toBeUndefined();
+      expect(back.ownerNotified).toBe(false);
+
+      const now = reduceAll(back, [
+        { type: 'approval', at: '14:00:12.000', requestId: 'r-1', nodeId: 'locker-1', personId: 'p-a', kind: 'requested' },
+        { ...call, at: '14:00:12.100' },
+        { type: 'verdict', at: '14:00:12.200', requestId: 'r-1', verdict: 'OK', reason: 'OK', nodeId: 'locker-1' },
+        { type: 'command', at: '14:00:12.300', requestId: 'r-1', nodeId: 'locker-1', action: 'open' }
+      ]);
+      expect(now.ownerNotified).toBe(true);
+      expect(now.request).toMatchObject({ id: 'r-1', verdict: 'OK', execution: 'sent' });
+    });
   });
 });
 

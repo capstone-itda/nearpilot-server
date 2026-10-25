@@ -15,10 +15,11 @@ export function UsesPanel({ onClose, onOpenDevice }: Close & { onOpenDevice: (id
   const q = useQuery(() => source.uses(), []);
   return (
     <Panel kind="uses" cap="패널 · MON-06" title="점유·대여 현황" onClose={onClose}>
-      <Section title="지금 쓰는 기기" hint="대여형 기기의 점유 세션만 보여요. 공용형은 세션이 없어 이 표에 없어요">
+      <Section title="지금 쓰는 기기" hint="대여형 기기의 점유 세션과 공용 조명을 지금 쓰는 사람을 보여요">
         {q.data ? (
           <DataTable label="점유·대여 목록" head={['기기', '사용자', '세션', '시작', '초과']} rows={q.data.map((u) => ({
-            key: u.nodeId,
+            // 공용 조명 하나를 여럿이 쓰면 같은 기기가 사람마다 한 행씩 온다
+            key: `${u.nodeId}:${u.personId}`,
             cells: [
               <TdLink key="d" main={deviceName(u.nodeId)} sub={u.nodeId} onClick={() => onOpenDevice(u.nodeId)} />,
               <Td key="p" main={personName(u.personId)} sub={u.occupancy} />,
@@ -95,7 +96,7 @@ const VERDICTS: Verdict[] = ['OK', 'ASK', 'NEED_APPROVAL', 'BUSY', 'DENY'];
 const HISTORY_PAGE = 6;
 
 export function HistoryPanel({ onClose, onOpenRequest }: Close & { onOpenRequest: (requestId: string) => void }) {
-  const { source, layout, deviceName, personName } = useData();
+  const { source, places, deviceName, personName } = useData();
   const [form, setForm] = useState<HistoryQuery>({ period: '오늘' });
   const [query, setQuery] = useState<HistoryQuery>(form);
   const q = useQuery(() => source.history(query), [query]);
@@ -117,7 +118,7 @@ export function HistoryPanel({ onClose, onOpenRequest }: Close & { onOpenRequest
             </select></label>
           <label className="np-field"><span className="np-field__label">기기</span>
             <select className="np-field__input" value={form.nodeId ?? ''} onChange={(e) => setForm({ ...form, nodeId: e.target.value || undefined })}>
-              <option value="">전체</option>{layout.devices.map((d) => <option key={d.nodeId} value={d.nodeId}>{d.name}</option>)}
+              <option value="">전체</option>{places.flatMap((p) => p.devices).map((d) => <option key={d.nodeId} value={d.nodeId}>{d.name}</option>)}
             </select></label>
           <button className="np-btn" type="submit">찾기</button>
         </form>
@@ -160,7 +161,9 @@ export function TrustPanel({ onClose }: Close) {
     x += w;
     return seg;
   });
-  const { labels, values } = t.evaluation.confusion;
+  // 평가 리포트가 없으면 evaluation이 없고, 리포트에 혼동 행렬이 없으면 confusion이 없다
+  const ev = t.evaluation;
+  const cm = ev?.confusion;
   return (
     <Panel kind="trust" size="wide" cap="패널 · MON-10" title="신뢰도 지표" onClose={onClose}>
       <Zone kind="live" title="이번 시연" cap="실시간">
@@ -179,29 +182,33 @@ export function TrustPanel({ onClose }: Close) {
           {VERDICTS.map((v) => <span key={v} className="np-legend__item"><span className="np-legend__swatch" data-verdict={v} />{VERDICT_LABEL[v]} {t.live.counts[v]}</span>)}
         </div>
       </Zone>
-      <Zone kind="eval" title="사전 평가 · 시연 숫자와 섞지 않음" cap={`평가일 ${t.evaluation.date}`}>
-        <div className="np-zone__cols">
-          <DataTable label="인수 기준 지표" head={['지표', '결과', '표본']} rows={t.evaluation.metrics.map((m) => ({
-            key: String(m.id),
-            cells: [
-              <Td key="n" main={`${m.id} ${m.name}`} />,
-              <td key="r"><span className="np-pass" data-pass={m.pass === null ? 'none' : String(m.pass)}>{m.label}</span></td>,
-              m.sampleNote ? <Td key="s" main={m.sample} sub={m.sampleNote} /> : <TdMono key="s" v={m.sample} />
-            ]
-          }))} />
-          <div className="np-sec">
-            <div className="np-sec__head"><h3 className="np-sec__title">근접 모델 혼동 행렬 · 지표 8</h3><span className="np-cap">시험셋</span></div>
-            <table className="np-matrix" data-component="ConfusionMatrix" aria-label="근접 모델 혼동 행렬">
-              <thead><tr><th scope="col">실제＼고름</th>{labels.map((h) => <th key={h} scope="col">{h}</th>)}</tr></thead>
-              <tbody>
-                {values.map((r, i) => (
-                  <tr key={labels[i]}><th scope="row">{labels[i]}</th>{r.map((v, j) => <td key={j} data-level={i === j ? 'hi' : v ? 'lo' : 'zero'}>{v}</td>)}</tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="np-sec__hint">값은 %. 1~3 사물함 · 스 스피커 · 조1~3 조명 · 없음 none</p>
+      <Zone kind="eval" title="사전 평가 · 시연 숫자와 섞지 않음" cap={ev ? `평가일 ${ev.date}` : ''}>
+        {ev ? (
+          <div className="np-zone__cols">
+            <DataTable label="인수 기준 지표" head={['지표', '결과', '표본']} rows={ev.metrics.map((m) => ({
+              key: String(m.id),
+              cells: [
+                <Td key="n" main={`${m.id} ${m.name}`} />,
+                <td key="r"><span className="np-pass" data-pass={m.pass === null ? 'none' : String(m.pass)}>{m.label}</span></td>,
+                m.sampleNote ? <Td key="s" main={m.sample} sub={m.sampleNote} /> : <TdMono key="s" v={m.sample} />
+              ]
+            }))} />
+            {cm ? (
+              <div className="np-sec">
+                <div className="np-sec__head"><h3 className="np-sec__title">근접 모델 혼동 행렬 · 지표 8</h3><span className="np-cap">시험셋</span></div>
+                <table className="np-matrix" data-component="ConfusionMatrix" aria-label="근접 모델 혼동 행렬">
+                  <thead><tr><th scope="col">실제＼고름</th>{cm.labels.map((h) => <th key={h} scope="col">{h}</th>)}</tr></thead>
+                  <tbody>
+                    {cm.values.map((r, i) => (
+                      <tr key={cm.labels[i]}><th scope="row">{cm.labels[i]}</th>{r.map((v, j) => <td key={j} data-level={i === j ? 'hi' : v ? 'lo' : 'zero'}>{v}</td>)}</tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="np-sec__hint">값은 %. 1~3 사물함 · 스 스피커 · 조1~3 조명 · 없음 none</p>
+              </div>
+            ) : null}
           </div>
-        </div>
+        ) : <p className="np-sec__hint" role="status">평가 리포트 없음</p>}
       </Zone>
     </Panel>
   );

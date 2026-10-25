@@ -31,14 +31,23 @@ function execText(r: RequestProgress, subject: string): string {
     case 'succeeded': return `${subject} ${ACTION_DONE[r.action]}`;
     case 'failed': return '기기가 실패를 알려 고장 격리했어요 (EXEC_FAILED)';
     case 'unknown': return '응답이 없어 결과를 몰라 고장 격리했어요 (EXEC_UNKNOWN)';
+    case 'rejected': return '기기가 실행 전에 거절했어요 · 격리하지 않았어요 (rejected)';
     case 'sent': return '명령 보냄 · 결과 기다림';
     default: return '허가 · 명령 보낼 차례';
   }
 }
 
+/** 승인 신청이 끝난 까닭별 타임라인 문구. 승인은 실행 허가가 아니다: AI가 request_use를 다시 불러야 실행한다 */
+const ACCESS_END_TEXT: Record<NonNullable<RequestProgress['accessEnd']>, string> = {
+  approved: '소유자가 승인 · 다시 요청하면 실행',
+  denied: '소유자가 거절 · 실행 안 함',
+  expired: '소유자 응답 없이 신청 만료 · 실행 안 함'
+};
+
 export function RequestPanel({ r, onClose }: { r: RequestProgress; onClose: () => void }) {
-  const { personName, deviceName, layout, snapshot } = useData();
-  const cap = CAPABILITY_NAME[r.target.capability ?? layout.devices.find((d) => d.nodeId === r.nodeId)?.capability ?? 'locker'];
+  const { personName, deviceName, places, snapshot } = useData();
+  const devices = places.flatMap((p) => p.devices);
+  const cap = CAPABILITY_NAME[r.target.capability ?? devices.find((d) => d.nodeId === r.nodeId)?.capability ?? 'locker'];
   const d: DecidedRequest | undefined = isDecided(r) ? r : undefined;
   const rows: [StepRowResult, string, string][] = r.steps.map((s) =>
     s.result === 'pass' ? ['pass', '통과', s.detail ?? '']
@@ -63,15 +72,15 @@ export function RequestPanel({ r, onClose }: { r: RequestProgress; onClose: () =
       ) : null}
       {showBars ? (
         <Section title={`어느 ${cap} 앞일까`} hint={`가장 높은 확률이 기준선을 넘어야 ${ACTION_VERB[r.action]}`}>
-          <ProbBars rows={layout.devices.filter((d) => r.posteriors![d.nodeId] !== undefined).map((d) => [d.name, r.posteriors![d.nodeId], d.nodeId === post[0][0] ? 'ask' : 'muted'])} threshold={r.threshold!} />
+          <ProbBars rows={devices.filter((d) => r.posteriors![d.nodeId] !== undefined).map((d) => [d.name, r.posteriors![d.nodeId], d.nodeId === post[0][0] ? 'ask' : 'muted'])} threshold={r.threshold!} />
         </Section>
       ) : null}
       {d?.verdict === 'NEED_APPROVAL' ? (
         <Section title="승인 진행">
           <Timeline items={d.accessRequestedAt
             ? [['done', d.accessRequestedAt, 'request_access로 승인 신청 → 소유자 폰에 알림 (알림 수단 미결)'],
-              ...(d.accessExpiredAt
-                ? [['now', d.accessExpiredAt, '소유자 응답 없이 신청 만료 · 실행 안 함', 'appr'] as ['now', string, string, string]]
+              ...(d.accessEnd || d.accessExpiredAt
+                ? [['now', d.accessExpiredAt ?? '—', ACCESS_END_TEXT[d.accessEnd ?? 'expired'], 'appr'] as ['now', string, string, string]]
                 : snapshot.request?.id === d.id ? [['now', snapshot.lastReceivedAt, '소유자 응답 기다림', 'appr'] as ['now', string, string, string]] : [])]
             : [['now', d.at, d.reason === 'APPROVAL_REQUIRED'
               ? 'AI의 승인 신청(request_access)을 기다림'

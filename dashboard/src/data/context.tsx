@@ -1,10 +1,11 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import type { DataSource } from './source';
-import type { FloorLayout, MonitorState } from '../model/types';
+import type { MonitorState, PlaceInfo } from '../model/types';
 
 export interface Ctx {
   source: DataSource;
-  layout: FloorLayout;
+  /** 모든 장소의 기기 정보. 주 장소가 아닌 장소의 기기도 이 목록에서 찾는다. */
+  places: PlaceInfo[];
   snapshot: MonitorState;
   personName: (id: string) => string;
   deviceName: (id: string) => string;

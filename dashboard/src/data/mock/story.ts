@@ -2,11 +2,12 @@
 // 13:21 방문자 C가 사물함 3 대여(14:21:05부터 대여 초과). 14:20 C의 요청 거부, 14:22 B의 BUSY,
 // 14:26 A의 ASK, 14:28 A가 사물함 1을 엶, 14:29 B의 사물함 2가 결과 불명으로 FAULT,
 // 14:30 B의 조명 1 승인 필요 → 14:31 승인 신청 → 14:41 응답 없이 만료.
+// 14:42 C가 라운지로 돌아옴, 14:43 A가 옆방으로 옮겨 무드등을 켬(OK).
 // 고정 장면은 그 시각까지의 이벤트를 한꺼번에 보낸 결과다. 조회 데이터(fixtures.ts)의 시각과 같다.
 import type { StreamEvent } from '../../model/events';
 import type { Action, MockPhoneScreen, MonitorState, Person, ReasonCode, RequestProgress, Verdict } from '../../model/types';
 import { initialState, reduceAll } from '../reduce';
-import { AUDIT, PLACE } from './fixtures';
+import { AUDIT, PLACES } from './fixtures';
 
 /** HH:MM:SS(.mmm) → 초 */
 export const sec = (t: string) => { const [h, m, s = '0'] = t.split(':'); return Number(h) * 3600 + Number(m) * 60 + Number(s); };
@@ -26,6 +27,10 @@ const RSSI_FLOW_A: Rssi = { 'locker-1': -52, 'locker-2': -67, 'locker-3': -74, '
 const RSSI_IDLE_B: Rssi = { 'locker-1': -77, 'locker-2': -76, 'locker-3': -66, 'speaker-1': -83, 'light-1': -77, 'light-2': -78, 'light-3': -72 };
 const RSSI_FAULT_B: Rssi = { 'locker-1': -74, 'locker-2': -58, 'locker-3': -70, 'speaker-1': -83, 'light-1': -77, 'light-2': -77, 'light-3': -84 };
 const RSSI_APPROVAL_B: Rssi = { 'locker-1': -72, 'locker-2': -75, 'locker-3': -77, 'speaker-1': -70, 'light-1': -57, 'light-2': -71, 'light-3': -83 };
+/** 옆방으로 옮긴 A: 라운지 신호는 사라지고 무드등만 잡힌다 */
+const RSSI_SIDE_A: Rssi = { 'mood-1': -49 };
+/** 라운지로 돌아온 C: 대여 중인 사물함 3 앞 */
+const RSSI_C: Rssi = { 'locker-1': -78, 'locker-2': -74, 'locker-3': -60, 'speaker-1': -80, 'light-1': -79, 'light-2': -82, 'light-3': -84 };
 
 const PEOPLE: (Pick<Person, 'pseudonym' | 'letter' | 'role'> & { id: string })[] = [
   { id: 'p-a', pseudonym: '방문자 A', letter: 'A', role: 'visitor' },
@@ -34,13 +39,21 @@ const PEOPLE: (Pick<Person, 'pseudonym' | 'letter' | 'role'> & { id: string })[]
   { id: 'p-owner', pseudonym: '소유자', role: 'owner' }
 ];
 
-/** 사람별 비콘이 잡히는 구간과 신호 세기 기준점. 사이 시각은 선형으로 잇는다. */
+/**
+ * 사람별 비콘이 잡히는 구간과 신호 세기 기준점. 사이 시각은 선형으로 잇는다.
+ * 기준점 사이는 같은 기기들의 값이어야 한다. A는 라운지를 떠나 비콘이 끊긴 사이에 신호 기기가 옆방으로 바뀐다.
+ */
 const TRACKS: Record<string, { windows: [string, string][]; keys: [string, Rssi][] }> = {
-  'p-a': { windows: [['14:05:00', '99:00:00']], keys: [['14:05:00', RSSI_IDLE_A], ['14:25:50', RSSI_IDLE_A], ['14:26:10', RSSI_ASK_A], ['14:27:45', RSSI_ASK_A], ['14:28:05', RSSI_FLOW_A]] },
+  'p-a': {
+    windows: [['14:05:00', '14:43:40'], ['14:43:44', '99:00:00']],
+    keys: [['14:05:00', RSSI_IDLE_A], ['14:25:50', RSSI_IDLE_A], ['14:26:10', RSSI_ASK_A], ['14:27:45', RSSI_ASK_A], ['14:28:05', RSSI_FLOW_A],
+      ['14:43:40', RSSI_FLOW_A], ['14:43:44', RSSI_SIDE_A]]
+  },
   'p-b': {
     windows: [['14:05:00', '14:23:00'], ['14:28:30', '99:00:00']],
     keys: [['14:05:00', RSSI_IDLE_B], ['14:28:30', RSSI_IDLE_B], ['14:29:30', RSSI_FAULT_B], ['14:29:50', RSSI_FAULT_B], ['14:30:50', RSSI_APPROVAL_B]]
-  }
+  },
+  'p-c': { windows: [['14:42:30', '99:00:00']], keys: [['14:42:30', RSSI_C]] }
 };
 
 /** 같은 입력에 같은 값을 주는 ±1 dB 흔들림 (0.5초마다 바뀜) */
@@ -138,7 +151,12 @@ const REQUEST_SCRIPTS: RequestScript[] = [
   { id: 'r-1430', at: '14:30:58', personId: 'p-b', target: { kind: 'nearest', capability: 'light' }, action: 'on',
     steps: [...ALL_PASS(['새 요청', '비콘 최근 수신', '조명 3대', 'P(light-1) 0.91 ≥ 0.75 (설정값)']), ['stop']],
     posterior: { at: 3, posteriors: { 'light-1': 0.91, 'light-2': 0.06, 'light-3': 0.03 }, threshold: 0.75 },
-    verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED', nodeId: 'light-1', said: '조명 켜 줘', reply: '조명 1은 소유자 승인이 필요해요. 승인을 신청할게요.' }
+    verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED', nodeId: 'light-1', said: '조명 켜 줘', reply: '조명 1은 소유자 승인이 필요해요. 승인을 신청할게요.' },
+  // 옆방의 장소는 따로라 후보도 그 장소의 기기다
+  { id: 'r-1443', at: '14:43:48', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on',
+    steps: ALL_PASS(['새 요청', '비콘 최근 수신', '조명 1대', 'P(mood-1) 0.98 ≥ 0.75 (설정값)', '켜기 정책']),
+    posterior: { at: 3, posteriors: { 'mood-1': 0.98 }, threshold: 0.75 },
+    verdict: 'OK', reason: 'OK', nodeId: 'mood-1', exec: { at: '14:43:49', result: 'succeeded' }, said: '조명 켜 줘', reply: '무드등을 켰어요.' }
 ];
 
 /** 승인 신청과 만료 (대기 10분은 목 값, 실제 값은 설정 approval_pending_ttl_sec) */
@@ -200,14 +218,16 @@ export const SCENE_TIME = {
   /** MON-01·04 승인 대기: B의 조명 1, 소유자에게 알림 */
   approval: '14:31:02',
   /** 패널 화면의 바탕: 승인 신청이 만료되고 조용해진 뒤 */
-  later: '14:41:30'
+  later: '14:41:30',
+  /** 옆방: A가 옮겨 간 옆방에서 무드등 켜기 명령을 보내고 결과를 기다림. C는 라운지에 있다 */
+  'side-room': '14:43:48.5'
 } as const;
 export type SceneName = keyof typeof SCENE_TIME;
 /** 재생 순서 (시각순) */
-export const PLAY_ORDER: SceneName[] = ['idle', 'ask', 'flow', 'done', 'fault', 'approval'];
+export const PLAY_ORDER: SceneName[] = ['idle', 'ask', 'flow', 'done', 'fault', 'approval', 'side-room'];
 
 /** 그 장면 시각까지 이벤트를 쌓은 모니터 상태 (테스트와 고정 장면) */
-export const stateAt = (t: number): MonitorState => reduceAll(initialState(PLACE), storyUntil(t));
+export const stateAt = (t: number): MonitorState => reduceAll(initialState(PLACES), storyUntil(t));
 export const SCENES = Object.fromEntries(Object.entries(SCENE_TIME).map(([k, v]) => [k, () => {
   const s = stateAt(sec(v));
   return k === 'offline' ? { ...s, connected: false, reconnectAttempts: 3 } : s;
@@ -216,7 +236,7 @@ export const SCENES = Object.fromEntries(Object.entries(SCENE_TIME).map(([k, v])
 /** 판정이 끝난 요청 하나 (조회 REST의 판정 단계별 결과) */
 export function finishedRequest(id: string): RequestProgress | undefined {
   let found: RequestProgress | undefined;
-  let s = initialState(PLACE);
+  let s = initialState(PLACES);
   for (const e of STORY) {
     s = reduceAll(s, [e]);
     if (s.request?.id === id) found = s.request;

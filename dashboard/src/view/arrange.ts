@@ -84,19 +84,21 @@ export function resolveArrangement(devices: DeviceInfo[], saved: Arrangement = {
   return out;
 }
 
-/** 서버의 장소 정보에 이 PC의 배치를 입힌다. 자리가 없는 기기는 무대에 그리지 않는다. */
-export function withArrangement(place: PlaceInfo, arr: Arrangement): FloorLayout {
-  return { ...place, devices: place.devices.filter((d) => arr[d.nodeId]).map((d) => ({ ...d, spot: arr[d.nodeId] })) };
+/** 서버의 장소 정보에 이 PC의 배치와 약한 신호 기준을 입힌다. 자리가 없는 기기는 무대에 그리지 않는다. */
+export function withArrangement(place: PlaceInfo, arr: Arrangement, weakRssiDbm: number): FloorLayout {
+  return { ...place, weakRssiDbm, devices: place.devices.filter((d) => arr[d.nodeId]).map((d) => ({ ...d, spot: arr[d.nodeId] })) };
 }
 
 // ── 파일 내보내기·불러오기 ──────────────────────────────────────────────
 
-export interface ArrangementFile { kind: 'nearpilot-arrangement'; version: 1; place: string; devices: Arrangement }
+/** place는 placeId다. placeName은 사람이 읽는 이름이고, 읽을 때 없으면 무시한다. */
+export interface ArrangementFile { kind: 'nearpilot-arrangement'; version: 1; place: string; placeName?: string; devices: Arrangement }
 
-export const toFile = (place: string, arr: Arrangement): ArrangementFile => ({ kind: 'nearpilot-arrangement', version: 1, place, devices: arr });
+export const toFile = (place: string, arr: Arrangement, placeName?: string): ArrangementFile =>
+  ({ kind: 'nearpilot-arrangement', version: 1, place, ...(placeName ? { placeName } : {}), devices: arr });
 
 /** 불러온 파일을 읽는다. 형식이 틀리면 이유를 돌려준다. */
-export function parseFile(text: string): { ok: true; devices: Arrangement; place: string } | { ok: false; error: string } {
+export function parseFile(text: string): { ok: true; devices: Arrangement; place: string; placeName?: string } | { ok: false; error: string } {
   let v: unknown;
   try { v = JSON.parse(text); } catch { return { ok: false, error: 'JSON 파일이 아니에요' }; }
   const f = v as Partial<ArrangementFile>;
@@ -110,7 +112,7 @@ export function parseFile(text: string): { ok: true; devices: Arrangement; place
     else invalid.push(id);
   }
   if (invalid.length) return { ok: false, error: `좌표가 숫자가 아닌 기기가 있어요 (${invalid.join(', ')})` };
-  return { ok: true, devices, place: typeof f.place === 'string' ? f.place : '' };
+  return { ok: true, devices, place: typeof f.place === 'string' ? f.place : '', ...(typeof f.placeName === 'string' ? { placeName: f.placeName } : {}) };
 }
 
 /**

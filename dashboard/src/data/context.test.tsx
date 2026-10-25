@@ -2,7 +2,7 @@
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DataCtx, useQuery } from './context';
-import { LAYOUT } from './mock/fixtures';
+import { PLACES } from './mock/fixtures';
 import { SCENES } from './mock/story';
 import { createMockSource } from './mock/mockSource';
 import type { MonitorState } from '../model/types';
@@ -16,7 +16,7 @@ describe('useQuery', () => {
     const fetch = () => new Promise<number>((res) => { calls += 1; release = res; });
     function Probe() { const q = useQuery(fetch, []); return <p>{q.data === undefined ? '없음' : `값 ${q.data}`}</p>; }
     const ui = (snapshot: MonitorState) => (
-      <DataCtx.Provider value={{ source: createMockSource({ scene: 'idle' }), layout: LAYOUT, snapshot, personName: (id) => id, deviceName: (id) => id }}>
+      <DataCtx.Provider value={{ source: createMockSource({ scene: 'idle' }), places: PLACES, snapshot, personName: (id) => id, deviceName: (id) => id }}>
         <Probe />
       </DataCtx.Provider>
     );

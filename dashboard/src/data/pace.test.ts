@@ -23,6 +23,17 @@ describe('paceJudging', () => {
     vi.advanceTimersByTime(JUDGE_GAUGE_MS);
     expect(got).toEqual([['mcp_call'], ['rssi'], ['step', 'verdict']]);
   });
+  it('FR12B 게이지가 도는 중에 다시 연결되면 모아 둔 이벤트를 버리고 게이지가 찬 뒤에도 넘기지 않는다', () => {
+    vi.useFakeTimers();
+    const got: string[][] = [];
+    const p = paceJudging((x) => got.push(x.map((e) => e.type)));
+    p.push([call]);
+    p.push([step, verdict]);
+    p.push([{ type: 'link', at: '14:00:01.300', connected: false, reconnectAttempts: 1 }]);
+    p.push([{ type: 'link', at: '14:00:02.300', connected: true, reconnectAttempts: 0 }]);
+    vi.advanceTimersByTime(JUDGE_GAUGE_MS);
+    expect(got).toEqual([['mcp_call'], ['link'], ['link']]);
+  });
   it('FR12B 같은 묶음에 판정까지 있으면(다시 연결해 받은 상태) 늦추지 않는다', () => {
     const got: string[][] = [];
     paceJudging((x) => got.push(x.map((e) => e.type))).push([call, step, verdict]);

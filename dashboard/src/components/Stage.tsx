@@ -1,11 +1,12 @@
 // 무대: 표시용 배치 위의 기기, 사람, 무선 흐름(D5). 배치는 이 PC에서 정한다(D4). 실제 위치·거리가 아니다.
 // 그림은 iso-glow 헤어라인 아이소메트릭이다: 어두운 판에 가는 선, 살아 있는 것만 판정 색으로 빛난다.
 // 평면 배치를 투영해 그리고(view/iso.ts), 글자는 투영한 자리에 똑바로 쓴다.
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import type { Spot } from '../model/types';
 import { GRID, ROOM, facing, frontOf, snap } from '../view/arrange';
+import { MARK_H, MARK_W, PERSON_R, planIn, type InsetView } from '../view/inset';
 import { ISO_K, ROOM_ISO, iso, kernel, unIso, type Kernel } from '../view/iso';
-import { DEVICE_D, DEVICE_H, DEVICE_LABEL_H, DEVICE_W, HEAD_R, PERSON_Z, deviceBody, labelBox } from '../view/placement';
+import { DEVICE_D, DEVICE_H, DEVICE_LABEL_H, DEVICE_W, HEAD_R, PERSON_Z, SLAB_H, WALL_H, deviceBody, labelBox } from '../view/placement';
 import type { StageDeviceView, StageView, StageVisitorView } from '../view/stage';
 import { FIT, ZOOM_MAX, ZOOM_STEP, isFit, panBy, viewBoxOf, zoomAt, type ZoomView } from '../view/zoom';
 import { Icon } from './common';
@@ -109,14 +110,16 @@ function LightFigure({ d }: { d: StageDeviceView }) {
   );
 }
 
-function Device({ d, edit }: { d: StageDeviceView; edit?: DeviceEditProps }) {
+function Device({ d, edit, calm }: { d: StageDeviceView; edit?: DeviceEditProps; calm?: boolean }) {
+  // 장소가 바뀌어 새로 그려지는 기기는 도착 강조 없이 겹쳐 나타난다 (처음 그릴 때 정한다. 상태가 바뀌면 key가 달라져 새로 그린다)
+  const quiet = useRef(calm).current;
   const editAttrs = edit ? {
     tabIndex: 0, role: 'button', 'aria-label': `${d.name} 옮기기. 끌거나 화살표 키로 한 칸씩 옮겨요`,
     'data-edit': 'true', 'data-invalid': b(edit.invalid), onPointerDown: edit.onPointerDown, onKeyDown: edit.onKeyDown
   } : {};
   const l = d.label;
   return (
-    <g className="np-stage__device np-flash" data-component="StageDevice" data-spot={`${d.x} ${d.y}`} data-tone={d.tone} data-dim={b(d.dim)} data-on={b(!d.hidden)} {...editAttrs}>
+    <g className={quiet ? 'np-stage__device' : 'np-stage__device np-flash'} data-component="StageDevice" data-spot={`${d.x} ${d.y}`} data-tone={d.tone} data-dim={b(d.dim)} data-on={b(!d.hidden)} {...editAttrs}>
       {edit ? <rect className="np-stage__hit" x={d.body.x1 - 12} y={d.body.y1 - 12} width={d.body.x2 - d.body.x1 + 24} height={d.body.y2 - d.body.y1 + 24} /> : null}
       {d.capability === 'light' ? <LightFigure d={d} /> : <DeviceFigure d={d} />}
       <text className="np-stage__label" x={l.x} y={l.y + 19} data-anchor="middle">{d.name}</text>
@@ -273,10 +276,110 @@ const FLOOR_GRID = (() => {
   for (let y = ROOM.y + 120; y < ROOM.y + ROOM.h; y += 120) out.push(ROOM_ISO.line([[ROOM.x, y, 0], [ROOM.x + ROOM.w, y, 0]]));
   return out.join('');
 })();
-const SLAB = ROOM_ISO.box(ROOM.x, ROOM.y, -12, ROOM.w, ROOM.h, 12);
-const WALL_H = 34;
+const SLAB = ROOM_ISO.box(ROOM.x, ROOM.y, -SLAB_H, ROOM.w, ROOM.h, SLAB_H);
 const WALL_LEFT = ROOM_ISO.poly([[ROOM.x, ROOM.y, 0], [ROOM.x, ROOM.y + ROOM.h, 0], [ROOM.x, ROOM.y + ROOM.h, WALL_H], [ROOM.x, ROOM.y, WALL_H]]);
 const WALL_BACK = ROOM_ISO.poly([[ROOM.x, ROOM.y, 0], [ROOM.x + ROOM.w, ROOM.y, 0], [ROOM.x + ROOM.w, ROOM.y, WALL_H], [ROOM.x, ROOM.y, WALL_H]]);
+
+// ── 한 장소의 층 ────────────────────────────────────────────────────────
+
+/** 한 장소의 바닥 층: 바닥판, 격자, 뒤쪽 낮은 벽, 바닥 배선, 기기 앞 원, 비콘 신호 */
+function Floor({ v, devices }: { v: StageView; devices: StageDeviceView[] }) {
+  const bus = devices.map((d) => pathOf(floorRoute(d))).join('');
+  return (
+    <>
+      <path className="np-iso__face" d={SLAB.side} /><path className="np-iso__face" d={SLAB.front} />
+      <path className="np-iso__face np-iso__floor" d={SLAB.top} />
+      <path className="np-iso__detail" d={FLOOR_GRID} />
+      <path className="np-iso__face np-iso__wall" d={WALL_LEFT} /><path className="np-iso__face np-iso__wall" d={WALL_BACK} />
+      <path className="np-stage__bus" d={bus} data-on={b(v.scene !== 'layout')} />
+      {devices.map((d) => <path key={d.nodeId} className="np-stage__front" d={ROOM_ISO.ring(d.fx, d.fy, 44)} />)}
+      {v.signals.map((s) => {
+        const p = iso(s);
+        return (
+          <g key={s.personId} className="np-stage__signals" data-on={b(s.on)}>
+            {devices.map((d) => <path key={d.nodeId} className="np-stage__signal" d={`M${pt(p)}L${pt(iso({ x: d.fx, y: d.fy }))}`} />)}
+          </g>
+        );
+      })}
+    </>
+  );
+}
+
+/** 한 장소의 기기, 사람, 신호 세기 글자, 콜아웃. 상태가 바뀐 기기는 다시 그려져 도착 강조가 한 번 나온다. */
+function Actors({ v, devices, editFor, calm }: {
+  v: StageView; devices: StageDeviceView[]; editFor?: (d: StageDeviceView) => DeviceEditProps | undefined; calm?: boolean;
+}) {
+  const c = v.callout;
+  // 앞에 있는 것(평면 x + y가 큰 것)을 나중에 그린다
+  const depth = [
+    ...devices.map((d) => ({ k: d.x + d.y, el: <Device key={`${d.nodeId}|${d.status}|${d.tone}`} d={d} edit={editFor?.(d)} calm={calm} /> })),
+    ...v.visitors.map((x) => ({ k: x.x + x.y + 1, el: <Visitor key={x.personId} v={x} /> }))
+  ].sort((a, z) => a.k - z.k);
+  return (
+    <>
+      {depth.map((x) => x.el)}
+
+      <g className="np-stage__rssi" data-on={b(v.rssiOn)}>
+        {devices.filter((d) => !d.hidden).map((d) => <text key={d.nodeId} className="np-stage__signal-label" x={d.rssiAt.x} y={d.rssiAt.y + 17} data-anchor="middle">{v.rssi[d.nodeId] ?? ''}</text>)}
+      </g>
+
+      <g key={`${c.title}|${c.body}`} className="np-stage__callout np-flash" data-component="StageCallout" data-on={b(c.on)} data-tone={c.tone}>
+        <path className="np-stage__callout-leader" d={`M${c.ax} ${c.ay}L${c.lx} ${c.ly}`} />
+        <circle className="np-stage__callout-dot" cx={c.ax} cy={c.ay} r="4" />
+        <g transform={`translate(${c.x} ${c.y})`}>
+          <rect className="np-stage__callout-box" width="390" height={c.body ? 76 : 50} rx="8" />
+          <text className="np-stage__callout-title" x="18" y="32">{c.title}</text>
+          <text className="np-stage__callout-body" x="18" y="58">{c.body}</text>
+        </g>
+      </g>
+    </>
+  );
+}
+
+// ── 작은 방 ─────────────────────────────────────────────────────────────
+
+/** 주 장소가 바뀔 때 떠나는 그림을 남겨 새 그림과 겹쳐 바꾸는 시간 (ms). styles/Stage.css의 np-place-in·np-place-out과 같다. */
+export const PLACE_FADE_MS = 400;
+
+/**
+ * 주 장소가 아닌 장소를 줄여 그린 카드: 장소 이름, 기기마다 상태 색 표시, 사람 글자. 누르면 그 장소로 고정한다.
+ * 장소가 바뀌어도 같은 카드를 다시 쓰므로(fading이면 새 모습이 겹쳐 나타난다) 키보드 포커스가 남는다.
+ * leaving이면 떠나는 그림이라 누를 수 없고 화면 읽기에서도 뺀다.
+ */
+function InsetCard({ inset, fading, leaving, onPick }: { inset: InsetView; fading?: boolean; leaving?: boolean; onPick?: (placeId: string) => void }) {
+  const { box } = inset;
+  const plan = planIn(box);
+  const pick = () => onPick?.(inset.placeId);
+  const live = leaving ? { 'aria-hidden': true } : {
+    role: 'button', tabIndex: 0, 'aria-label': inset.aria, onClick: pick,
+    // 무대를 끌어 옮기는 동작이 포인터를 가져가면 눌림이 이 카드에 오지 않는다
+    onPointerDown: (e: PointerEvent<SVGGElement>) => e.stopPropagation(),
+    onKeyDown: (e: KeyboardEvent<SVGGElement>) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } }
+  };
+  return (
+    <g className="np-stage__inset" data-component="StageInset" data-place={inset.placeId} data-fade={fading ? 'in' : 'off'} data-leaving={b(leaving)} {...live}>
+      <rect className="np-stage__inset-box" x={box.x1} y={box.y1} width={box.x2 - box.x1} height={box.y2 - box.y1} rx="10" />
+      <text className="np-stage__inset-title" x={box.x1 + 14} y={box.y1 + 25}>{inset.placeName}</text>
+      <rect className="np-stage__inset-plan" x={plan.x} y={plan.y} width={ROOM.w * plan.k} height={ROOM.h * plan.k} rx="3" />
+      {inset.devices.map((d) => <rect key={d.nodeId} className="np-stage__inset-mark" data-tone={d.tone} x={d.x - MARK_W / 2} y={d.y - MARK_H / 2} width={MARK_W} height={MARK_H} rx="2" />)}
+      {inset.people.map((p) => (
+        <g key={p.personId} className="np-stage__inset-person">
+          <circle cx={p.x} cy={p.y} r={PERSON_R} />
+          <text className="np-stage__inset-letter" x={p.x} y={p.y + 6} data-anchor="middle">{p.letter}</text>
+        </g>
+      ))}
+    </g>
+  );
+}
+
+/** 장소 목록이 비었을 때의 무대. 상단 바, 레일, 폰 화면은 그대로 둔다. */
+export function StageEmpty() {
+  return (
+    <section className="np-stage" data-component="Stage" data-scene="empty" aria-label="장소 없음">
+      <p className="np-stage__empty" role="status">장소 없음</p>
+    </section>
+  );
+}
 
 /** 모니터 무대의 확대·이동 (설정의 배치 화면에서는 쓰지 않는다) */
 export interface StageZoom {
@@ -286,12 +389,36 @@ export interface StageZoom {
   onSize: (s: { w: number; h: number; right: number }) => void;
 }
 
-export function Stage({ v, edit, zoom }: { v: StageView; edit?: StageEdit; zoom?: StageZoom }) {
+export function Stage({ v, edit, zoom, inset, locked, onInset }: {
+  v: StageView; edit?: StageEdit; zoom?: StageZoom;
+  /** 작은 방 (view/inset.ts). 없으면 그리지 않는다. */
+  inset?: InsetView;
+  /** 사람이 장소를 고정했다 */
+  locked?: boolean;
+  /** 작은 방을 눌렀다 (그 장소로 고정한다) */
+  onInset?: (placeId: string) => void;
+}) {
   const svg = useRef<SVGSVGElement>(null);
   const section = useRef<HTMLElement>(null);
   const pan = useRef<{ x: number; y: number; view: ZoomView; scale: number } | null>(null);
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
+  // 주 장소가 바뀌면 떠나는 장소의 방과 작은 방을 잠시 남겨 새 그림과 겹쳐 바꾼다 (움직임 줄이기 설정과 배치 편집에서는 바로 바꾼다).
+  // 장소가 바뀐 그 그림에서 바로 정해야 새 기기가 도착 강조 없이 그려진다.
+  const last = useRef({ v, inset });
+  const [placeId, setPlaceId] = useState(v.placeId);
+  const [leaving, setLeaving] = useState<{ v: StageView; inset?: InsetView } | null>(null);
+  if (placeId !== v.placeId) {
+    setPlaceId(v.placeId);
+    setLeaving(edit || window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? null : last.current);
+  }
+  useLayoutEffect(() => { last.current = { v, inset }; });
+  useEffect(() => {
+    if (!leaving) return;
+    const t = setTimeout(() => setLeaving(null), PLACE_FADE_MS);
+    return () => clearTimeout(t);
+  }, [leaving]);
+  const fading = !!leaving;
   /** 화면 좌표 → 무대 좌표 */
   const toStage = (x: number, y: number): Spot => {
     const m = svg.current?.getScreenCTM();
@@ -383,7 +510,6 @@ export function Stage({ v, edit, zoom }: { v: StageView; edit?: StageEdit; zoom?
   };
 
   const shift = v.shift;
-  const bus = devices.map((d) => pathOf(floorRoute(d))).join('');
   const cmd = routeTo(devices.find((d) => d.nodeId === v.cmd), shift);
   const fault = routeTo(devices.find((d) => d.nodeId === v.fault), shift);
   // 비콘 신호는 방 안쪽 끝의 기기에서 뒤쪽 벽과 왼쪽 벽을 따라 서버로 올라간다
@@ -395,17 +521,11 @@ export function Stage({ v, edit, zoom }: { v: StageView; edit?: StageEdit; zoom?
   const room = (children: ReactNode, fade = false) => (
     <g mask={shift && fade ? 'url(#np-room-cut)' : undefined} clipPath={shift && !fade ? 'url(#np-room-clip)' : undefined}><g transform={shift ? `translate(${-shift} 0)` : undefined}>{children}</g></g>
   );
-  const c = v.callout;
-  // 앞에 있는 것(평면 x + y가 큰 것)을 나중에 그린다
-  const depth = [
-    ...devices.map((d) => ({ k: d.x + d.y, el: <Device key={`${d.nodeId}|${d.status}|${d.tone}`} d={d} edit={editFor(d)} /> })),
-    ...v.visitors.map((x) => ({ k: x.x + x.y + 1, el: <Visitor key={x.personId} v={x} /> }))
-  ].sort((a, z) => a.k - z.k);
-
+  // 작은 방이 있으면 안의 누를 수 있는 카드가 화면 읽기에 보이도록 그림 전체를 이미지로 두지 않는다
   return (
-    <section ref={section} className="np-stage" data-component="Stage" data-scene={v.scene} data-zoomed={b(!!zoom && !isFit(zoom.view))} aria-label={`${v.placeName} 배치도`}>
+    <section ref={section} className="np-stage" data-component="Stage" data-scene={v.scene} data-place={v.placeId} data-locked={b(locked)} data-zoomed={b(!!zoom && !isFit(zoom.view))} aria-label={`${v.placeName} 배치도`}>
       <svg ref={svg} className="np-stage__svg" data-editing={b(!!drag)} onPointerDown={onPanStart} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => { pan.current = null; setDrag(null); }}
-        viewBox={v.scene === 'layout' ? '300 0 1100 800' : (zoom ? viewBoxOf(zoom.view) : viewBoxOf(FIT)).join(' ')} preserveAspectRatio="xMidYMid meet" role="img" aria-label={v.aria}>
+        viewBox={v.scene === 'layout' ? '300 0 1100 800' : (zoom ? viewBoxOf(zoom.view) : viewBoxOf(FIT)).join(' ')} preserveAspectRatio="xMidYMid meet" role={inset ? 'group' : 'img'} aria-label={v.aria}>
         <defs>
           <filter id="np-glow" filterUnits="userSpaceOnUse" x="-2000" y="-2000" width="6000" height="6000"><feGaussianBlur stdDeviation="4" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
           {/* 방을 밀면 왼쪽 칸 쪽 가장자리를 흐리게 지워, 방이 그 뒤로 이어진다는 것을 보인다 */}
@@ -421,22 +541,10 @@ export function Stage({ v, edit, zoom }: { v: StageView; edit?: StageEdit; zoom?
 
         <text className="np-stage__note" x={330} y={40}>표시용 배치 · 실제 거리와 다름</text>
 
-        {/* 방: 바닥판, 격자, 뒤쪽 낮은 벽, 바닥 배선, 기기 앞 원, 비콘 신호 */}
+        {/* 방: 바닥판, 격자, 뒤쪽 낮은 벽, 바닥 배선, 기기 앞 원, 비콘 신호. 장소가 바뀌면 떠나는 방이 잠시 겹쳐 있다. */}
         {room(<>
-          <path className="np-iso__face" d={SLAB.side} /><path className="np-iso__face" d={SLAB.front} />
-          <path className="np-iso__face np-iso__floor" d={SLAB.top} />
-          <path className="np-iso__detail" d={FLOOR_GRID} />
-          <path className="np-iso__face np-iso__wall" d={WALL_LEFT} /><path className="np-iso__face np-iso__wall" d={WALL_BACK} />
-          <path className="np-stage__bus" d={bus} data-on={b(v.scene !== 'layout')} />
-          {devices.map((d) => <path key={d.nodeId} className="np-stage__front" d={ROOM_ISO.ring(d.fx, d.fy, 44)} />)}
-          {v.signals.map((s) => {
-            const p = iso(s);
-            return (
-              <g key={s.personId} className="np-stage__signals" data-on={b(s.on)}>
-                {devices.map((d) => <path key={d.nodeId} className="np-stage__signal" d={`M${pt(p)}L${pt(iso({ x: d.fx, y: d.fy }))}`} />)}
-              </g>
-            );
-          })}
+          {leaving ? <g className="np-stage__place" data-leaving="true" aria-hidden="true"><Floor v={leaving.v} devices={leaving.v.devices} /></g> : null}
+          <g className="np-stage__place" data-fade={fading ? 'in' : 'off'}><Floor v={v} devices={devices} /></g>
         </>, true)}
 
         <g className="np-stage__nodes" data-on={b(v.scene !== 'layout')}>
@@ -457,23 +565,13 @@ export function Stage({ v, edit, zoom }: { v: StageView; edit?: StageEdit; zoom?
         <g data-on={b(v.scene !== 'layout')} className="np-stage__nodes"><ServerText key={`server|${v.server}|${JSON.stringify(v.judge)}`} j={v.judge} /></g>
 
         {room(<>
-        {/* 상태가 바뀐 기기는 다시 그려져 도착 강조가 한 번 나온다 */}
-        {depth.map((x) => x.el)}
-
-        <g className="np-stage__rssi" data-on={b(v.rssiOn)}>
-          {devices.filter((d) => !d.hidden).map((d) => <text key={d.nodeId} className="np-stage__signal-label" x={d.rssiAt.x} y={d.rssiAt.y + 17} data-anchor="middle">{v.rssi[d.nodeId] ?? ''}</text>)}
-        </g>
-
-        <g key={`${c.title}|${c.body}`} className="np-stage__callout np-flash" data-component="StageCallout" data-on={b(c.on)} data-tone={c.tone}>
-          <path className="np-stage__callout-leader" d={`M${c.ax} ${c.ay}L${c.lx} ${c.ly}`} />
-          <circle className="np-stage__callout-dot" cx={c.ax} cy={c.ay} r="4" />
-          <g transform={`translate(${c.x} ${c.y})`}>
-            <rect className="np-stage__callout-box" width="390" height={c.body ? 76 : 50} rx="8" />
-            <text className="np-stage__callout-title" x="18" y="32">{c.title}</text>
-            <text className="np-stage__callout-body" x="18" y="58">{c.body}</text>
-          </g>
-        </g>
+          {leaving ? <g className="np-stage__place" data-leaving="true" aria-hidden="true"><Actors v={leaving.v} devices={leaving.v.devices} calm /></g> : null}
+          <g className="np-stage__place" data-fade={fading ? 'in' : 'off'}><Actors v={v} devices={devices} editFor={editFor} calm={fading} /></g>
         </>)}
+
+        {/* 작은 방: 밀어 그리는 방과 겹치지 않게 방 층 밖에 둔다 (패널이 열리면 없다) */}
+        {leaving?.inset ? <InsetCard inset={leaving.inset} leaving /> : null}
+        {inset ? <InsetCard inset={inset} fading={fading} onPick={onInset} /> : null}
 
         <text className="np-stage__code" x={1380} y={40} data-anchor="end">{v.placeName} · 근접 모델 {v.modelVersion}</text>
       </svg>

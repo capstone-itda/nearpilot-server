@@ -146,3 +146,31 @@
 .np-stage__zoom .np-btn:disabled { opacity: 0.4; cursor: default; }
 .np-stage[data-zoomed="true"] .np-stage__svg { cursor: grab; }
 .np-stage[data-zoomed="true"] .np-stage__svg:active { cursor: grabbing; }
+
+/* 작은 방: 주 장소가 아닌 장소를 줄인 카드. 누르면 그 장소로 고정한다.
+   글자는 장소 이름과 사람 글자뿐이다. 무대가 작게 그려져도 읽히도록 크기는 늘 18px이다. */
+.np-stage__inset { cursor: pointer; outline: none; }
+.np-stage__inset-box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+.np-stage__inset:hover .np-stage__inset-box { stroke: var(--accent); }
+.np-stage__inset:focus-visible .np-stage__inset-box { stroke: var(--accent-strong); stroke-width: 2; stroke-dasharray: 6 4; }
+.np-stage__inset-title { font-family: var(--font-sans); font-size: 18px; font-weight: 500; fill: var(--ink); }
+.np-stage__inset-plan { fill: var(--floor); stroke: var(--line-soft); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.np-stage__inset-mark { fill: var(--glass); stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.np-stage__inset-mark:not([data-tone="none"]) { fill: var(--tone); stroke: var(--tone); }
+.np-stage__inset-mark[data-tone="deny"] { stroke-dasharray: 3 2; }
+.np-stage__inset-person circle { fill: var(--accent); stroke: var(--surface); stroke-width: 1.5; }
+.np-stage__inset-letter { font-family: var(--font-mono); font-size: 18px; font-weight: 600; fill: var(--on-accent); }
+
+/* 주 장소가 바뀌면 방과 작은 방을 0.4초 동안 겹쳐 바꾼다 (Stage.tsx의 PLACE_FADE_MS). 움직임 줄이기면 바로 바꾼다. */
+@keyframes np-place-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes np-place-out { from { opacity: 1; } to { opacity: 0; } }
+.np-app[data-motion="on"] :is(.np-stage__place, .np-stage__inset)[data-fade="in"] { animation: np-place-in 0.4s ease-out; }
+.np-app[data-motion="on"] :is(.np-stage__place, .np-stage__inset)[data-leaving="true"] { animation: np-place-out 0.4s ease-out forwards; pointer-events: none; }
+.np-app[data-motion="off"] :is(.np-stage__place, .np-stage__inset)[data-leaving="true"] { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .np-app[data-motion="on"] :is(.np-stage__place, .np-stage__inset) { animation: none; }
+  .np-app :is(.np-stage__place, .np-stage__inset)[data-leaving="true"] { display: none; }
+}
+
+/* 장소 목록이 비었을 때 */
+.np-stage__empty { font-size: var(--fs-lead); color: var(--ink-2); }
