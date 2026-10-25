@@ -301,7 +301,8 @@ _EVENTS: dict[str, _Shape] = {
     ),
     "command": _shape(_req("requestId", _str), _req("nodeId", _str), _req("action", _enum(Action))),
     "exec_result": _shape(
-        _req("requestId", _str), _req("nodeId", _str), _req("result", _lit("succeeded", "failed", "unknown"))
+        _req("requestId", _str), _req("nodeId", _str),
+        _req("result", _lit("succeeded", "failed", "rejected", "unknown")),
     ),
     "mcp_result": _shape(_req("requestId", _str)),
     "transition": _shape(
@@ -401,6 +402,7 @@ _REQUEST_PROGRESS = _shape(
     _opt("threshold", _num),
     _opt("execution", _enum(ExecutionStatus)),
     _opt("accessRequestedAt", _time),
+    _opt("accessEnd", _lit("approved", "denied", "expired")),
     _opt("accessExpiredAt", _time),
     _opt("respondedAt", _time),
     person=_person_id,
@@ -423,9 +425,9 @@ _METRIC = _shape(
 )
 _CONFUSION = _shape(_req("labels", _strs), _req("values", _matrix))
 _EVALUATION = _shape(
-    _req("date", _str), _req("metrics", _list(_obj(_METRIC))), _req("confusion", _obj(_CONFUSION))
+    _req("date", _str), _req("metrics", _list(_obj(_METRIC))), _opt("confusion", _obj(_CONFUSION))
 )
-_TRUST_REPORT = _shape(_req("live", _obj(_LIVE)), _req("evaluation", _obj(_EVALUATION)))
+_TRUST_REPORT = _shape(_req("live", _obj(_LIVE)), _opt("evaluation", _obj(_EVALUATION)))
 _TIMELINE_ITEM = _shape(_req("at", _time), _req("text", _str), _opt("now", _bool))
 _RENTAL_INFO = _shape(
     _req("nodeId", _str),

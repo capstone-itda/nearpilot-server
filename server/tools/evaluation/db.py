@@ -11,7 +11,7 @@ import sqlite3
 
 # `db/schema/sql/*.sql` 마이그레이션 파일 수와 같다. `db/schema/`에 새 마이그레이션이 추가되면
 # 이 값도 같이 올린다 — `test_NFR13_expected_schema_version_matches_migrations`가 어긋남을 잡아낸다.
-EXPECTED_SCHEMA_VERSION = 5
+EXPECTED_SCHEMA_VERSION = 6
 
 
 class SchemaVersionMismatch(RuntimeError):

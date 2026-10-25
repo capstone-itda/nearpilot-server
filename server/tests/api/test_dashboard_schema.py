@@ -260,6 +260,12 @@ def test_FR12B_도구_호출은_MCP_도구_여섯_개를_모두_받는다(tool):
     assert result == {"type": "mcp_call", "at": ISO, "requestId": "req-1", "tool": tool, "personId": "p1"}
 
 
+@pytest.mark.parametrize("result", ["succeeded", "failed", "rejected", "unknown"])
+def test_FR12B_실행_결과_이벤트는_거절을_실패와_따로_받는다(result):
+    fields = {**GOOD["exec_result"].fields, "result": result}
+    assert render_event(event("exec_result", fields), PersonNames())["result"] == result
+
+
 @pytest.mark.parametrize(
     ("at", "text"),
     [
@@ -336,6 +342,7 @@ BAD_EVENTS = [
     bad_event("lit_not_str", "step", "step.result", "result", to=1),
     bad_event("unknown_tool", "mcp_call", "mcp_call.tool", "tool", to=SECRET),
     bad_event("approval_kind_outside", "approval", "approval.kind", "kind", to="granted"),
+    bad_event("exec_result_outside", "exec_result", "exec_result.result", "result", to="busy"),
     bad_event("enum_outside", "verdict", "verdict.verdict", "verdict", to=SECRET),
     bad_event("enum_wrong_case", "command", "command.action", "action", to="OPEN"),
     bad_event("enum_not_str", "verdict", "verdict.reason", "reason", to=7),
@@ -463,7 +470,8 @@ REQUEST = {  # 실행까지 끝난 요청
     "steps": [{"result": "pass"}, {"result": "pass"}, {"result": "pass", "detail": "후보 2개"},
               {"result": "pass", "detail": "p=0.97"}, {"result": "pass"}, {"result": "pass"}, {"result": "pass"}],
     "nodeId": "locker-1", "posteriors": {"locker-1": 0.97, "light-1": 0.03}, "threshold": 0.9,
-    "execution": "succeeded", "accessRequestedAt": EARLY, "respondedAt": NOW, "subject": VISITOR,
+    "execution": "succeeded", "accessRequestedAt": EARLY, "accessEnd": "approved", "respondedAt": NOW,
+    "subject": VISITOR,
 }
 REQUEST_OUT = {
     "personId": "p1", "id": "req-1", "tool": "request_use", "target": {"kind": "nearest", "capability": "locker"},
@@ -471,22 +479,23 @@ REQUEST_OUT = {
     "steps": [{"result": "pass"}, {"result": "pass"}, {"result": "pass", "detail": "후보 2개"},
               {"result": "pass", "detail": "p=0.97"}, {"result": "pass"}, {"result": "pass"}, {"result": "pass"}],
     "nodeId": "locker-1", "posteriors": {"locker-1": 0.97, "light-1": 0.03}, "threshold": 0.9,
-    "execution": "succeeded", "accessRequestedAt": EARLY_ISO, "respondedAt": ISO,
+    "execution": "succeeded", "accessRequestedAt": EARLY_ISO, "accessEnd": "approved", "respondedAt": ISO,
 }
 REQUEST_STOPPED = {  # 승인이 필요해 ④에서 멈췄고 신청이 만료됐다
     "id": "req-2", "tool": "request_use", "target": {"kind": "explicit", "nodeId": "locker-1"}, "action": "open",
     "at": EARLY, "verdict": "NEED_APPROVAL", "reason": ReasonCode.APPROVAL_REQUIRED,
     "steps": [{"result": "pass"}, {"result": "pass"}, {"result": "pass"}, {"result": "pass"},
               {"result": "stop", "detail": "승인 필요"}, {"result": "skip"}, {"result": "skip"}],
-    "nodeId": "locker-1", "accessRequestedAt": EARLY, "accessExpiredAt": NOW, "respondedAt": NOW,
-    "subject": VISITOR,
+    "nodeId": "locker-1", "accessRequestedAt": EARLY, "accessEnd": "expired", "accessExpiredAt": NOW,
+    "respondedAt": NOW, "subject": VISITOR,
 }
 REQUEST_STOPPED_OUT = {
     "personId": "p1", "id": "req-2", "tool": "request_use", "target": {"kind": "explicit", "nodeId": "locker-1"},
     "action": "open", "at": EARLY_ISO, "verdict": "NEED_APPROVAL", "reason": "APPROVAL_REQUIRED",
     "steps": [{"result": "pass"}, {"result": "pass"}, {"result": "pass"}, {"result": "pass"},
               {"result": "stop", "detail": "승인 필요"}, {"result": "skip"}, {"result": "skip"}],
-    "nodeId": "locker-1", "accessRequestedAt": EARLY_ISO, "accessExpiredAt": ISO, "respondedAt": ISO,
+    "nodeId": "locker-1", "accessRequestedAt": EARLY_ISO, "accessEnd": "expired", "accessExpiredAt": ISO,
+    "respondedAt": ISO,
 }
 REQUEST_PENDING = {  # 판정 전. 선택 키가 모두 없다
     "id": "req-3", "tool": "request_use", "target": {"kind": "any", "capability": "light"}, "action": "on",
@@ -572,6 +581,10 @@ RESPONSE_CASES = [
     ResponseCase("request_stopped", "request", REQUEST_STOPPED, REQUEST_STOPPED_OUT),
     ResponseCase("request_pending", "request", REQUEST_PENDING, REQUEST_PENDING_OUT),
     ResponseCase("trust", "trust", TRUST, TRUST_OUT),
+    ResponseCase("trust_no_evaluation", "trust", patched(TRUST, ("evaluation",), DROP),
+                 patched(TRUST_OUT, ("evaluation",), DROP)),
+    ResponseCase("trust_no_confusion", "trust", patched(TRUST, ("evaluation", "confusion"), DROP),
+                 patched(TRUST_OUT, ("evaluation", "confusion"), DROP)),
     ResponseCase("rental", "rental", RENTAL, RENTAL_OUT),
     ResponseCase("health", "health", HEALTH, HEALTH_OUT),
 ]
@@ -673,6 +686,7 @@ BAD_RESPONSES = [
     bad_response("target_missing", "request", REQUEST, "request.target", ("target",), DROP),
     bad_response("execution_outside", "request", REQUEST, "request.execution", ("execution",), "done"),
     bad_response("execution_sent", "request", REQUEST, "request.execution", ("execution",), "sent"),  # ExecutionStatus 에 없다
+    bad_response("access_end_pending", "request", REQUEST, "request.accessEnd", ("accessEnd",), "pending"),  # 대기 중이면 키가 없다
     bad_response("posteriors_key_not_utf8", "request", REQUEST, "request.posteriors", ("posteriors",), {UNENCODABLE: 0.5}),
     bad_response("optional_naive_time", "request", REQUEST, "request.respondedAt", ("respondedAt",), NAIVE),
     # 신뢰도

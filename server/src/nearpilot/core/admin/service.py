@@ -90,6 +90,12 @@ class DefaultAdminService:
             return denied
         return self._admin.set_release_policy(node_id, release_policy)
 
+    def set_node_name(self, actor_user_id: str, node_id: str, name: str) -> AdminWriteResult:
+        denied = self._deny_unless_node_owner(actor_user_id, node_id)
+        if denied is not None:
+            return denied
+        return self._admin.set_node_name(node_id, name)
+
     def set_policy(self, actor_user_id: str, settings: PolicySettings) -> PolicyWriteResult:
         """내용이 현재 정책과 같으면 쓰지 않는다. 다르면 현재 버전을 기대값으로 새 리비전을 추가한다."""
         node_id = settings.node_id

@@ -6,10 +6,12 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -138,6 +140,11 @@ approval_mode = "one_time"
 approval_ttl_sec = 600
 """
 FULL_SEED = ACCOUNTS + BEACONS + PLACES + NODES + POLICIES
+# 기기 이름이 있는 전체 시드. locker-1과 light-1에만 이름을 정하고 locker-2는 이름을 정하지 않는다.
+NAMED_SEED = FULL_SEED.replace(
+    'node_id = "locker-1"\ntrust = "trusted"\n', 'node_id = "locker-1"\ntrust = "trusted"\nname = "사물함 1"\n', 1
+).replace(
+    'node_id = "light-1"\ntrust = "trusted"\n', 'node_id = "light-1"\ntrust = "trusted"\nname = "조명 1"\n', 1)
 
 GHOST_NODE = '\n[[nodes]]\nnode_id = "ghost"\n'
 GHOST_POLICY = '\n[[policies]]\nnode_id = "ghost"\nvisibility = "public"\nmode = "open"\napproval_mode = "one_time"\n'
@@ -230,6 +237,12 @@ INVALID_CASES = [
     pytest.param(FULL_SEED.replace('release_policy = { check_criteria = { id = "locker-return", version = 1 } }',
                                    'release_policy = "x"', 1),
                  ("nodes[0].release_policy: 표여야 한다",), id="release-policy-not-table"),
+    pytest.param(FULL_SEED.replace('node_id = "light-1"\ntrust = "trusted"\n',
+                                   'node_id = "light-1"\ntrust = "trusted"\nname = 7\n', 1),
+                 ("nodes[1].name: 빈 문자열이 아닌 문자열이어야 한다",), id="node-name-not-string"),
+    pytest.param(FULL_SEED.replace('node_id = "light-1"\ntrust = "trusted"\n',
+                                   'node_id = "light-1"\ntrust = "trusted"\nname = "  "\n', 1),
+                 ("nodes[1].name: 빈 문자열이 아닌 문자열이어야 한다",), id="node-name-blank"),
     pytest.param(FULL_SEED.replace('nodes = ["locker-2"]', 'nodes = ["locker-2", 3]', 1),
                  ("places[1].nodes: 빈 문자열이 아닌 문자열의 배열이어야 한다",), id="node-id-not-string"),
     pytest.param(FULL_SEED.replace('visibility = "private"', 'visibility = "secret"', 1),
@@ -531,6 +544,92 @@ def test_FR12A_seed_applies_all_sections(server_dir, run_cli, announce_nodes):
         assert repo.is_place_owner("owner2", "locker-2") and not repo.is_place_owner("owner", "locker-2")
 
 
+def test_FR12A_seed_node_name_applies_and_summarizes(server_dir, run_cli, announce_nodes):
+    announce_nodes(server_dir, *NODE_IDS)
+    write_seed(server_dir, NAMED_SEED)
+
+    code, out, _ = run_cli(["seed", "demo.toml"], cwd=server_dir)
+
+    assert code == EXIT_OK
+    lines = masked_lines(out)
+    # 이름은 같은 기기의 신뢰·종료 정책 다음 줄이다. 이름을 정하지 않은 기기는 건드리지 않는다
+    assert lines[lines.index("기기 locker-1 종료 정책: 반영") + 1] == "기기 locker-1 이름: 사물함 1"
+    assert lines[lines.index("기기 light-1 신뢰: trusted") + 1] == "기기 light-1 이름: 조명 1"
+    assert not any("locker-2 이름" in line for line in lines)
+    assert lines[-1] == "완료: 반영 16, 변경 없음 0, 거부 0"
+    assert query(server_dir, "SELECT node_id, name FROM node ORDER BY 1") == [
+        ("light-1", "조명 1"), ("locker-1", "사물함 1"), ("locker-2", None)]
+    audited = [json.loads(payload) for (payload,) in query(server_dir, "SELECT payload_json FROM audit_log ORDER BY rowid")
+               if "set_node_name" in payload]
+    assert audited == [
+        {"event": "set_node_name", "node_id": "locker-1", "name": "사물함 1"},
+        {"event": "set_node_name", "node_id": "light-1", "name": "조명 1"},
+    ]
+
+    # 다시 실행해도 신뢰나 종료 정책처럼 같은 값을 다시 쓰고 반영으로 센다
+    code, second_out, _ = run_cli(["seed", "demo.toml"], cwd=server_dir)
+    assert code == EXIT_OK
+    assert second_out.splitlines()[-1] == "완료: 반영 10, 변경 없음 6, 거부 0"
+    assert query(server_dir, "SELECT node_id, name FROM node ORDER BY 1") == [
+        ("light-1", "조명 1"), ("locker-1", "사물함 1"), ("locker-2", None)]
+
+
+def test_FR12A_seed_node_name_dry_run_writes_a_line(server_dir, run_cli):
+    write_seed(server_dir, FULL_SEED, name="plain.toml")
+    write_seed(server_dir, NAMED_SEED)
+
+    code, plain, _ = run_cli(["seed", "plain.toml", "--dry-run"], cwd=server_dir)
+    assert code == EXIT_OK
+    code, named, _ = run_cli(["seed", "demo.toml", "--dry-run"], cwd=server_dir)
+
+    assert code == EXIT_OK
+    expected = plain.splitlines()
+    expected.insert(expected.index("(dry-run) 기기 locker-1 종료 정책 반영") + 1, "(dry-run) 기기 locker-1 이름 사물함 1")
+    expected.insert(expected.index("(dry-run) 기기 light-1 신뢰 trusted") + 1, "(dry-run) 기기 light-1 이름 조명 1")
+    assert named.splitlines() == expected
+    assert not (server_dir / "var").exists()  # DB 파일도 폴더도 만들지 않는다
+
+
+def test_FR13_seed_node_name_unknown_node_is_rejected_once(server_dir, run_cli, announce_nodes):
+    announce_nodes(server_dir, "locker-1", "locker-2")  # light-1은 서버가 아직 발표를 받지 못했다
+    write_seed(server_dir, NAMED_SEED)
+
+    code, out, _ = run_cli(["seed", "demo.toml"], cwd=server_dir)
+
+    assert code == EXIT_FAILED
+    lines = out.splitlines()
+    assert lines.count("기기 light-1: DB에 없다 (서버가 발표를 받은 뒤 다시 실행한다)") == 1
+    assert "기기 locker-1 이름: 사물함 1" in lines
+    assert not any("light-1 이름" in line for line in lines)  # light-1의 이름은 건너뛰고 거부는 한 번만 센다
+    assert lines[-1] == "완료: 반영 13, 변경 없음 0, 거부 1"
+    assert query(server_dir, "SELECT node_id, name FROM node ORDER BY 1") == [("locker-1", "사물함 1"), ("locker-2", None)]
+
+
+def test_FR12A_seed_apply_node_name_rejection_is_reported_like_other_keys():
+    """DB가 이름을 거부하면 신뢰나 종료 정책과 같은 줄 모양으로 쓰고 거부로 센다."""
+
+    class RejectingNames:
+        def assign_place(self, actor_user_id, req):
+            return AdminWriteResult(AdminWriteOutcome.APPLIED, AdminWriteReason.OK)
+
+        def set_node_name(self, actor_user_id, node_id, name):
+            return AdminWriteResult(AdminWriteOutcome.REJECTED, AdminWriteReason.NODE_NOT_FOUND)
+
+    class OneNode:
+        def nodes(self):
+            return [SimpleNamespace(node_id="locker-1")]
+
+    lines: list[str] = []
+    seed = SeedFile((), (), (SeedPlace("lab", "owner", "실험실", ("locker-1",)),),
+                    (SeedNode("locker-1", None, None, "사물함 1"),), ())
+
+    summary = apply_seed(seed, RejectingNames(), OneNode(), lines.append)
+
+    assert lines == ["장소 lab: 배치 (기기 1대)", "기기 locker-1 이름: 거부 (NODE_NOT_FOUND)",
+                     "완료: 반영 1, 변경 없음 0, 거부 1"]
+    assert summary == SeedSummary(applied=1, unchanged=0, rejected=1)
+
+
 def test_FR14_seed_changes_apply_on_rerun(server_dir, run_cli, announce_nodes):
     announce_nodes(server_dir, *NODE_IDS)
     write_seed(server_dir, FULL_SEED)
@@ -711,6 +810,16 @@ def test_FR12A_seed_load_file_parses_all_sections(tmp_path):
         PolicySettings("locker-1", Visibility.PUBLIC, AccessMode.RESTRICTED, "owner", ApprovalMode.TIME_WINDOW, 3600, 3),
         PolicySettings("light-1", Visibility.PUBLIC, AccessMode.OPEN, None, ApprovalMode.ONE_TIME, None, None),
         PolicySettings("locker-2", Visibility.PRIVATE, AccessMode.RESTRICTED, "owner2", ApprovalMode.ONE_TIME, 600, None),
+    )
+
+
+def test_FR12A_seed_load_file_parses_node_name(tmp_path):
+    seed = load_seed_file(write_seed(tmp_path, NAMED_SEED))
+
+    assert seed.nodes == (
+        SeedNode("locker-1", TrustState.TRUSTED, {"check_criteria": {"id": "locker-return", "version": 1}}, "사물함 1"),
+        SeedNode("light-1", TrustState.TRUSTED, None, "조명 1"),
+        SeedNode("locker-2", TrustState.TRUSTED, None, None),  # name 이 없으면 None 이다
     )
 
 

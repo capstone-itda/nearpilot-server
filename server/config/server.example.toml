@@ -66,3 +66,14 @@ stop_timeout_sec = 5.0
 locker-1 = 0.0
 locker-2 = 0.0
 light-1 = 0.0
+
+# 대시보드 (선택). 이 섹션이 있으면 소유자 토큰으로 모니터링 WebSocket(/dashboard/stream)과
+# 조회 REST(/dashboard/...)를 연다. 없으면 대시보드를 열지 않고 서버의 다른 동작은 같다.
+# 키 6개가 모두 필수이고 기본값이 없다. 값은 시연용 초기값이다.
+[dashboard]
+queue_max_events = 1000  # 연결마다 쌓아 둘 수 있는 이벤트 수. 넘으면 그 연결을 닫고 대시보드가 다시 연결한다
+batch_max_events = 50    # WebSocket 메시지 하나에 담는 이벤트 수
+auth_timeout_sec = 5.0   # 연결한 뒤 인증 메시지를 기다리는 시간
+audit_limit_max = 200    # 감사 조회 한 번의 최대 행 수
+weak_rssi_dbm = -80      # 장소 목록의 weakRssiDbm. 대시보드 배치 화면이 이보다 약한 수신을 약한 신호로 그린다
+tail_interval_sec = 0.5  # 따라 읽기 간격. 사건이 화면에 보이기까지 최대 이만큼 늦다

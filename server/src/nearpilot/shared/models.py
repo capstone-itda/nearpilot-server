@@ -990,3 +990,125 @@ class MonitorEvent:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "fields", _freeze(self.fields))
+
+
+# ── 대시보드 읽기 행 (FR-12A, FR-12B, specs/core-dashboard-queries) ─────
+# `DashboardReadStore` 가 돌려주는 DB 행이다. 시각은 시간대가 있는 datetime 이고, seq 는 그 표의 rowid 다.
+# 분류와 계산은 CORE 조회 서비스가 한다 — 여기에는 저장된 값을 그대로 담는다.
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardPlace:
+    place_id: str
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardNode:
+    node_id: str
+    name: str | None  # node.name. 없으면 None
+    place_id: str | None
+    capability: Capability
+    occupancy: Occupancy
+    trust_state: TrustState
+    device_state: DeviceState
+    last_seen_at: datetime | None
+    session_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardSession:
+    """끝나지 않은 use_session (RESERVED, ACTIVE, CLOSING)."""
+
+    use_id: str
+    internal_request_id: str
+    user_id: str
+    node_id: str
+    state: SessionState
+    reserved_at: datetime | None
+    rental_due_at: datetime | None
+    received_at: datetime  # 연결된 request.received_at
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardApproval:
+    approval_id: str
+    node_id: str
+    requester_user_id: str
+    internal_request_id: str
+    action: Action
+    status: ApprovalStatus
+    created_at: datetime
+    pending_until: datetime | None
+    valid_until: datetime | None
+    mode: ApprovalMode  # policy_revision.approval_mode (approval 의 policy_id, policy_version)
+    used_count: int  # approval.used_count
+    remaining_uses: int | None  # Repository 의 남은 횟수와 같은 규칙. max_uses 가 없으면 None
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardRequest:
+    seq: int  # request.rowid
+    internal_request_id: str
+    user_id: str | None  # 서버 내부 요청은 None
+    kind: str  # request.request_kind ('visitor' | 'server_internal')
+    target_spec: str
+    action: Action
+    verdict: Verdict | None
+    reason_code: ReasonCode | None
+    node_id: str | None
+    decision_context: Mapping[str, Any] | None  # 없으면 None
+    received_at: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "decision_context", _freeze(self.decision_context))
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardCommand:
+    seq: int  # node_command.rowid
+    command_id: str
+    internal_request_id: str
+    node_id: str
+    action: Action
+    status: ExecutionStatus
+    use_id: str | None
+    send_started_at: datetime | None
+    outcome: str | None  # CommandOutcome 값 문자열 그대로
+    occurred_at: datetime | None
+    evidence: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evidence", _freeze(self.evidence))
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardAudit:
+    seq: int  # audit_log.rowid
+    log_id: str
+    internal_request_id: str | None
+    command_id: str | None
+    step: Step
+    payload: Mapping[str, Any]
+    created_at: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "payload", _freeze(self.payload))
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardRssi:
+    seq: int  # rssi_observation.rowid
+    node_id: str
+    user_id: str  # beacon.user_id
+    rssi: float
+    received_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardBeacon:
+    """활성 비콘 (is_active = 1)."""
+
+    user_id: str
+    beacon_id: str
+    last_seen_at: datetime | None  # 그 비콘의 rssi_observation.received_at 최댓값. 관측이 없으면 None

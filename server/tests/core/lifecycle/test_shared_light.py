@@ -1,14 +1,14 @@
 """공용 조명의 이탈 시나리오. 실제 MQTT 전송은 검증 범위 밖이다."""
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from threading import Barrier, Lock, RLock
+from threading import Barrier, Event, Lock, RLock
 from types import SimpleNamespace
 
 import pytest
 
-from nearpilot.core.lifecycle.shared_light import SharedLightService
+from nearpilot.core.lifecycle.shared_light import SharedHolder, SharedLightService
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
     Action, ActuatorState, Capability, DeviceState, ExecutionKind, ExecutionStatus,
@@ -639,3 +639,64 @@ def test_FR20_internal_off_through_real_execution(env):
     assert store.internal[0].cause == InternalRequestCause.LEAVE_OFF
     assert store.commands["internal-1"].status == ExecutionStatus.SUCCEEDED
     assert light.tick() == ()
+
+
+def test_FR20_유지_대상자_읽기(env):
+    second = replace(env.repository.light, node_id="light-0", session_id="connection-0")
+    env.repository.nodes = lambda capability=None: (
+        env.repository.light, second, env.repository.anchor, env.repository.other_anchor,
+    )
+    start = env.time[0]
+    assert env.service.holders() == []
+
+    execution(env, "visitor-b", "request-1")
+    advance(env, 3)
+    execution(env, "visitor-a", "request-2")
+    execution(env, "visitor-a", "request-3", node_id="light-0")
+    joined = start + timedelta(seconds=3)
+
+    # 넣은 순서가 아니라 node_id, user_id 순이다
+    assert env.service.holders() == [
+        SharedHolder("light-0", "visitor-a", joined),
+        SharedHolder("light-1", "visitor-a", joined),
+        SharedHolder("light-1", "visitor-b", start),
+    ]
+
+    # 같은 장소에서 비콘이 다시 보이면 그 사람의 수신 시각만 바뀐다
+    advance(env, 9)
+    observe(env, "visitor-b")
+    seen = start + timedelta(seconds=12)
+    assert env.service.holders() == [
+        SharedHolder("light-0", "visitor-a", joined),
+        SharedHolder("light-1", "visitor-a", joined),
+        SharedHolder("light-1", "visitor-b", seen),
+    ]
+
+    # 이탈한 사람은 tick 뒤에 사라진다 (visitor-a 만 유예가 끝났다)
+    advance(env, 8)
+    assert env.service.tick() == ()
+    assert env.service.holders() == [SharedHolder("light-1", "visitor-b", seen)]
+
+    # 꺼짐 성공은 그 기기의 유지 대상자를 모두 지운다
+    execution(env, "visitor-a", "request-4", action=Action.OFF)
+    assert env.service.holders() == []
+
+
+def test_FR20_유지_대상자_읽기는_기기_잠금_안에서_복사한다(env):
+    execution(env)
+    held, release = Event(), Event()
+
+    def hold_lock():
+        with env.lock_for("light-1"):
+            held.set()
+            release.wait(5)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        holder = executor.submit(hold_lock)
+        assert held.wait(5)
+        reader = executor.submit(env.service.holders)
+        done, _ = wait([reader], timeout=0.2)
+        assert not done  # 기기의 잠금이 풀릴 때까지 읽지 못한다
+        release.set()
+        assert [row.user_id for row in reader.result(5)] == ["visitor-a"]
+        holder.result(5)

@@ -60,7 +60,7 @@
 | 계약 | 사용 또는 제공 | 상대 영역 |
 |---|---|---|
 | `Authenticator.authenticate` | 사용 | 판정 (`api/auth`) |
-| `MonitorFeed.publish` | 제공 | 이벤트가 난 영역: 판정, 상태 관리, IOT, MCP 도구 (2026-10-23 팀 결정) |
+| `MonitorFeed.publish` | 제공 | 대시보드 따라 읽기 (`core/dashboard/`). 커밋된 행을 읽어 넘긴다 (2026-10-24 대시보드 담당 결정이 2026-10-23 팀 결정의 "사건이 난 영역"을 바꿨다. architecture.md §4) |
 | `MonitorSnapshot`, `DashboardQueries` | 사용. 테스트는 fake | CORE 조회 서비스 (2026-10-23 팀 결정) |
 | `create_dashboard_router` | 제공 | 상태 관리 (조립) |
 | 모니터링 WebSocket, 대시보드 조회 REST | 제공 | 대시보드 |

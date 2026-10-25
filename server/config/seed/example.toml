@@ -39,15 +39,18 @@ nodes = ["locker-1", "locker-2"]
 
 # trust: discovered | trusted | revoked
 # release_policy: 점유를 끝낼 때 기기가 검사할 기준(check_criteria)이다.
+# name: 대시보드에 보이는 기기 이름이다. 생략하면 기기 ID가 보인다.
 [[nodes]]
 node_id = "locker-1"
 trust = "trusted"
 release_policy = { check_criteria = { id = "locker-return", version = 1 } }
+name = "사물함 1"
 
 [[nodes]]
 node_id = "locker-2"
 trust = "trusted"
 release_policy = { check_criteria = { id = "locker-return", version = 1 } }
+name = "사물함 2"
 
 # visibility: public | private, mode: open | restricted, approval_mode: one_time | time_window
 # approver, approval_ttl_sec, max_uses는 선택이다. 정책 내용이 그대로면 다시 실행해도 새 리비전을 만들지 않는다.

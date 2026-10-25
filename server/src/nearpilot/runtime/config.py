@@ -1,6 +1,7 @@
 """서버 TOML 설정 (specs/core-server-assembly/spec.md 6절 "설정과 모델").
 
-운영 `Settings`, runtime 실행 설정, HTTP·DB·근접 모델·MQTT·보고 설정을 한 파일에서 읽는다.
+운영 `Settings`, runtime 실행 설정, HTTP·DB·근접 모델·MQTT·보고 설정과 선택 섹션 `[dashboard]`
+(specs/core-dashboard-queries/spec.md 2절)를 한 파일에서 읽는다.
 상대 경로는 설정 파일의 부모 디렉터리 기준이다. 알 수 없는 키는 거부한다.
 비밀은 파일 경로로만 받는다. 오류 메시지에는 키 이름만 쓰고 값을 쓰지 않는다 (NFR-08).
 """
@@ -15,6 +16,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from nearpilot.api.ws.settings import DashboardSettings
 from nearpilot.iot.mqtt.connection import MqttConfig
 from nearpilot.iot.mqtt.delivery import DeliveryConfig
 from nearpilot.shared.config import Settings
@@ -67,6 +69,16 @@ class ProximityConfig:
 
 
 @dataclass(frozen=True)
+class DashboardConfig:
+    """선택 섹션 `[dashboard]`. 없으면 대시보드를 열지 않는다."""
+
+    api: DashboardSettings  # queue_max_events, batch_max_events, auth_timeout_sec, audit_limit_max
+    weak_rssi_dbm: float  # 장소 목록의 weakRssiDbm
+    tail_interval_sec: float  # 따라 읽기 간격
+    reports_dir: Path  # 평가 리포트 폴더. cli 의 `dirs_for` 와 같은 규칙이다: 설정 파일 폴더의 부모 / var / reports
+
+
+@dataclass(frozen=True)
 class ServerConfig:
     source: Path
     settings: Settings
@@ -76,10 +88,11 @@ class ServerConfig:
     proximity: ProximityConfig
     mqtt: MqttConfig
     delivery: DeliveryConfig
+    dashboard: DashboardConfig | None = None  # [dashboard] 가 없으면 None
 
 
-_SECTIONS = {"settings", "runtime", "http", "database", "proximity", "mqtt", "delivery"}
-_REQUIRED_SECTIONS = _SECTIONS - {"runtime"}
+_SECTIONS = {"settings", "runtime", "http", "database", "proximity", "mqtt", "delivery", "dashboard"}
+_REQUIRED_SECTIONS = _SECTIONS - {"runtime", "dashboard"}
 
 
 def load_config(path: str | Path, *, require_models: bool = True) -> ServerConfig:
@@ -110,6 +123,7 @@ def parse_config(raw: Mapping[str, Any], *, base: Path, source: Path | None = No
             proximity=_proximity(_table(raw, "proximity"), base, require_models=require_models),
             mqtt=_mqtt(_table(raw, "mqtt"), base),
             delivery=_delivery(_table(raw, "delivery")),
+            dashboard=_dashboard(_table(raw, "dashboard"), base) if "dashboard" in raw else None,
         )
     except ConfigError:
         raise
@@ -180,6 +194,24 @@ def _delivery(table: Mapping[str, Any]) -> DeliveryConfig:
     return DeliveryConfig(**table)
 
 
+def _dashboard(table: Mapping[str, Any], base: Path) -> DashboardConfig:
+    names = {f.name for f in fields(DashboardSettings)}
+    _keys(table, "dashboard", required=names | {"weak_rssi_dbm", "tail_interval_sec"})
+    # DashboardSettings 도 같은 규칙을 검사하지만 오류 메시지에 값을 쓴다. 여기서 먼저 걸러 키 이름만 알린다.
+    for key in ("queue_max_events", "batch_max_events", "audit_limit_max"):
+        if type(table[key]) is not int or table[key] < 1:
+            raise ConfigError(f"dashboard.{key} 는 1 이상의 정수여야 한다")
+    for key in ("auth_timeout_sec", "tail_interval_sec"):
+        if not _finite_number(table[key]) or table[key] <= 0:
+            raise ConfigError(f"dashboard.{key} 는 0보다 큰 유한한 수여야 한다")
+    if not _finite_number(table["weak_rssi_dbm"]):
+        raise ConfigError("dashboard.weak_rssi_dbm 는 유한한 수여야 한다")
+    return DashboardConfig(
+        DashboardSettings(**{name: table[name] for name in names}),
+        table["weak_rssi_dbm"], table["tail_interval_sec"],
+        base.resolve().parent / "var" / "reports")  # cli 의 dirs_for(설정 파일 폴더의 부모 / var / reports)와 같은 규칙
+
+
 # ── 공통 검사 ──────────────────────────────────────────────────────
 
 
@@ -200,6 +232,11 @@ def _keys(table: Mapping[str, Any], where: str, *, required: set[str],
     missing = sorted(required - set(table))
     if missing:
         raise ConfigError(f"필수 설정 키가 없다: {', '.join(prefix + k for k in missing)}")
+
+
+def _finite_number(value: Any) -> bool:
+    """bool 이 아닌 유한한 수. bool 은 type 이 int 가 아니라서 걸러진다."""
+    return type(value) is int or (type(value) is float and math.isfinite(value))
 
 
 def _path(table: Mapping[str, Any], where: str, key: str, base: Path) -> Path:
