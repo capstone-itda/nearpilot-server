@@ -79,8 +79,8 @@ export function RequestPanel({ r, onClose }: { r: RequestProgress; onClose: () =
         <Section title="승인 진행">
           <Timeline items={d.accessRequestedAt
             ? [['done', d.accessRequestedAt, 'request_access로 승인 신청 → 소유자 폰에 알림 (알림 수단 미결)'],
-              ...(d.accessExpiredAt
-                ? [['now', d.accessExpiredAt, ACCESS_END_TEXT[d.accessEnd ?? 'expired'], 'appr'] as ['now', string, string, string]]
+              ...(d.accessEnd || d.accessExpiredAt
+                ? [['now', d.accessExpiredAt ?? '—', ACCESS_END_TEXT[d.accessEnd ?? 'expired'], 'appr'] as ['now', string, string, string]]
                 : snapshot.request?.id === d.id ? [['now', snapshot.lastReceivedAt, '소유자 응답 기다림', 'appr'] as ['now', string, string, string]] : [])]
             : [['now', d.at, d.reason === 'APPROVAL_REQUIRED'
               ? 'AI의 승인 신청(request_access)을 기다림'

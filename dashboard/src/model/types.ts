@@ -108,7 +108,7 @@ export interface RequestProgress {
   accessRequestedAt?: string;
   /** 승인 신청이 끝난 시각: 소유자 응답 없이 만료됐거나, 소유자가 승인·거부했다 */
   accessExpiredAt?: string;
-  /** 승인 신청이 끝난 까닭. accessExpiredAt과 함께 생긴다 */
+  /** 승인 신청이 끝난 까닭. 스트림에서는 accessExpiredAt과 함께 생긴다. 조회 REST의 승인·거절은 끝난 시각 없이 온다 (서버가 저장하지 않는다) */
   accessEnd?: 'approved' | 'denied' | 'expired';
   /** 서버가 AI 호스트에 결과를 돌려준 시각 */
   respondedAt?: string;

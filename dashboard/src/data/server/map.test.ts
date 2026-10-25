@@ -206,6 +206,12 @@ describe('서버 어댑터 조회 응답 변환', () => {
     expect(requestOf({ ...REQUEST, execution: 'unknown' }).execution).toBe('unknown');
     expect(requestOf({ ...REQUEST, execution: 'not_sent' })).not.toHaveProperty('execution');
   });
+  it('FR12A 요청 한 건: 승인 신청이 끝난 까닭(accessEnd)을 옮기고, 모르는 값은 형식 오류다', () => {
+    const { accessExpiredAt: _x, ...noTime } = REQUEST;
+    for (const end of ['approved', 'denied', 'expired'] as const) expect(requestOf({ ...noTime, accessEnd: end }).accessEnd).toBe(end);
+    expect(requestOf(noTime)).not.toHaveProperty('accessEnd');
+    expect(() => requestOf({ ...noTime, accessEnd: 'pending' })).toThrow();
+  });
   it('FR12A 요청 한 건: 판정 전 요청은 선택 키 없이도 읽는다', () => {
     const { verdict: _v, reason: _r, nodeId: _n, posteriors: _p, threshold: _t, execution: _e, accessRequestedAt: _a, accessExpiredAt: _x, respondedAt: _d, ...early } = REQUEST;
     const r = requestOf({ ...early, steps: Array.from({ length: 7 }, () => ({ result: 'pending' })) });

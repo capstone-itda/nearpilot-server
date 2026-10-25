@@ -167,7 +167,8 @@ const REQUEST: Check<RequestProgress> = obj(
   { id: str, personId: str, tool: lit<'request_use'>('request_use'), target: TARGET, action: ACTION, at: time('HH:MM:SS'), steps: arr(STEP_OUTCOME, 7) },
   {
     verdict: VERDICT, reason, nodeId: str, posteriors: rec(num), threshold: num, execution: EXECUTION,
-    accessRequestedAt: time('HH:MM:SS'), accessExpiredAt: time('HH:MM:SS'), respondedAt: time('HH:MM:SS')
+    accessRequestedAt: time('HH:MM:SS'), accessEnd: lit<NonNullable<RequestProgress['accessEnd']>>('approved', 'denied', 'expired'),
+    accessExpiredAt: time('HH:MM:SS'), respondedAt: time('HH:MM:SS')
   }
 );
 

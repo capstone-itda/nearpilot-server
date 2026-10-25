@@ -85,4 +85,14 @@ describe('RequestPanel 승인 신청의 끝', () => {
     expect(timeline.querySelector('.np-tl__item:last-child .np-tl__time')?.textContent).toBe('14:31:30');
     for (const other of TEXTS.filter((t) => t !== text)) expect(screen.queryByText(other)).toBeNull();
   });
+  it.each([
+    ['approved', TEXTS[0]],
+    ['denied', TEXTS[1]]
+  ] as const)('FR12A 조회 REST의 승인 신청이 끝난 시각 없이 %s로 끝났어도 끝난 줄을 그리고 응답 기다림이 아니다', (accessEnd, text) => {
+    renderRequest(needApproval({ accessEnd }));
+    const timeline = document.querySelector('[data-component="Timeline"]')!;
+    expect(timeline.querySelector('.np-tl__item:last-child .np-tl__text')?.textContent).toBe(text);
+    expect(timeline.querySelector('.np-tl__item:last-child .np-tl__time')?.textContent).toBe('—');
+    expect(screen.queryByText('소유자 응답 기다림')).toBeNull();
+  });
 });
