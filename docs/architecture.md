@@ -1254,7 +1254,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
   - `GET /dashboard/uses`: 점유 목록
   - `GET /dashboard/approvals`: 대기·유효·끝난 승인
   - `GET /dashboard/audit?limit=`: 최근 감사 행. `limit`은 설정 한도로 줄인다
-  - `GET /dashboard/history?period=&verdict=&nodeId=`: 요청·판정 이력
+  - `GET /dashboard/history?period=&verdict=&nodeId=`: 요청·판정 이력. `period`는 `today`(서버 시간대의 오늘) 또는 `HH:MM~HH:MM`(서버 시간대 오늘의 구간)이다
   - `GET /dashboard/requests/{request_id}`: 요청 한 건의 판정 단계별 결과. `request_id`는 서버의 내부 요청 ID다
   - `GET /dashboard/trust`: 시연 세션 지표와 사전 평가 결과
   - `GET /dashboard/rentals/{node_id}`: 대여 한 건
