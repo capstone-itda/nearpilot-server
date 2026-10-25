@@ -1,5 +1,10 @@
 # MQTT 기기 시뮬레이터
 
+2026-10-26에 센서 기반 물리 검증과 반납 검사를 범위에서 제외했다.
+아래는 아직 바꾸지 않은 MQTT v1 구현의 실행법이다. 새 계약은 `docs/requirements.md` FR-07·FR-20을 따른다.
+`light_observable`, `unmeasurable`, `sensor_fault`와 문 조작은 이전 검사 시나리오다. 후속 fix PR에서 정리한다.
+새 계약에서는 센서 관측 부재를 실행 불명으로 만들지 않는다. 명령 처리 실패와 결과 유실 시험은 유지한다.
+
 실제 ESP32 없이 MQTT v1 계약을 확인하는 가상 기기다. 계약과 결정은 `specs/iot-node-simulator/spec.md`에 있다.
 가상 완료와 가상 관측은 실제 센서의 검증 완료가 아니다.
 

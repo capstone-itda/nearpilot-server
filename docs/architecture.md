@@ -835,6 +835,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 
 이 decision PR은 `docs/`의 계약을 바꾼다. 서버, 펌웨어, 시뮬레이터와 테스트 코드는 바꾸지 않는다.
 기존 spec은 현재 구현의 기록이다. 후속 fix PR에서 기존 spec과 코드를 함께 고친다.
+문서별 영향과 보존 이유는 [센서 검증 제외의 문서 영향 점검](sensor-removal-review.md)에 쓴다.
 
 - 근접 추정의 장소 전체 목록, 신뢰 정보와 명시 지정 임계값 설정은 `shared`에 반영했다.
 - 대시보드 모니터링의 공동 모델(`Subject`, `MonitorEvent`)과 접점(`MonitorFeed`, `MonitorSnapshot`, `DashboardQueries`)은 `shared`에 반영했다. 대시보드 읽기 접점(`DashboardReadStore`), 조회 서비스, 따라 읽기, 조립의 연결은 `core/dashboard/`와 `runtime/`에 반영했다.
@@ -849,6 +850,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | IOT | 상태·결과 형식과 버전을 검증한다. 반납 검사 전송·수신 경로를 제거한다. | `specs/iot-messages/spec.md`, `specs/iot-mqtt-gateway/spec.md`, `specs/iot-event-delivery/spec.md`, `specs/iot-command-gateway/spec.md` |
 | DB | 검사 ID 없는 종료 저장과 조회, 복구 근거와 데이터 이전을 맞춘다. | `specs/db-execution-store/spec.md`, `specs/db-repository/spec.md` |
 | 펌웨어 | 센서·완료 관측·반납 검사 모듈을 제거한다. 제어 신호 출력 완료를 저장하고 보고한다. | `specs/firmware-contracts/spec.md` |
+| 연결 시험 | 시험 펌웨어, 설정 생성 도구와 상태 표시를 새 성공·상태 계약으로 맞춘다. 과거 실측 기록은 보존한다. | `specs/core-node-lab/spec.md` |
 | 시뮬레이터 | 물리 검사 응답을 제거하고 같은 명령 처리 계약을 구현한다. | `specs/iot-node-simulator/spec.md` |
 | API와 대시보드 | 완료 안내를 제어 신호 출력과 논리적 점유로 맞춘다. 물리 상태와 검사 표시를 제거한다. | `specs/api-mcp-release/spec.md`, `specs/core-service/spec.md`, `specs/dashboard-monitor/spec.md`, `specs/core-dashboard-queries/spec.md` |
 | 설정과 평가 | 검사 설정과 센서 평가를 제거한다. FR-07·FR-20·NFR-04의 인수 기준을 맞춘다. | `specs/core-server-assembly/spec.md`, `specs/core-ops-cli/spec.md`, `specs/db-evaluation-foundation/spec.md` |
@@ -1183,6 +1185,11 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 대기 승인의 알림 수단은 미결이다 (FR-03). 앱은 알림 수단이 정해지기 전까지 `GET /approvals`를 주기적으로 호출할 수 있다.
 
 #### 대시보드 조회
+
+실행·이력 문구와 목 장면은 제어 신호 출력 결과와 논리적 점유를 표시한다 (FR-12A, FR-12B).
+`열림`처럼 물리 상태를 단정하는 성공 안내는 `열기 신호 출력 완료`처럼 출력 결과로 바꾼다.
+`CLOSING`은 논리적 종료를 저장하는 상태로 표시한다. 센서 검사 대기로 안내하지 않는다.
+서버의 문구 생성, 조회 서비스, 스트림, 목 장면과 실제 서버 어댑터에 같은 뜻을 적용한다.
 
 - 대시보드 조회는 `GET`만 둔다. 소유자 토큰(`Authorization: Bearer`)만 받는다. 응답 키는 camelCase이고, 시각은 ISO 8601(밀리초, 시간대 포함)이다. 오류 본문은 공통 규칙의 `{"error": "<사유 코드>"}`다 (401 `INVALID_TOKEN`, 403 `POLICY_DENIED`, 400 `INVALID_INPUT`, 404 `USE_NOT_FOUND`, 500 `INTERNAL_ERROR`).
   - `GET /dashboard/places`: 등록된 장소 목록 (장소마다 이름, 근접 모델·보정 버전, 기기 목록)과 약한 신호 기준
