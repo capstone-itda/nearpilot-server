@@ -90,6 +90,7 @@
 | FR-03 | `test_FR03_requires_token` | 토큰이 없으면 `401`이다 |
 | FR-03 | `test_FR03_lookup_failure_is_internal_error` | 계정 조회 실패는 `500`이다 |
 | FR-03 | `test_FR03_decide_rejects_invalid_body` | 잘못된 본문은 `400`이다 |
+| FR-03 | `test_FR03_decide_rejects_non_json_body` | JSON이 아닌 본문은 `400`이다 |
 | FR-03 | `test_FR03_service_error_is_internal_error` | 서비스 예외는 `500`이다 |
 | FR-14, NFR-08 | `test_NFR08_responses_hide_requester` | 응답에 요청자와 사용자 ID가 없다 |
 | FR-03 | `test_FR03_approval_rest_with_real_db` (integration) | 실제 DB와 `OwnerApprovalService`로 목록, 승인, 재전송, 권한 없음 |
