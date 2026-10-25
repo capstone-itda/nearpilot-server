@@ -115,6 +115,22 @@ describe('reduce', () => {
     expect(expired.request!.accessExpiredAt).toBe('14:10:05');
   });
 
+  it('FR12B 승인·거절·만료는 끝난 까닭(accessEnd)을 남기고, 신청 중이거나 다른 요청의 끝이면 남기지 않는다', () => {
+    const asked = reduceAll(s0(), [call, { type: 'verdict', at: '14:00:01.200', requestId: 'r-1', verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED', nodeId: 'locker-1' },
+      { type: 'mcp_result', at: '14:00:01.300', requestId: 'r-1' },
+      { type: 'approval', at: '14:00:05.000', requestId: 'r-1', nodeId: 'locker-1', personId: 'p-a', kind: 'requested' }]);
+    // 신청 중에는 끝난 까닭이 없다
+    expect(asked.request).not.toHaveProperty('accessEnd');
+    expect(asked.request).not.toHaveProperty('accessExpiredAt');
+    for (const kind of ['approved', 'denied', 'expired'] as const) {
+      const ended = reduceAll(asked, [{ type: 'approval', at: '14:00:09.000', requestId: 'r-1', nodeId: 'locker-1', personId: 'p-a', kind }]);
+      expect(ended.request, kind).toMatchObject({ accessRequestedAt: '14:00:05', accessExpiredAt: '14:00:09', accessEnd: kind });
+      // 다른 요청 번호의 끝은 지금 요청을 바꾸지 않는다
+      const other = reduceAll(asked, [{ type: 'approval', at: '14:00:09.000', requestId: 'r-x', nodeId: 'locker-1', personId: 'p-a', kind }]);
+      expect(other.request, kind).not.toHaveProperty('accessEnd');
+    }
+  });
+
   it('FR12B 승인과 거부도 만료처럼 소유자 알림을 끄고 끝난 시각을 남긴다', () => {
     const asked = reduceAll(s0(), [call, { type: 'verdict', at: '14:00:01.200', requestId: 'r-1', verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED', nodeId: 'locker-1' },
       { type: 'mcp_result', at: '14:00:01.300', requestId: 'r-1' },

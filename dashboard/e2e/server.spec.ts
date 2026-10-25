@@ -74,6 +74,8 @@ async function fakeServer(page: Page, options: Options = {}) {
     /** 서버에 있는 점유와 감사 로그 (시험이 흐름에 맞춰 바꾼다) */
     uses: [USE_B] as unknown[],
     audit: [AUDIT_OLD] as unknown[],
+    /** 장소 조회가 이렇게 실패한다 (시험이 바꾼다). error는 서버 오류(500), abort는 서버에 닿지 못함 */
+    placesFailure: undefined as 'error' | 'abort' | undefined,
     /** 열려 있는 스트림에 이벤트 한 묶음을 보낸다 */
     send(events: unknown[]) { socket!.send(JSON.stringify({ v: 1, events })); },
     /** 열려 있는 스트림을 서버가 닫는다 */
@@ -86,6 +88,8 @@ async function fakeServer(page: Page, options: Options = {}) {
     fake.rest.push({ path: url.pathname + url.search, auth });
     if (options.restStatus) return route.fulfill({ status: options.restStatus, json: { error: options.restStatus === 401 ? 'INVALID_TOKEN' : 'POLICY_DENIED' } });
     if (auth !== `Bearer ${TOKEN}`) return route.fulfill({ status: 401, json: { error: 'INVALID_TOKEN' } });
+    if (url.pathname === '/dashboard/places' && fake.placesFailure === 'abort') return route.abort('connectionrefused');
+    if (url.pathname === '/dashboard/places' && fake.placesFailure === 'error') return route.fulfill({ status: 500, json: { error: 'INTERNAL_ERROR' } });
     const bodies: Record<string, unknown> = {
       '/dashboard/places': PLACES, '/dashboard/uses': fake.uses, '/dashboard/approvals': { pending: [], active: [], ended: [] },
       '/dashboard/audit': fake.audit, '/dashboard/history': [], '/dashboard/trust': TRUST,
@@ -291,6 +295,83 @@ test('FR12B 스트림이 4403으로 닫히면 소유자 토큰이 아니라는 �
   await expect(gate(page).getByRole('alert')).toContainText('소유자 토큰이 아니에요');
   expect(await page.evaluate(() => sessionStorage.length)).toBe(0);
 });
+
+const placesError = (page: Page) => page.locator('[data-component="PlacesError"]');
+const placesCalls = (fake: Awaited<ReturnType<typeof fakeServer>>) => fake.rest.filter((r) => r.path === '/dashboard/places').length;
+
+for (const [name, failure, reason] of [
+  ['서버 오류(500)', 'error', '서버 오류 500 · INTERNAL_ERROR'],
+  ['서버에 닿지 못함(연결 실패)', 'abort', '서버에 연결하지 못했어요']
+] as const) {
+  test(`FR12A 처음 장소 조회가 ${name}이면 불러오는 중에 멈추지 않고 실패 이유와 다시 시도를 보인다. 누르면 다시 조회해 화면을 그린다`, async ({ page }) => {
+    const fake = await fakeServer(page);
+    fake.placesFailure = failure;
+    const logs: string[] = [];
+    page.on('console', (m) => logs.push(m.text()));
+    await page.goto('/?source=server&theme=dark');
+    await enterToken(page);
+
+    await expect(placesError(page)).toBeVisible();
+    await expect(placesError(page).getByRole('heading')).toHaveText('장소를 불러오지 못했어요');
+    await expect(placesError(page).getByRole('alert')).toHaveText(reason);
+    await expect(page.getByText('불러오는 중…')).toHaveCount(0);
+    await expect(stage(page)).toHaveCount(0);
+    // 장소를 받기 전에는 스트림을 열지 않는다. 토큰 입력 화면으로 돌아가지도 않는다
+    expect(fake.connections).toBe(0);
+    await expect(gate(page)).toHaveCount(0);
+    expect(await page.evaluate(() => sessionStorage.length)).toBeGreaterThan(0);
+    // 토큰은 주소·화면·DOM·콘솔에 없다
+    expect(page.url()).not.toContain(TOKEN);
+    expect(await page.locator('body').innerText()).not.toContain(TOKEN);
+    expect(await page.content()).not.toContain(TOKEN);
+    expect(logs.join('\n')).not.toContain(TOKEN);
+
+    // 서버가 돌아오면 다시 시도로 장소를 다시 조회해 화면을 그린다
+    fake.placesFailure = undefined;
+    const before = placesCalls(fake);
+    await placesError(page).getByRole('button', { name: '다시 시도' }).click();
+    await expect(stage(page)).toBeVisible();
+    await expect(placesError(page)).toHaveCount(0);
+    expect(placesCalls(fake)).toBe(before + 1);
+    await expect(page.locator('[data-component="StageDevice"]')).toHaveCount(3);
+    expect(fake.connections).toBe(1);
+    expect(page.url()).not.toContain(TOKEN);
+  });
+}
+
+test('FR12A 다시 시도해도 장소 조회가 실패하면 실패 화면에 머물고, 서버가 돌아온 뒤 누르면 그린다', async ({ page }) => {
+  const fake = await fakeServer(page);
+  fake.placesFailure = 'error';
+  await page.goto('/?source=server');
+  await enterToken(page);
+  await expect(placesError(page).getByRole('alert')).toHaveText('서버 오류 500 · INTERNAL_ERROR');
+  const first = placesCalls(fake);
+  // 서버가 이번에는 닿지 못한다: 새 이유로 바뀐다
+  fake.placesFailure = 'abort';
+  await placesError(page).getByRole('button', { name: '다시 시도' }).click();
+  await expect(placesError(page).getByRole('alert')).toHaveText('서버에 연결하지 못했어요');
+  expect(placesCalls(fake)).toBe(first + 1);
+  expect(fake.connections).toBe(0);
+  fake.placesFailure = undefined;
+  await placesError(page).getByRole('button', { name: '다시 시도' }).click();
+  await expect(stage(page)).toBeVisible();
+});
+
+for (const theme of ['dark', 'light']) {
+  test(`FR12A 장소 조회 실패 화면은 ${theme} 테마에서 넘침·겹침·작은 누르는 자리·대비 문제가 없다`, async ({ page }) => {
+    const fake = await fakeServer(page);
+    fake.placesFailure = 'error';
+    await page.goto(`/?source=server&theme=${theme}`);
+    await enterToken(page);
+    await expect(placesError(page)).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    for (const [w, h] of [[1920, 1080], [1280, 720]]) {
+      await page.setViewportSize({ width: w, height: h });
+      const r = await inspect(page);
+      expect(r, `${w}×${h}`).toEqual({ ...r, ...CLEAN });
+    }
+  });
+}
 
 test('FR12A 조회가 401이면 토큰을 지우고 입력 화면으로 돌아간다. 403이면 소유자 토큰이 아니라고 알린다', async ({ page }) => {
   const fake = await fakeServer(page, { restStatus: 401 });

@@ -154,7 +154,10 @@ describe('서버 어댑터 실행 상태', () => {
     expect(mapExecution('succeeded')).toBe('succeeded');
     expect(mapExecution('failed')).toBe('failed');
     expect(mapExecution('unknown')).toBe('unknown');
-    expect(mapExecution('rejected')).toBe('failed');
+  });
+  it('FR12B 기기가 실행 전에 거절한 상태(rejected)는 실패(failed)가 아니라 거절(rejected)로 옮긴다', () => {
+    expect(mapExecution('rejected')).toBe('rejected');
+    expect(mapExecution('rejected')).not.toBe(mapExecution('failed'));
   });
   it('FR12B 확실한 미전송(not_sent)과 모르는 상태는 실행 없음이다', () => {
     expect(mapExecution('not_sent')).toBeUndefined();
@@ -195,10 +198,11 @@ describe('서버 어댑터 조회 응답 변환', () => {
       steps: REQUEST.steps
     });
   });
-  it('FR12A 요청 한 건: 서버의 pending·in_progress는 sent, rejected는 failed, not_sent는 키 없음이다', () => {
+  it('FR12A 요청 한 건: 서버의 pending·in_progress는 sent, rejected는 rejected, not_sent는 키 없음이다', () => {
     expect(requestOf({ ...REQUEST, execution: 'pending' }).execution).toBe('sent');
     expect(requestOf({ ...REQUEST, execution: 'in_progress' }).execution).toBe('sent');
-    expect(requestOf({ ...REQUEST, execution: 'rejected' }).execution).toBe('failed');
+    expect(requestOf({ ...REQUEST, execution: 'rejected' }).execution).toBe('rejected');
+    expect(requestOf({ ...REQUEST, execution: 'failed' }).execution).toBe('failed');
     expect(requestOf({ ...REQUEST, execution: 'unknown' }).execution).toBe('unknown');
     expect(requestOf({ ...REQUEST, execution: 'not_sent' })).not.toHaveProperty('execution');
   });

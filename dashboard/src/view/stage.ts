@@ -81,6 +81,13 @@ export interface StageView {
 
 const VERDICT_TONE = { OK: 'ok', ASK: 'ask', NEED_APPROVAL: 'appr', BUSY: 'busy', DENY: 'deny' } as const;
 
+/** 승인 신청이 끝난 까닭별 콜아웃. 승인은 실행 허가가 아니다: AI가 request_use를 다시 불러야 실행한다 */
+const ACCESS_END: Record<NonNullable<RequestProgress['accessEnd']>, { title: string; body: string }> = {
+  approved: { title: '소유자가 승인', body: '다시 요청하면 실행' },
+  denied: { title: '소유자가 거절', body: '실행 안 함' },
+  expired: { title: '승인 신청 만료', body: '소유자 응답 없음' }
+};
+
 const dbm = (v: number) => `${String(v).replace('-', '−')} dBm`;
 
 /** 기기 상태 → 표시 글자와 색. 작은 방(inset.ts)도 같은 규칙으로 칠한다. */
@@ -191,6 +198,7 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
   if (opt.layoutCheck) scene = 'layout';
   else if (r) {
     if (!isDecided(r)) scene = 'judging';
+    // 거절(rejected)은 고장 격리가 아니다. 기기를 격리하지 않으므로 flow 장면에서 콜아웃만 거절로 바꾼다
     else if (r.verdict === 'OK') scene = r.execution === 'unknown' || r.execution === 'failed' ? 'fault' : 'flow';
     else scene = ({ ASK: 'ask', NEED_APPROVAL: 'approval', BUSY: 'busy', DENY: 'deny' } as const)[r.verdict];
   }
@@ -255,8 +263,8 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
   // 신호와 흐름 선
   const idleShow = !r && s.connected && !opt.panelOpen && !opt.layoutCheck;
   const idlePerson = idleShow ? visitors.find((p) => p.beaconSeen && anchors.has(p.id)) : undefined;
-  // 실행이 끝난 요청은 신호와 호출 선을 끈다
-  const inFlight = !!r && (scene === 'judging' || (scene === 'flow' && r.execution !== 'succeeded') || scene === 'ask');
+  // 실행이 끝난 요청(완료, 거절)은 신호와 호출 선을 끈다
+  const inFlight = !!r && (scene === 'judging' || (scene === 'flow' && r.execution !== 'succeeded' && r.execution !== 'rejected') || scene === 'ask');
   const signalPerson: Person | undefined = opt.layoutCheck ? undefined : inFlight ? requester : idlePerson;
   // 이 장소에 세우지 않은 사람(다른 장소에 있는 사람)의 신호는 이 장소의 선으로 그리지 않는다
   const signalOn = !!signalPerson && anchors.has(signalPerson.id);
@@ -359,6 +367,9 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
         } else if (!r.execution) {
           view.aria = `${who}의 ${cap} ${act} 요청을 허가함`;
           set('ok', atDevice(target), `${name} ${act} 허가`, '');
+        } else if (r.execution === 'rejected') {
+          view.aria = `${josa(name, '이', '가')} 실행 전에 거절해 격리하지 않음`;
+          set('busy', atDevice(target), `${name} 거절`, '실행 안 함 · 격리 안 함');
         } else {
           view.aria = `${who}의 ${cap} ${act} 요청이 실행되는 중`;
           set('ok', atDevice(target), `${name}에 ${act} 명령`, '');
@@ -381,13 +392,17 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
         else set('ask', atVisitor(r.personId), `어느 ${cap} 앞인지 애매해요`, top.length === 2 ? `${top[0]}·${top[1]} 사이` : '');
         break;
       }
-      case 'approval':
+      case 'approval': {
+        // 승인 신청이 끝났으면 끝난 까닭. 끝난 까닭을 모르면 만료다 (조회 REST의 요청은 까닭이 없다)
+        const end = r.accessExpiredAt ? r.accessEnd ?? 'expired' : undefined;
         view.aria = s.ownerNotified ? `${who}의 ${cap} ${act} 요청이 소유자 승인을 기다리는 중`
-          : `${who}의 ${cap} ${act} 요청을 실행하지 않음: ${approvalText(r.reason!).title}`;
-        if (r.accessExpiredAt) set('appr', place(NODE_ANCHOR.owner.x + shift, NODE_ANCHOR.owner.y), '승인 신청 만료', '소유자 응답 없음');
+          : end === 'approved' || end === 'denied' ? `${who}의 ${cap} ${act} 요청: ${ACCESS_END[end].title}, ${ACCESS_END[end].body}`
+            : `${who}의 ${cap} ${act} 요청을 실행하지 않음: ${approvalText(r.reason!).title}`;
+        if (end) set('appr', place(NODE_ANCHOR.owner.x + shift, NODE_ANCHOR.owner.y), ACCESS_END[end].title, ACCESS_END[end].body);
         else if (s.ownerNotified) set('appr', place(NODE_ANCHOR.owner.x + shift, NODE_ANCHOR.owner.y), '소유자에게 승인 요청', '');
         else set('appr', atDevice(target), approvalText(r.reason!).title, '');
         break;
+      }
       case 'busy':
         view.aria = `${who}의 ${cap} ${act} 요청이 바빠서 실행되지 않음`;
         if (target) set('busy', atDevice(target), r.reason === 'USER_BUSY' ? '이미 다른 기기를 쓰는 중' : r.reason === 'COMMAND_IN_PROGRESS' ? `${name} 명령 실행 중` : `${name} 사용 중`,

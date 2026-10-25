@@ -332,6 +332,71 @@ describe('서버 어댑터 스트림 연결', () => {
     expect(rejected).toEqual([]);
   });
 
+  it('FR12B v 불일치로 멈춘 뒤 사람이 누른 reconnect()는 새 소켓으로 연결하고, 열리면 인증 메시지를 가장 먼저 보낸다', () => {
+    const { source, timers } = setup();
+    const { bundles } = listen(source);
+    last().open();
+    const old = last();
+    old.message({ v: 2, events: [BEACON] });
+    // 저절로 다시 연결하지 않는다
+    expect(FakeSocket.all).toHaveLength(1);
+    expect(timers.pending).toBe(0);
+    bundles.length = 0;
+
+    source.reconnect();
+    expect(FakeSocket.all).toHaveLength(2);
+    const fresh = last();
+    expect(fresh).not.toBe(old);
+    expect(fresh.url).toBe('ws://dash.test:5173/dashboard/stream');
+    expect(fresh.sent).toEqual([]);
+    fresh.open();
+    expect(fresh.sent).toEqual([JSON.stringify({ type: 'auth', token: TOKEN })]);
+    expect(links(bundles)).toEqual([{ type: 'link', at: expect.any(String), connected: true, reconnectAttempts: 0 }]);
+    // 끊은 소켓의 늦은 닫힘으로 새 연결이 흔들리지 않고, 새 연결의 메시지를 이어서 받는다
+    old.drop(1000);
+    expect(timers.pending).toBe(0);
+    expect(FakeSocket.all).toHaveLength(2);
+    fresh.message({ v: 1, events: [BEACON] });
+    expect(bundles.at(-1)?.map((e) => e.type)).toEqual(['beacon']);
+  });
+
+  it('FR12B v 불일치가 거듭나도 reconnect()를 누를 때마다 새로 연결한다. 열려 있는 연결과 해제한 연결은 건드리지 않는다', () => {
+    const { source, timers } = setup();
+    const { off } = listen(source);
+    last().open();
+    // 열려 있는 연결은 그대로 둔다
+    source.reconnect();
+    expect(FakeSocket.all).toHaveLength(1);
+    for (let n = 2; n <= 4; n += 1) {
+      last().message({ v: 9, events: [] });
+      expect(timers.pending).toBe(0);
+      source.reconnect();
+      expect(FakeSocket.all).toHaveLength(n);
+      last().open();
+      // 누르지 않았는데 한 번 더 열리지 않는다
+      source.reconnect();
+      expect(FakeSocket.all).toHaveLength(n);
+    }
+    // 멈춘 채 해제하면 reconnect()로 다시 열리지 않는다
+    last().message({ v: 9, events: [] });
+    off();
+    source.reconnect();
+    expect(FakeSocket.all).toHaveLength(4);
+  });
+
+  it('FR12B 4401·4403으로 멈춘 연결은 reconnect()로도 다시 열지 않는다 (토큰을 지우고 입력 화면으로 갔다)', () => {
+    for (const [code, why] of [[4401, 'invalid'], [4403, 'not_owner']] as const) {
+      const { source, timers, rejected } = setup();
+      listen(source);
+      last().open();
+      last().drop(code);
+      source.reconnect();
+      expect(FakeSocket.all, String(code)).toHaveLength(1);
+      expect(timers.pending, String(code)).toBe(0);
+      expect(rejected).toEqual([why]);
+    }
+  });
+
   it('FR12B 4401은 invalid, 4403은 not_owner로 onRejected를 부르고 다시 연결하지 않는다', () => {
     for (const [code, why] of [[4401, 'invalid'], [4403, 'not_owner']] as const) {
       const { source, timers, rejected } = setup();

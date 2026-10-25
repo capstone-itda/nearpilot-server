@@ -309,6 +309,75 @@ describe('stageView 이벤트 흐름', () => {
   });
 });
 
+describe('stageView 승인 신청의 끝과 실행 거절', () => {
+  /** 승인 대기 장면에서 신청이 끝난 상태 */
+  const ended = (accessEnd?: 'approved' | 'denied' | 'expired') => {
+    const s = SCENES.approval();
+    s.request = { ...s.request!, accessExpiredAt: '14:31:30', ...(accessEnd ? { accessEnd } : {}) };
+    s.ownerNotified = false;
+    return s;
+  };
+  const rejected = () => {
+    const s = SCENES.flow();
+    s.request = { ...s.request!, execution: 'rejected' };
+    return s;
+  };
+
+  it('FR12B 승인 신청이 끝난 까닭마다 콜아웃이 다르다: 승인은 다시 요청하면 실행, 거절은 실행 안 함, 만료는 소유자 응답 없음', () => {
+    for (const [accessEnd, title, body] of [
+      ['approved', '소유자가 승인', '다시 요청하면 실행'],
+      ['denied', '소유자가 거절', '실행 안 함'],
+      ['expired', '승인 신청 만료', '소유자 응답 없음'],
+      // 끝난 까닭을 모르는 요청(조회 REST)은 만료로 그린다
+      [undefined, '승인 신청 만료', '소유자 응답 없음']
+    ] as const) {
+      const v = stageView(ended(accessEnd), LAYOUT, { panelOpen: false });
+      expect(v, String(accessEnd)).toMatchObject({ scene: 'approval', push: false, owner: false });
+      expect(v.callout, String(accessEnd)).toMatchObject({ on: true, tone: 'appr', title, body });
+    }
+  });
+  it('FR12B 승인·거절로 끝난 장면의 화면 읽기 문구는 소유자 승인이 필요하다고 말하지 않는다', () => {
+    const aria = (accessEnd: 'approved' | 'denied') => stageView(ended(accessEnd), LAYOUT, { panelOpen: false }).aria;
+    expect(aria('approved')).toBe('방문자 B의 조명 켜기 요청: 소유자가 승인, 다시 요청하면 실행');
+    expect(aria('denied')).toBe('방문자 B의 조명 켜기 요청: 소유자가 거절, 실행 안 함');
+  });
+
+  it('FR12B 기기가 실행 전에 거절하면 고장 격리가 아니다: 격리 선과 명령 선이 없고 기기 위에 거절 콜아웃(바쁨 색)을 둔다', () => {
+    const v = stageView(rejected(), LAYOUT, { panelOpen: false });
+    expect(v).toMatchObject({ scene: 'flow', fault: null, cmd: null });
+    expect(v.callout).toMatchObject({ on: true, tone: 'busy', title: '사물함 1 거절', body: '실행 안 함 · 격리 안 함' });
+    // 명령을 보내던 때와 같은 기기 앞을 가리킨다
+    const sending = stageView(SCENES.flow(), LAYOUT, { panelOpen: false }).callout;
+    expect([v.callout.ax, v.callout.ay]).toEqual([sending.ax, sending.ay]);
+    // 서버의 판정(허가)은 그대로다
+    expect(v.judge).toMatchObject({ mark: '허가', tone: 'ok' });
+    expect(v.aria).toBe('사물함 1이 실행 전에 거절해 격리하지 않음');
+    expect(JSON.stringify(v)).not.toContain('고장 격리');
+  });
+  it('FR12B 실행이 끝난 요청이라 거절도 완료처럼 요청자 신호와 신호 세기를 끈다', () => {
+    expect(stageView(SCENES.flow(), LAYOUT, { panelOpen: false })).toMatchObject({ rssiOn: true });
+    for (const execution of ['succeeded', 'rejected'] as const) {
+      const s = SCENES.flow();
+      s.request = { ...s.request!, execution };
+      const v = stageView(s, LAYOUT, { panelOpen: false });
+      expect(v.rssiOn, execution).toBe(false);
+      expect(v.signals.some((x) => x.on), execution).toBe(false);
+    }
+  });
+  it('FR12B 실행 결과마다 장면이 갈린다: 실패와 결과 불명은 고장 격리, 완료와 거절은 격리가 아니다', () => {
+    const scene = (execution: 'succeeded' | 'failed' | 'unknown' | 'rejected') => {
+      const s = SCENES.flow();
+      s.request = { ...s.request!, execution };
+      const v = stageView(s, LAYOUT, { panelOpen: false });
+      return [v.scene, v.fault];
+    };
+    expect(scene('failed')).toEqual(['fault', 'locker-1']);
+    expect(scene('unknown')).toEqual(['fault', 'locker-1']);
+    expect(scene('succeeded')).toEqual(['flow', null]);
+    expect(scene('rejected')).toEqual(['flow', null]);
+  });
+});
+
 // 주 장소가 아닌 장소의 사람과 요청: 작은 방에 그리고, 콜아웃은 작은 방을 가리킨다
 describe('stageView 두 장소', () => {
   const layoutOf = (id: string) => {

@@ -25,6 +25,13 @@ export const GUIDE_STEPS: RailStep[] = [
 /** 확인 네 칸의 기본 이름 */
 export const CHECK_NAMES = ['누구인지', '어디 앞인지', '정책', '비었는지'];
 
+/** 승인 신청이 끝난 까닭별 5단계 문구. 승인은 실행 허가가 아니다: AI가 request_use를 다시 불러야 실행한다. 코드는 enums.py의 값이다 */
+const ACCESS_END: Record<NonNullable<RequestProgress['accessEnd']>, Pick<RailStep, 'mark' | 'detail' | 'code'>> = {
+  approved: { mark: '승인됨', detail: '다시 요청하면 실행', code: 'approved' },
+  denied: { mark: '거절됨', detail: '소유자가 거절', code: 'APPROVAL_REJECTED' },
+  expired: { mark: '신청 만료', detail: '소유자 응답 없음', code: 'APPROVAL_REQUEST_EXPIRED' }
+};
+
 /** 모든 장소에서 기기를 찾는다. 주 장소가 아닌 장소의 기기도 이름과 방식을 알 수 있다. */
 const findDevice = (places: PlaceInfo[], nodeId: string | undefined): DeviceInfo | undefined => places.flatMap((p) => p.devices).find((d) => d.nodeId === nodeId);
 
@@ -107,11 +114,21 @@ export function railView(s: MonitorState, places: PlaceInfo[], mirroredPersonId:
         s5 = { status: 'todo' };
       } else {
         s4 = { status: 'done', detail: `${act} 명령 보냄`, code: nodeAct };
-        s5 = r.execution === 'succeeded'
-          ? { status: 'current', tone: 'ok', mark: '완료', detail: `${josa(name, '이', '가')} ${ACTION_DONE[r.action]}`, code: 'OK' }
-          : r.execution === 'failed'
-            ? { status: 'current', tone: 'deny', mark: '고장 격리', detail: '기기가 실패를 알림', code: 'EXEC_FAILED → FAULT' }
-            : { status: 'current', tone: 'deny', mark: '고장 격리', detail: '응답 없음 · 결과 불명', code: 'EXEC_UNKNOWN → FAULT' };
+        // 결과가 온 실행의 종류를 모두 가른다. 거절(rejected)은 고장 격리가 아니다: 기기를 격리하지 않고 사용분을 돌려준다
+        switch (r.execution) {
+          case 'succeeded':
+            s5 = { status: 'current', tone: 'ok', mark: '완료', detail: `${josa(name, '이', '가')} ${ACTION_DONE[r.action]}`, code: 'OK' };
+            break;
+          case 'failed':
+            s5 = { status: 'current', tone: 'deny', mark: '고장 격리', detail: '기기가 실패를 알림', code: 'EXEC_FAILED → FAULT' };
+            break;
+          case 'rejected':
+            s5 = { status: 'current', tone: 'busy', mark: '거절됨', detail: '기기가 실행 전에 거절', code: 'rejected' };
+            break;
+          case 'unknown':
+            s5 = { status: 'current', tone: 'deny', mark: '고장 격리', detail: '응답 없음 · 결과 불명', code: 'EXEC_UNKNOWN → FAULT' };
+            break;
+        }
       }
       break;
     case 'ASK':
@@ -119,7 +136,7 @@ export function railView(s: MonitorState, places: PlaceInfo[], mirroredPersonId:
       break;
     case 'NEED_APPROVAL':
       s5 = r.accessExpiredAt
-        ? { status: 'current', tone: 'appr', mark: '신청 만료', detail: '소유자 응답 없음', code: 'APPROVAL_REQUEST_EXPIRED' }
+        ? { status: 'current', tone: 'appr', ...ACCESS_END[r.accessEnd ?? 'expired'] }
         : r.accessRequestedAt
         ? { status: 'current', tone: 'appr', mark: '승인 기다림', detail: '소유자에게 알림 보냄', code: 'NEED_APPROVAL → request_access' }
         : { status: 'current', tone: 'appr', mark: approvalText(r.reason).mark, detail: approvalText(r.reason).title, code: `NEED_APPROVAL · ${r.reason}` };

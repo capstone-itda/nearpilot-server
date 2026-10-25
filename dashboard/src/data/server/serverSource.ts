@@ -18,7 +18,7 @@ export interface ServerOptions {
   clearTimeout?: typeof clearTimeout;
 }
 
-/** 스트림 메시지 형식의 버전 (architecture.md §5 "WebSocket"의 v). 다르면 읽지 않고 다시 연결하지도 않는다 */
+/** 스트림 메시지 형식의 버전 (architecture.md §5 "WebSocket"의 v). 다르면 읽지 않고 저절로 다시 연결하지도 않는다. 사람이 누른 다시 연결만 새로 연결한다 */
 const PROTOCOL_VERSION = 1;
 /** 닫기 코드 (architecture.md §5): 토큰 오류와 소유자 아님은 다시 연결하지 않는다. 4408, 1011, 1013, 그 밖의 끊김은 다시 연결한다 */
 const CLOSE_INVALID_TOKEN = 4401;
@@ -70,6 +70,8 @@ export function createServerSource(options: ServerOptions): DataSource {
     let timer: ReturnType<typeof setTimeout> | undefined;
     /** 연결이 끊긴 뒤 다시 연결을 예약한 수. 연결이 열리면 0이다 */
     let attempts = 0;
+    /** 메시지의 v가 달라 연결을 끊고 멈춘 상태. 저절로 다시 연결하지 않고, 사람이 누른 다시 연결(retryNow)만 새로 연다 */
+    let versionMismatch = false;
 
     const link = (connected: boolean) => listener([{ type: 'link', at: formatLocal(new Date(), 'HH:MM:SS.mmm'), connected, reconnectAttempts: attempts }]);
 
@@ -85,9 +87,10 @@ export function createServerSource(options: ServerOptions): DataSource {
       if (typeof msg !== 'object' || msg === null || Array.isArray(msg)) return;
       const m = msg as { v?: unknown; events?: unknown };
       if (m.v !== undefined && m.v !== PROTOCOL_VERSION) {
-        // 읽을 수 없는 형식이다. 연결을 끊고 다시 연결하지 않는다
+        // 읽을 수 없는 형식이다. 연결을 끊고 저절로 다시 연결하지 않는다
         const old = socket;
         socket = undefined;
+        versionMismatch = true;
         old?.close(1000);
         link(false);
         return;
@@ -110,6 +113,7 @@ export function createServerSource(options: ServerOptions): DataSource {
 
     function open() {
       timer = undefined;
+      versionMismatch = false;
       const ws = new (options.WebSocket ?? WebSocket)(url.toString());
       socket = ws;
       // 해제했거나 닫은 소켓의 늦은 이벤트는 무시한다
@@ -125,10 +129,10 @@ export function createServerSource(options: ServerOptions): DataSource {
 
     open();
     return {
-      /** 기다리는 재연결을 바로 한다 */
+      /** 기다리는 재연결을 바로 하고, v 불일치로 멈춘 연결은 새로 연다. 연결이 열려 있거나 4401·4403으로 멈췄으면 아무것도 하지 않는다 */
       retryNow() {
-        if (timer === undefined) return;
-        (options.clearTimeout ?? clearTimeout)(timer);
+        if (timer === undefined && !versionMismatch) return;
+        if (timer !== undefined) (options.clearTimeout ?? clearTimeout)(timer);
         open();
       },
       close() {

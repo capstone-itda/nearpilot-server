@@ -110,14 +110,13 @@ export function mapEvent(raw: unknown): StreamEvent | undefined {
 
 /**
  * 서버의 실행 상태(ExecutionStatus)를 화면 모델의 실행으로 옮긴다.
- * pending·in_progress는 명령을 보내고 결과를 기다리는 중(sent), rejected(검증된 DEVICE_BUSY)는 실패(failed),
+ * pending·in_progress는 명령을 보내고 결과를 기다리는 중(sent), rejected(검증된 DEVICE_BUSY: 기기가 실행 전에 거절하고 격리하지 않음)는 rejected,
  * not_sent(확실한 미전송)는 실행이 없으니 undefined다.
  */
 export function mapExecution(status: string): RequestProgress['execution'] | undefined {
   switch (status) {
     case 'pending': case 'in_progress': return 'sent';
-    case 'rejected': return 'failed';
-    case 'succeeded': case 'failed': case 'unknown': return status;
+    case 'succeeded': case 'failed': case 'unknown': case 'rejected': return status;
     default: return undefined;
   }
 }
@@ -127,6 +126,7 @@ const EXECUTION: Check<RequestProgress['execution'] | undefined> = (v, p) =>
 /**
  * 이력 기간을 서버 값으로 바꾼다. 화면의 "오늘"은 `today`, "14:26~14:29"(앞에 "오늘 "이 있어도, 시가 한 자리여도)는 `HH:MM~HH:MM`이다.
  * 그 밖은 그대로 보내고 서버가 400으로 알린다.
+ * 시각 구간은 서버가 서버 시간대의 오늘로 읽는다. 화면은 이 PC의 시각으로 보이므로 두 시간대가 같다고 가정한다 (spec 7절).
  */
 export function serverPeriod(period: string): string {
   const m = /(\d{1,2}):(\d{2})\s*~\s*(\d{1,2}):(\d{2})/.exec(period);

@@ -51,6 +51,59 @@ const LEGACY_KEY = 'nearpilot-arrangement:공용 라운지';
 const MID2 = { 'locker-1': { x: 456, y: 432 }, 'locker-2': { x: 624, y: 432 }, 'locker-3': { x: 792, y: 432 } };
 const arrangementFile = (place: string) => JSON.stringify({ kind: 'nearpilot-arrangement', version: 1, place, devices: MID2 });
 
+describe('App 처음 장소 조회 실패', () => {
+  /** 앞에서부터 차례로 실패하고, 실패를 다 쓰면 목 데이터의 장소를 준다 */
+  function flakySource(failures: unknown[]) {
+    const mock = createMockSource({ scene: 'idle' });
+    let calls = 0;
+    const source: DataSource = { ...mock, places: () => { calls += 1; return failures.length ? Promise.reject(failures.shift()) : mock.places(); } };
+    return { source, calls: () => calls };
+  }
+
+  it('FR12A 장소 조회가 실패하면 불러오는 중에 멈추지 않고 이유와 다시 시도를 보인다. 누르면 장소를 다시 조회해 화면을 그린다', async () => {
+    const { source, calls } = flakySource([new Error('서버에 연결하지 못했어요')]);
+    const { container } = render(<App source={source} />);
+    expect((await screen.findByRole('alert')).textContent).toBe('서버에 연결하지 못했어요');
+    expect(screen.getByRole('heading', { name: '장소를 불러오지 못했어요' })).toBeTruthy();
+    expect(screen.queryByText('불러오는 중…')).toBeNull();
+    expect(container.querySelector('[data-component="TopBar"]')).toBeNull();
+    const before = calls();
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }));
+    expect(calls()).toBe(before + 1);
+    // 다시 조회하는 동안은 실패 화면이 아니다
+    expect(container.querySelector('[data-component="PlacesError"]')).toBeNull();
+    expect(await screen.findByRole('banner')).toBeTruthy();
+    expect(container.querySelector('[data-component="PlacesError"]')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('FR12A 다시 시도해도 실패하면 그 이유를 보이고, 이유를 알 수 없으면 정해진 문구를 보인다', async () => {
+    const { source, calls } = flakySource([new Error('서버 오류 500 · INTERNAL_ERROR'), 'boom', new Error('')]);
+    render(<App source={source} />);
+    expect((await screen.findByRole('alert')).textContent).toBe('서버 오류 500 · INTERNAL_ERROR');
+    for (const text of ['원인을 알 수 없어요', '원인을 알 수 없어요']) {
+      fireEvent.click(screen.getByRole('button', { name: '다시 시도' }));
+      await act(async () => undefined);
+      expect(screen.getByRole('alert').textContent).toBe(text);
+    }
+    expect(calls()).toBe(3);
+    // 오류 원문(예: 'boom')은 화면에 없다
+    expect(document.body.textContent).not.toContain('boom');
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }));
+    expect(await screen.findByRole('banner')).toBeTruthy();
+    expect(calls()).toBe(4);
+  });
+
+  it('FR12A 장소 조회가 성공하면 실패 화면 없이 바로 그린다', async () => {
+    const { source, calls } = flakySource([]);
+    const { container } = render(<App source={source} />);
+    expect(await screen.findByRole('banner')).toBeTruthy();
+    expect(container.querySelector('[data-component="PlacesError"]')).toBeNull();
+    expect(calls()).toBe(1);
+  });
+});
+
 describe('App', () => {
   it('FR12B 장소 목록이 비면 무대에 "장소 없음"을 보이고 상단 바, 레일, 폰 화면은 그대로 둔다', async () => {
     const { container } = render(<App source={emptySource()} />);

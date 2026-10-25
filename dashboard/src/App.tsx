@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { DataSource } from './data/source';
 import { DataCtx, type Ctx } from './data/context';
@@ -67,6 +67,8 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
   const [sizes, setSizes] = useState<Sizes>(prefs.sizes);
   const [stageSize, setStageSize] = useState<{ w: number; h: number; right: number }>();
   const [info, setInfo] = useState<PlacesInfo>();
+  /** 처음 장소 조회가 실패한 이유 (어댑터가 정한 문구). 다시 시도하면 지운다 */
+  const [placesError, setPlacesError] = useState<string>();
   /** 장소별 표시 배치 (placeId → 배치) */
   const [arrangements, setArrangements] = useState<Record<string, Arrangement>>({});
   /** 사람이 고정한 장소. 이 화면을 연 동안만 두고 저장하지 않는다. 자동이면 undefined */
@@ -98,12 +100,15 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     const t = setTimeout(() => setMotion(true), 800);
     return () => clearTimeout(t);
   }, [loaded]);
-  useEffect(() => {
+  // 토큰이 거부되면(401·403) 어댑터가 입력 화면으로 돌려보내므로 이 실패 화면이 끼어들지 않는다
+  const loadPlaces = useCallback(() => {
+    setPlacesError(undefined);
     source.places().then((p) => {
       setInfo(p);
       setArrangements(Object.fromEntries(p.places.map((pl) => [pl.placeId, resolveArrangement(pl.devices, loadArrangement(pl.placeId, pl.placeName))])));
-    }, () => undefined);
+    }, (e: unknown) => setPlacesError(e instanceof Error && e.message ? e.message : '원인을 알 수 없어요'));
   }, [source]);
+  useEffect(loadPlaces, [loadPlaces]);
   // 무대의 주 장소: 스냅숏이 바뀔 때마다 진행 중인 요청과 사람의 이동으로 고른다. 고정한 장소가 있으면 그 장소다.
   const focusRef = useRef<StageFocus>();
   const focus = useMemo(() => (info && snapshot ? nextFocus(focusRef.current, snapshot, info.places, lock) : undefined), [info, snapshot, lock]);
@@ -167,7 +172,13 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  if (!info || !snapshot) return <div className="np-app" data-theme={theme}><p className="np-loading" role="status">불러오는 중…</p></div>;
+  if (!info || !snapshot) {
+    return (
+      <div className="np-app" data-theme={theme}>
+        {placesError && !info ? <PlacesError message={placesError} onRetry={loadPlaces} /> : <p className="np-loading" role="status">불러오는 중…</p>}
+      </div>
+    );
+  }
 
   const people = new Map(snapshot.people.map((p) => [p.id, p.pseudonym]));
   // 이력과 감사 로그는 주 장소가 아닌 장소의 기기도 이름으로 보인다
@@ -306,6 +317,20 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     <DataCtx.Provider value={ctx}>
       <div className="np-app" data-theme={theme} data-motion={motion ? 'on' : 'off'}>{screen}</div>
     </DataCtx.Provider>
+  );
+}
+
+/** 처음 장소 조회가 실패했을 때. 이유는 어댑터가 정한 문구라 토큰이나 브라우저 오류 원문이 없다. */
+function PlacesError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <main className="np-gate" data-component="PlacesError">
+      <div className="np-gate__card">
+        <span className="np-cap">NEARPILOT · 운영 모니터</span>
+        <h1 className="np-gate__title">장소를 불러오지 못했어요</h1>
+        <p className="np-gate__error" role="alert">{message}</p>
+        <button className="np-btn" data-variant="primary" type="button" onClick={onRetry}>다시 시도</button>
+      </div>
+    </main>
   );
 }
 

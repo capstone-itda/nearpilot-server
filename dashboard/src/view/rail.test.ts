@@ -141,6 +141,59 @@ describe('railView 명령 전', () => {
   });
 });
 
+describe('railView 승인 신청의 끝', () => {
+  /** 승인 대기 장면에서 소유자가 답했거나 기한이 지나 신청이 끝난 상태 */
+  const ended = (accessEnd?: 'approved' | 'denied' | 'expired') => {
+    const s = SCENES.approval();
+    s.request = { ...s.request!, accessExpiredAt: '14:31:30', ...(accessEnd ? { accessEnd } : {}) };
+    s.ownerNotified = false;
+    return s;
+  };
+  const fifth = (s: MonitorState) => railView(s, PLACES, 'p-b').steps[4];
+
+  it('FR12B 소유자가 승인하면 승인됨 · 다시 요청하면 실행이라고 쓴다 (승인은 실행 허가가 아니다)', () => {
+    expect(fifth(ended('approved'))).toEqual({ status: 'current', tone: 'appr', mark: '승인됨', detail: '다시 요청하면 실행', code: 'approved' });
+  });
+  it('FR12B 소유자가 거절하면 거절됨 · 소유자가 거절이라고 쓴다', () => {
+    expect(fifth(ended('denied'))).toEqual({ status: 'current', tone: 'appr', mark: '거절됨', detail: '소유자가 거절', code: 'APPROVAL_REJECTED' });
+  });
+  it('FR12B 소유자 응답 없이 만료되면 신청 만료 · 소유자 응답 없음이라고 쓰고, 끝난 까닭을 모르는 요청(조회 REST)도 만료로 읽는다', () => {
+    const expired = { status: 'current', tone: 'appr', mark: '신청 만료', detail: '소유자 응답 없음', code: 'APPROVAL_REQUEST_EXPIRED' };
+    expect(fifth(ended('expired'))).toEqual(expired);
+    expect(fifth(ended())).toEqual(expired);
+  });
+  it('FR12B 승인을 기다리는 동안에는 끝난 까닭을 쓰지 않는다', () => {
+    expect(fifth(SCENES.approval())).toMatchObject({ mark: '승인 기다림', code: 'NEED_APPROVAL → request_access' });
+  });
+});
+
+describe('railView 실행 거절', () => {
+  const rejected = () => {
+    const s = SCENES.flow();
+    s.request = { ...s.request!, execution: 'rejected' };
+    return s;
+  };
+
+  it('FR12B 기기가 실행 전에 거절하면 거절됨이다. 고장 격리가 아니다', () => {
+    const v = railView(rejected(), PLACES, 'p-a');
+    expect(v.steps[3]).toMatchObject({ status: 'done', detail: '열기 명령 보냄' });
+    expect(v.steps[4]).toEqual({ status: 'current', tone: 'busy', mark: '거절됨', detail: '기기가 실행 전에 거절', code: 'rejected' });
+    expect(JSON.stringify(v.steps)).not.toMatch(/고장 격리|FAULT|EXEC_/);
+  });
+  it('FR12B 실행 결과마다 5단계가 갈린다: 완료, 실패와 결과 불명은 고장 격리, 거절은 거절됨', () => {
+    const mark = (execution: 'succeeded' | 'failed' | 'unknown' | 'rejected') => {
+      const s = SCENES.flow();
+      s.request = { ...s.request!, execution };
+      const step = railView(s, PLACES, 'p-a').steps[4];
+      return [step.mark, step.code];
+    };
+    expect(mark('succeeded')).toEqual(['완료', 'OK']);
+    expect(mark('failed')).toEqual(['고장 격리', 'EXEC_FAILED → FAULT']);
+    expect(mark('unknown')).toEqual(['고장 격리', 'EXEC_UNKNOWN → FAULT']);
+    expect(mark('rejected')).toEqual(['거절됨', 'rejected']);
+  });
+});
+
 describe('railView 여러 장소', () => {
   it('FR12B 라운지가 주 장소여도 옆방 기기의 이름으로 레일과 서버 랙을 채운다', () => {
     const s = SCENES['side-room']();

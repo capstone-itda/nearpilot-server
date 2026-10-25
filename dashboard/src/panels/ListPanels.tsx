@@ -15,7 +15,7 @@ export function UsesPanel({ onClose, onOpenDevice }: Close & { onOpenDevice: (id
   const q = useQuery(() => source.uses(), []);
   return (
     <Panel kind="uses" cap="패널 · MON-06" title="점유·대여 현황" onClose={onClose}>
-      <Section title="지금 쓰는 기기" hint="대여형 기기의 점유 세션만 보여요. 공용형은 세션이 없어 이 표에 없어요">
+      <Section title="지금 쓰는 기기" hint="대여형 기기의 점유 세션과 공용 조명을 지금 쓰는 사람을 보여요">
         {q.data ? (
           <DataTable label="점유·대여 목록" head={['기기', '사용자', '세션', '시작', '초과']} rows={q.data.map((u) => ({
             key: u.nodeId,

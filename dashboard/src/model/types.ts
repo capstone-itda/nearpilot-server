@@ -102,12 +102,14 @@ export interface RequestProgress {
   posteriors?: Record<string, number>;
   /** 이 요청에 적용한 근접 임계값 (설정값) */
   threshold?: number;
-  /** 실행: 보냄(결과 대기), 완료, 결과 불명 */
-  execution?: 'sent' | 'succeeded' | 'failed' | 'unknown';
+  /** 실행: 보냄(결과 대기), 완료, 실패, 결과 불명, 기기가 실행 전에 거절(고장 격리 아님) */
+  execution?: 'sent' | 'succeeded' | 'failed' | 'unknown' | 'rejected';
   /** NEED_APPROVAL 뒤 AI가 request_access로 신청한 시각 */
   accessRequestedAt?: string;
   /** 승인 신청이 끝난 시각: 소유자 응답 없이 만료됐거나, 소유자가 승인·거부했다 */
   accessExpiredAt?: string;
+  /** 승인 신청이 끝난 까닭. accessExpiredAt과 함께 생긴다 */
+  accessEnd?: 'approved' | 'denied' | 'expired';
   /** 서버가 AI 호스트에 결과를 돌려준 시각 */
   respondedAt?: string;
 }
