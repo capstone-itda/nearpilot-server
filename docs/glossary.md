@@ -26,6 +26,9 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 
 ### 도메인
 
+2026-10-26 결정은 실행 성공과 반납 완료의 뜻을 아래처럼 정한다.
+기존 코드와 spec에 남은 물리 검사 용어는 이 문서 끝의 "이전 계약 용어"를 따른다.
+
 | 용어 | 뜻 | 코드 이름 | 쓰지 않는 말 |
 |---|---|---|---|
 | 기기 | ESP32 보드 하나와 그 보드가 제어하는 사물함, 조명 또는 스피커. 앵커 역할도 한다 | `node`, `NodeInfo` | 장치, 노드 |
@@ -57,14 +60,15 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 대여시간 기준 시각 | 대여시간 초과를 계산하는 기준이다. 접근 승인 만료와 구분한다 | `rental_due_at` | 대여 권한 만료 시각 |
 | 초과시간 | 대여시간 기준 시각을 넘긴 시간이다. 종료 전에는 현재 시각, 종료 뒤에는 종료 시각으로 계산한다 | | |
 | 대여 기본 시간 | 대여시간 기준 시각을 정하는 시간이다. 자동 반납의 기준이 아니다 | `rental_duration_sec` | |
-| 유지 대상자 | 공용형 기기를 켜 두는 근거가 되는 계정. 켜기 요청에 성공했고 사용 권한이 유효한 계정이다. 서버는 유지 대상자를 저장하지 않는다 | | 유지 참여자 |
+| 유지 대상자 | 공용형 기기의 켜기 제어를 유지하는 근거가 되는 계정. 켜기 신호 출력에 성공했고 사용 권한이 유효한 계정이다. 서버는 유지 대상자를 저장하지 않는다 | | 유지 참여자 |
 | 초기 참여 대기 | 서버가 재시작 뒤 관측을 재개한 시점부터 새 유지 대상자를 기다리는 시간. 이탈 판단의 미수신 시간과 유예 시간의 합이다 | `leave_absent_sec`, `leave_grace_sec` | |
-| 기기 연결 ID | 기기가 MQTT에 접속할 때 새로 만드는 UUID다. 재접속과 재시작마다 바뀐다. 명령과 검사 요청의 대상으로 쓸 때는 `target_session_id`다 | `session_id` | 점유 세션 ID, 노드 세션 ID, `node_session_id` |
-| 결과 사건 ID | 기기가 결과 보고 하나에 붙이는 UUID다. 같은 보고를 다시 보내도 유지한다. 서버가 만든 결과에는 없다 | `NodeResult.event_id`, `SafetyCheckResult.event_id` | |
-| 반납 검사 | 서버의 요청을 받은 기기가 반납의 물리 조건을 새로 검사하는 것. 서버는 검사 결과와 점유 상태, 장애 상태로 종료를 결정한다 | `SafetyCheckRequest`, `SafetyCheckResult` | 안전 검사 |
-| 검사 ID | 서버가 반납 검사 시도마다 발급하는 고유 ID. 반납은 `use_id`로 식별한다 | `check_id` | |
-| 검사 기준 | 기기가 반납 검사에서 확인하는 물리 조건의 묶음. ID와 버전이 있다. 점유 세션은 생성 당시 종료 정책과 함께 검사 기준을 보존한다 | `CheckCriteria`, `UseSession.check_criteria` | |
-| 확인 불능 | 서버가 반납 검사의 결과를 확인하지 못한 상태. 응답 기한 초과, 유효하지 않은 결과, `unknown`이 원인이다. `not_ready`와 구분한다 | | |
+| 기기 연결 ID | 기기가 MQTT에 접속할 때 새로 만드는 UUID다. 재접속과 재시작마다 바뀐다. 명령의 대상으로 쓸 때는 `target_session_id`다 | `session_id` | 점유 세션 ID, 노드 세션 ID, `node_session_id` |
+| 결과 사건 ID | 기기가 결과 보고 하나에 붙이는 UUID다. 같은 보고를 다시 보내도 유지한다. 서버가 만든 결과에는 없다 | `NodeResult.event_id` | |
+| 제어 신호 출력 | 펌웨어가 서보, 조명이나 스피커에 명령의 제어 신호를 내보내는 것. 실제 상태 확인을 포함하지 않는다 | | |
+| 실행 성공 | 펌웨어가 명령의 제어 신호 출력을 마치고 결과를 저장한 것. 실제 켜짐, 열림과 재생의 증명이 아니다 | `succeeded` | |
+| 명령 처리 상태 | 펌웨어가 명령 처리를 기다리는지, 처리 중인지, 확인할 수 없는지 나타내는 상태 | 새 필드 형식은 미결이다 | 물리 상태 |
+| 마지막 제어 상태 | 저장한 성공 명령의 `on` 또는 `off`다. 실제 켜짐과 꺼짐의 관측이 아니다 | | |
+| 반납 완료 | 본인 반납의 논리적 점유 해제를 서버가 저장한 것. 문 닫힘과 잠금, 물리 안전의 증명이 아니다 | | |
 | 점유 세션 | 대여형 기기를 한 계정이 점유하는 기간의 기록 | `use_session`, `use_id` | 사용 세션 |
 | 신뢰 상태 | 소유자가 정한 기기의 신뢰 여부. `discovered`, `trusted`, `revoked` | `TrustState` | |
 | 온라인 | 기기의 마지막 수신 시각이 TTL 안에 있는 상태 | `last_seen_at` | |
@@ -96,7 +100,7 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 서버 내부 요청 | 방문자 요청 없이 서버가 시작한 명령 요청. 사용자 ID와 판정 기록이 없다 | `InternalRequest`, `ExecutionKind.SERVER_INTERNAL` | |
 | 최초 대여 | 점유 세션을 새로 만드는 대여형 조작 | | |
 | 재조작 | 대여 중인 본인이 기존 점유 세션의 기기에 하는 새 조작. 새 요청과 새 명령을 기존 `use_id`에 연결한다 | | |
-| 구동 중 | 기기의 구동부가 물리 동작을 하는 상태. 기기 상태 `ACTIVE`(대여 중)와 다르다 | `actuator_state`의 `busy` | |
+| 구동 중 | 펌웨어가 명령의 제어 신호를 출력하는 상태. 기기 상태 `ACTIVE`인 대여 중과 구분한다 | 새 상태 필드 형식은 미결이다 | |
 | 접수·실행 전 거부 | 기기가 새 명령을 접수하기 전에 검증된 `DEVICE_BUSY`로 거부한 결과. 서버의 확실한 미전송(`NOT_SENT`)과 다르다 | `CommandOutcome.REJECTED` | |
 | 처리 중 사유 | 다른 구동 명령이 진행 중이어서 새 조작을 시작하지 못하는 사유. 기기 점유 충돌과 구분한다 | `ReasonCode.COMMAND_IN_PROGRESS` | |
 | 실행 중단 사유 | 재검사 밖의 이유로 상태 관리가 전송을 막은 사유. 재검사 판정과 구분한다 | `ExecutionResult.reason` | |
@@ -120,7 +124,6 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 종료 사유 | `release`, `leave`, `timeout`, `fault`, `cancelled` | `EndReason` |
 | 실행 진행 상태 | `pending`, `in_progress`, `succeeded`, `failed`, `unknown`, `not_sent`, `rejected` | `ExecutionStatus` |
 | 사건 반영 결과 | `applied`, `already_applied`, `conflict` | `StoreOutcome` |
-| 반납 검사 결과 | `passed`, `not_ready`, `fault`, `unknown` | `SafetyCheckOutcome` |
 | 기기 실행 결과 상태 | `accepted`, `running`, `succeeded`, `failed`, `unknown`, `rejected` | `NodeResultState` |
 | 거부 코드 | `SESSION_MISMATCH`, `COMMAND_EXPIRED`, `CLOCK_UNVERIFIED`, `UNSUPPORTED_ACTION`, `COMMAND_ID_CONFLICT`, `INVALID_MESSAGE`, `STORAGE_ERROR`, `DEVICE_BUSY` | `RejectCode` |
 | 복구 준비 상태 | `not_ready`, `ready`, `recovering`, `recovered` | `RecoveryStatus` |
@@ -138,3 +141,16 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | decision PR | 팀 결정 하나를 반영하는 PR. 브랜치는 `decision/{요약}`이다 |
 | 추상 요약 | 경계에서 보이는 입력, 출력, 바뀌는 상태, 약속만 쓴 설명. 내부 동작은 쓰지 않는다 |
 | 미결 | 아직 정하지 않은 내용. 이슈가 생기면 `미결 — #이슈번호`로 쓴다 |
+
+### 이전 계약 용어
+
+아래 용어는 센서 기반 물리 검증을 쓰던 이전 계약의 뜻이다. 새 실행·반납·복구 조건에는 쓰지 않는다.
+기존 코드와 spec의 설명을 읽거나 저장 기록을 이전할 때만 참조한다.
+
+| 용어 | 이전 계약의 뜻 | 코드 이름 | 쓰지 않는 말 |
+|---|---|---|---|
+| 반납 검사 | 서버의 요청을 받은 기기가 반납의 물리 조건을 새로 검사하는 것. 서버는 검사 결과와 점유 상태, 장애 상태로 종료를 결정한다 | `SafetyCheckRequest`, `SafetyCheckResult` | 안전 검사 |
+| 검사 ID | 서버가 반납 검사 시도마다 발급하는 고유 ID. 반납은 `use_id`로 식별한다 | `check_id` | |
+| 검사 기준 | 기기가 반납 검사에서 확인하는 물리 조건의 묶음. ID와 버전이 있다. 점유 세션은 생성 당시 종료 정책과 함께 검사 기준을 보존한다 | `CheckCriteria`, `UseSession.check_criteria` | |
+| 확인 불능 | 서버가 반납 검사의 결과를 확인하지 못한 상태. 응답 기한 초과, 유효하지 않은 결과, `unknown`이 원인이다. `not_ready`와 구분한다 | | |
+| 반납 검사 결과 | 이전 계약의 `passed`, `not_ready`, `fault`, `unknown`이다. 새 계약의 반납 조건에서 제외한다 | `SafetyCheckOutcome` | |
