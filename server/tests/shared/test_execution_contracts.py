@@ -127,6 +127,9 @@ def test_fr19_fake_store_satisfies_protocol():
         def close_result(self, use_id):
             return None
 
+        def last_succeeded(self, node_id):
+            return None
+
         def restore_pending(self):
             return ()
 

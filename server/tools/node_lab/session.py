@@ -98,8 +98,6 @@ class Lab:
                 continue
             self._check(admin.assign_place(owner, PlaceAssignment("node-lab", owner, "연결 시험", (node.node_id,))))
             self._check(admin.set_node_trust(owner, node.node_id, TrustState.TRUSTED))
-            self._check(admin.set_release_policy(owner, node.node_id,
-                {"check_criteria": {"id": "light-return", "version": 1}}))
             self._check(admin.set_policy(owner, PolicySettings(node.node_id, Visibility.PUBLIC, AccessMode.OPEN,
                 None, ApprovalMode.ONE_TIME, None, None)).result)
             self._configured.add(node.node_id)
@@ -142,7 +140,7 @@ class Lab:
                     received_at=frame.received_at if frame else None,
                     status_observed_at=status.observed_at if status else None,
                     status_received_at=status.received_at if status else None,
-                    physical=asdict(status.physical) if status else None)
+                    command_state=status.command_state.value if status else None)
             place_nodes = [n for n in nodes if n.place_id == "node-lab" and n.trust_state == TrustState.TRUSTED]
             if not place_nodes or not latest:
                 self.evidence.emit("proximity_pending", reason="유효한 현재 비콘 관측을 기다린다")

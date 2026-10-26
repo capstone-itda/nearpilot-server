@@ -8,7 +8,7 @@ import sys
 
 from tools.node_sim.config import ConfigError, acl_sections, build_device, load_config
 
-HELP = "commands: door <node_id> open|close, quit"
+HELP = "commands: quit"
 
 
 def main(argv: list[str] | None = None, *, read_line=sys.stdin.readline, write=print) -> int:
@@ -42,11 +42,7 @@ def main(argv: list[str] | None = None, *, read_line=sys.stdin.readline, write=p
             words = line.split()
             if words == ["quit"]:
                 break
-            if (len(words) == 3 and words[0] == "door" and words[1] in devices
-                    and words[2] in ("open", "close")):
-                changed = devices[words[1]].node.set_door(words[2] == "close")
-                write("ok" if changed else "unchanged (locked or not a locker)")
-            elif words:
+            if words:
                 write(HELP)
     except KeyboardInterrupt:
         pass

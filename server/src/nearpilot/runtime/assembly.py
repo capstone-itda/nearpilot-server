@@ -319,7 +319,7 @@ class Runtime:
         release = ReleaseService(repository=repo, store=store, settings=settings, clock=clock,
                                  lock_for=locks)
         execute_off = Late("shared_light_execute")
-        shared_light = SharedLightService(repository=repo, policy=policy, settings=settings,
+        shared_light = SharedLightService(repository=repo, store=store, policy=policy, settings=settings,
                                           clock=clock, lock_for=locks, execute=execute_off)
         restore = RestoreService(repository=repo, store=store, release=release, recovery=recovery,
                                  shared_light=shared_light, settings=settings, clock=clock,

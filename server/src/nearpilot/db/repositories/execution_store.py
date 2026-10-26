@@ -726,6 +726,18 @@ class SqliteExecutionStore:
         ).fetchone()
         return None if row is None else self._command_from_row(row)
 
+    def last_succeeded(self, node_id: str) -> CommandRecord | None:
+        """기기에서 가장 늦게 전송을 시작한 `succeeded` 명령. 공용형의 마지막 제어 상태다 (FR-20).
+
+        전송 시작 시각은 서버 시계다. 기기 시각인 `occurred_at`으로 순서를 정하지 않는다.
+        """
+        row = self._conn.execute(
+            "SELECT * FROM node_command WHERE node_id = ? AND status = ? "
+            "ORDER BY send_started_at DESC, rowid DESC LIMIT 1",
+            (node_id, ExecutionStatus.SUCCEEDED.value),
+        ).fetchone()
+        return None if row is None else self._command_from_row(row)
+
     def execution_context(self, command_id: str) -> ExecutionContext | None:
         """명령 ID로 판정이 인계한 원래 실행 문맥을 조회한다 (#83).
 

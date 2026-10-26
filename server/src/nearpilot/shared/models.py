@@ -29,7 +29,7 @@ from nearpilot.shared.enums import (
     RecoveryReason,
     AccessMode,
     Action,
-    ActuatorState,
+    CommandState,
     ApprovalMode,
     ApprovalStatus,
     Capability,
@@ -497,20 +497,10 @@ class NodeAnnounce:
 
 
 @dataclass(frozen=True, slots=True)
-class PhysicalState:
-    """`status` 의 원시 물리 관측 (architecture.md §5 MQTT 3절). None 은 확인하지 못했다는 뜻이다."""
-
-    door_closed: bool | None
-    light_on: bool | None
-    actuator_state: ActuatorState
-    sensor_fault: bool | None
-
-
-@dataclass(frozen=True, slots=True)
 class NodeStatus:
-    """기기 상태 보고. 원시 관측만 담는다.
+    """기기 상태 보고. 펌웨어의 명령 처리 상태만 담는다 (FR-07, MQTT v2).
 
-    IOT 는 안전을 판정하지 않는다. 이 보고는 반납 검사를 대신하지 못한다 (FR-07).
+    실제 상태와 센서 고장 값은 담지 않는다. 반납 종료의 근거가 아니다.
     """
 
     node_id: str
@@ -518,8 +508,8 @@ class NodeStatus:
     session_id: str
     seq: int
     sent_at: datetime
-    observed_at: datetime  # 관측 시각
-    physical: PhysicalState
+    observed_at: datetime  # 보고 기준 시각
+    command_state: CommandState
     detail: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

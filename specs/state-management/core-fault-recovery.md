@@ -49,9 +49,9 @@
 - 명령 처리 대기 근거는 아래를 모두 만족하는 `status`다 (architecture.md §4 "복구 준비 조회와 복구 승인").
   - 현재 기기 연결(`NodeInfo.session_id`)의 보고다.
   - 마지막 보고의 서버 수신 시각이 `online_ttl_sec` 안이다.
-  - 마지막 보고가 명령 처리 대기(`actuator_state=idle`)다. `busy`와 `unknown`은 근거가 아니다.
+  - 마지막 보고가 명령 처리 대기(`command_state=idle`)다. `busy`와 `unknown`은 근거가 아니다.
   - 복구 건이 생긴 뒤에 받은 보고다.
-- 센서 값(`door_closed`, `light_on`, `sensor_fault`)은 복구 조건에 쓰지 않는다. status 형식의 새 버전은 미결이다 (FR-07).
+- MQTT v2의 `status`는 센서 값을 담지 않는다. 복구 조건은 명령 처리 상태만 쓴다 (FR-07).
 - 준비 상태는 `not_ready`, `ready`, `recovering`, `recovered`다. 복구 건이 없으면 `not_ready`와 `NO_RECOVERY_REQUIRED`다 (NFR-04).
 - `blockers`는 `RecoveryBlocker`로 부족한 조건을 구분한다. 명령 처리 대기 보고가 없으면 `COMMAND_STATE_UNCONFIRMED`다.
 - `evidence`는 저장한 명령 결과와 현재 연결의 상태 보고를 참조한다. 임의의 진단 문자열로 근거를 대신하지 않는다.
@@ -180,7 +180,7 @@
 - #84 A안: 조회와 승인마다 `Repository.is_place_owner(user_id, node_id)`로 소유 여부만 확인한다.
 - #89: 복구 REST 경로는 상태 관리가 구현하지만 이 spec에 넣지 않는다. 이 spec은 `RecoveryService`만 제공한다.
 - `NotPlaceOwner`는 `lifecycle` 안의 예외다. REST 경로가 응답 코드로 바꾼다고 가정한다.
-- 미결 (#196): 새 status 형식이다. 정해질 때까지 MQTT v1의 `physical_state.actuator_state`를 명령 처리 상태로 읽는다.
+- 새 status 형식은 MQTT v2의 `command_state`로 가정한다 (`iot-messages` 가정, 담당자 확인 2026-10-26).
 - 미결 (#196): `COMMAND_STATE_UNCONFIRMED`는 새 `RecoveryBlocker` 값이다. architecture.md §4는 새 사유 값을 미결로 둔다.
 - 미결 (#196): 결과 불명 명령의 사용분 정산 기준이다. 정해질 때까지 `held`로 남긴다.
 - 미결 (#196): 미해결 복구 건의 이전 절차다. 배포한 운영 데이터가 없어서 이전 없이 새 DB로 시작한다고 가정한다 (담당자 확인, 2026-10-26).

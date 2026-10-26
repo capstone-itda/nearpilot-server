@@ -15,7 +15,7 @@ from tools.node_sim.device import BrokerConfig, Credentials, SimDevice
 from tools.node_sim.node import ACTIONS, Beacon, Scenario, SimNode
 from tools.node_sim.store import CommandStore
 
-REPORTS = ("announce", "rssi", "status", "result", "safety_check_result")
+REPORTS = ("announce", "rssi", "status", "result")
 
 
 class ConfigError(ValueError):
@@ -44,7 +44,6 @@ class FleetConfig:
 def _scenario(data: dict) -> Scenario:
     data = dict(data)
     data["beacons"] = tuple(Beacon(**beacon) for beacon in data.get("beacons", ()))
-    data["unmeasurable"] = tuple(data.get("unmeasurable", ()))
     return Scenario(**data)
 
 
@@ -86,6 +85,6 @@ def acl_sections(fleet: FleetConfig) -> str:
         base = f"nearpilot/node/{device.node_id}"
         lines = [f"user {device.username}"]
         lines += [f"topic write {base}/{kind}" for kind in REPORTS]
-        lines += [f"topic read {base}/cmd", f"topic read {base}/safety_check"]
+        lines += [f"topic read {base}/cmd"]
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks) + "\n"

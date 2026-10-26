@@ -1,8 +1,9 @@
 # ESP32 관측과 명령 연결 시험
 
 2026-10-26에 센서 기반 물리 검증과 반납 검사를 범위에서 제외했다 (`docs/requirements.md` FR-07·FR-20).
-아래의 물리 상태 필드와 센서 없는 실행의 `unknown` 설명은 현재 MQTT v1 구현을 가리킨다.
-후속 fix PR에서 시험 설정 생성, 상태 표시와 성공 기준을 새 계약에 맞춘다.
+서버 쪽 시험 도구는 MQTT v2로 바꿨다. 상태 표시는 `command_state`이고 검사 기준과 검사 ACL을 쓰지 않는다.
+시험 펌웨어(`firmware/node_lab`)는 아직 MQTT v1이라 서버가 보고를 거부한다. 펌웨어 후속 fix PR에서 맞춘다.
+아래의 물리 상태 필드와 센서 없는 실행의 `unknown` 설명은 이전 v1 시험 펌웨어를 가리킨다.
 `HARDWARE_VALIDATION.md`의 과거 실측과 `KNOWN_ISSUES.md`의 기존 관찰은 보존한다.
 
 앱, 로그인 화면, REST, WebSocket 없이 기존 서버를 직접 부른다.

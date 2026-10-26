@@ -37,7 +37,7 @@
     {"node_id": "mood-1", "place": "place-b", "capability": "light", "occupancy": "shared",
      "username": "mood-1", "password_file": "config/.env.node-mood-1",
      "store": "var/node_sim/mood-1.sqlite3",
-     "scenario": {"actuation_sec": 0.5, "light_observable": false, "beacons": [
+     "scenario": {"actuation_sec": 0.5, "beacons": [
        {"uuid": "11111111-2222-3333-4444-555555555555", "major": 2, "minor": 1, "rssi": -60}]}}
   ]
 }

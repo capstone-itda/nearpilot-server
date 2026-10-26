@@ -1,12 +1,7 @@
 # MQTT 기기 시뮬레이터
 
-2026-10-26에 센서 기반 물리 검증과 반납 검사를 범위에서 제외했다.
-아래는 아직 바꾸지 않은 MQTT v1 구현의 실행법이다. 새 계약은 `docs/requirements.md` FR-07·FR-20을 따른다.
-`light_observable`, `unmeasurable`, `sensor_fault`와 문 조작은 이전 검사 시나리오다. 후속 fix PR에서 정리한다.
-새 계약에서는 센서 관측 부재를 실행 불명으로 만들지 않는다. 명령 처리 실패와 결과 유실 시험은 유지한다.
-
-실제 ESP32 없이 MQTT v1 계약을 확인하는 가상 기기다. 계약과 결정은 `specs/iot-node-simulator/spec.md`에 있다.
-가상 완료와 가상 관측은 실제 센서의 검증 완료가 아니다.
+실제 ESP32 없이 MQTT v2 계약을 확인하는 가상 기기다. 계약과 결정은 `specs/iot-node-simulator/spec.md`에 있다.
+2026-10-26 결정에 따라 `succeeded`는 가상 제어 신호 출력 완료다. 상태 보고는 `command_state`만 담고 반납 검사는 처리하지 않는다.
 
 ## 실행
 
@@ -20,8 +15,7 @@
 4. 시작한다: `python -m tools.node_sim run --config tools/node_sim/fleet.example.json`
    `--node <기기 ID>`를 반복해 일부 기기만 실행할 수 있다.
 
-실행 중에는 `door <기기 ID> open|close`로 사물함 문을 조작하고 `quit`으로 끝낸다.
-열린 문은 잠금이 풀린 사물함에서만 열 수 있다. 문을 닫으면 다시 잠근다.
+실행 중에는 `quit`으로 끝낸다.
 
 ## 설정
 
@@ -37,13 +31,10 @@
 
 | 키 | 뜻 |
 |---|---|
-| `actuation_sec` | 구동 시작부터 최종 결과까지의 시간 |
+| `actuation_sec` | 출력 시작부터 최종 결과까지의 시간 |
 | `final` | 최종 결과 `succeeded`·`failed`·`unknown` |
 | `drop_final_result` | 최종 결과를 저장하되 보고하지 않는다 (결과 유실) |
 | `result_delay_sec` | 최종 결과의 보고를 늦춘다 |
-| `light_observable` | `false`면 `light_on=null`이고 조명 명령은 `unknown`으로 끝난다 (IR 무드등) |
-| `unmeasurable` | 측정하지 못하는 검사 항목. 근거에서 빠지고 결과는 `unknown`이다 |
-| `sensor_fault` | 상태의 `sensor_fault=true`와 검사 결과 `fault` |
 | `storage_error` | 명령 기록 저장이 실패한다. 구동하지 않는다 |
 | `beacons` | 프레임마다 보고할 비콘 `uuid`·`major`·`minor`·`rssi` |
 

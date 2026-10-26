@@ -7,7 +7,7 @@ import pytest
 
 from nearpilot.shared.enums import (
     Action,
-    ActuatorState,
+    CommandState,
     Capability,
     CommandOutcome,
     DeviceState,
@@ -34,7 +34,6 @@ from nearpilot.shared.models import (
     NodeInfo,
     NodeResult,
     NodeStatus,
-    PhysicalState,
     RssiFrame,
     UseSession,
 )
@@ -109,10 +108,11 @@ def test_fr07_status_and_command_result_do_not_judge_safety():
     assert "safe" not in {f.name for f in fields(CommandResult)}
     status = NodeStatus(
         "locker-1", NOW, "sess-1", 1, NOW, NOW,
-        PhysicalState(None, None, ActuatorState.UNKNOWN, None),
+        CommandState.UNKNOWN,
     )
-    assert status.physical.door_closed is None
-    assert {s.value for s in ActuatorState} == {"idle", "busy", "unknown"}
+    assert {f.name for f in fields(NodeStatus)} >= {"command_state"}
+    assert not {"physical", "door_closed", "light_on", "sensor_fault"} & {f.name for f in fields(NodeStatus)}
+    assert {s.value for s in CommandState} == {"idle", "busy", "unknown"}
 
 
 def test_fr06_node_command_targets_a_session_and_expires():

@@ -1,7 +1,7 @@
-"""MQTT v1 device simulator (specs/iot-node-simulator/spec.md).
+"""MQTT v2 device simulator (specs/iot-node-simulator/spec.md).
 
 Virtual devices use real MQTT connections and per-device credentials. Their
-completions and observations are simulated, not verified sensor ability.
+control signal outputs are simulated; no physical state is reported.
 """
 
 from tools.node_sim.config import (

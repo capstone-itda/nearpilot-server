@@ -14,14 +14,14 @@ from nearpilot.core.lifecycle.restore import RestoreService
 from nearpilot.core.lifecycle.shared_light import SharedLightService
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, ActuatorState, ApprovalUsageState, Capability, CommandOutcome, DeviceState,
+    Action, CommandState, ApprovalUsageState, Capability, CommandOutcome, DeviceState,
     EndReason, ExecutionKind, ExecutionStatus, Occupancy, ReasonCode, RecoveryStatus, SessionState,
     StoreOutcome, TrustState, Verdict,
 )
 from nearpilot.shared.errors import StoreError, StoreNotApplied, StoreOutcomeUnknown
 from nearpilot.shared.models import (
     ApprovalUsageRecord, CommandRecord, NodeInfo, NodeStatus, PendingRequestRecord,
-    PhysicalState, PolicyCheckResult, RecoveryCompletion, RecoveryEvidence, RecoveryRecord,
+    PolicyCheckResult, RecoveryCompletion, RecoveryEvidence, RecoveryRecord,
     RecoverySettlement, RestoredSession, RestoreBundle, StoreResult, TargetSpec, UseRequest, UseSession,
 )
 
@@ -161,6 +161,13 @@ class StoreFake:
     def close_result(self, use_id):
         return None
 
+    def last_succeeded(self, node_id):
+        """재시작 전 마지막 성공 명령. 조명은 켜기에 성공했다고 둔다."""
+        if not node_id.startswith("light"):
+            return None
+        return CommandRecord("last-on", "request-last-on", node_id, Action.ON, ExecutionStatus.SUCCEEDED,
+                             ExecutionKind.SHARED)
+
     def recovery(self, recovery_id):
         return self.recoveries.get(recovery_id)
 
@@ -193,7 +200,7 @@ def env():
     recovery = FaultRecoveryService(repository=repository, store=store, clock=clock, lock_for=lock_for)
     release = ReleaseService(repository=repository, store=store, settings=lambda: settings[0],
                              clock=clock, lock_for=lock_for)
-    light = SharedLightService(repository=repository, policy=PolicyFake(),
+    light = SharedLightService(repository=repository, store=store, policy=PolicyFake(),
                                settings=lambda: settings[0], clock=clock, lock_for=lock_for)
     def create():
         return RestoreService(repository=repository, store=store, release=release, recovery=recovery,
@@ -208,8 +215,7 @@ def status(env, node_id="locker-1", **changes):
     node = env.repository.items[node_id]
     env.repository.items[node_id] = replace(node, last_seen_at=now)
     report = NodeStatus(node_id, now, node.session_id, int(now.timestamp() * 1000), now, now,
-                        PhysicalState(True, True if node.capability == Capability.LIGHT else None,
-                                      ActuatorState.IDLE, False))
+                        CommandState.IDLE)
     report = replace(report, **changes)
     env.service.on_status(report)
     return report
@@ -583,7 +589,7 @@ def test_FR19_old_connection_and_pre_restart_status_cannot_unlock(env):
     assert env.service.can_execute("locker-1")
 
 
-@pytest.mark.parametrize("change", ["future", "old", "busy", "sensor_fault", "unknown_sensor"])
+@pytest.mark.parametrize("change", ["future", "old", "busy", "unknown"])
 def test_FR19_unconfirmed_status_does_not_unlock(env, change):
     env.service.restore()
     values = {}
@@ -592,9 +598,7 @@ def test_FR19_unconfirmed_status_does_not_unlock(env, change):
     elif change == "old":
         values["received_at"] = env.clock() - timedelta(seconds=100)
     else:
-        values["physical"] = PhysicalState(True, None,
-            ActuatorState.BUSY if change == "busy" else ActuatorState.IDLE,
-            True if change == "sensor_fault" else None if change == "unknown_sensor" else False)
+        values["command_state"] = CommandState.BUSY if change == "busy" else CommandState.UNKNOWN
     status(env, **values)
     assert not env.service.can_execute("locker-1")
 
@@ -623,7 +627,7 @@ def test_FR19_stale_sequence_cannot_replace_busy_report(env):
     env.service.restore()
     old = status(env)
     advance(env, 1)
-    status(env, physical=PhysicalState(True, None, ActuatorState.BUSY, False))
+    status(env, command_state=CommandState.BUSY)
     env.service.on_status(replace(old, received_at=env.clock()))
     assert not env.service.can_execute("locker-1")
 
@@ -789,7 +793,7 @@ def test_FR19_same_status_redelivery_retries_failed_handover(env):
     env.release.resume_close = failed
     now = env.clock()
     report = NodeStatus("locker-1", now, "connection-1", 1, now, now,
-                        PhysicalState(True, None, ActuatorState.IDLE, False))
+                        CommandState.IDLE)
     with pytest.raises(StoreError):
         env.service.on_status(report)
     env.release.resume_close = original

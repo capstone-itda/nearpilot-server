@@ -42,10 +42,10 @@
 - RSSI는 `ProximityEstimator.observe(frame, node=NodeInfo)`로 넘긴다. `NodeInfo`는 `Repository.nodes()`로 조회한 값이다 (architecture.md §4 "근접 사후확률의 범위").
 - RSSI 저장과 근접 추정 전달은 별개다. 근접 추정이 예외를 던져도 저장한 관측은 그대로 둔다.
 - RSSI는 `core-shared-light`의 이탈 판단에도 넘긴다 (architecture.md §4 "이탈 판단의 관측 계약").
-- `status`의 `sensor_fault`가 `true`이면 `isolate_device()`로 격리하고 새 복구 건을 만든다. 점유 세션과 승인 사용분은 바꾸지 않는다 (architecture.md §4 "예약 이후 저장").
+- `status`는 명령 처리 상태(`command_state`)만 담는다. 센서 이상으로 격리하지 않는다 (2026-10-26 결정). 기기 격리는 점유 중 발표 변경과 명령 결과가 만든다. 점유 세션과 승인 사용분은 바꾸지 않는다 (architecture.md §4 "예약 이후 저장").
 - 격리와 복구 건 저장은 별개다. `ALREADY_APPLIED`만으로 복구 건의 저장 완료를 추정하지 않는다 (architecture.md §4 "복구 건과 복구 정산").
 - 복구 건 저장에 실패하면 재인계에서도 같은 장애의 저장을 계속한다. `core-fault-recovery`가 같은 복구 ID로 저장 여부를 확인한다 (NFR-04).
-- `actuator_state=busy`는 이상이 아니다. 기기 상태 `ACTIVE`와 구분한다 (FR-19).
+- `command_state=busy`는 이상이 아니다. 기기 상태 `ACTIVE`와 구분한다 (FR-19).
 - 일반 `status`는 반납 종료의 근거가 아니다. 반납은 `core-release`가 논리 조건으로 결정한다 (FR-07, FR-20).
 - 기기별 관측, 장애 반영, 복구는 같은 기기 잠금으로 직렬화한다 (architecture.md §4 "복구 준비 조회와 복구 승인").
 - 저장 함수가 `StoreError`를 던지면 예외를 다시 던진다. 인계 실패를 성공으로 처리하지 않는다 (architecture.md §4 "기기 보고의 인계").
@@ -84,10 +84,10 @@
 | 신뢰한 기기가 다른 기능으로 발표한다 | `upsert_announced_node()`를 부른다. 신뢰 되돌림은 DB가 한다 | `test_FR04_changed_announce_forwarded` |
 | 진행 중인 점유가 있는 기기가 다른 기능으로 발표한다 | 점유를 보존하고 먼저 격리한다. 복구 건 저장 뒤 DB의 신뢰 되돌림을 적용한다 | `test_FR04_changed_announce_during_occupancy` |
 | 발표만 오고 `status`가 없다 | `touch_node()`와 `set_node_session()`을 부르지 않는다 | `test_FR13_announce_does_not_touch` |
-| `status`의 `sensor_fault`가 `true`다 | `isolate_device()`를 부르고 복구 건을 만든다 | `test_NFR04_sensor_fault_isolates` |
+| `status`가 어떤 명령 처리 상태여도 | 격리하지 않는다. 점유를 바꾸지 않는다 | `test_NFR04_status_never_isolates` |
 | 이미 `FAULT`인 기기가 `sensor_fault`를 다시 보고한다 | 같은 장애의 복구 건 저장을 확인한다. 저장이 끝났으면 같은 복구 건을 유지한다 | `test_NFR04_repeat_fault_same_recovery` |
 | 격리는 성공했지만 복구 건 저장에 실패했다 | 재인계에서 같은 복구 ID로 저장을 재시도한다. `ALREADY_APPLIED`를 이유로 생략하지 않는다 | `test_NFR04_retry_missing_recovery_after_isolation` |
-| `actuator_state`가 `busy`다 | 격리하지 않는다 | `test_FR19_busy_actuator_not_fault` |
+| `command_state`가 `busy`다 | 격리하지 않는다 | `test_FR19_busy_actuator_not_fault` |
 | 결과 대기가 끝난 뒤 `on_result()`가 온다 | `touch_node()`를 부르지 않는다. `core-execution`으로 넘긴다 | `test_FR13_result_does_not_touch` |
 | `save_rssi()`가 `StoreNotApplied`를 던진다 | 예외를 다시 던진다 | `test_FR05_rssi_store_error_propagates` |
 | `observe()`가 예외를 던진다 | 저장한 관측을 유지한다. 실패를 기록한다 | `test_FR05_observe_error_keeps_saved_rssi` |
@@ -128,7 +128,7 @@
 | FR-07 | `test_FR07_status_does_not_change_logical_release` | 상태 보고는 논리적으로 끝난 반납을 바꾸지 않는다 |
 | FR-20 | `test_FR20_sink_has_no_release_check_handover` | 반납 검사 결과의 인계 접점이 없다 |
 | FR-13 | `test_FR13_status_touches_with_received_at` | `last_seen_at`을 서버 수신 시각으로 갱신한다 |
-| NFR-04 | `test_NFR04_sensor_fault_isolates` | 센서 이상이면 점유를 보존하고 기기만 격리한다 |
+| NFR-04 | `test_NFR04_status_never_isolates` | 상태 보고로 격리하지 않는다 |
 | NFR-04 | `test_NFR04_retry_missing_recovery_after_isolation` | 격리 뒤 실패한 복구 건 저장을 같은 ID로 재시도한다 |
 | NFR-04 | `test_NFR04_link_query_failure_still_isolates_known_fault` | 장애 연결 조회가 실패해도 기기를 먼저 격리한다 |
 | NFR-04 | `test_NFR04_online_write_failure_does_not_skip_sensor_isolation` | 온라인 저장이 실패해도 격리와 복구 건을 먼저 저장한다. 재인계는 복구 건을 중복하지 않는다 |

@@ -2,6 +2,7 @@
 
 유지 대상자가 모두 이탈하면 서버 내부 요청으로 꺼짐을 실행 서비스에 넘긴다 (#86).
 호출자는 검증된 관측과 저장을 확인한 실행 결과만 인계한다.
+켜짐 여부는 저장한 마지막 성공 명령의 on·off로 판단한다. 실제 켜짐의 관측이 아니다 (2026-10-26 결정).
 """
 
 from __future__ import annotations
@@ -16,10 +17,10 @@ from uuid import uuid4
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, Capability, DeviceState, ExecutionKind, ExecutionStatus, InternalRequestCause,
+    Action, Capability, CommandState, DeviceState, ExecutionKind, ExecutionStatus, InternalRequestCause,
     Occupancy, ReasonCode, TrustState, Verdict,
 )
-from nearpilot.shared.interfaces import PolicyChecker, Repository
+from nearpilot.shared.interfaces import ExecutionStore, PolicyChecker, Repository
 from nearpilot.shared.models import (
     ExecutionContext, ExecutionResult, InternalRequest, NodeInfo, NodeStatus, RssiFrame,
 )
@@ -52,7 +53,6 @@ class _Light:
     resumed_at: datetime | None = None
     resumed_session_id: str | None = None
     status: NodeStatus | None = None
-    status_after: datetime | None = None
     off_request: ExecutionContext | None = None
 
 
@@ -66,13 +66,14 @@ class SharedLightService:
     """
 
     def __init__(
-        self, *, repository: Repository, policy: PolicyChecker,
+        self, *, repository: Repository, store: ExecutionStore, policy: PolicyChecker,
         settings: Callable[[], Settings], clock: Callable[[], datetime],
         lock_for: Callable[[str], AbstractContextManager[Any]],
         execute: Callable[[ExecutionContext], ExecutionResult] | None = None,
         new_id: Callable[[], str] = lambda: str(uuid4()),
     ) -> None:
         self._repository = repository
+        self._store = store
         self._policy = policy
         self._settings = settings
         self._clock = clock
@@ -111,8 +112,6 @@ class SharedLightService:
             now = self._clock()
             if action == Action.OFF:
                 light.holders.clear()
-                # 뒤늦은 켜짐 status로 같은 꺼짐을 다시 요청하지 않는다.
-                light.status_after = now
             elif self._permitted(context.request.user_id, context.node_id, now):
                 old = light.holders.get(context.request.user_id)
                 light.holders[context.request.user_id] = _Holder(
@@ -133,7 +132,6 @@ class SharedLightService:
             light.resumed_at = self._clock()
             light.resumed_session_id = node.session_id
             light.status = None
-            light.status_after = None
 
     def on_status(self, status: NodeStatus) -> None:
         """IOT가 검증한 보고를 보존한다. Repository의 온라인 시각을 바꾸지 않는다."""
@@ -144,8 +142,6 @@ class SharedLightService:
             if status.received_at > self._clock():
                 return
             light = self._light(status.node_id)
-            if light.status_after is not None and status.received_at <= light.status_after:
-                return
             old = light.status
             if old is not None and old.session_id == status.session_id and (
                 status.seq <= old.seq or status.observed_at <= old.observed_at
@@ -231,7 +227,10 @@ class SharedLightService:
         return result.status != ExecutionStatus.NOT_SENT
 
     def can_request_off(self, node_id: str) -> bool:
-        """현재 유지 대상자·연결·온라인·보고를 다시 검사한다. 실행 허가가 아니다."""
+        """현재 유지 대상자·연결·온라인·명령 처리 상태와 마지막 제어 상태를 다시 검사한다.
+
+        실행 허가가 아니다. 마지막 성공 명령이 `on`일 때만 꺼짐을 요청한다. 기록이 없으면 요청하지 않는다.
+        """
         with self._lock_for(node_id):
             with self._index_lock:
                 light = self._lights.get(node_id)
@@ -252,10 +251,11 @@ class SharedLightService:
                 node.trust_state != TrustState.TRUSTED or node.device_state != DeviceState.AVAILABLE
                 or not node.session_id or node.session_id != light.resumed_session_id
                 or node.last_seen_at is None or status is None or status.session_id != node.session_id
-                or status.received_at < light.resumed_at or status.physical.light_on is not True
-                or (light.status_after is not None and status.received_at <= light.status_after)
-                or status.physical.sensor_fault is not False
+                or status.received_at < light.resumed_at or status.command_state != CommandState.IDLE
             ):
+                return False
+            last = self._store.last_succeeded(node_id)
+            if last is None or last.node_id != node_id or last.action != Action.ON:
                 return False
             ttl = timedelta(seconds=light.settings.online_ttl_sec)
             return (
