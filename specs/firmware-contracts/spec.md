@@ -491,6 +491,33 @@ MQTT v2 전환 결과 (2026-10-26, PC와 빌드만):
 - ESP32에서의 `test_common` 실행, 새 파티션 표 업로드와 실제 서버 연결은 하지 않았다. 다음 실제 기기 시험에서 확인한다.
 - 이전 시험 기록의 `physical_completion=unverified`와 `unknown` 결과는 v1 동작이다. 새 계약의 성공으로 재해석하지 않는다.
 
+MQTT v2 실제 기기 시험 (2026-10-26~27, ESP32-WROOM-32E, COM6, 펌웨어 `5fb89a2`):
+
+- `pio test -e esp32dev -f test_common --upload-port COM6 --test-port COM6`: 40개 통과다. 모듈의 구동부와 저장 실패는 fake로 확인한다.
+- 제품 펌웨어 빌드와 업로드가 통과했다. RAM은 57,636바이트, Flash는 1,098,593바이트다.
+- 업로드는 새 파티션 표를 `0x8000`에 쓰고 해시를 확인했다. `np_records` 위치는 유지하고 없앤 검사 파티션의 자리는 `spiffs`로 쓴다.
+- 재부팅에서 `node=light-1 config=loaded generation=1 mode=serial_only storage=1`을 확인했다. 전체 Flash와 NVS를 지우지 않았다.
+- 이전 서버 주소로는 연결하지 못했다. 새 시험 폴더 `server/var/node-lab-v2/`를 만들고 서버·시각원 주소 `10.106.106.199`와 시험 MQTT 계정을 다시 주입했다. 기존 시험 DB는 보존했다.
+- Windows 재동기화 뒤 실제 NTP 응답은 leap 0, stratum 5다. ESP32의 동기화와 재동기화를 확인했다.
+- 오차 미설정(`-1`)에서는 NTP 동기화도 시작하지 않았다. 명령 서버를 끈 채 이전 실측 한도 1초를 넣고 새 오차를 측정했다.
+- 150초 측정에서 유효 표본은 40개다. USB 지연을 포함한 오차 구간의 최대 절댓값은 0.3045443초다. 여유 0.25초를 더한 값은 0.5545443초다.
+- 새 실측과 여유를 포함하는 1초를 서버와 기기의 연결 시험 한도로 유지했다. 재동기화 간격은 60초, 신뢰 기간은 120초다. 운영용 장시간 오차 보증은 아니다.
+- 새 연결의 `announce`는 v2와 `light/shared`다. `status`는 v2와 `command_state=idle`이며 실제 상태·센서 필드가 없다. 서버는 `ready=true`로 확인했다.
+- 정상 연결 시험의 `boot_check` 요약은 2.941초에 `NODE_READY`다. 순서 위반은 없다. `RECORD_STORE primary=1 legacy=1`과 watchdog 적용도 확인했다.
+- 이전 명령 두 건은 기존 사건 ID·발생 시각과 `unknown`을 유지해서 재보고했다. 새 DB에 없는 명령이라 기존 `StoreError` 재인계 경고가 발생했다. 기록을 지우거나 성공으로 바꾸지 않았다.
+- 실제 시험 iBeacon의 RSSI로 CORE가 `on`과 `off`를 허가했다. 두 명령 모두 MQTT v2 QoS1으로 `accepted`·`running`·`succeeded`를 차례로 보고했다.
+- 각 명령에서 `COMMAND_HANDLED ... output=serial_only output_completed=1`은 한 번이다. 서버 응답은 모두 `OK / OK`이며 DB의 명령 상태는 `succeeded`다.
+- 성공은 시리얼 제어 신호 출력 완료다. 시리얼 출력 외의 구동부와 물리 상태는 검증하지 않았다. 근접 모델은 합성 `synthetic-1`이며 실측 품질 검증은 아니다.
+- 첫 재부팅 후 30초 관찰에서는 시각 동기화를 기다렸다. 다음 재부팅의 60초 관찰은 `NODE_READY`와 두 성공 결과의 재보고를 확인했다.
+- 재보고는 새 연결 ID를 쓰고 기존 성공 사건 ID·발생 시각을 유지했다. 두 명령의 `COMMAND_HANDLED`는 다시 나오지 않았다. 이번 시험은 명령 재전송과 실제 출력 중 전원 차단을 포함하지 않는다.
+- 기록 커밋 전 서버 전체 `pytest`는 3,661개 통과, 2개 생략, 1개 예상 실패다 (2026-10-27). 실제 Mosquitto를 포함했다. 펌웨어와 서버 코드는 바꾸지 않았다.
+- 원본은 새 시험 폴더의 `ntp-check.jsonl`, `provision.jsonl`, `clock-bootstrap.json`, `clock-measurement-enabled.jsonl`, `hardware-trace.jsonl`, `evidence.jsonl`, `verified-summary.json`, `reboot-trace*.jsonl`이다. 주소 변경 전 부팅 로그는 `server/var/node-lab-hotspot-2/boot-v2-preflight.jsonl`이다. 모두 Git에서 제외한다.
+
+| 동작 | 명령 ID | 성공 사건 ID |
+|---|---|---|
+| `on` | `89678619-40f5-4832-8f7a-db0296580e63` | `fddb86b1-f7f8-45fb-9798-e9ab378eccc6` |
+| `off` | `853abe21-8fef-4950-8fa5-95569c90d39c` | `a458c414-d632-40bf-8b5a-3005c81d5529` |
+
 실제 기기는 다음 절차로 검증한다 (architecture.md §5 MQTT 7절).
 
 1. 기기별로 재부팅, 재접속과 장시간 동작 때 최대 시각 오차를 측정한다.
