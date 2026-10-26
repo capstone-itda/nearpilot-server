@@ -179,7 +179,7 @@ def test_NFR04_runtime_recovery_flow(tmp_path):
         assert ready["recovery_id"] == recovery_id and ready["blockers"] == []
         assert ready["evidence"]
         for item in ready["evidence"]:
-            assert set(item) == {"evidence_id", "observed_at", "execution_outcome", "command_idle"}
+            assert set(item) == {"observed_at", "execution_outcome", "command_idle"}
 
         approve = client.post(f"{RECOVERY}/{recovery_id}/approve", headers=owner)
         assert approve.status_code == 200

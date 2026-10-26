@@ -40,10 +40,9 @@ def _time(value: datetime | None) -> str | None:
 
 
 def _evidence_json(evidence: RecoveryEvidence) -> dict[str, Any]:
-    """기기 연결 세션 ID(`session_id`)는 사용자에게 쓸모없는 내부 식별자라 뺀다 (NFR-08)."""
+    """근거 ID와 기기 연결 세션 ID는 뺀다. 근거 ID 안에 세션 ID가 들어 있다 (NFR-08)."""
     outcome = evidence.execution_outcome
     return {
-        "evidence_id": evidence.evidence_id,
         "observed_at": _time(evidence.observed_at),
         "execution_outcome": outcome.value if outcome is not None else None,
         "command_idle": evidence.command_idle,

@@ -36,7 +36,7 @@ APPROVE_URL = f"{READINESS_URL}/{RECOVERY_ID}/approve"
 PATHS = [pytest.param("GET", READINESS_URL, id="readiness"), pytest.param("POST", APPROVE_URL, id="approve")]
 LOGGER = "nearpilot.api.rest.recovery"
 
-EVIDENCE = RecoveryEvidence("ev-1", SESSION_ID, OBSERVED, CommandOutcome.UNKNOWN, True)
+EVIDENCE = RecoveryEvidence(f"status:{NODE}:{SESSION_ID}:1", SESSION_ID, OBSERVED, CommandOutcome.UNKNOWN, True)
 READY = RecoveryReadiness(NODE, RECOVERY_ID, RecoveryStatus.READY, (), (EVIDENCE,), NOW)
 RECOVERED = RecoveryReadiness(NODE, RECOVERY_ID, RecoveryStatus.RECOVERED, (), (EVIDENCE,), NOW)
 RECOVERING = RecoveryReadiness(
@@ -55,7 +55,6 @@ READY_BODY = {
     "status": "ready",
     "blockers": [],
     "evidence": [{
-        "evidence_id": "ev-1",
         "observed_at": "2026-01-01T00:04:00+00:00",
         "execution_outcome": "unknown",
         "command_idle": True,
@@ -69,7 +68,6 @@ UNCONFIRMED_BODY = {
     "status": "not_ready",
     "blockers": ["EXECUTION_UNCONFIRMED", "COMMAND_STATE_UNCONFIRMED"],
     "evidence": [{
-        "evidence_id": "ev-2",
         "observed_at": "2026-01-01T00:04:00+00:00",
         "execution_outcome": None,
         "command_idle": None,
@@ -282,8 +280,9 @@ def test_NFR08_recovery_responses_hide_internal_ids(client):
 
     for response in responses:
         assert response.status_code == 200
-        assert "ev-1" in response.text
+        assert "observed_at" in response.text  # 근거는 실렸다
         assert SESSION_ID not in response.text
+        assert "evidence_id" not in response.text
         assert "session_id" not in response.text
         assert USER not in response.text
         assert TOKEN not in response.text

@@ -79,7 +79,7 @@
 
 - 라우터는 `build_recovery_router(recovery, authenticator)`가 만드는 FastAPI `APIRouter`다 — 계정·승인 라우터와 같은 방식이다. 서버 조립이 MCP 마운트보다 먼저 붙인다.
 - 복구 서비스는 서버 시작(`Runtime._build`) 때 만들어지고 라우터는 그 전에 붙는다. 조립은 시작 전에 늦게 연결하는 래퍼(`Runtime.recovery`)를 라우터에 넘기고, `_build`에서 실제 서비스를 연결한다. 호출은 다른 REST처럼 접수 문과 DB 연결 범위 안에서 한다. 연결 전 호출은 `RuntimeError`이고 라우터는 다른 서비스 예외처럼 `500`과 `INTERNAL_ERROR`로 응답한다. uvicorn은 시작을 마친 뒤에 소켓을 열므로 운영에서는 닿지 않는다.
-- 준비 조회 응답 키: `node_id`, `recovery_id`, `status`, `blockers`(사유 코드 문자열 배열), `evidence`, `checked_at`. `evidence` 항목 키는 `evidence_id`, `observed_at`, `execution_outcome`, `command_idle`이다 — 기기 연결 세션 ID(`session_id`)는 사용자에게 쓸모없는 내부 식별자라 뺀다 (architecture.md §4). 시각은 시간대를 포함한 ISO 8601 문자열이고, 없는 값은 `null`이다.
+- 준비 조회 응답 키: `node_id`, `recovery_id`, `status`, `blockers`(사유 코드 문자열 배열), `evidence`, `checked_at`. `evidence` 항목 키는 `observed_at`, `execution_outcome`, `command_idle`이다 — 기기 연결 세션 ID(`session_id`)와 그것을 담은 근거 ID(`evidence_id`)는 사용자에게 쓸모없는 내부 식별자라 뺀다 (architecture.md §4, NFR-08). 시각은 시간대를 포함한 ISO 8601 문자열이고, 없는 값은 `null`이다.
 - 승인 성공 응답 키: `recovery_id`, `outcome`, `reason_code`, `completed_at`, `readiness`(준비 조회와 같은 형식). `completed`는 `200`, `pending`은 `202`다.
 - 거부(`rejected`)는 공통 규칙의 `{"error": "<사유 코드>"}`만 보낸다. 부족한 조건은 준비 조회로 본다. 사유별 상태 코드는 5절 표와 같다. `STORE_NOT_APPLIED`는 변경 없이 다시 시도할 수 있는 저장 오류라 `503`이다.
 - 승인은 본문을 읽지 않는다 — 내부 입력은 인증 계정, `node_id`, `recovery_id`뿐이다 (architecture.md §4).
