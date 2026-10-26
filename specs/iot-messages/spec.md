@@ -1,4 +1,4 @@
-# MQTT v1 메시지 형식과 shared 모델 변환
+# MQTT v2 메시지 형식과 shared 모델 변환
 
 - 담당: 이 작업을 지시한 담당자 (상태 관리의 IOT 구현 범위)
 - 구현 브랜치: `feat/iot-messages`
@@ -18,7 +18,7 @@
 - 출력: `NodeCommand`에서 만든 MQTT 본문이다.
 - 바뀌는 상태: 없음. 변환은 현재 연결·순번·명령 대기를 저장하지 않는다.
 - 약속:
-  - 일곱 토픽의 v1 필드 의미를 보존한다.
+  - 다섯 토픽의 v2 필드 의미를 보존한다. v1 본문은 새 뜻으로 재해석하지 않고 거부한다.
   - 서버 수신 시각은 본문에서 받지 않는다. 호출자가 주입한 최초 수신 시각을 쓴다.
   - 추가 필드는 실행과 안전의 근거로 쓰지 않는다.
   - 형식 검증과 현재 연결·최신성 검증을 구분한다.
@@ -26,18 +26,17 @@
 ## 3. 제약
 
 - 토픽은 `nearpilot/node/{node_id}/{종류}`다. 본문의 기기 ID와 같아야 한다 (NFR-08).
-- 본문은 UTF-8 JSON 객체이며 `schema_version=1`이다 (NFR-11, architecture.md §5 MQTT 2절).
+- 본문은 UTF-8 JSON 객체이며 `schema_version=2`다. 다른 버전은 거부한다 (NFR-11, architecture.md §5 MQTT 2절, §1.5).
 - 필수 필드·타입·열거형을 검사한다. 정수 자리의 bool을 허용하지 않는다 (architecture.md §5 MQTT 2절).
 - 시각은 RFC 3339의 UTC 문자열이다. 연결 ID와 결과 사건 ID는 UUID다 (architecture.md §5 MQTT 2·3절).
 - `seq`는 1 이상의 정수다. 순번의 선후 판정은 보고 검증 spec이 맡는다 (architecture.md §5 MQTT 2절).
 - 비콘 UUID는 하이픈을 포함한 소문자 문자열이다. `major`·`minor`는 0~65535의 정수다 (FR-05).
 - RSSI는 유한한 수다. 한 본문에 같은 비콘을 두 번 담지 않는다 (FR-05).
 - RSSI 본문 전체를 검증한 뒤 같은 연결·순번·시각으로 비콘별 모델을 만든다 (FR-05).
-- `physical_state`의 네 필드는 architecture.md §5 MQTT 3절을 따른다. `safe`를 종료 근거로 만들지 않는다 (FR-07).
-- `criteria_id`·`criteria_version`은 `CheckCriteria`로 변환한다. v1 필수 근거는 §4의 표를 따른다 (FR-20, #141).
-- IOT는 bool 근거를 꾸미지 않는다. 실제 기준 충족과 종료의 결정은 펌웨어·CORE가 맡는다 (FR-07, #143).
+- `status`는 `observed_at`과 명령 처리 상태 `command_state`(`idle`, `busy`, `unknown`)만 담는다. 실제 상태와 센서 고장 값은 받지 않는다 (FR-07).
+- `result.succeeded`는 제어 신호 출력 완료와 결과 저장이다. 실제 상태 확인으로 바꾸지 않는다 (FR-07).
 - 실행 결과의 상태·오류 코드·사건 ID를 그대로 담는다. 서버 타임아웃을 `NodeResult`로 만들지 않는다 (FR-07).
-- `rejected`의 오류 코드는 `RejectCode`다. 검사 결과에 실행용 거부 코드를 추가하지 않는다 (FR-07, #143).
+- `rejected`의 오류 코드는 `RejectCode`다 (FR-07).
 - 송신 본문에 사용자 ID·외부 요청 ID·승인 정보·점유 주체를 넣지 않는다 (NFR-08).
 - 명령 ID, 대상 연결·발행 시각·만료 시각을 변환 중 바꾸지 않는다 (FR-06).
 
@@ -77,7 +76,9 @@
 | RSSI가 NaN·무한대이거나 비콘이 중복이다 | 본문 전체를 거부한다 | `test_FR05_invalid_rssi_batch_rejected` |
 | 관측 배열이 비었다 | 빈 결과다. 가짜 프레임을 만들지 않는다 | `test_FR05_empty_observations_no_fake_frame` |
 | 본문에 여러 비콘이 있다 | 공통 메타데이터로 비콘별 모델을 만든다 | `test_FR05_batch_preserves_metadata` |
-| IR 무드등이 `light_on=null`을 보고한다 | `None`을 보존한다 | `test_FR07_unobserved_light_is_none` |
+| `status`가 명령 처리 상태를 보고한다 | `command_state`만 변환한다 | `test_FR07_status_carries_command_state_only` |
+| v1 `physical_state` 본문이 온다 | 거부한다. 새 뜻으로 재해석하지 않는다 | `test_FR07_v1_physical_state_rejected` |
+| `schema_version=1` 보고가 온다 | 모든 토픽에서 거부한다 | `test_NFR11_v1_messages_rejected` |
 | `safety_check_result` 토픽의 보고다 | 알 수 없는 토픽으로 거부한다 | `test_FR20_release_check_result_topic_rejected` |
 | 명령을 직렬화한다 | 내부 계정 정보 없이 허용한 필드만 담는다 | `test_FR06_encode_preserves_command` |
 
@@ -94,13 +95,13 @@
 - `encode_command(NodeCommand)`는 UTF-8 JSON 바이트를 반환한다. `encode_safety_check`는 없앴다.
 - 형식이 잘못되면 `MessageValidationError`를 던진다. 예외 메시지에 본문을 넣지 않는다. 호출자가 거부를 기록한다.
 - 중복 JSON 키와 유한하지 않은 JSON 수를 거부한다. 알 수 없는 추가 필드는 판정 필드에 넣지 않는다.
-- 반납 검사 결과의 변환과 검사 요청의 직렬화를 없앤다 — 2026-10-26 결정으로 반납 검사를 제외했다. status 형식의 새 버전은 미결이라 v1 `physical_state`를 그대로 변환한다.
+- 반납 검사 결과의 변환과 검사 요청의 직렬화를 없앤다 — 2026-10-26 결정으로 반납 검사를 제외했다.
+- 모든 메시지를 `schema_version=2`로 올린다 — 담당자가 2026-10-26에 선택했다. 펌웨어가 한 버전의 계약만 맞추고 서버는 v1을 모두 거부한다. 버전 값은 `SCHEMA_VERSION` 상수 하나다.
 
 ## 7. 가정
 
-- #141의 v1 기준은 §4 표다. 미래 센서 조건을 같은 버전에 추가하지 않는다.
-- #142는 확인 불가를 `unknown`·`null`로 보존한다. 스피커 새 필드는 후속 계약 전 추가하지 않는다.
-- #143은 기존 확인 불능 경로를 쓴다. 오류용 새 상태·필드는 후속 계약 전 추가하지 않는다.
+- 미결 (#196): 메시지별 새 버전 번호와 status 필드 형식이다. 모든 메시지 v2와 `command_state` 하나로 가정한다 (담당자 확인, 2026-10-26).
+- 미결 (#196): 구버전 전환 절차다. 전환 기간 없이 v1을 거부한다고 가정한다. 펌웨어는 같은 버전으로 바꿔야 연결된다.
 - 실제 시각 오차와 상태 허용 나이는 보고 검증 spec이 미결로 관리한다.
 
 ## 8. 테스트
@@ -110,10 +111,10 @@
 | FR-04 | `test_FR04_announce_to_shared_model` | 기능·점유 방식·공통 메타데이터를 변환한다 |
 | FR-05 | 5절의 `test_FR05_*` | 빈 배열·일괄 관측·비콘과 RSSI를 검증한다 |
 | FR-06 | `test_FR06_encode_preserves_command` | 명령과 유효 시간을 보존한다 |
-| FR-07 | 5절의 `test_FR07_*` | 원시 관측과 결과 사건을 보존한다 |
+| FR-07 | 5절의 `test_FR07_*` | 명령 처리 상태와 결과 사건을 보존한다 |
 | FR-20 | `test_FR20_release_check_result_topic_rejected` | 반납 검사 결과 토픽을 받지 않는다 |
 | NFR-08 | `test_NFR08_outbound_allowlist` | 내부 계정 정보를 보내지 않는다 |
-| NFR-11 | `test_NFR11_all_v1_message_shapes` | 일곱 토픽의 v1 형식을 확인한다 |
+| NFR-11 | `test_NFR11_all_v2_message_shapes` | 다섯 토픽의 v2 형식을 확인한다 |
 
 실제 브로커와 다른 계층 구현은 필요 없다. 입력과 변환 결과를 직접 비교한다.
 

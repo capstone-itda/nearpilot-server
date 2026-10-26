@@ -159,12 +159,6 @@ class NodeEventService:
                 if done.seq == status.seq and done != status:
                     raise ValueError("같은 상태 사건의 내용이 다르다")
                 return
-            if status.physical.sensor_fault is True:
-                self._faults.setdefault(status.node_id, _Fault({
-                    "source": "sensor_fault", "session_id": status.session_id,
-                    "seq": status.seq, "observed_at": status.observed_at,
-                    "received_at": status.received_at,
-                }))
             if status.node_id in self._faults:
                 self._isolate(status.node_id)
             self._repository.set_node_session(status.node_id, status.session_id, status.received_at)

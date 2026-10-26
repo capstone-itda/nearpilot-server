@@ -1,4 +1,7 @@
-"""공용 조명의 이탈 시나리오. 실제 MQTT 전송은 검증 범위 밖이다."""
+"""공용 조명의 이탈 시나리오. 실제 MQTT 전송은 검증 범위 밖이다.
+
+켜짐 여부는 저장한 마지막 성공 명령으로 판단한다. status는 명령 처리 상태만 담는다 (2026-10-26 결정).
+"""
 
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import replace
@@ -11,13 +14,13 @@ import pytest
 from nearpilot.core.lifecycle.shared_light import SharedHolder, SharedLightService
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, ActuatorState, Capability, DeviceState, ExecutionKind, ExecutionStatus,
+    Action, CommandState, Capability, DeviceState, ExecutionKind, ExecutionStatus,
     InternalRequestCause, Occupancy, ReasonCode, TrustState, Verdict,
 )
 from nearpilot.shared.errors import StoreError
 from nearpilot.shared.models import (
-    BeaconKey, ExecutionContext, ExecutionResult, NodeInfo, NodeStatus, PhysicalState,
-    PolicyCheckResult, RssiFrame, TargetSpec, UseRequest,
+    BeaconKey, CommandRecord, ExecutionContext, ExecutionResult, NodeInfo, NodeStatus, PolicyCheckResult, RssiFrame,
+    TargetSpec, UseRequest,
 )
 
 
@@ -62,12 +65,27 @@ class PolicyFake:
         )
 
 
+class StoreFake:
+    """`ExecutionStore.last_succeeded` 만 쓴다. 기본값은 재시작 전에 켜기에 성공한 조명이다."""
+
+    def __init__(self):
+        self.last = {"light-1": Action.ON}
+
+    def last_succeeded(self, node_id):
+        action = self.last.get(node_id)
+        if action is None:
+            return None
+        return CommandRecord(f"last-{node_id}", f"request-last-{node_id}", node_id, action,
+                             ExecutionStatus.SUCCEEDED, ExecutionKind.SHARED)
+
+
 @pytest.fixture
 def env():
     time = [datetime(2026, 10, 15, tzinfo=timezone.utc)]
     settings = [Settings()]
     repository = RepositoryFake(time[0])
     policy = PolicyFake()
+    store = StoreFake()
     locks, index_lock = {}, Lock()
 
     def lock_for(node_id):
@@ -75,10 +93,10 @@ def env():
             return locks.setdefault(node_id, RLock())
 
     def new_service():
-        return SharedLightService(repository=repository, policy=policy,
+        return SharedLightService(repository=repository, store=store, policy=policy,
                                   settings=lambda: settings[0], clock=lambda: time[0], lock_for=lock_for)
 
-    result = SimpleNamespace(time=time, settings=settings, repository=repository,
+    result = SimpleNamespace(time=time, settings=settings, repository=repository, store=store,
                              policy=policy, new_service=new_service, lock_for=lock_for, seq=0)
     result.service = new_service()
     result.service.resume("light-1")
@@ -94,7 +112,7 @@ def status(env, **changes):
     now = env.time[0]
     env.repository.light = replace(env.repository.light, last_seen_at=now)
     report = NodeStatus("light-1", now, env.repository.light.session_id, env.seq, now, now,
-                        PhysicalState(None, True, ActuatorState.IDLE, False))
+                        CommandState.IDLE)
     report = replace(report, **changes)
     env.service.on_status(report)
     return report
@@ -108,6 +126,8 @@ def execution(env, user="visitor-a", request_id="request-1", action=Action.ON,
                                ExecutionKind.SHARED)
     result = ExecutionResult(request_id, ExecutionStatus.SUCCEEDED, "command-" + request_id)
     result = replace(result, **changes)
+    if result.status == ExecutionStatus.SUCCEEDED:
+        env.store.last[node_id] = action  # 실제 DB는 성공 명령을 저장한다.
     env.service.on_execution_result(context, result)
     return context, result
 
@@ -279,14 +299,25 @@ def test_FR20_resume_duplicate_does_not_extend_wait(env):
     assert candidates(env) == ("light-1",)
 
 
-@pytest.mark.parametrize("physical", [PhysicalState(None, None, ActuatorState.IDLE, False),
-                                      PhysicalState(None, False, ActuatorState.IDLE, False),
-                                      PhysicalState(None, True, ActuatorState.IDLE, True),
-                                      PhysicalState(None, True, ActuatorState.IDLE, None)])
-def test_FR20_restart_requires_confirmed_normal_light(env, physical):
+@pytest.mark.parametrize("command_state", [CommandState.BUSY, CommandState.UNKNOWN])
+def test_FR20_restart_requires_idle_command_state(env, command_state):
     advance(env, 15)
-    status(env, physical=physical)
+    status(env, command_state=command_state)
     assert env.service.tick() == ()
+
+
+@pytest.mark.parametrize("last", [None, Action.OFF])
+def test_FR20_off_requires_last_control_on(env, last):
+    """기록이 없거나 마지막 성공이 꺼짐이면 실제 켜짐을 추정해서 꺼짐을 보내지 않는다."""
+    env.store.last["light-1"] = last
+    advance(env, 15)
+    assert candidates(env) == ()
+
+
+def test_FR20_status_has_no_light_observation(env):
+    assert not hasattr(status(env), "physical")
+    advance(env, 15)
+    assert candidates(env) == ("light-1",)
 
 
 @pytest.mark.parametrize("changes", [{"device_state": DeviceState.FAULT},
@@ -320,8 +351,9 @@ def test_FR20_explicit_off_clears_holders(env):
     execution(env, "visitor-b", "request-2")
     execution(env, request_id="request-off", action=Action.OFF)
     advance(env, 15)
-    # 새 상태 보고가 켜짐을 다시 확인한 경우에만 후보를 만든다.
-    assert candidates(env) == ("light-1",)
+    assert env.service.holders() == []
+    # 마지막 제어 상태가 꺼짐이므로 꺼짐을 다시 요청하지 않는다.
+    assert candidates(env) == ()
 
 
 def test_FR20_off_success_invalidates_previous_status(env):
@@ -348,7 +380,8 @@ def test_FR20_duplicate_on_after_off_does_not_restore_holder(env):
     execution(env, request_id="off-1", action=Action.OFF)
     advance(env, 15)
     env.service.on_execution_result(context, result)
-    assert candidates(env) == ("light-1",)
+    assert env.service.holders() == []
+    assert candidates(env) == ()  # 마지막 성공은 꺼짐이다.
 
 
 def test_FR20_duplicate_off_does_not_remove_new_holder(env):
@@ -459,11 +492,11 @@ def test_FR20_unknown_node_cannot_request_off(env):
 
 def test_FR20_past_status_does_not_replace_newer_off(env):
     advance(env, 15)
-    old_on = status(env)
+    old_idle = status(env)
     advance(env, 1)
-    status(env, physical=PhysicalState(None, False, ActuatorState.IDLE, False))
+    status(env, command_state=CommandState.BUSY)
     advance(env, 1)
-    env.service.on_status(replace(old_on, received_at=env.time[0]))
+    env.service.on_status(replace(old_idle, received_at=env.time[0]))
     assert env.service.tick() == ()
 
 
@@ -509,10 +542,12 @@ def active(env, outcome=ExecutionStatus.SUCCEEDED):
         calls.append(ctx)
         if not service.can_request_off(ctx.node_id):
             return ExecutionResult(ctx.internal_request_id, ExecutionStatus.NOT_SENT)
-        return ExecutionResult(ctx.internal_request_id, outcome[0] if isinstance(outcome, list) else outcome,
-                               "command-" + ctx.internal_request_id)
+        status = outcome[0] if isinstance(outcome, list) else outcome
+        if status == ExecutionStatus.SUCCEEDED:
+            env.store.last[ctx.node_id] = Action.OFF  # 실제 DB는 성공한 꺼짐을 저장한다.
+        return ExecutionResult(ctx.internal_request_id, status, "command-" + ctx.internal_request_id)
     ids = iter(f"internal-{n}" for n in range(1, 100))
-    service = SharedLightService(repository=env.repository, policy=env.policy,
+    service = SharedLightService(repository=env.repository, store=env.store, policy=env.policy,
         settings=lambda: env.settings[0], clock=lambda: env.time[0], lock_for=env.lock_for,
         execute=execute, new_id=lambda: next(ids))
     service.resume("light-1")
@@ -609,6 +644,9 @@ def test_FR20_internal_off_through_real_execution(env):
                              outcome=outcome, occurred_at=occurred_at, evidence=evidence)
             self.commands["internal-1"] = record
             return StoreResult(StoreOutcome.APPLIED, command=record)
+        def last_succeeded(self, node_id):
+            done = [c for c in self.commands.values() if c.status == ExecutionStatus.SUCCEEDED]
+            return done[-1] if done else env.store.last_succeeded(node_id)
 
     class Gateway:
         def __init__(self):
@@ -626,7 +664,7 @@ def test_FR20_internal_off_through_real_execution(env):
     executor = ExecutionService(repository=env.repository, store=store, rechecker=None, gateway=gateway,
         clock=lambda: env.time[0], lock_for=env.lock_for, can_execute=lambda node_id: True,
         record_isolated=None, confirm_internal=lambda ctx: light.can_request_off(ctx.node_id))
-    light = SharedLightService(repository=env.repository, policy=env.policy,
+    light = SharedLightService(repository=env.repository, store=store, policy=env.policy,
         settings=lambda: env.settings[0], clock=lambda: env.time[0], lock_for=env.lock_for,
         execute=executor.execute, new_id=lambda: "internal-1")
     holder["light"] = light

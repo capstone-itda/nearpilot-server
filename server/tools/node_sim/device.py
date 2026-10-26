@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 
 # architecture.md §5 MQTT 1절: (QoS, retain) of device → server topics.
 PUBLISH = {"announce": (1, True), "rssi": (0, False), "status": (1, False),
-           "result": (1, False), "safety_check_result": (1, False)}
+           "result": (1, False)}
 
 
 @dataclass(frozen=True)
@@ -109,7 +109,7 @@ class SimDevice:
             log.warning("Simulator connection rejected: node=%s", self.node.node_id)
             return
         messages = self.node.connect()
-        client.subscribe([(self.topic("cmd"), 1), (self.topic("safety_check"), 1)])
+        client.subscribe([(self.topic("cmd"), 1)])
         self._publish(messages)
         self.connected.set()
         self._kick.set()  # Report status right after the announce.
@@ -125,8 +125,6 @@ class SimDevice:
             self._publish(messages)
             if started:
                 self._later(self.node.scenario.actuation_sec, self._finish)
-        elif kind == "safety_check":
-            self._publish(self.node.handle_check(payload))
 
     def _finish(self) -> None:
         messages = self.node.finish()

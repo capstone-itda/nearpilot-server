@@ -31,11 +31,10 @@ def sec(value):
 
 
 def body(kind, node, session, seq, at):
-    data = dict(schema_version=1, node_id=node, session_id=session, seq=seq, sent_at=iso(at))
+    data = dict(schema_version=2, node_id=node, session_id=session, seq=seq, sent_at=iso(at))
     data.update({
         "announce": dict(capability="locker", occupancy="rental"),
-        "status": dict(observed_at=iso(at), physical_state=dict(
-            door_closed=True, light_on=None, actuator_state="idle", sensor_fault=False)),
+        "status": dict(observed_at=iso(at), command_state="idle"),
         "rssi": dict(frame_ts=iso(at), observations=[dict(uuid=BEACON, major=1, minor=1, rssi=-60)]),
         "result": dict(command_id="command-1", event_id=EVENT, state="succeeded",
                        occurred_at=iso(at)),
@@ -141,8 +140,7 @@ def test_FR05_dedup_after_successful_delivery(h, caplog):
     status = incoming("status")
     h.feed(status)
     assert h.feed(replace(status, received_at=status.received_at + sec(1), dup=True)) == 0
-    changed = incoming("status", physical_state=dict(
-        door_closed=False, light_on=None, actuator_state="idle", sensor_fault=False))
+    changed = incoming("status", command_state="busy")
     with caplog.at_level(logging.WARNING):
         assert h.feed(changed) == 0
     assert "different content" in caplog.text
@@ -268,7 +266,7 @@ def test_FR07_waiter_not_blocked_by_sink():
 
 def test_FR20_release_check_result_not_handed_over(h, caplog):
     """반납 검사 결과 토픽은 이전 계약이다. 검증에서 거부하고 CORE에 넘기지 않는다."""
-    data = dict(schema_version=1, node_id="locker-1", session_id=S1, seq=1, sent_at=iso(T0),
+    data = dict(schema_version=2, node_id="locker-1", session_id=S1, seq=1, sent_at=iso(T0),
                 check_id="check-1", event_id=EVENT, criteria_id="locker-return", criteria_version=1,
                 checked_at=iso(T0), outcome="passed", evidence={})
     report = IncomingReport("nearpilot/node/locker-1/safety_check_result", json.dumps(data).encode(),
@@ -344,7 +342,7 @@ def test_FR07_failed_lane_does_not_block_others(h):
 def test_NFR08_rejection_logs_omit_secrets(h, caplog):
     secret = "device-password-123"
     bad = IncomingReport("nearpilot/node/locker-1/status",
-                         ('{"password": "%s", "schema_version": 2}' % secret).encode(),
+                         ('{"password": "%s", "schema_version": 3}' % secret).encode(),
                          1, False, False, T0)
     h.sink.fail = lambda method, report: True
     with caplog.at_level(logging.DEBUG):

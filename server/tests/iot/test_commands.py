@@ -27,7 +27,7 @@ def iso(value):
 
 def result(state="succeeded", *, node="locker-1", command_id="command-1", event=EVENT, seq=1,
            error_code=None):
-    data = dict(schema_version=1, node_id=node, session_id=S1, seq=seq, sent_at=iso(T0),
+    data = dict(schema_version=2, node_id=node, session_id=S1, seq=seq, sent_at=iso(T0),
                 command_id=command_id, event_id=event, state=state, occurred_at=iso(T0))
     if error_code:
         data["error_code"] = error_code
@@ -297,7 +297,7 @@ def test_FR07_late_result_subscription_remains(env):
 
 def test_FR20_release_check_result_not_handed_to_core(env):
     sink, connection, delivery, gateway = env
-    data = dict(schema_version=1, node_id="locker-1", session_id=S1, seq=1,
+    data = dict(schema_version=2, node_id="locker-1", session_id=S1, seq=1,
                 sent_at=iso(T0 + timedelta(seconds=0.5)), check_id="check-1", event_id=EVENT,
                 criteria_id="locker-return", criteria_version=1,
                 checked_at=iso(T0 + timedelta(seconds=0.5)), outcome="passed", evidence={})

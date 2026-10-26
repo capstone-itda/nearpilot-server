@@ -273,8 +273,6 @@ class FakePaho:
             if started:
                 messages += node.finish()
             self._deliver(node_id, messages + [node.status()])
-        else:
-            self._deliver(node_id, node.handle_check(payload))
 
     def _run(self) -> None:
         while True:

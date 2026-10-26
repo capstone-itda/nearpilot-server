@@ -119,8 +119,8 @@ stop_timeout_sec = 5.0
         reconnect_min_sec=1, reconnect_max_sec=8), settings={}, devices=devices))
     acl = "user nearpilot-server\n" + "\n".join(
         [f"topic read nearpilot/node/+/{kind}" for kind in
-         ("announce", "rssi", "status", "result", "safety_check_result")]
-        + ["topic write nearpilot/node/+/cmd", "topic write nearpilot/node/+/safety_check"]) + "\n\n"
+         ("announce", "rssi", "status", "result")]
+        + ["topic write nearpilot/node/+/cmd"]) + "\n\n"
     (folder / "broker.acl").write_text(acl + acl_sections(load_fleet(folder / "fleet.json")), encoding="utf-8")
     (folder / "broker.conf").write_text(
         f"listener {port} {host}\nallow_anonymous false\n"

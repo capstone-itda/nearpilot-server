@@ -16,15 +16,14 @@ from nearpilot.core.lifecycle.fault_recovery import (
 )
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, ActuatorState, ApprovalUsageState, Capability, CommandOutcome, DeviceState, EndReason,
+    Action, CommandState, ApprovalUsageState, Capability, CommandOutcome, DeviceState, EndReason,
     ExecutionKind, ExecutionStatus, Occupancy, RecoveryBlocker, RecoveryOutcome, RecoveryReason,
     RecoveryStatus, SessionState, StoreOutcome, TrustState,
 )
 from nearpilot.shared.errors import StoreNotApplied, StoreOutcomeUnknown
 from nearpilot.shared.interfaces import RecoveryService
 from nearpilot.shared.models import (
-    ApprovalUsageRecord, CommandRecord, NodeInfo, NodeStatus, PhysicalState,
-    RecoveryCompletion, RecoveryEvidence, RecoveryRecord, RestoreBundle, StoreResult, UseSession,
+    ApprovalUsageRecord, CommandRecord, NodeInfo, NodeStatus, RecoveryCompletion, RecoveryEvidence, RecoveryRecord, RestoreBundle, StoreResult, UseSession,
 )
 
 
@@ -141,13 +140,12 @@ def online(env):
     env.repository.node = replace(env.repository.node, last_seen_at=env.clock())
 
 
-def status(env, **physical):
+def status(env, command_state=CommandState.IDLE):
     advance(env, 1)
     online(env)
     now = env.clock()
     env.seq += 1
-    state = replace(PhysicalState(True, None, ActuatorState.IDLE, False), **physical)
-    report = NodeStatus("locker-1", now, env.repository.node.session_id, env.seq, now, now, state)
+    report = NodeStatus("locker-1", now, env.repository.node.session_id, env.seq, now, now, command_state)
     env.service.on_status(report)
     return report
 
@@ -197,8 +195,8 @@ def test_NFR04_no_physical_safety_or_sync_condition(env):
     """복구 조건에 물리 안전 검사와 물리 상태 동기화가 없다 (NFR-04)."""
     assert not hasattr(env.service, "on_check_result")
     assert {b.name for b in RecoveryBlocker}.isdisjoint({"SAFETY_UNCONFIRMED", "PHYSICAL_STATE_UNSYNCED"})
-    # 센서 값이 없거나 이상을 말해도 명령 처리 대기이면 조건을 채운다.
-    status(env, door_closed=None, sensor_fault=None)
+    # status에는 센서 값이 없다. 명령 처리 대기 보고만으로 조건을 채운다.
+    assert not hasattr(status(env), "physical")
     assert env.service.readiness("owner-1", "locker-1").status == RecoveryStatus.READY
 
 
@@ -211,9 +209,9 @@ def test_NFR04_command_idle_evidence_from_current_connection(env):
 
 
 def test_NFR04_busy_or_unknown_command_state_blocks(env):
-    status(env, actuator_state=ActuatorState.BUSY)
+    status(env, CommandState.BUSY)
     assert env.service.readiness("owner-1", "locker-1").blockers == (RecoveryBlocker.COMMAND_STATE_UNCONFIRMED,)
-    status(env, actuator_state=ActuatorState.UNKNOWN)
+    status(env, CommandState.UNKNOWN)
     assert env.service.readiness("owner-1", "locker-1").blockers == (RecoveryBlocker.COMMAND_STATE_UNCONFIRMED,)
     status(env)
     assert env.service.readiness("owner-1", "locker-1").blockers == ()

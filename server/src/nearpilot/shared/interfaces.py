@@ -367,6 +367,14 @@ class ExecutionStore(Protocol):
         """반영 여부가 불명일 때 다시 조회한다."""
         ...
 
+    def last_succeeded(self, node_id: str) -> CommandRecord | None:
+        """기기에서 가장 늦게 전송을 시작한 `succeeded` 명령. 키: node_id
+
+        공용형의 마지막 제어 상태(`on`·`off`)를 판단한다. 실제 켜짐의 관측이 아니다 (FR-20).
+        성공 명령이 없으면 None 이다.
+        """
+        ...
+
     def execution_context(self, command_id: str) -> ExecutionContext | None:
         """명령 ID 로 판정이 인계한 원래 실행 문맥을 조회한다 (#83). 키: command_id
 

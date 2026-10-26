@@ -114,6 +114,7 @@
 | 종료 직전에 구동 명령이 진행 중이다 | `CONFLICT`와 `COMMAND_IN_PROGRESS`다. `CLOSING`을 유지한다 | `test_FR19_finish_close_command_in_progress` |
 | 기기·세션 상태가 저장 사이에 바뀌었다 | `CONFLICT`다 | `test_FR20_finish_close_state_conflict` |
 | 완료 기록을 조회한다 | `CloseResult`를 반환한다 | `test_FR20_close_result_found` |
+| 기기의 마지막 성공 명령을 조회한다 | 전송 시작이 가장 늦은 `succeeded` 명령을 반환한다. 없으면 `None`이다 | `test_FR20_last_succeeded_uses_send_order` |
 | 취소로 끝난 세션의 기록을 조회한다 | 종료 사유 `cancelled`로 반환한다 | `test_FR20_close_result_reports_other_end_reason` |
 | 완료 기록이 없다 | `None`을 반환한다. 미반영의 증거로 쓰지 않는다 | `test_FR20_close_result_none` |
 | `execution()`으로 명령을 다시 조회한다 | 저장된 `CommandRecord`를 반환한다. 없으면 `None`이다 | `test_FR19_execution_lookup` |
@@ -152,7 +153,7 @@
 - "명령 연결 전의 예약 요청"은 `request.verdict = 'OK'`이고 `node_command`에 연결이 없으며, **세션이 `RESERVED`이거나 승인 사용분이 `reserved`인, 예약이 남은 요청**으로 찾는다 — 판정(`core/decision/pipeline.py`)이 실행 인계보다 먼저 `save_decision()`으로 `request.node_id`를 저장하므로, 명령이 생기기 전에도 대상 기기를 알 수 있다. `verdict = 'OK'`만으로는 `open` 정책의 공용형 성공(#27, 쓰기 없음)까지 포함돼 복원할 예약이 없는 요청이 섞인다. 이미 `cancel_not_sent`로 취소된 요청도 세션·사용분 상태가 `RESERVED`·`reserved`가 아니게 되므로 이 조건에서 자연히 빠진다.
 - `RestoredSession.created_at`은 세션을 만든 `internal_request_id`의 `request.received_at`을 쓴다. `use_session`에는 생성 시각 컬럼이 없다 — `CommandRecord.reserved_at`과 같은 근거다.
 - `RestoredSession.evidence`는 채우지 않는다(기본값 `{}`) — "종료 사유와 관련 근거"는 `CLOSED`된 세션에만 의미가 있는데, `restore_pending`은 `RESERVED`·`ACTIVE`·`CLOSING`만 돌려준다.
-- `recovery.evidence` 컬럼은 `RecoveryEvidence`의 필드(`evidence_id`, `session_id`, `observed_at`, `execution_outcome`, `safety_confirmed`, `physical_state_synced`)를 그대로 담은 JSON 배열로 저장한다 — `save_recovery`(7단계)가 쓸 형식을 `restore_pending`의 읽기 쪽에서 먼저 정했다. `restore_pending`은 `completed_at IS NULL`인 행만 돌려주므로 그 호출에서는 `RecoveryRecord.completion`이 항상 `None`이다. `recovery()`는 `completed_at`이 있으면 `completion`을 채운다.
+- `recovery.evidence` 컬럼은 `RecoveryEvidence`의 필드(`evidence_id`, `session_id`, `observed_at`, `execution_outcome`, `command_idle`)를 그대로 담은 JSON 배열로 저장한다 — `save_recovery`(7단계)가 쓸 형식을 `restore_pending`의 읽기 쪽에서 먼저 정했다. `restore_pending`은 `completed_at IS NULL`인 행만 돌려주므로 그 호출에서는 `RecoveryRecord.completion`이 항상 `None`이다. `recovery()`는 `completed_at`이 있으면 `completion`을 채운다.
 - `save_recovery`는 대상 연결(`node_id`, `use_id`, `internal_request_ids`, `command_ids`, `created_at`)이 같은지만 보고 다르면 `CONFLICT`·`LINK_MISMATCH`다. 내용(`status`, `evidence`)이 같으면 `ALREADY_APPLIED`, 다르면 갱신하고 `APPLIED`다. 이미 완료된(`completed_at` 있음) 복구 건은 새 근거로 덮어쓰지 않고 `ALREADY_APPLIED`와 기존 완료 결과를 반환한다 — "완료 뒤의 새 보고로 당시 근거를 덮어쓰지 않는다"(architecture.md §4).
 - `settle_recovery`는 완료 여부 → 대상 연결(`node_id`, `use_id`) → 기기 상태 → 복구 건 상태 → 명령별 예상 상태 → 세션별 예상 상태 → 사용분별 예상 상태 순서로 검사한다. 하나라도 다르면 `CONFLICT`다(연결 불일치는 `LINK_MISMATCH`, 나머지는 `STATE_CONFLICT`). 완료된 복구 건은 `settlement_digest`로만 비교한다 — 같으면 `ALREADY_APPLIED`, 다르면 `CONFLICT`·`CONTENT_CONFLICT`다.
 - `settle_recovery`가 기기를 복구하는 목표 상태는 점유 방식과 관계없이 `AVAILABLE`이다 — 공용형은 `reserve_if_free()`가 `device_state`를 건드리지 않는 것과 같은 이유로, 대여형의 상태 머신(`RESERVED`·`ACTIVE`·`CLOSING`) 밖에서는 `AVAILABLE`이 기본값이다.

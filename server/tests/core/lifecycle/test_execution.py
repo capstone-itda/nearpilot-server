@@ -15,14 +15,14 @@ from nearpilot.core.lifecycle.restore import RestoreService
 from nearpilot.core.lifecycle.shared_light import SharedLightService
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, ActuatorState, Capability, CommandOutcome, DeviceState, ExecutionKind, ExecutionStatus,
+    Action, CommandState, Capability, CommandOutcome, DeviceState, ExecutionKind, ExecutionStatus,
     NodeResultState, Occupancy, ReasonCode, RejectCode, StoreConflictReason, StoreOutcome,
     TrustState, Verdict,
 )
 from nearpilot.shared.errors import StoreError, StoreNotApplied, StoreOutcomeUnknown
 from nearpilot.shared.models import (
     CommandRecord, CommandResult, Decision, ExecutionContext, NodeInfo, NodeResult,
-    NodeStatus, PhysicalState, RestoreBundle, StoreResult, TargetSpec, UseRequest,
+    NodeStatus, RestoreBundle, StoreResult, TargetSpec, UseRequest,
 )
 
 
@@ -66,6 +66,11 @@ class StoreFake:
         if self.read_error:
             raise self.read_error
         return self.commands.get(internal_request_id)
+
+    def last_succeeded(self, node_id):
+        done = [c for c in self.commands.values()
+                if c.node_id == node_id and c.status == ExecutionStatus.SUCCEEDED]
+        return done[-1] if done else None
 
     def link_command(self, internal_request_id, node_id, action):
         self.calls.append(("link", internal_request_id))
@@ -751,7 +756,7 @@ def test_FR19_execution_uses_real_restore_gate(env):
     env.repository.items[node.node_id] = replace(node, device_state=DeviceState.AVAILABLE)
     release = ReleaseService(repository=env.repository, store=env.store,
         settings=lambda: env.ctx.settings, clock=env.clock, lock_for=env.lock_for)
-    light = SharedLightService(repository=env.repository,
+    light = SharedLightService(repository=env.repository, store=env.store,
         policy=SimpleNamespace(check=lambda *args: None), settings=lambda: env.ctx.settings,
         clock=env.clock, lock_for=env.lock_for)
     restore = RestoreService(repository=env.repository, store=env.store, release=release,
@@ -765,7 +770,7 @@ def test_FR19_execution_uses_real_restore_gate(env):
     assert env.gateway.calls == []
     now = env.clock()
     restore.on_status(NodeStatus(env.ctx.node_id, now, "connection-1", 1, now, now,
-        PhysicalState(True, None, ActuatorState.IDLE, False)))
+        CommandState.IDLE))
     env.repository.items[node.node_id] = replace(node, device_state=DeviceState.RESERVED)
     assert service.execute(env.ctx).status == ExecutionStatus.SUCCEEDED
 

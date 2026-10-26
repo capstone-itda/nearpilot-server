@@ -1,4 +1,4 @@
-"""Per-device SQLite command and check records (FR-06, FR-07, FR-20).
+"""Per-device SQLite command records (FR-06, FR-07).
 
 Separate from the server DB. Each write is one transaction, and the simulator
 starts actuation only after the accepted record is committed. Records are
@@ -27,13 +27,6 @@ class CommandRecord:
     error_code: str | None = None
 
 
-@dataclass(frozen=True)
-class CheckRecord:
-    check_id: str
-    content: str
-    result: str  # JSON of the reported check fields.
-
-
 class CommandStore:
     """One SQLite file per simulated device. `fail_writes` simulates storage failure."""
 
@@ -47,8 +40,6 @@ class CommandStore:
             CREATE TABLE IF NOT EXISTS commands (
                 command_id TEXT PRIMARY KEY, content TEXT NOT NULL, state TEXT NOT NULL,
                 event_id TEXT NOT NULL, occurred_at TEXT NOT NULL, error_code TEXT);
-            CREATE TABLE IF NOT EXISTS checks (
-                check_id TEXT PRIMARY KEY, content TEXT NOT NULL, result TEXT NOT NULL);
         """)
 
     def close(self) -> None:
@@ -99,12 +90,3 @@ class CommandStore:
         rows = self._read("SELECT command_id, content, state, event_id, occurred_at, error_code"
                           " FROM commands WHERE state IN ('accepted', 'running')")
         return [CommandRecord(*row) for row in rows]
-
-    def check(self, check_id: str) -> CheckRecord | None:
-        rows = self._read("SELECT check_id, content, result FROM checks WHERE check_id = ?",
-                          (check_id,))
-        return CheckRecord(*rows[0]) if rows else None
-
-    def insert_check(self, record: CheckRecord) -> None:
-        self._write("INSERT INTO checks VALUES (?, ?, ?)",
-                    (record.check_id, record.content, record.result))

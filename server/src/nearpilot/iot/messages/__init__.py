@@ -1,4 +1,7 @@
-"""Stateless MQTT v1 conversion (architecture.md §4 and §5).
+"""Stateless MQTT v2 conversion (architecture.md §4 and §5).
+
+v2 (2026-10-26): `status` carries only `command_state`; `result.succeeded` means the control
+signal output finished. v1 messages are rejected, never reinterpreted.
 
 Delivery metadata, connection freshness and authorization belong to the caller.
 Invalid messages raise MessageValidationError without including their contents.
@@ -13,21 +16,23 @@ from datetime import datetime, timedelta
 from uuid import UUID
 
 from nearpilot.shared.enums import (
-    Action, ActuatorState, Capability, NodeResultState, Occupancy, RejectCode,
+    Action, Capability, CommandState, NodeResultState, Occupancy, RejectCode,
 )
 from nearpilot.shared.models import (
-    BeaconKey, NodeAnnounce, NodeCommand, NodeResult, NodeStatus, PhysicalState, RssiFrame,
+    BeaconKey, NodeAnnounce, NodeCommand, NodeResult, NodeStatus, RssiFrame,
 )
 
-__all__ = ["MessageValidationError", "decode_message", "encode_command"]
+__all__ = ["SCHEMA_VERSION", "MessageValidationError", "decode_message", "encode_command"]
+
+SCHEMA_VERSION = 2
 
 
 class MessageValidationError(ValueError):
-    """The message does not satisfy the MQTT v1 contract."""
+    """The message does not satisfy the MQTT v2 contract."""
 
 
 def _fail(field: str) -> None:
-    raise MessageValidationError(f"Invalid MQTT v1 field: {field}")
+    raise MessageValidationError(f"Invalid MQTT v2 field: {field}")
 
 
 def _object(value: object, field: str) -> dict:
@@ -75,12 +80,6 @@ def _enum(kind, value: object, field: str):
         return kind(value)
     except ValueError:
         _fail(field)
-
-
-def _nullable_bool(data: dict, field: str) -> bool | None:
-    if field not in data or (data[field] is not None and type(data[field]) is not bool):
-        _fail(field)
-    return data[field]
 
 
 def _constant(value: str) -> None:
@@ -132,8 +131,8 @@ def decode_message(
         data = _object(json.loads(raw, parse_constant=_constant, object_pairs_hook=_pairs), "payload")
         _finite_json(data)
     except (UnicodeError, ValueError, RecursionError):
-        raise MessageValidationError("Invalid MQTT v1 JSON") from None
-    if _integer(data.get("schema_version"), "schema_version", 1) != 1:
+        raise MessageValidationError("Invalid MQTT v2 JSON") from None
+    if _integer(data.get("schema_version"), "schema_version", 1) != SCHEMA_VERSION:
         _fail("schema_version")
     if _string(data.get("node_id"), "node_id") != node_id:
         _fail("node_id")
@@ -168,13 +167,8 @@ def decode_message(
             for beacon, rssi in validated
         )
     if kind == "status":
-        physical = _object(data.get("physical_state"), "physical_state")
         return NodeStatus(**common, observed_at=_time(data.get("observed_at"), "observed_at"),
-            physical=PhysicalState(
-                door_closed=_nullable_bool(physical, "door_closed"),
-                light_on=_nullable_bool(physical, "light_on"),
-                actuator_state=_enum(ActuatorState, physical.get("actuator_state"), "actuator_state"),
-                sensor_fault=_nullable_bool(physical, "sensor_fault")))
+            command_state=_enum(CommandState, data.get("command_state"), "command_state"))
     state = _enum(NodeResultState, data.get("state"), "state")
     error = data.get("error_code")
     if "error_code" in data:
@@ -197,7 +191,7 @@ def _outbound(request: NodeCommand) -> dict:
     node_id = _string(request.node_id, "node_id")
     if any(c in node_id for c in "/+#\x00"):
         _fail("node_id")
-    return dict(schema_version=1, node_id=node_id,
+    return dict(schema_version=SCHEMA_VERSION, node_id=node_id,
         target_session_id=_uuid(request.target_session_id, "target_session_id"),
         issued_at=_wire_time(request.issued_at, "issued_at"),
         expires_at=_wire_time(request.expires_at, "expires_at"))

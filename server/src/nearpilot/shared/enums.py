@@ -226,8 +226,11 @@ class RejectCode(StrEnum):
     DEVICE_BUSY = "DEVICE_BUSY"  # 다른 구동 명령이 진행 중이다. 이번 명령의 미접수·미실행이다.
 
 
-class ActuatorState(StrEnum):
-    """`status` 의 `physical_state.actuator_state` (architecture.md §5 MQTT 3절)."""
+class CommandState(StrEnum):
+    """`status` 의 `command_state`. 펌웨어의 명령 처리 상태다 (architecture.md §5 MQTT 3절).
+
+    실제 켜짐·열림이나 센서 고장의 관측이 아니다 (2026-10-26 결정).
+    """
 
     IDLE = "idle"
     BUSY = "busy"

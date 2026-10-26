@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import paho.mqtt.client as mqtt
 import pytest
 
-from nearpilot.iot.messages import MessageValidationError, decode_message
+from nearpilot.iot.messages import decode_message
 from nearpilot.shared.config import Settings
 from tools.node_sim import (
     Beacon, BrokerConfig, CommandStore, ConfigError, Credentials, Scenario, SimDevice, SimNode,
@@ -60,20 +60,11 @@ def make(tmp_path, clock):
 def cmd(node, command_id="command-1", *, action=None, session=None, issued=None, expires=None,
         **extra):
     action = action or ("open" if node.capability == "locker" else "on")
-    data = dict(schema_version=1, node_id=node.node_id, command_id=command_id, action=action,
+    data = dict(schema_version=2, node_id=node.node_id, command_id=command_id, action=action,
                 target_session_id=session or node.session_id,
                 issued_at=iso(issued or T0 - timedelta(seconds=0.5)),
                 expires_at=iso(expires or T0 + timedelta(seconds=3))) | extra
     return json.dumps(data).encode()
-
-
-def check(node, check_id="check-1", *, criteria="locker-return", version=1, session=None,
-          expires=None):
-    return json.dumps(dict(
-        schema_version=1, node_id=node.node_id, check_id=check_id,
-        target_session_id=session or node.session_id, criteria_id=criteria,
-        criteria_version=version, issued_at=iso(T0 - timedelta(seconds=0.5)),
-        expires_at=iso(expires or T0 + timedelta(seconds=3)))).encode()
 
 
 def decode(message):
@@ -131,7 +122,7 @@ def test_FR06_busy_rejected_without_queue(make):
      "COMMAND_EXPIRED"),
     (dict(action="on"), "UNSUPPORTED_ACTION"),
     (dict(issued=T0 + timedelta(seconds=3)), "INVALID_MESSAGE"),
-    (dict(schema_version=2), "INVALID_MESSAGE"),
+    (dict(schema_version=1), "INVALID_MESSAGE"),
     (dict(issued=T0 + timedelta(seconds=1), expires=T0 + timedelta(seconds=2)),
      "INVALID_MESSAGE"),
 ])
@@ -149,7 +140,7 @@ def test_FR06_old_duplicate_reports_stored_result(make, clock):
     clock.now += timedelta(seconds=60)  # Expired and possibly another session.
     node.connect()
     record = node.store.command("command-1")
-    resend = json.loads(record.content) | dict(schema_version=1, command_id="command-1")
+    resend = json.loads(record.content) | dict(schema_version=2, command_id="command-1")
     messages, started = node.handle_command(json.dumps(resend).encode())
     assert not started and states(messages) == [("succeeded", None)]
     assert messages[0][1]["event_id"] == record.event_id
@@ -159,7 +150,7 @@ def test_FR06_storage_error_prevents_actuation(make):
     node = make(storage_error=True)
     messages, started = node.handle_command(cmd(node))
     assert not started and states(messages) == [("rejected", "STORAGE_ERROR")]
-    assert node.actuations == 0 and not node.physical.busy and node.physical.locked
+    assert node.actuations == 0 and not node.busy and node.last_output is None
     node.store.fail_writes = False
     assert node.store.command("command-1") is None
 
@@ -188,7 +179,7 @@ def test_FR07_final_scenarios(make, final, drop, expected):
     node.handle_command(cmd(node))
     assert [s for s, _ in states(node.finish())] == expected
     assert node.store.command("command-1").state == final
-    assert node.physical.locked is (final == "failed")
+    assert node.last_output is None if final != "succeeded" else node.last_output == "open"
 
 
 def test_FR05_empty_and_multiple_beacons(make):
@@ -212,47 +203,30 @@ def test_FR04_reconnect_announces_new_session(make):
     assert (second.capability.value, second.occupancy.value) == ("locker", "rental")
 
 
-def test_FR20_server_rejects_simulator_check_result(make):
-    """서버는 반납 검사 결과를 받지 않는다. 시뮬레이터의 검사 응답 제거는 시뮬레이터 후속 작업이다."""
+def test_FR20_simulator_has_no_release_check(make):
+    """반납 검사 요청과 결과를 처리하지 않는다 (2026-10-26 결정)."""
     node = make()
-    messages = node.handle_check(check(node))
-    with pytest.raises(MessageValidationError):
-        decode(messages[0])
+    assert not hasattr(node, "handle_check") and not hasattr(node.store, "check")
 
 
-def test_FR20_check_conflict_keeps_record(make):
+def test_FR07_status_reports_command_state_only(make):
     node = make()
-    first = node.handle_check(check(node))
-    stored = node.store.check("check-1")
-    assert node.handle_check(check(node, expires=T0 + timedelta(seconds=9))) == []
-    assert node.store.check("check-1") == stored
-    again = node.handle_check(check(node))
-    assert again[0][1]["event_id"] == first[0][1]["event_id"]
-    assert again[0][1]["checked_at"] == first[0][1]["checked_at"]
-
-
-def test_FR20_status_not_check_evidence(make):
-    node = make()
+    idle = node.status()[1]
+    assert decode(node.status()).command_state.value == "idle"
+    assert "physical_state" not in idle and "safe" not in idle and idle["schema_version"] == 2
     node.handle_command(cmd(node))
+    assert decode(node.status()).command_state.value == "busy"
     node.finish()
-    status = node.status()[1]
-    assert set(status["physical_state"]) == {"door_closed", "light_on", "actuator_state",
-                                             "sensor_fault"}
-    assert "safe" not in status and "locked" not in status["physical_state"]
-    assert node.handle_check(check(node, session="99999999-9999-9999-9999-999999999999")) == []
-    assert node.handle_check(check(node, expires=T0 - timedelta(seconds=0.1))) == []
-    assert node.store.check("check-1") is None
+    assert decode(node.status()).command_state.value == "idle"
 
 
-def test_FR07_unobserved_light_not_success(make):
-    mood = make("light", name="mood", light_observable=False)
-    mood.handle_command(cmd(mood))
-    assert states(mood.finish()) == [("unknown", None)]
-    assert decode(mood.status()).physical.light_on is None
-    light = make("light", name="light")
-    light.handle_command(cmd(light))
-    assert states(light.finish()) == [("succeeded", None)]
-    assert decode(light.status()).physical.light_on is True
+@pytest.mark.parametrize("capability,action", [("light", "on"), ("light", "off"), ("speaker", "on")])
+def test_FR07_output_completion_is_success(make, capability, action):
+    """실제 상태를 관측하지 않아도 출력 완료는 성공이다. IR 무드등도 같다."""
+    node = make(capability, name=capability + action)
+    node.handle_command(cmd(node, action=action))
+    assert states(node.finish()) == [("succeeded", None)]
+    assert node.last_output == action
 
 
 def test_NFR10_eight_device_scenarios():
@@ -267,7 +241,7 @@ def test_NFR10_eight_device_scenarios():
         ("place-a", "locker"): 3, ("place-a", "light"): 3, ("place-a", "speaker"): 1,
         ("place-b", "light"): 1}
     mood = next(d for d in devices if d.place == "place-b")
-    assert mood.scenario.light_observable is False
+    assert not hasattr(mood.scenario, "light_observable")
     assert len({d.username for d in devices}) == len({str(d.store) for d in devices}) == 8
 
 
@@ -341,27 +315,20 @@ def device(tmp_path):
     created.stop()
 
 
-def test_NFR11_simulator_v1_qos_retain(device):
+def test_NFR11_simulator_v2_qos_retain(device):
     client = device._client
     assert client.options["protocol"] == mqtt.MQTTv311 and client.options["clean_session"]
     device.start()
     device._on_connect(client, None, None, 0, None)
     assert wait_for(lambda: {k for k, *_ in client.published} >= {"announce", "status", "rssi"})
-    assert client.subscribed == [[("nearpilot/node/locker-1/cmd", 1),
-                                  ("nearpilot/node/locker-1/safety_check", 1)]]
+    assert client.subscribed == [[("nearpilot/node/locker-1/cmd", 1)]]
     node = device.node
     device._on_message(client, None, SimpleNamespace(
         topic="nearpilot/node/locker-1/cmd", payload=cmd(node, issued=datetime.now(timezone.utc)
         - timedelta(seconds=1), expires=datetime.now(timezone.utc) + timedelta(seconds=5))))
-    device._on_message(client, None, SimpleNamespace(
-        topic="nearpilot/node/locker-1/safety_check", payload=json.dumps(dict(
-            schema_version=1, node_id="locker-1", check_id="check-1",
-            target_session_id=node.session_id, criteria_id="locker-return", criteria_version=1,
-            issued_at=iso(datetime.now(timezone.utc) - timedelta(seconds=1)),
-            expires_at=iso(datetime.now(timezone.utc) + timedelta(seconds=5)))).encode()))
     assert wait_for(lambda: any(b.get("state") == "succeeded" for _, b, *_ in client.published))
     expected = {"announce": (1, True), "rssi": (0, False), "status": (1, False),
-                "result": (1, False), "safety_check_result": (1, False)}
+                "result": (1, False)}
     seen = {kind: (qos, retain) for kind, _, qos, retain in client.published}
     assert seen == expected
     assert client.published[0][0] == "announce"
@@ -381,5 +348,6 @@ def test_NFR08_simulator_uses_node_credentials(device, caplog):
         assert f"topic read nearpilot/node/{d.node_id}/cmd" in text
     assert "+" not in text and "#" not in text and "topic write nearpilot/node/" in text
     assert all(line.startswith("topic read") for line in text.splitlines()
-               if line.endswith(("/cmd", "/safety_check")))  # No device writes commands.
+               if line.endswith("/cmd"))  # No device writes commands.
+    assert "safety_check" not in text
     assert all(".env." in str(d.password_file) for d in fleet.devices)

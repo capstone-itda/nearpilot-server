@@ -8,10 +8,10 @@ import operator
 
 import pytest
 
-from nearpilot.shared.enums import Action, ActuatorState, Capability, DeviceState, Occupancy, Step, TrustState
+from nearpilot.shared.enums import Action, CommandState, Capability, DeviceState, Occupancy, Step, TrustState
 from nearpilot.shared.enums import SessionState
 from nearpilot.shared.models import (
-    AuditEvent, NodeInfo, NodeResult, NodeStatus, PhysicalState, ProximityResult,
+    AuditEvent, NodeInfo, NodeResult, NodeStatus, ProximityResult,
     ReserveRequest, UseSession,
 )
 from nearpilot.shared.enums import NodeResultState
@@ -23,8 +23,7 @@ NODE = NodeInfo(
     TrustState.TRUSTED, DeviceState.AVAILABLE, None, None,
 )
 RESERVATION = ReserveRequest("r1", "u1", "locker-1", Action.OPEN, None)
-PHYSICAL = PhysicalState(True, None, ActuatorState.IDLE, False)
-STATUS = NodeStatus("locker-1", NOW, "sess-1", 1, NOW, NOW, PHYSICAL)
+STATUS = NodeStatus("locker-1", NOW, "sess-1", 1, NOW, NOW, CommandState.IDLE)
 RESULT = NodeResult(
     "locker-1", "sess-1", 1, NOW, NOW, "cmd-1", "evt-1", NodeResultState.SUCCEEDED, NOW,
 )

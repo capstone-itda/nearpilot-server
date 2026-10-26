@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    ActuatorState, ApprovalUsageState, DeviceState, EndReason, ExecutionStatus, RecoveryBlocker,
+    ApprovalUsageState, CommandState, DeviceState, EndReason, ExecutionStatus, RecoveryBlocker,
     RecoveryOutcome, RecoveryReason, RecoveryStatus, SessionState,
     StoreOutcome, TrustState,
 )
@@ -217,7 +217,7 @@ class FaultRecoveryService:
                 ):
                     return
                 since = None
-                if status.physical.actuator_state == ActuatorState.IDLE:
+                if status.command_state == CommandState.IDLE:
                     keep = previous is not None and previous.since is not None and (
                         previous.since.session_id == status.session_id)
                     since = previous.since if keep else status

@@ -10,10 +10,10 @@ from nearpilot.iot.messages import (
     MessageValidationError, decode_message, encode_command,
 )
 from nearpilot.shared.enums import (
-    Action, ActuatorState, Capability, NodeResultState, Occupancy,
+    Action, CommandState, Capability, NodeResultState, Occupancy,
 )
 from nearpilot.shared.models import (
-    BeaconKey, NodeAnnounce, NodeCommand, NodeResult, NodeStatus, PhysicalState, RssiFrame,
+    BeaconKey, NodeAnnounce, NodeCommand, NodeResult, NodeStatus, RssiFrame,
 )
 
 SESSION = "12345678-1234-1234-1234-123456789abc"
@@ -26,12 +26,11 @@ COMMON = dict(node_id="locker-1", session_id=SESSION, seq=7, sent_at=SENT, recei
 
 
 def body(kind):
-    data = dict(schema_version=1, node_id="locker-1", session_id=SESSION, seq=7, sent_at=STAMP)
+    data = dict(schema_version=2, node_id="locker-1", session_id=SESSION, seq=7, sent_at=STAMP)
     data.update({
         "announce": dict(capability="locker", occupancy="rental"),
         "rssi": dict(frame_ts=STAMP, observations=[dict(uuid=BEACON, major=0, minor=65535, rssi=-62.5)]),
-        "status": dict(observed_at=STAMP, physical_state=dict(
-            door_closed=True, light_on=None, actuator_state="idle", sensor_fault=False)),
+        "status": dict(observed_at=STAMP, command_state="idle"),
         "result": dict(command_id="command-1", event_id=EVENT, state="succeeded", occurred_at=STAMP),
     }[kind])
     return data
@@ -96,25 +95,32 @@ def test_FR05_invalid_observations_rejected(observations):
         decode("rssi", body("rssi") | dict(observations=observations))
 
 
-def test_FR07_unobserved_light_is_none():
-    assert decode("status") == NodeStatus(**COMMON, observed_at=SENT,
-        physical=PhysicalState(True, None, ActuatorState.IDLE, False))
+@pytest.mark.parametrize("state", list(CommandState))
+def test_FR07_status_carries_command_state_only(state):
+    assert decode("status", body("status") | dict(command_state=state.value)) == NodeStatus(
+        **COMMON, observed_at=SENT, command_state=state)
 
 
-@pytest.mark.parametrize("value", [True, False, None])
-def test_FR07_nullable_observations_preserved(value):
-    data = body("status")
-    for key in ("door_closed", "light_on", "sensor_fault"):
-        data["physical_state"][key] = value
-    report = decode("status", data)
-    assert report.physical.door_closed is value
-    assert report.physical.light_on is value
-    assert report.physical.sensor_fault is value
+def test_FR07_v1_physical_state_rejected():
+    """v1의 physical_state를 새 뜻으로 재해석하지 않는다 (2026-10-26 결정)."""
+    data = dict(schema_version=1, node_id="locker-1", session_id=SESSION, seq=7, sent_at=STAMP,
+                observed_at=STAMP, physical_state=dict(door_closed=True, light_on=None,
+                                                       actuator_state="idle", sensor_fault=False))
+    with pytest.raises(MessageValidationError):
+        decode("status", data)
+    with pytest.raises(MessageValidationError):
+        decode("status", data | dict(schema_version=2))
+
+
+@pytest.mark.parametrize("kind", ["announce", "rssi", "status", "result"])
+def test_NFR11_v1_messages_rejected(kind):
+    with pytest.raises(MessageValidationError):
+        decode(kind, body(kind) | dict(schema_version=1))
 
 
 def test_FR07_extra_fields_not_safety_evidence():
-    data = body("status") | dict(safe=True, received_at="forged", detail={"safe": True})
-    data["physical_state"]["safe"] = True
+    data = body("status") | dict(safe=True, received_at="forged", detail={"safe": True},
+                                 light_on=True, door_closed=True, sensor_fault=True)
     report = decode("status", data)
     assert report == decode("status")
     assert not hasattr(report, "safe")
@@ -137,7 +143,7 @@ def test_FR07_rejected_requires_reject_code(error):
 
 @pytest.mark.parametrize("kind", ["announce", "rssi", "status", "result"])
 @pytest.mark.parametrize("field,value", [
-    ("schema_version", True), ("schema_version", 1.0), ("schema_version", 2),
+    ("schema_version", True), ("schema_version", 2.0), ("schema_version", 1), ("schema_version", 3),
     ("seq", True), ("seq", 0), ("seq", 1.0), ("seq", "1"),
     ("node_id", ""), ("node_id", 1), ("session_id", "bad"),
     ("sent_at", "2026-10-15T03:00:00"), ("sent_at", "2026-10-15T04:00:00+01:00"),
@@ -160,7 +166,8 @@ def test_NFR11_every_required_field_is_required(kind):
 @pytest.mark.parametrize("kind,field,value", [
     ("announce", "capability", "gate"), ("announce", "occupancy", "exclusive"),
     ("rssi", "frame_ts", "yesterday"), ("status", "observed_at", None),
-    ("status", "physical_state", {}), ("result", "state", "timeout"),
+    ("status", "command_state", "AVAILABLE"), ("status", "command_state", None),
+    ("result", "state", "timeout"),
     ("result", "command_id", ""), ("result", "event_id", "bad"),
     ("result", "occurred_at", "today"), ("result", "error_code", 1),
 ])
@@ -169,27 +176,8 @@ def test_NFR11_invalid_topic_specific_fields(kind, field, value):
         decode(kind, body(kind) | {field: value})
 
 
-@pytest.mark.parametrize("field", ["door_closed", "light_on", "actuator_state", "sensor_fault"])
-def test_FR07_physical_fields_are_required(field):
-    data = body("status")
-    del data["physical_state"][field]
-    with pytest.raises(MessageValidationError):
-        decode("status", data)
-
-
-@pytest.mark.parametrize("field,value", [
-    ("door_closed", 1), ("light_on", "true"), ("sensor_fault", 0),
-    ("actuator_state", None), ("actuator_state", "AVAILABLE"),
-])
-def test_FR07_physical_types_are_strict(field, value):
-    data = body("status")
-    data["physical_state"][field] = value
-    with pytest.raises(MessageValidationError):
-        decode("status", data)
-
-
 @pytest.mark.parametrize("raw", [b"\xff", b"[]", b"null", b"1", b"{} garbage", b"{", b'"text"',
-    b'{"schema_version":1,"schema_version":1}', b'{"extra": NaN}', b'{"extra": 1e999}'])
+    b'{"schema_version":2,"schema_version":2}', b'{"extra": NaN}', b'{"extra": 1e999}'])
 def test_NFR11_invalid_json_rejected(raw):
     with pytest.raises(MessageValidationError):
         decode_message("nearpilot/node/locker-1/status", raw, received_at=RECEIVED)
@@ -233,7 +221,7 @@ def test_FR06_encode_preserves_command(action):
     assert datetime.fromisoformat(data.pop("issued_at")) == SENT
     assert datetime.fromisoformat(data.pop("expires_at")) == RECEIVED
     assert data == dict(
-        schema_version=1, node_id="locker-1", command_id="command-1", action=action,
+        schema_version=2, node_id="locker-1", command_id="command-1", action=action,
         target_session_id=SESSION)
 
 
@@ -249,9 +237,9 @@ def test_NFR11_invalid_outbound_fields_rejected(field, value):
         encode_command(replace(command(), **{field: value}))
 
 
-def test_NFR11_all_v1_message_shapes():
+def test_NFR11_all_v2_message_shapes():
     assert isinstance(decode("announce"), NodeAnnounce)
     assert isinstance(decode("rssi")[0], RssiFrame)
     assert isinstance(decode("status"), NodeStatus)
     assert isinstance(decode("result"), NodeResult)
-    assert json.loads(encode_command(command()))["schema_version"] == 1
+    assert json.loads(encode_command(command()))["schema_version"] == 2

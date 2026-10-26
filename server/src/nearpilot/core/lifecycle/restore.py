@@ -19,7 +19,7 @@ from nearpilot.core.lifecycle.release import ReleaseService
 from nearpilot.core.lifecycle.shared_light import SharedLightService
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    ActuatorState, Capability, CommandOutcome, DeviceState, ExecutionStatus,
+    Capability, CommandOutcome, CommandState, DeviceState, ExecutionStatus,
     Occupancy, ReasonCode, SessionState, StoreOutcome,
 )
 from nearpilot.shared.errors import StoreError, StoreOutcomeUnknown
@@ -366,7 +366,7 @@ class RestoreService:
 
     @staticmethod
     def _normal(report: NodeStatus) -> bool:
-        return report.physical.sensor_fault is False and report.physical.actuator_state == ActuatorState.IDLE
+        return report.command_state == CommandState.IDLE
 
     @staticmethod
     def _is_light(node: NodeInfo) -> bool:

@@ -16,7 +16,7 @@ from nearpilot.core.lifecycle.restore import RestoreService
 from nearpilot.core.lifecycle.shared_light import SharedLightService
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, ActuatorState, Capability, CommandOutcome, DeviceState, EndReason,
+    Action, CommandState, Capability, CommandOutcome, DeviceState, EndReason,
     ExecutionKind, ExecutionStatus, NodeResultState, Occupancy, ReasonCode,
     SessionState, StoreOutcome, TrustState, Verdict,
 )
@@ -24,7 +24,7 @@ from nearpilot.shared.errors import StoreError, StoreNotApplied, StoreOutcomeUnk
 from nearpilot.shared.interfaces import NodeEventSink
 from nearpilot.shared.models import (
     BeaconKey, CloseResult, CommandRecord, CommandResult, Decision, ExecutionContext,
-    NodeAnnounce, NodeInfo, NodeResult, NodeStatus, PhysicalState, PolicyCheckResult,
+    NodeAnnounce, NodeInfo, NodeResult, NodeStatus, PolicyCheckResult,
     RestoredSession, RestoreBundle, RssiFrame, StoreResult,
     TargetSpec, UseRequest, UseSession,
 )
@@ -133,6 +133,11 @@ class StoreFake:
         self.fail("execution")
         return self.commands.get(internal_request_id)
 
+    def last_succeeded(self, node_id):
+        done = [c for c in self.commands.values()
+                if c.node_id == node_id and c.status == ExecutionStatus.SUCCEEDED]
+        return done[-1] if done else None
+
     def record_result(self, command_id, outcome, occurred_at, rental_due_at, evidence):
         self.calls.append(("result", command_id, outcome))
         self.fail("result")
@@ -190,7 +195,7 @@ def env():
     recovery = FaultRecoveryService(repository=repo, store=store, clock=clock, lock_for=lock_for)
     release = ReleaseService(repository=repo, store=store, settings=lambda: settings,
         clock=clock, lock_for=lock_for)
-    light = SharedLightService(repository=repo, policy=policy, settings=lambda: settings,
+    light = SharedLightService(repository=repo, store=store, policy=policy, settings=lambda: settings,
         clock=clock, lock_for=lock_for)
     restore = RestoreService(repository=repo, store=store, release=release, recovery=recovery,
         shared_light=light, settings=lambda: settings, clock=clock, lock_for=lock_for)
@@ -213,7 +218,7 @@ def env():
 def status(env, **changes):
     at = env.clock()
     return replace(NodeStatus("locker", at, "connection", 1, at, at,
-        PhysicalState(True, None, ActuatorState.IDLE, False)), **changes)
+        CommandState.IDLE), **changes)
 
 
 def announce(env, **changes):
@@ -386,32 +391,28 @@ def test_FR05_wrong_connection_does_not_update_online(env):
     assert env.repo.frames == {}
 
 
-def test_NFR04_sensor_fault_isolates(env):
+@pytest.mark.parametrize("state", list(CommandState))
+def test_NFR04_status_never_isolates(env, state):
+    """status는 센서 고장을 담지 않는다. 센서 이상 격리를 하지 않는다 (2026-10-26 결정)."""
     original = occupied(env)
-    env.store.usages["request"] = "held"
-    env.sink.on_status(status(env, physical=PhysicalState(None, None, ActuatorState.IDLE, True)))
-    assert env.repo.items["locker"].device_state == DeviceState.FAULT
+    env.sink.on_status(status(env, command_state=state))
+    assert env.repo.items["locker"].device_state == DeviceState.ACTIVE
     assert env.repo.sessions["use"] == original
-    assert env.store.usages == {"request": "held"}
-    assert len(env.store.recoveries) == 1
-    assert not env.restore.can_execute("locker")
+    assert env.store.recoveries == {}
 
 
 def test_NFR04_repeat_fault_same_recovery(env):
-    report = status(env, physical=PhysicalState(None, None, ActuatorState.IDLE, True))
-    env.sink.on_status(report)
-    env.sink.on_status(replace(report, seq=2))
+    occupied(env)
+    report = announce(env, capability=Capability.LIGHT)
+    env.sink.on_announce(report)
+    env.sink.on_announce(replace(report, seq=2))
     assert len(env.store.recoveries) == 1
 
 
-@pytest.mark.parametrize("source", ["status", "announce"])
 @pytest.mark.parametrize("error", [StoreNotApplied("save"), StoreOutcomeUnknown("save")])
-def test_NFR04_retry_missing_recovery_after_isolation(env, source, error):
+def test_NFR04_retry_missing_recovery_after_isolation(env, error):
     occupied(env)
-    report = status(env, physical=PhysicalState(None, None, ActuatorState.IDLE, True))
-    method = env.sink.on_status
-    if source == "announce":
-        method, report = env.sink.on_announce, announce(env, capability=Capability.LIGHT)
+    method, report = env.sink.on_announce, announce(env, capability=Capability.LIGHT)
     env.store.errors["recovery"] = error
     with pytest.raises(type(error)):
         method(report)
@@ -423,23 +424,25 @@ def test_NFR04_retry_missing_recovery_after_isolation(env, source, error):
 
 
 def test_NFR04_isolation_unknown_retries_recovery(env):
+    occupied(env)
     env.store.errors["isolate_after"] = StoreOutcomeUnknown("isolation")
-    report = status(env, physical=PhysicalState(None, None, ActuatorState.IDLE, True))
+    report = announce(env, capability=Capability.LIGHT)
     with pytest.raises(StoreOutcomeUnknown):
-        env.sink.on_status(report)
-    env.sink.on_status(report)
+        env.sink.on_announce(report)
+    env.sink.on_announce(report)
     assert len(env.store.recoveries) == 1
 
 
 def test_NFR04_isolation_conflict_is_not_delivered(env):
+    occupied(env)
     env.store.isolate_outcome = StoreOutcome.CONFLICT
     with pytest.raises(StoreError):
-        env.sink.on_status(status(env, physical=PhysicalState(None, None, ActuatorState.IDLE, True)))
+        env.sink.on_announce(announce(env, capability=Capability.LIGHT))
     assert env.store.recoveries == {}
 
 
 def test_FR19_busy_actuator_not_fault(env):
-    env.sink.on_status(status(env, physical=PhysicalState(True, None, ActuatorState.BUSY, False)))
+    env.sink.on_status(status(env, command_state=CommandState.BUSY))
     assert env.repo.items["locker"].device_state == DeviceState.AVAILABLE
     assert env.store.recoveries == {}
 
@@ -449,7 +452,7 @@ def test_FR07_status_does_not_change_logical_release(env):
     decision = env.release.release_use("visitor", "use")
     assert decision.verdict == Verdict.OK
     before = env.repo.items["locker"].device_state
-    env.sink.on_status(status(env, physical=PhysicalState(False, None, ActuatorState.IDLE, False)))
+    env.sink.on_status(status(env, command_state=CommandState.IDLE))
     assert env.repo.sessions["use"].state == SessionState.CLOSED
     assert env.repo.items["locker"].device_state == before == DeviceState.AVAILABLE
     assert len(env.store.closed) == 1
@@ -527,11 +530,11 @@ def test_FR20_shared_success_and_rssi_update_real_holder(env):
     env.sink.on_result(report)
     # 복원 확인 이후 이탈 판단을 시작한다. 성공 계정은 메모리 유지 대상자다.
     env.light.resume("locker")
-    env.sink.on_status(status(env, physical=PhysicalState(None, True, ActuatorState.IDLE, False)))
+    env.sink.on_status(status(env, command_state=CommandState.IDLE))
     env.time[0] += timedelta(seconds=env.settings.leave_absent_sec)
     env.sink.on_rssi(frame(env))
     env.time[0] += timedelta(seconds=env.settings.leave_grace_sec)
-    env.sink.on_status(status(env, seq=2, physical=PhysicalState(None, True, ActuatorState.IDLE, False)))
+    env.sink.on_status(status(env, seq=2, command_state=CommandState.IDLE))
     assert not env.light.can_request_off("locker")
 
 
@@ -542,7 +545,7 @@ def test_FR20_internal_off_result_routed(env):
     holder = command(env, shared=True)
     env.sink.on_result(holder)
     env.light.resume("locker")
-    env.sink.on_status(status(env, physical=PhysicalState(None, True, ActuatorState.IDLE, False)))
+    env.sink.on_status(status(env, command_state=CommandState.IDLE))
     assert env.light._lights["locker"].holders
     internal = InternalRequest("internal", "locker", Action.OFF, InternalRequestCause.LEAVE_OFF,
                                env.settings, env.clock())
@@ -569,9 +572,10 @@ def test_NFR04_node_events_serialized(env):
     def observe():
         with env.lock_for("locker"):
             return env.repo.items["locker"].device_state
-    report = status(env, physical=PhysicalState(None, None, ActuatorState.IDLE, True))
+    occupied(env)
+    report = announce(env, capability=Capability.LIGHT)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        event = pool.submit(env.sink.on_status, report)
+        event = pool.submit(env.sink.on_announce, report)
         assert entered.wait(3)
         read = pool.submit(observe)
         try:
@@ -637,9 +641,9 @@ def test_FR04_announce_write_failure_keeps_changed_occupied_node_isolated(env):
 def test_NFR04_restarted_sink_repairs_missing_recovery(env):
     occupied(env)
     env.store.errors["recovery"] = StoreNotApplied("recovery")
-    report = status(env, physical=PhysicalState(None, None, ActuatorState.IDLE, True))
+    report = announce(env, capability=Capability.LIGHT)
     with pytest.raises(StoreNotApplied):
-        env.sink.on_status(report)
+        env.sink.on_announce(report)
     fresh_recovery = FaultRecoveryService(repository=env.repo, store=env.store,
         clock=env.clock, lock_for=env.lock_for)
     fresh_restore = RestoreService(repository=env.repo, store=env.store,
@@ -649,7 +653,7 @@ def test_NFR04_restarted_sink_repairs_missing_recovery(env):
     sink = env.create()
     sink._recovery = fresh_recovery
     sink._restore = fresh_restore
-    sink.on_status(report)
+    sink.on_announce(report)
     recovery, = env.store.recoveries.values()
     assert (recovery.use_id, recovery.internal_request_ids) == ("use", ("request",))
 
@@ -665,32 +669,15 @@ def test_FR07_shared_result_retries_failed_holder_handover(env):
     assert len([c for c in env.store.calls if c[0] == "result"]) == 1
 
 
-@pytest.mark.parametrize("source", ["status", "announce"])
-def test_NFR04_link_query_failure_still_isolates_known_fault(env, source):
+def test_NFR04_link_query_failure_still_isolates_known_fault(env):
     occupied(env)
     env.store.errors["restore"] = StoreNotApplied("links")
-    report = status(env, physical=PhysicalState(None, None, ActuatorState.IDLE, True))
-    method = env.sink.on_status
-    if source == "announce":
-        method, report = env.sink.on_announce, announce(env, capability=Capability.LIGHT)
+    method, report = env.sink.on_announce, announce(env, capability=Capability.LIGHT)
     with pytest.raises(StoreNotApplied):
         method(report)
     assert env.repo.items["locker"].device_state == DeviceState.FAULT
     method(report)
     assert len(env.store.recoveries) == 1
-
-
-def test_NFR04_online_write_failure_does_not_skip_sensor_isolation(env):
-    env.repo.errors["touch"] = StoreNotApplied("online")
-    report = status(env, physical=PhysicalState(None, None, ActuatorState.IDLE, True))
-    with pytest.raises(StoreNotApplied):
-        env.sink.on_status(report)
-    assert env.repo.items["locker"].device_state == DeviceState.FAULT
-    assert len(env.store.recoveries) == 1
-    env.sink.on_status(report)
-    assert len(env.store.recoveries) == 1
-    assert env.repo.items["locker"].last_seen_at == report.received_at
-    assert env.sink.latest_status("locker") == report
 
 
 def test_FR07_reports_during_gateway_wait_do_not_deadlock(env):
