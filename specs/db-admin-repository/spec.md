@@ -113,6 +113,7 @@
 | 점유 중인 기기의 정책을 바꾼다 | `CONFLICT`, `NODE_OCCUPIED`. 정책·감사가 바뀌지 않는다 | `test_FR12A_set_policy_occupied_rejected` |
 | 점유 중인 기기를 다른 장소로 옮긴다 | `CONFLICT`, `NODE_OCCUPIED`. 장소 생성과 다른 기기 연결도 하지 않는다 | `test_FR12A_assign_place_occupied_rejected` |
 | 점유 중인 기기를 이미 있는 같은 장소에 다시 연결한다 (시드 재실행) | `APPLIED`. 장소가 바뀌지 않으므로 허용한다 | `test_FR12A_assign_place_same_place_while_occupied` |
+| 장소가 없던 점유 기기를 처음 배치한다 | `APPLIED`. 이동이 아니다 | `test_FR12A_assign_place_applied` |
 | 반납을 마친 기기(세션 `CLOSED`, 기기 `AVAILABLE`)의 정책을 바꾼다 | `APPLIED` | `test_FR12A_change_after_release_applied` |
 | `FAULT`인데 닫지 않은 세션이 있다 | 점유 중으로 보고 `CONFLICT`, `NODE_OCCUPIED` | `test_FR12A_fault_with_open_session_is_occupied` |
 | 종료 정책·이름·신뢰 상태를 점유 중에 바꾼다 | 기존대로 허용한다 | `test_FR12A_other_writes_ignore_occupancy` |
@@ -140,7 +141,7 @@
 - 수집 회차 겹침 검사는 `BEGIN IMMEDIATE` 안에서 조회와 삽입을 함께 한다 — 동시에 두 회차가 열려도 하나만 들어간다.
 - `AdminRepository` 구현은 `db/repositories/admin_repository.py`의 `SqliteAdminRepository`에 둔다. `SqliteRepository`와 같은 연결을 받는다 — DB 쓰기 경로는 하나다 (`AGENTS.md` 의존 규칙 5).
 - 점유 중은 기기의 `device_state`가 `RESERVED`·`ACTIVE`·`CLOSING`이거나, 그 기기에 `state`가 `CLOSED`가 아닌 `use_session`이 있는 경우다 — `FAULT` 기기도 닫지 않은 세션이 있으면 점유 중이다. 공용형 기기는 점유 세션이 없으므로 이 검사에 걸리지 않는다 (2026-10-26 담당자 결정).
-- 거부하는 쓰기는 `assign_place`에서 장소가 실제로 바뀌는 기기(`node.place_id`가 `req.place_id`와 다름)와 `set_policy`다. 종료 정책(`set_release_policy`)은 세션이 생성 당시 값을 보존하므로, 이름과 신뢰 상태는 점유 판단과 관계없으므로 허용한다.
+- 거부하는 쓰기는 `assign_place`에서 다른 장소에 있던 기기를 옮기는 경우(`node.place_id`가 NULL이 아니고 `req.place_id`와 다름)와 `set_policy`다. 장소가 없던 기기의 첫 배치는 이동이 아니므로 허용한다. 종료 정책(`set_release_policy`)은 세션이 생성 당시 값을 보존하므로, 이름과 신뢰 상태는 점유 판단과 관계없으므로 허용한다.
 - 검사는 CORE가 아니라 DB 쓰기 트랜잭션 안에서 한다 — 검사와 쓰기 사이에 서버가 새 예약을 만들 수 없게 한다 (AGENTS.md 의존 규칙 5). 결과 종류는 지금 상태와 어긋난 입력이므로 `CONFLICT`다.
 - `assign_place`는 점유 검사를 기기 존재 검사 다음, 장소 생성 전에 한다. 하나라도 걸리면 아무것도 바꾸지 않는다.
 - `AdminWriteReason.PLACE_NOT_FOUND`는 이번에 쓰지 않는다 — `assign_place`의 `place_id`는 새로 만드는 대상이라 "없음"을 거부할 상황이 없다.
