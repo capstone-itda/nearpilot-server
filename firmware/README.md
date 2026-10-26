@@ -42,6 +42,26 @@ pio test -e native
 `native`는 PC에서 실행하며 PATH에 `gcc`·`g++`가 필요하다.
 Windows에서는 `winget install BrechtSanders.WinLibs.POSIX.UCRT`로 설치한 MinGW-w64 GCC로 검증했다.
 
+### light-1의 GPIO23 출력
+
+`light-1`은 `esp32dev-light-1` 환경으로 빌드하고 업로드한다. 기본 `esp32dev`는 시리얼 모드다.
+아래 명령은 `firmware/`에서 실행한다. PowerShell에서 PlatformIO가 PATH에 없으면 `pio` 대신 `./node_lab/.venv/Scripts/pio.exe`를 쓴다.
+
+```bash
+pio run -e esp32dev-light-1
+pio run -e esp32dev-light-1 -t upload --upload-port COM6
+```
+
+- 출력 핀은 보드의 `IO23` 또는 `23`이다. GPIO 번호이며 헤더의 순서 번호가 아니다.
+- 부팅하면 GPIO23을 LOW로 시작한다. 허가한 새 `on`은 HIGH, `off`는 LOW를 유지한다.
+- 기존 결과 재보고는 핀을 다시 켜지 않는다. 재부팅 뒤 켜려면 서버가 새 명령을 허가해야 한다.
+- 부팅 로그의 `GPIO_OUTPUT pin=23 on_level=1 off_level=0 initial_level=0`으로 적용한 설정을 확인한다.
+- LED 시험 배선은 `IO23 → 330Ω 저항 → LED 양극`, `LED 음극 → GND`다. 연결할 때 전원을 끈다.
+- GPIO는 3.3V 제어 신호다. 전구나 LED 스트립의 전원을 GPIO에서 직접 공급하지 않는다.
+- `config.local.h`를 따로 쓴다면 출력 매크로를 빌드 설정과 충돌하게 다시 정의하지 않는다.
+- 업로드는 USB 연결이 필요하다. 기존 Wi-Fi, MQTT 설정과 명령 기록은 유지한다.
+- 성공 보고는 제어 신호 출력 완료와 결과 저장을 뜻한다. LED 점등이나 핀 전압 측정 결과를 대신하지 않는다.
+
 ## 설정과 확인
 
 3단계부터 USB 설정은 기존 11개 키에 `capability`와 `occupancy`를 더한 13개 문자열 키를 요구한다.

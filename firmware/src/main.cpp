@@ -430,6 +430,9 @@ void setup() {
         // Avoid a transient active pulse when switching a pin into output mode.
         digitalWrite(NP_OUTPUT_PIN, NP_OUTPUT_ACTIVE_HIGH ? LOW : HIGH);
         pinMode(NP_OUTPUT_PIN, OUTPUT);
+        Serial.printf("GPIO_OUTPUT pin=%d on_level=%d off_level=%d initial_level=%d\n",
+            NP_OUTPUT_PIN, NP_OUTPUT_ACTIVE_HIGH ? HIGH : LOW,
+            NP_OUTPUT_ACTIVE_HIGH ? LOW : HIGH, NP_OUTPUT_ACTIVE_HIGH ? LOW : HIGH);
     }
     Serial.printf("NODE_START node=%s config=%s generation=%lu mode=%s storage=%d reset_reason=%s\n",
         configured ? config.nodeId.c_str() : "-", loaded, config.generation,

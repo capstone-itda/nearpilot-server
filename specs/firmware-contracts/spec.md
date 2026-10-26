@@ -523,6 +523,20 @@ MQTT v2 실제 기기 시험 (2026-10-26~27, ESP32-WROOM-32E, COM6, 펌웨어 `5
 | `on` | `89678619-40f5-4832-8f7a-db0296580e63` | `fddb86b1-f7f8-45fb-9798-e9ab378eccc6` |
 | `off` | `853abe21-8fef-4950-8fa5-95569c90d39c` | `a458c414-d632-40bf-8b5a-3005c81d5529` |
 
+### 2026-10-27 light-1 GPIO23 출력 설정
+
+- 담당자가 GPIO23, `on` HIGH, `off` LOW를 골랐다. 제품 펌웨어에 `esp32dev-light-1` 빌드 환경을 더했다.
+- `pio run -e esp32dev-light-1`과 COM6 업로드를 통과했다. RAM은 57,636바이트, Flash는 1,100,797바이트다.
+- 기본 `esp32dev` 빌드도 통과했다. RAM은 57,636바이트, Flash는 1,098,593바이트다. 기기에는 GPIO 출력 빌드를 유지했다.
+- `pio test -e native`의 공통 테스트 40개가 통과했다. 허가 검사, 중복 실행 방지, 출력 완료와 결과 저장 순서를 확인했다.
+- ESP32 부팅 로그는 `GPIO_OUTPUT pin=23 on_level=1 off_level=0 initial_level=0`이다.
+- `NODE_START`는 `node=light-1`, `generation=3`, `mode=optional_gpio`, `storage=1`이다. 기존 설정과 기록 저장소를 유지했다.
+- 재시작 뒤 `CLOCK_SYNCED`를 확인했다. 실제 NTP 응답은 leap 0, stratum 5다.
+- 새 연결 `8cf202b7-456f-47ee-8fea-e36c88c019a1`의 MQTT v2 `status`와 RSSI를 수신했다. 명령 처리 상태는 `idle`이다.
+- 서버 전체 `pytest`는 3,646개 통과, 17개 생략, 1개 예상 실패다. 서버 코드는 바꾸지 않았다.
+- 이번 작업에서 새 `on`·`off` 명령을 실행하거나 핀 전압과 LED 점등을 측정하지 않았다. 부팅 로그는 출력 설정의 확인이다.
+- 부팅 원본은 `server/var/node-lab-v2/gpio23-boot-1793057308221563400.json`이다. 동기화 원본은 `gpio23-connect-1793057378062379400.json`이다. 두 파일은 Git에서 제외한다.
+
 실제 기기는 다음 절차로 검증한다 (architecture.md §5 MQTT 7절).
 
 1. 기기별로 재부팅, 재접속과 장시간 동작 때 최대 시각 오차를 측정한다.

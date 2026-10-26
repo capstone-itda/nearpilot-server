@@ -2,9 +2,14 @@
 // Build-time tuning shared by every device. Copy to config.local.h only to change it.
 // Device ID, MQTT account, Wi-Fi, server/time-source address and clock trust are NOT here:
 // they are injected over USB (`python -m tools.node_lab provision`) and kept in NVS.
+// The light-1 build profile overrides these two values for GPIO23 output.
 // No extra board is required. Leave OUTPUT_PIN=-1 for serial-only verification.
+#ifndef NP_OUTPUT_PIN
 #define NP_OUTPUT_PIN -1
+#endif
+#ifndef NP_OUTPUT_ACTIVE_HIGH
 #define NP_OUTPUT_ACTIVE_HIGH true
+#endif
 #define NP_RSSI_FRAME_MS 1000UL
 #define NP_STATUS_MS 1000UL
 // Retry starts at these minimums, doubles after each failure and stops at NP_RETRY_MAX_MS.
