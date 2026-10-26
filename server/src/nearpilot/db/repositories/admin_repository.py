@@ -12,7 +12,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 from nearpilot.db.repositories._common import immediate_transaction, iso, new_id, parse_iso, to_json
-from nearpilot.shared.enums import AdminWriteOutcome, AdminWriteReason, Step, TrustState
+from nearpilot.shared.enums import (
+    AdminWriteOutcome,
+    AdminWriteReason,
+    DeviceState,
+    SessionState,
+    Step,
+    TrustState,
+)
 from nearpilot.shared.models import (
     AccountRegistration,
     AdminWriteResult,
@@ -139,6 +146,17 @@ class SqliteAdminRepository:
                         outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.NODE_NOT_FOUND
                     )
 
+            # 점유 중인 기기를 다른 장소로 옮기지 않는다 — 하나라도 걸리면 아무것도 바꾸지 않는다.
+            # 장소가 없던 기기의 첫 배치와 같은 장소로의 재연결은 이동이 아니므로 통과한다 (spec §6 결정).
+            for node_id in req.node_ids:
+                current_place_id = self._conn.execute(
+                    "SELECT place_id FROM node WHERE node_id = ?", (node_id,)
+                ).fetchone()["place_id"]
+                if current_place_id is not None and current_place_id != req.place_id and self._occupied(node_id):
+                    return AdminWriteResult(
+                        outcome=AdminWriteOutcome.CONFLICT, reason=AdminWriteReason.NODE_OCCUPIED
+                    )
+
             existing = self._conn.execute(
                 "SELECT owner_user_id, name FROM place WHERE place_id = ?", (req.place_id,)
             ).fetchone()
@@ -181,6 +199,12 @@ class SqliteAdminRepository:
                     return AdminWriteResult(
                         outcome=AdminWriteOutcome.REJECTED, reason=AdminWriteReason.ACCOUNT_NOT_FOUND
                     )
+
+            # 점유 중인 기기의 접근 정책은 바꾸지 않는다. 검사와 쓰기는 같은 트랜잭션이다 (spec §6 결정).
+            if self._occupied(revision.node_id):
+                return AdminWriteResult(
+                    outcome=AdminWriteOutcome.CONFLICT, reason=AdminWriteReason.NODE_OCCUPIED
+                )
 
             existing = self._conn.execute(
                 "SELECT policy_id, current_version FROM access_policy WHERE node_id = ?", (revision.node_id,)
@@ -354,6 +378,21 @@ class SqliteAdminRepository:
             "UPDATE beacon SET is_active = ? WHERE beacon_id = ?",
             (1 if req.is_active else 0, req.beacon_id),
         )
+
+    def _occupied(self, node_id: str) -> bool:
+        """기기가 점유 중인지 본다. `FAULT`여도 닫지 않은 세션이 있으면 점유 중이다.
+
+        쓰기 트랜잭션 안에서 불러야 검사와 쓰기 사이에 새 예약이 끼어들지 않는다.
+        """
+        row = self._conn.execute(
+            "SELECT EXISTS (SELECT 1 FROM node WHERE node_id = ? AND device_state IN (?, ?, ?)) "
+            "OR EXISTS (SELECT 1 FROM use_session WHERE node_id = ? AND state != ?)",
+            (
+                node_id, DeviceState.RESERVED.value, DeviceState.ACTIVE.value, DeviceState.CLOSING.value,
+                node_id, SessionState.CLOSED.value,
+            ),
+        ).fetchone()
+        return bool(row[0])
 
     def _append_audit(self, payload: Mapping[str, Any]) -> None:
         """감사 payload에 토큰 원문·`token_hash`를 넣지 않는다 (NFR-08, #29)."""
