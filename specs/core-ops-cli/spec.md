@@ -164,7 +164,7 @@
 - 이미 있는 장소를 다른 소유자로 다시 배치하는 요청은 서비스 검사를 지나 DB가 `CONFLICT`/`STATE_CONFLICT`로 거부한다. 쓰기는 일어나지 않는다.
 - `AdminRepository.set_release_policy(node_id, release_policy)`를 추가한다. `node.release_policy`만 바꾸고 `Step.ADMIN` 감사와 한 트랜잭션이다. 진행 중 점유 세션은 생성 당시 값을 보존하므로 소급하지 않는다.
 - 정책은 `current_policy`와 내용이 같으면 쓰지 않는다. 다르면 현재 버전을 `expected_version`으로 새 리비전을 추가한다. 정책이 없으면 버전 1로 등록한다. `policy_id`는 `pol-<node_id>`다.
-- 시드 파일 TOML: `[[accounts]]`(user_id, name, role), `[[beacons]]`(beacon_id, user_id, uuid, major, minor, active), `[[places]]`(place_id, owner, name, nodes), `[[nodes]]`(node_id, trust, release_policy), `[[policies]]`(node_id, visibility, mode, approver, approval_mode, approval_ttl_sec, max_uses). 모르는 키는 거부한다. 선택 키: `beacons.active`(기본 true), `nodes.trust`, `nodes.release_policy`(없으면 건드리지 않는다), `policies.approver`, `approval_ttl_sec`, `max_uses`.
+- 시드 파일 TOML: `[[accounts]]`(user_id, name, role), `[[beacons]]`(beacon_id, user_id, uuid, major, minor, active), `[[places]]`(place_id, owner, name, nodes), `[[nodes]]`(node_id, trust, release_policy), `[[policies]]`(node_id, visibility, mode, approver, approval_mode, approval_ttl_sec, max_uses). 모르는 키는 거부한다. 선택 키: `beacons.active`(기본 true), `nodes.trust`, `nodes.release_policy`(없으면 건드리지 않는다), `policies.approver`, `approval_ttl_sec`, `max_uses`. `approval_mode = one_time`에 1이 아닌 `max_uses`는 입력 오류다 (FR-14).
 - 파일 검사는 키 중복, 두 장소에 든 기기, 어느 `[[places]].nodes`에도 없는 `[[nodes]]`·`[[policies]]` 기기를 입력 오류(2)로 거부한다. 다른 계정 참조(`beacons.user_id` 등)는 DB에 이미 있는 계정일 수 있어 DB에 맡긴다.
 - `seed`는 DB 파일이 없으면 만든다 — 서버를 띄우기 전에도 계정과 장소를 넣을 수 있다. DB를 읽는 다른 명령(collect, split, fit, eval)은 DB가 없으면 2다.
 - 시드는 파일 전체를 검사한 뒤 쓴다. 항목 하나가 거부되면 사유를 쓰고 나머지를 계속한다. 거부가 하나라도 있으면 종료 코드 1이다 — 기기 발표를 기다리는 동안 계정과 장소는 먼저 넣고 다시 실행할 수 있다.

@@ -51,7 +51,7 @@ trust = "trusted"
 name = "사물함 2"
 
 # visibility: public | private, mode: open | restricted, approval_mode: one_time | time_window
-# approver, approval_ttl_sec, max_uses는 선택이다. 정책 내용이 그대로면 다시 실행해도 새 리비전을 만들지 않는다.
+# approver, approval_ttl_sec, max_uses는 선택이다. one_time은 승인 한 건에 한 번이라 max_uses를 주려면 1만 쓴다. 정책 내용이 그대로면 다시 실행해도 새 리비전을 만들지 않는다.
 [[policies]]
 node_id = "locker-1"
 visibility = "public"

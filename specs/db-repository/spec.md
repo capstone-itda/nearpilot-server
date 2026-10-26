@@ -160,6 +160,7 @@
 - 테스트 데이터는 `tests/db/`의 fixture가 SQL로 직접 넣는다 — `AdminRepository`의 DB 구현은 아직 없다. `#30`의 결정은 `Protocol`까지만 반영됐고, 구현은 `db-approval-admin`이 한다.
 - 공용형 기기는 `reserve_if_free()`에서 ⑤⑥과 세션 생성을 건너뛴다. 승인 사용분만 예약한다. `approval_id`가 `None`이면 아무것도 쓰지 않고 `RESERVED`를 반환한다 (#27).
 - 기간형이고 `max_uses`가 NULL이어도 요청별 사용분 행을 만든다. 횟수 검사만 생략한다 (#27).
+- 횟수 한도는 `one_time`이면 1, `time_window`면 `max_uses`다 (`_use_limit`). `valid_approval`·`approvals_in_scope`의 남은 횟수와 사용분 예약이 같은 규칙을 쓴다 (FR-14, 2026-10-27 담당자 위임 결정).
 - `node`에 `anchor_params` 컬럼을 두지 않는다. `NodeInfo`에서 필드 자체가 빠졌다. 근접 파라미터는 장소별 모델 파일이 보존하고, DB는 판정에 적용한 모델·보정 버전만 기록한다 (#40, PR #54).
 - `rssi_observation`은 `collection_id`로 수집 회차를 연결한다. 회차는 `collection_run` 테이블(`collection_id`, `beacon_id`, `label`, `started_at`, `ended_at`)에 둔다. `label`은 관측이 아니라 회차에 있다 (#41, PR #54).
 - 계정당 활성 비콘은 하나다. DB는 `(user_id) WHERE is_active=1` 부분 UNIQUE 인덱스로 막는다. `beacons_of()`는 활성 비콘 0개 또는 1개만 반환한다 (#42, PR #54).
