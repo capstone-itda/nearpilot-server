@@ -56,7 +56,8 @@
 | 계약 | 사용 또는 제공 | 상대 영역 |
 |---|---|---|
 | `CoreService`, 기존 MCP `build_app` | 생성·연결 | 판정, API |
-| `Repository`, `AccountLookup`, `ExecutionStore`, `AuditLog` | 생성·주입 | DB |
+| `Repository`, `AccountLookup`, `AdminRepository`, `ExecutionStore`, `AuditLog` | 생성·주입 | DB |
+| `AdminService`, `ApprovalService`, 계정·승인 라우터 생성 함수 | 생성·연결 | 근접 추정, 앱 API |
 | `RetentionStore.cleanup` | 시작과 주기 호출 | DB |
 | `ProximityEstimator`, 구현의 기존 `restore` 접점 | 생성·관측 복원 | 근접 추정 |
 | `ExecutionReadiness`, `DecisionRechecker` | 생성·연결 | 상태 관리, 판정 |
@@ -218,7 +219,7 @@
 |---|---|---|
 | FR-01 | `test_FR01_runtime_account_rest` | 실제 앱 수명주기에서 계정 생성과 비콘 교체, 토큰 인증을 확인한다 |
 | FR-03 | `test_FR03_runtime_approval_rest` | 승인 목록, 상세, 권한 검사, 결정과 재전송을 확인한다 |
-| NFR-03 | `test_NFR03_runtime_rest_scope_and_shutdown` | 서비스 호출의 연결 범위와 종료 대기를 확인한다 |
+| NFR-03 | `test_NFR03_runtime_rest_scope_and_shutdown`, `test_NFR03_runtime_rest_exception_closes_scope` | 연결 범위, 종료 대기와 예외 뒤 연결 정리를 확인한다 |
 | FR-05, FR-06 | `test_FR05_runtime_buffers_startup_reports`, `test_FR06_runtime_requires_suback` | 보고 수신과 실행 접수의 순서다 |
 | FR-07 | `test_FR07_runtime_shutdown_timeout_keeps_unknown` | 종료 불명과 재시작 복원이다 |
 | FR-08, FR-09, FR-11 | `test_FR08_runtime_mcp_real_app_tools`, `test_FR09_runtime_unset_threshold_stays_blocked` | 인증, 여섯 도구와 응답 정보 제한, 미설정 임계값 차단이다 |
