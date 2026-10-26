@@ -2,7 +2,7 @@
 
 - 담당: eunji719 (판정)
 - 요구사항: FR-08, FR-09, FR-10, FR-11
-- 따르는 결정: #29
+- 따르는 결정: #29, 2026-10-26 팀 결정 (독립 AP 안 HTTP 허용)
 
 ## 1. 왜
 
@@ -73,6 +73,7 @@
 | 계정 조회가 실패했다 | 500 `INTERNAL_ERROR` | `test_FR08_계정_조회_실패는_500` |
 | 공개 Host로 유효한 토큰을 보낸다 | 처리한다 | `test_FR08_공개_Host를_설정하면_터널로_온_요청을_받는다` |
 | 설정하지 않은 Host나 Origin으로 보낸다 | 421, 403. 서비스를 부르지 않는다 | `test_FR08_설정하지_않은_Host는_유효한_토큰이어도_421` 외 |
+| 서버의 AP 주소(`Host`, 포트 포함)를 `public_hosts`에 넣고 붙었다 | 토큰이 맞으면 처리한다. 토큰이 없으면 401 | `test_FR08_AP_주소로_붙어도_처리한다`, `test_FR08_AP_주소여도_토큰이_없으면_401` |
 | 유효한 토큰으로 도구 목록을 조회한다 | `request_use`가 있다 | `test_FR09_도구_목록에_request_use가_있다` |
 | `request_use`를 호출한다 | 토큰 계정과 인자로 `UseRequest`를 만들어 서비스에 넘긴다 | `test_FR09_request_use는_토큰_계정으로_요청을_만든다` |
 | 인자로 다른 사용자 ID를 넘긴다 | 계정으로 쓰지 않는다 | `test_FR09_인자의_사용자_ID는_계정으로_쓰지_않는다` |
@@ -90,6 +91,7 @@
 - 구조: `api/mcp/server.py`의 `build_app(core, authenticator, clock)`이 도구를 등록한 MCP 앱에 미들웨어를 씌워서 ASGI 앱을 반환한다. 서비스는 스레드에서 호출한다(`asyncio.to_thread`).
 - MCP SDK의 DNS 리바인딩 방어(Host·Origin 검사)를 끄지 않는다. 허용 목록은 SDK의 localhost 기본값에 `build_app`의 `public_hosts`를 더한다. Origin은 `https://{Host}`를 더한다 — 터널로 온 요청이 유효한 토큰으로도 `421`이었다. 담당자가 2026-10-27 대화에서 정했다.
 - 도구는 `target_spec`(문자열), `action`(문자열), `request_id`(문자열)를 받는다. `TargetSpec.parse`, `Action`으로 해석하고 실패하면 `INVALID_INPUT`이다. `request_id`는 비어 있으면 안 된다.
+- AP 안의 호스트는 서버의 AP 주소로 붙는다. Host 검사를 끄지 않고 그 주소(포트 포함, 예: `10.42.0.1:8000`)를 `[http] public_hosts`에 넣는다 — main의 #206이 Host 검사를 유지하기로 정했다 (2026-10-27 담당자 위임 결정).
 
 ## 7. 가정
 

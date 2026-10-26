@@ -75,6 +75,21 @@ def test_FR08_설정하지_않은_Origin은_403():
 # ── FR-09 request_use ───────────────────────────────────────────────
 
 
+@pytest.mark.parametrize("host", ["192.168.0.10:8000", "10.42.0.1:8000", "nearpilot.local:8000"])
+def test_FR08_AP_주소로_붙어도_처리한다(host):
+    c = Client(public_hosts=(host,))  # 서버의 AP 주소를 `[http] public_hosts`에 넣는다
+    r = run(c.post("tools/list", headers={"host": host}))
+    assert r.status_code == 200, r.text
+    assert any(tool["name"] == "request_use" for tool in r.json()["result"]["tools"])
+
+
+@pytest.mark.parametrize("host", ["192.168.0.10:8000", "10.42.0.1:8000"])
+def test_FR08_AP_주소여도_토큰이_없으면_401(host):
+    c = Client(public_hosts=(host,))
+    r = run(c.post("tools/list", token=None, headers={"host": host}))
+    assert r.status_code == 401
+
+
 def test_FR09_도구_목록에_request_use가_있다():
     r = run(Client().post("tools/list"))
     assert r.status_code == 200

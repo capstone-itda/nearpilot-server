@@ -73,23 +73,24 @@ keepalive, 접속·시작·종료 제한 시간, 재접속 최소·최대 대기
 # AI 호스트 연결
 
 AI 호스트는 MCP Streamable HTTP로 `http://<서버 AP 주소>:<[http] port>/mcp`에 붙고, 헤더 `Authorization: Bearer <토큰>`을 보낸다.
-독립 AP 안에서는 평문 HTTP를 쓴다 (NFR-08, NFR-14). 토큰은 시드 때 화면에 나온 방문자 토큰이다.
+독립 AP 안에서는 HTTPS 없이 HTTP를 쓴다 (NFR-08, NFR-14). 토큰은 앱에서 계정을 만들 때 받은 방문자 토큰이나 시드 때 화면에 나온 토큰이다.
+AP의 다른 기기가 붙으려면 서버 설정의 `[http] host`를 `"0.0.0.0"`(또는 서버의 AP 주소)로 두고, `[http] public_hosts`에 호스트가 쓸 서버 주소를 포트까지 넣는다 (예: `["10.42.0.1:8000"]`). 넣지 않은 주소로 온 `/mcp` 요청은 토큰이 맞아도 `421`이다. 예시 값 `127.0.0.1`은 서버 노트북 안에서만 받는다.
 
 | 호스트 | 연결 방법 | 확인 |
 |---|---|---|
-| Claude Code CLI | 아래 `mcp.json`을 `claude --mcp-config mcp.json`으로 넘긴다 | 2026-10-27 실제 서버·시뮬레이터 기기로 조회→사용→반납 성공 |
-| Codex CLI | `codex -c mcp_servers.nearpilot.url="http://.../mcp" -c mcp_servers.nearpilot.bearer_token_env_var="NP_TOKEN"` (토큰은 환경 변수 `NP_TOKEN`) | 2026-10-27 같은 확인 성공 |
+| Claude Code CLI | 아래 `mcp.json`을 `claude --mcp-config mcp.json`으로 넘긴다 | 2026-10-27 실제 서버·시뮬레이터 기기로 조회→사용→반납 성공 (`127.0.0.1`과 서버의 LAN 주소 둘 다) |
+| Codex CLI | `codex -c mcp_servers.nearpilot.url="http://.../mcp" -c mcp_servers.nearpilot.bearer_token_env_var="NP_TOKEN"` (토큰은 환경 변수 `NP_TOKEN`) | 2026-10-27 같은 확인 성공 (두 주소) |
 | Gemini CLI | 설정의 `mcpServers`에 `httpUrl`과 `headers`를 쓴다 | 미확인 (이 PC에 설치하지 않았다) |
-| claude.ai, ChatGPT, Gemini 웹·앱 | 각 서비스의 클라우드가 서버에 접속한다. 공개 HTTPS 주소가 필요하다 | 독립 AP 안의 서버에는 붙지 않는다 |
+| claude.ai, ChatGPT, Gemini 웹·앱 | 각 서비스의 클라우드가 서버에 접속한다. 공개 HTTPS 주소가 필요하다 | 미확인. 클라우드에서 접속하는 구조라 독립 AP 안의 서버에는 닿지 않는다고 판단했다 |
 
 ```json
 {"mcpServers": {"nearpilot": {"type": "http", "url": "http://<서버 AP 주소>:8000/mcp",
   "headers": {"Authorization": "Bearer <토큰>"}}}}
 ```
 
-CLI 호스트도 LLM을 부르려면 호스트를 돌리는 노트북에 인터넷이 필요하다. 서버와 기기는 독립 AP만 쓴다.
+CLI 호스트도 LLM을 부르려면 호스트를 돌리는 노트북에 인터넷이 필요하다. 이 노트북은 AP와 다른 연결(유선, 다른 Wi-Fi)로 인터넷에 붙고 AP 트래픽을 넘기지 않는다 (NFR-14). 서버와 기기는 독립 AP만 쓴다.
 웹·앱 호스트는 서버를 인터넷에 공개해야 쓸 수 있다. 이는 독립 AP 동작(NFR-12)과 평문 허용(NFR-08, NFR-14)의 전제와 맞지 않는다.
-미결: 시연에서 웹·앱 호스트를 쓸지, AP 안 노트북의 CLI 호스트만 쓸지.
+시연과 지표 7의 3종 호스트는 CLI 3종(Claude Code, Codex, Gemini)이다. 웹·앱 호스트는 쓰지 않는다 (FR-10, 2026-10-27 팀 결정).
 
 # 운영 명령
 
