@@ -1,8 +1,8 @@
 # FAULT 복구 REST와 복구 명령
 
-- 담당: dnnals (관리·복구 API, 복구 스크립트)
+- 담당: dnnals (근접 추정·대시보드. 2026-10-26 팀 결정으로 복구 REST와 복구 스크립트도 맡는다)
 - 요구사항: FR-12A, NFR-04, NFR-07, NFR-08
-- 따르는 결정: #20, #89, 2026-10-26 담당자 결정 (관리·복구 API와 복구 스크립트의 담당을 dnnals로 정함)
+- 따르는 결정: #20, #89, 2026-10-26 팀 결정 (복구 REST와 복구 스크립트 담당. 담당자가 팀 전권으로 정함)
 
 ## 1. 왜
 
@@ -37,7 +37,7 @@
 - `server/src/nearpilot/cli/` (새 하위 명령 `recover`)
 - `server/tests/api/`, `server/tests/integration/`, `server/tests/cli/`
 - `server/config/README.md` (복구 명령 사용법)
-- `docs/requirements.md`, `docs/architecture.md` (관리·복구 API와 복구 스크립트 담당의 `미결`을 2026-10-26 결정으로 바꾼다)
+- `docs/requirements.md`, `docs/architecture.md` (복구 담당 `미결`과 #89 배정, §2 `cli/` 목록, §5 REST 복구 응답 형식을 2026-10-26 팀 결정으로 바꾼다)
 
 ### 고치지 않는 곳
 - 항상: `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
@@ -71,6 +71,10 @@
 | 승인 요청에 본문이 있다 | 본문을 읽지 않는다. 계정은 토큰으로만 정한다 | `test_NFR04_approve_ignores_body` |
 | 서비스가 예외를 냈다 | `500`과 `INTERNAL_ERROR`. 예외 내용은 응답에 넣지 않는다 | `test_FR12A_recovery_service_error_is_internal_error` |
 | 서버가 아직 시작을 마치지 않아 복구 서비스가 연결되지 않았다 | 래퍼가 `RuntimeError`를 내고 라우터는 `500`과 `INTERNAL_ERROR` | `test_FR12A_runtime_recovery_unbound_is_internal_error` |
+| 래퍼를 두 번 연결한다 | `RuntimeError` | `test_FR12A_runtime_recovery_wrapper_binds_once` |
+| 승인 결과가 `rejected`인데 사유가 표 밖이다 (`OK`, `STORE_OUTCOME_UNKNOWN`) | 오류 로그와 `500`, `INTERNAL_ERROR` | `test_NFR04_approve_unmapped_reason_is_internal_error` |
+| 명령: 2xx인데 본문이 JSON 객체가 아니거나, `status`가 없거나, 상태 코드와 `outcome`이 다르다 (`200`은 `completed`, `202`는 `pending`만) | 종료 코드 1, 완료를 안내하지 않는다 | `test_FR12A_recover_cli_unreadable_response` |
+| 명령: `--server`가 주소로 해석되지 않는다 | 종료 코드 2, 요청을 보내지 않는다 | `test_FR12A_recover_cli_server_option_must_be_http_url` |
 | 명령: 토큰 파일이 없거나 비었거나, 토큰 하나가 아니다(공백·줄바꿈·ASCII 밖 글자, UTF-8 아님) | 종료 코드 2, 요청을 보내지 않는다. 토큰 원문을 오류에 쓰지 않는다 | `test_FR12A_recover_cli_token_file_errors` |
 | 명령: 서버에 연결할 수 없다 | 종료 코드 1과 연결 실패 안내 | `test_FR12A_recover_cli_connection_error` |
 | 명령: 서버가 거부했다 | 종료 코드 1과 사유 코드 | `test_FR12A_recover_cli_rejected` |
@@ -89,10 +93,13 @@
 - 명령의 종료 코드: 준비 조회 성공 0 (상태가 `not_ready`여도 0), 승인 `completed` 0, 승인 `pending`과 거부와 연결 실패 1, 입력 오류 2. 출력은 사람이 읽는 한국어 줄이다. `status`는 상태, 복구 ID, 부족한 조건을 쓰고, `ready`이면 실행할 `approve` 명령 한 줄을 함께 쓴다.
 - `--server`는 `http://`나 `https://`로 시작해야 한다. 아니면 입력 오류 2다. 요청 하나를 10초까지 기다린다 — 서버 운영 수치가 아니라 명령이 기다리는 한계라 명령 모듈의 값이다. 2xx지만 예상하지 못한 응답과 끊긴 응답은 종료 코드 1이다.
 - HTTP 호출은 표준 라이브러리 `urllib.request`로 한다 — 새 의존성을 더하지 않는다.
+- 라우터는 `401`에 `WWW-Authenticate: Bearer` 헤더를 붙인다 — 계정·승인 라우터와 같다.
+- 공개 도우미: `readiness_json`(준비 조회 결과를 응답 JSON으로, 승인 응답의 `readiness`도 같은 함수), `server_url`(명령의 서버 주소).
+- 명령은 토큰 파일의 UTF-8 BOM을 허용한다 (메모장). 경로에 넣는 `node_id`·`recovery_id`는 `/`까지 퍼센트 인코딩하고, `--server` 끝의 `/`는 지운다. 거부 본문에 사유 코드가 없으면 HTTP 상태 코드만 쓴다.
 
 ## 7. 가정
 
-- 운영 데이터가 없으므로 기존 복구 건의 이전은 다루지 않는다 (2026-10-26 담당자 결정).
+- 미해결 복구 건의 이전 절차는 `미결`이다 (`requirements.md` §1.5, `architecture.md` §4 "공동 인터페이스의 후속 반영"). 이 작업은 이전을 다루지 않는다. 운영 데이터가 없어 전환 때 DB를 초기화한다는 2026-10-26 팀 결정(D2)을 가정한다.
 
 ## 8. 테스트
 

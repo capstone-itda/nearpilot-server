@@ -76,6 +76,8 @@ def _status(args: argparse.Namespace) -> int:
     base = server_url(args)
     status, body = _send("GET", base, f"/admin/nodes/{_segment(args.node_id)}/recovery", token)
     body = _accepted(status, body, (200,))
+    if not isinstance(body.get("status"), str):
+        raise _unreadable(status)
     recovery_id = body.get("recovery_id")
     print(f"상태: {body.get('status')}")
     print(f"복구 ID: {recovery_id or _NONE}")
@@ -91,6 +93,8 @@ def _approve(args: argparse.Namespace) -> int:
     path = f"/admin/nodes/{_segment(args.node_id)}/recovery/{_segment(args.recovery_id)}/approve"
     status, body = _send("POST", base, path, token)
     body = _accepted(status, body, (200, 202))
+    if body.get("outcome") != ("completed" if status == 200 else "pending"):  # 상태 코드와 결과가 다르면 믿지 않는다
+        raise _unreadable(status)
     if status == 202:  # 저장 결과를 확인하는 중이다. 완료가 아니다
         raise CliError(
             f"복구는 아직 완료가 아니다. 서버가 저장 결과를 확인하는 중이다 (reason_code: {body.get('reason_code')}). "
@@ -129,7 +133,10 @@ def _send(method: str, base: str, path: str, token: str) -> tuple[int, dict[str,
 
     4xx·5xx도 상태 코드와 본문으로 돌려준다. 서버와 통신하지 못하면 `CliError`(종료 코드 1)다.
     """
-    request = urllib.request.Request(base + path, method=method, headers={"Authorization": f"Bearer {token}"})
+    try:
+        request = urllib.request.Request(base + path, method=method, headers={"Authorization": f"Bearer {token}"})
+    except ValueError:  # 예: 닫히지 않은 IPv6 주소. 예외 문구에는 토큰이 없지만 주소만 알린다
+        raise CliError(f"--server 주소를 해석하지 못했다: {base}", EXIT_INVALID) from None
     try:
         try:
             with urllib.request.urlopen(request, timeout=_TIMEOUT_SEC) as response:
@@ -157,5 +164,9 @@ def _accepted(status: int, body: dict[str, Any] | None, accepted: tuple[int, ...
         suffix = f": {reason}" if isinstance(reason, str) else ""
         raise CliError(f"서버가 요청을 처리하지 못했다 (HTTP {status}){suffix}", EXIT_FAILED)
     if status not in accepted or body is None:
-        raise CliError(f"서버 응답을 해석하지 못했다 (HTTP {status})", EXIT_FAILED)
+        raise _unreadable(status)
     return body
+
+
+def _unreadable(status: int) -> CliError:
+    return CliError(f"서버 응답을 해석하지 못했다 (HTTP {status})", EXIT_FAILED)

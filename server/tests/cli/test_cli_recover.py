@@ -203,6 +203,12 @@ def test_FR12A_recover_cli_rejected(fake, token_file, run_cli, tmp_path, command
     pytest.param("status", 202, readiness("ready", RECOVERY, []), id="status-unexpected-code"),
     pytest.param("approve", 200, b"", id="approve-empty-body"),
     pytest.param("approve", 204, b"", id="approve-unexpected-code"),
+    pytest.param("status", 200, b"{}", id="status-without-status"),
+    pytest.param("approve", 200, b'{"outcome": "pending", "reason_code": "STORE_OUTCOME_UNKNOWN"}',
+                 id="approve-200-pending"),
+    pytest.param("approve", 200, b'{"outcome": "rejected", "reason_code": "NOT_READY"}', id="approve-200-rejected"),
+    pytest.param("approve", 200, b"{}", id="approve-200-without-outcome"),
+    pytest.param("approve", 202, b'{"outcome": "completed"}', id="approve-202-completed"),
 ])
 def test_FR12A_recover_cli_unreadable_response(fake, token_file, run_cli, tmp_path, command, status, body):
     fake.reply(status, body)
@@ -327,7 +333,8 @@ def test_FR12A_recover_cli_quotes_ids_in_path(fake, token_file, run_cli, tmp_pat
     assert [seen.path for seen in fake.seen] == ["/admin/nodes/node%2F1%20a/recovery/rec%3Fx%231/approve"]
 
 
-@pytest.mark.parametrize("server", ["127.0.0.1:8000", "localhost", "ftp://127.0.0.1", "file:///etc/hosts", ""])
+@pytest.mark.parametrize("server", ["127.0.0.1:8000", "localhost", "ftp://127.0.0.1", "file:///etc/hosts", "",
+                                    "http://[::1"])
 def test_FR12A_recover_cli_server_option_must_be_http_url(token_file, run_cli, tmp_path, server):
     code, out, err = run_cli(["recover", "status", NODE, "--server", server, "--token-file", str(token_file)],
                              cwd=tmp_path)
