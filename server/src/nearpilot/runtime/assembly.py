@@ -12,14 +12,16 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 import paho.mqtt.client as mqtt
 
 from nearpilot.api.auth.authenticator import Authenticator
 from nearpilot.api.ws.hub import MonitorHub
 from nearpilot.api.ws.names import PersonNames
+from nearpilot.core.admin import DefaultAdminService
 from nearpilot.core.allocation.window import AllocationWindow
+from nearpilot.core.approval import OwnerApprovalService
 from nearpilot.core.dashboard import DashboardQueryService, ModelVersions, MonitorTail
 from nearpilot.core.decision.core_service import build_core_service
 from nearpilot.core.decision.recheck import Rechecker
@@ -39,7 +41,9 @@ from nearpilot.runtime.database import ThreadDatabase
 from nearpilot.runtime.tasks import CallGate, Late, NodeLocks, NotAccepting, PeriodicTask
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import Action, ExecutionStatus
-from nearpilot.shared.interfaces import CoreService, ProximityEstimator, RetentionStore
+from nearpilot.shared.interfaces import (
+    AdminService, ApprovalService, CoreService, ProximityEstimator, RetentionStore,
+)
 from nearpilot.shared.models import Decision, ExecutionContext, ExecutionResult, UseRequest
 
 log = logging.getLogger(__name__)
@@ -124,6 +128,22 @@ class GuardedCore:
         return self._call("get_use_status", user_id, use_id)
 
 
+class _GuardedRestService:
+    """REST 서비스 호출 하나를 접수 문과 같은 스레드의 DB 연결 범위로 감싼다."""
+
+    def __init__(self, inner: Any, gate: CallGate, db: ThreadDatabase) -> None:
+        self._inner, self._gate, self._db = inner, gate, db
+
+    def __getattr__(self, name: str) -> Any:
+        method = getattr(self._inner, name)
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            with self._gate.enter(), self._db.scope():
+                return method(*args, **kwargs)
+
+        return call
+
+
 class _ScopedSink:
     """IOT 인계 작업이 부르는 `NodeEventSink`. 보고 하나마다 연결 범위 하나다."""
 
@@ -202,6 +222,10 @@ class Runtime:
             busy_timeout_ms=config.runtime.sqlite_busy_timeout_ms)
         self.core = GuardedCore(self.gate, self.db)
         self.authenticator = Authenticator(self.db.accounts())
+        self.admin = cast(AdminService, _GuardedRestService(
+            DefaultAdminService(self.db.repository(), self.db.admin_repository()), self.gate, self.db))
+        self.approvals = cast(ApprovalService, _GuardedRestService(
+            OwnerApprovalService(self.db.repository(), self._clock), self.gate, self.db))
         self.services: Services | None = None
         self.tasks: list[PeriodicTask] = []
         self._started: list[str] = []

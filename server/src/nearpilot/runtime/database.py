@@ -21,13 +21,14 @@ from typing import Any
 from nearpilot.db.repositories import (
     SqliteDashboardReads, SqliteExecutionStore, SqliteRepository, SqliteRetentionStore,
 )
+from nearpilot.db.repositories.admin_repository import SqliteAdminRepository
 from nearpilot.db.audit import SqliteAuditLog
 from nearpilot.db.audit.jsonl import JsonlExporter
 from nearpilot.db.repositories._common import deferred_transaction, unregister_jsonl_export
 from nearpilot.db.schema import connect
 from nearpilot.shared.config import Settings
 from nearpilot.shared.interfaces import (
-    AccountLookup, AuditLog, ExecutionStore, Repository, RetentionStore,
+    AccountLookup, AdminRepository, AuditLog, ExecutionStore, Repository, RetentionStore,
 )
 from nearpilot.shared.models import BeaconKey
 
@@ -40,6 +41,7 @@ class Bound:
 
     conn: sqlite3.Connection
     repo: SqliteRepository
+    admin: SqliteAdminRepository
     store: SqliteExecutionStore
     audit: SqliteAuditLog
     retention: SqliteRetentionStore
@@ -79,6 +81,7 @@ class ThreadDatabase:
             bound = Bound(
                 conn=conn,
                 repo=SqliteRepository(conn, self._settings),
+                admin=SqliteAdminRepository(conn),
                 store=SqliteExecutionStore(conn),
                 audit=SqliteAuditLog(conn, self.audit_jsonl),
                 retention=SqliteRetentionStore(conn, self._settings, self.audit_jsonl),
@@ -123,6 +126,9 @@ class ThreadDatabase:
 
     def repository(self) -> Repository:
         return _scoped(self, "repo", Repository)
+
+    def admin_repository(self) -> AdminRepository:
+        return _scoped(self, "admin", AdminRepository)
 
     def accounts(self) -> AccountLookup:
         return _scoped(self, "repo", AccountLookup)
