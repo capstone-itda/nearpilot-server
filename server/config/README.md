@@ -84,10 +84,11 @@ keepalive, 접속·시작·종료 제한 시간, 재접속 최소·최대 대기
 | `config/plans/` | 수집 계획: 회차 순서와 길이, 수집하는 사람의 비콘 | 사람 | `collect run` |
 | `config/layouts/` | 배치: 기기와 기기 앞 위치의 좌표, none 지점 | 사람 | `fit` |
 | `config/fit/` | 적합 설정: 분할 비율, 후보 값, 통과 기준 | 사람 | `collect list --summary`, `split`, `fit`, `eval` |
+| `config/eval/` | 서버 지표 평가 설정: 사용자, 기기, 지표별 횟수와 통과 기준, 시뮬레이터 RSSI | 사람 | `evaluate-server` |
 | `var/records/` | 수집 회차 기록 | `collect run` | |
-| `var/splits/` | 분할 결과 | `split` | `fit`, `eval` |
-| `var/models/` | 모델 파일 (`[proximity].model_root`) | `fit` | `eval`, `serve` |
-| `var/reports/` | 평가 보고서 (CSV, Markdown) | `eval` | |
+| `var/splits/` | 분할 결과 | `split` | `fit`, `eval`, `evaluate-reask` |
+| `var/models/` | 모델 파일 (`[proximity].model_root`) | `fit` | `eval`, `evaluate-reask`, `serve` |
+| `var/reports/` | 평가 보고서 (CSV, Markdown). `evaluate-*`는 원자료(JSON)와 그래프(PNG)도 쓴다 | `eval`, `evaluate-server`, `evaluate-reask` | |
 
 `config/`의 `example.*`는 예시다. 좌표, 회차 길이, 통과 기준을 실제 환경에 맞춰 바꾼다.
 `var/`는 설정 파일 폴더의 부모(`server/var/`)이고 명령이 만든다.
@@ -171,3 +172,87 @@ nearpilot recover approve locker-1 <복구 ID> --token-file config/.env.owner-to
   기기가 서버에 연결돼 있는지 확인하고 기다린다.
 - `OFFLINE`: 기기가 서버에 연결돼 있지 않다. 기기의 전원, Wi-Fi, MQTT 연결을 확인한다.
 - 그 밖의 사유 코드는 서버가 정한 값 그대로다.
+
+# 서버 지표 평가
+
+`nearpilot evaluate-server`는 임시 폴더에 Mosquitto, 서버, 시뮬레이터 기기를 띄워 서버 지표 1·3·4·5·6·7·9를 잰다.
+`nearpilot evaluate-reask`는 시험 회차로 지표 2의 재질문 곡선을 만든다. 둘 다 결과를 `var/reports/`에 쓴다.
+운영 DB와 실제 기기에는 접속하지 않는다 (`evaluate-reask`는 서버 설정의 DB를 읽기 전용으로만 연다). 지표 8은 `eval`이 잰다.
+
+```
+nearpilot evaluate-server server-metrics.example.toml
+nearpilot evaluate-server server-metrics.example.toml --metrics 1,4,5 --seed 7 --out demo --force
+nearpilot evaluate-reask place-a/v1 --split place-a-seed42.json --ratios 1,2,5,10
+```
+
+| 옵션 | 뜻 |
+|---|---|
+| `--metrics 1,3,4,5,6,7,9` | `evaluate-server`가 잴 지표. 기본은 전부다. 번호를 어떤 순서로 줘도 도는 순서는 같다. |
+| `--seed N` | `evaluate-server`의 무작위 입력 시드. 기본은 평가 설정의 `seed`다. |
+| `--ratios 1,2,5,10` | `evaluate-reask`의 비용 비율 r (기본 `1,2,5,10`). 0보다 큰 유한한 수이고 겹치지 않아야 한다. |
+| `--split FILE` | `evaluate-reask`의 분할 결과. 이름이면 `var/splits/`에서 찾는다. |
+| `--out NAME` | 보고서 이름이다. 경로가 아니다. 기본은 `server-metrics-<UTC 날짜>`, `evaluate-reask`는 `<장소>-<버전>-reask-<UTC 날짜>`다. |
+| `--force` | 이미 있는 같은 이름의 파일을 덮어쓴다. |
+
+**준비**
+
+- `evaluate-server`는 Mosquitto(`mosquitto`, `mosquitto_passwd`)가 필요하다. PATH와 기본 설치 폴더에서 찾고, 못 찾으면 `MOSQUITTO_EXECUTABLE`, `MOSQUITTO_PASSWD_EXECUTABLE`에 경로를 준다.
+  `--metrics 9`만 재면 서버를 띄우지 않아서 필요 없다.
+- 임시 폴더(`TMP`, `TMPDIR`)의 경로는 ASCII여야 한다. Mosquitto가 한글 경로의 설정 파일을 열지 못한다.
+  Mosquitto가 없거나 경로가 ASCII가 아니면 아무것도 재기 전에 종료 코드 1로 끝난다.
+- 그래프는 matplotlib이 있어야 그린다. `pip install -e ".[eval]"`로 설치한다. 없으면 경고만 하고 그래프를 건너뛰며, 보고서와 원자료는 쓴다.
+
+**평가 설정**
+
+- `<설정 TOML>`은 `config/eval/`의 평가 설정이다 (서버 설정이 아니다). 사용자, 기기, 지표별 횟수와 통과 기준, 시뮬레이터 RSSI를 쓴다.
+  이름이면 `config/eval/`에서 찾고, 경로면 실행 폴더 기준이다. 설정 안의 상대 경로는 그 파일이 있는 폴더 기준이다.
+- 고른 지표가 읽는 횟수, 통과 기준, RSSI가 설정에 없거나 값이 틀리면 서버를 띄우기 전에 종료 코드 2다. 고르지 않은 지표의 키가 빠진 것은 오류가 아니다.
+  장면에 필요한 사용자나 기기가 설정에 없다는 오류만 지표를 돌릴 때 알게 되어 그때 종료 코드 2로 끝난다.
+- 예시 `server-metrics.example.toml`의 `model_root`는 테스트용 합성 모델을 가리킨다. 실제 평가는 `fit`이 만든 모델과 그 모델의 기기 ID로 설정을 쓴다.
+  예시의 횟수, 부하 클라이언트 수, 통과 기준 수치는 시연용 초기값이다. D8에 따라 측정 뒤 다시 정한다.
+
+**도는 순서와 시드**
+
+- 서버 없이 도는 지표 9가 먼저이고, 나머지는 하네스 하나 안에서 1, 4, 5, 6, 7, 3 순서로 돈다.
+  하네스는 브로커, 서버, 시뮬레이터 기기를 띄우고 `nearpilot seed`로 계정과 기기를 넣은 뒤 서버를 한 번 다시 시작한다.
+  지표 1·4는 요청 ID가 고정이라 한 하네스에서 한 번만 돌 수 있다. 지표 3의 부하는 뒤 지표의 근접 상태를 흔들 수 있어서 마지막에 둔다.
+  지표 사이에는 시뮬레이터 기기의 시나리오(들리는 비콘, 구동 결과, 저장 오류)를 처음 상태로 돌린다.
+- 시드는 무작위 입력을 쓰는 지표 3과 9가 각자 `random.Random(시드)`로 받는다. 같은 시드와 설정이면 입력이 같고, 같이 재는 지표와 `--metrics`의 번호 순서와는 무관하다.
+  시드와 도는 순서는 보고서의 `seed`, `metric_order` 열과 원자료에 남는다.
+- 지표마다 `지표 N 측정 중`을 쓴다. 예시 규모 전체는 15~20분 걸린다 (지표 6 약 8분, 지표 5 약 3분, 지표 3 약 2분). 횟수를 줄인 설정으로 먼저 확인한다.
+
+**출력** (`var/reports/`)
+
+| 파일 | 내용 |
+|---|---|
+| `<이름>.csv` | 머리말 주석 줄(`db_path`, `schema_version`, `git_commit`, `sample_count`, `generated_at`) 뒤에 지표 표다. 열은 `metric`, `value`, `limit`, `passed`, `trials`, `failures`, `note`이고, 실패 0건인 행에는 95% 신뢰구간 상한 `confidence_bound_95`가 붙는다. `evaluate-server`는 `seed`, `metric_order`, `config_file` 열이, `evaluate-reask`는 `place_id`, `model_version`, `calib_version`, `split_file` 열이 더 붙는다. |
+| `<이름>.md` | CSV와 같은 내용 |
+| `<이름>-raw.json` | 원자료: 명령, 시드, 도는 순서, 지표별 원자료 |
+| `<이름>-latency.png` | 지표 7의 서버 판정 지연 분포 (`evaluate-server`, 지표 7을 쟀을 때) |
+| `<이름>-pass.png` | 행마다 통과 여부 막대 (`evaluate-server`) |
+| `<이름>-reask.png` | 재질문 곡선. x는 재질문률, y는 오작동률이다 (`evaluate-reask`) |
+
+- `evaluate-server`의 `db_path`는 하네스가 만든 임시 DB 경로이고 평가가 끝나면 지워진다 (`--metrics 9`만 재면 `없음`). `sample_count`는 행의 `trials` 합이다.
+- 시뮬레이터 RSSI(`[rssi]`)는 실제 전파가 아니다. 서버 경로와 절차를 확인하는 값이라서 지표 1·4의 note에 `시뮬레이터 측정 (실측 아님)`이라고 쓴다.
+  실기기 수집 뒤 실측 값을 넣은 설정으로 같은 명령을 다시 돌린다. 지표 7의 호스트 쪽 행(`m7_host_*`)은 LLM 호스트가 필요해서 `미측정`이다.
+- `evaluate-reask`는 `eval`처럼 분할 결과의 시험 회차만 읽는다. 모델은 `[proximity].model_root`의 `<장소>/<버전>.json`이다.
+  비용 비율 r마다 확률 임계값 `r/(1+r)` 아래를 재질문으로 세어 재질문률과 오작동률을 낸다. 행은 `m2_reask_curve` 하나와 r마다 `m2_reask_r<r>`이다.
+  같은 재질문률에서 오작동이 줄었는지 비교할 기준이 미결이라 통과 여부는 판정하지 않는다 (통과 칸이 빈 값이다).
+  시험 회차에 기기 라벨이 없으면 곡선 행을 비우고 note에 이유를 쓴다 (종료 코드 0).
+- 대시보드는 `var/reports/`의 CSV 가운데 `generated_at`이 가장 늦은 하나를 읽는다 (서버 실행 설정 참고). 일부 지표만 잰 보고서나 `evaluate-reask` 보고서가 가장 늦으면 화면에는 그것만 보인다.
+  전체를 잰 보고서를 마지막에 만든다.
+
+**종료 코드와 실패**
+
+| 종료 코드 | 뜻 |
+|---|---|
+| 0 | 보고서를 썼다. 기준에 못 미쳐도 0이다. 통과 여부는 보고서의 `passed` 칸이다. |
+| 1 | 실행 실패다. Mosquitto를 찾지 못했거나 브로커나 서버가 뜨지 않았거나 측정 도중 실패했다. `evaluate-reask`는 수집 회차를 읽지 못했거나 표본이 없다. |
+| 2 | 입력·설정 오류다. 평가 설정, `--metrics`, `--ratios`, `--out`, 모델, 분할 결과, DB 파일이 틀렸거나, 쓸 파일이 이미 있는데 `--force`가 없다. |
+| 130 | Ctrl+C다. |
+
+- 이미 있는 파일은 `--force` 없이 덮어쓰지 않는다. 이번 실행이 쓸 모든 파일(CSV, Markdown, 원자료, 그래프)을 서버를 띄우거나 DB를 읽기 전에 확인한다.
+- 측정이 도중에 실패하면(Ctrl+C 포함) 하네스를 모두 끄고, 그때까지 끝난 지표의 원자료를 `<이름>-raw.json`에 남긴다. `error` 키에 사유를 쓰고, 표준 오류에 경로를 알린다.
+  보고서(CSV, Markdown)와 그래프는 쓰지 않는다. 끝난 지표가 없으면 아무 파일도 쓰지 않는다.
+  다시 돌릴 때는 남은 원자료 때문에 `--force`를 주거나 `--out`을 바꾼다.
+- 측정은 끝났는데 시험 횟수가 0인 행이 있어 보고서를 만들 수 없을 때도 종료 코드 1이다 (예: 지표 3에서 기기를 구동한 요청이 하나도 없다). 원자료는 남는다.
