@@ -33,7 +33,7 @@ class RuntimeSettings:
     sqlite_busy_timeout_ms: int = 5000
     shutdown_timeout_sec: float = 30.0
     execution_tick_sec: float = 0.25  # 실행 저장 재시도와 예약 만료
-    release_tick_sec: float = 0.25  # 반납 검사와 재시도
+    release_tick_sec: float = 0.25  # 저장 결과가 불명인 반납 종료의 재확인
     restore_tick_sec: float = 0.25  # 미완료 복원 재시도
     recovery_tick_sec: float = 0.25  # 복구 저장 재시도
     shared_light_tick_sec: float = 1.0  # 공용 조명 이탈·유지 권한 검사

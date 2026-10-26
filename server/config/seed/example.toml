@@ -38,18 +38,16 @@ name = "시연 공간"
 nodes = ["locker-1", "locker-2"]
 
 # trust: discovered | trusted | revoked
-# release_policy: 점유를 끝낼 때 기기가 검사할 기준(check_criteria)이다.
+# release_policy: 기기의 종료 정책 표다. 생략하면 바꾸지 않는다. 반납 검사 기준은 쓰지 않는다.
 # name: 대시보드에 보이는 기기 이름이다. 생략하면 기기 ID가 보인다.
 [[nodes]]
 node_id = "locker-1"
 trust = "trusted"
-release_policy = { check_criteria = { id = "locker-return", version = 1 } }
 name = "사물함 1"
 
 [[nodes]]
 node_id = "locker-2"
 trust = "trusted"
-release_policy = { check_criteria = { id = "locker-return", version = 1 } }
 name = "사물함 2"
 
 # visibility: public | private, mode: open | restricted, approval_mode: one_time | time_window

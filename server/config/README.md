@@ -1,15 +1,15 @@
 # MQTT 실행 설정
 
 2026-10-26에 센서 기반 물리 검증과 반납 검사를 범위에서 제외했다 (`docs/requirements.md` FR-07·FR-20·NFR-04).
-아래 실행법과 예시는 현재 구현을 위한 설정이다. 문서 결정만으로 설정 키나 ACL을 지우지 않는다.
+서버의 반납·복구 검사 경로는 지웠다. 아래 표는 설정 예시의 정리 상태다.
 새 계약의 전환 절차와 기존 데이터 이전은 `docs/architecture.md` §4의 미결을 따른다.
 
-| 현재 예시 | 후속 구현에서 맞출 내용 |
+| 예시 | 정리 상태 |
 |---|---|
-| `seed/example.toml`의 `release_policy.check_criteria` | 논리적 종료 정책으로 바꾼다. 기존 점유의 정책 이전은 미결이다. |
-| `mosquitto.acl.example`의 검사 토픽 | 서버·기기의 검사 발행과 구독을 제거할 때 ACL도 함께 정리한다. |
-| `Settings`의 검사 시간 값과 Runtime의 검사 주기 | 반납·복구 검사 타이머를 제거할 때 설정 검증과 예시를 함께 맞춘다. |
-| `tools/node_sim/fleet.example.json`의 `light_observable` | 관측 부재로 `unknown`을 만드는 이전 시나리오를 제거한다. |
+| `seed/example.toml`의 `release_policy.check_criteria` | 지웠다. 서버는 검사 기준을 읽지 않는다. |
+| `mosquitto.acl.example`의 검사 토픽 | 지웠다. 서버는 검사 요청을 보내지 않고 검사 결과를 받지 않는다. |
+| `Settings`의 검사 시간 값 | 지웠다. `release_tick_sec`는 저장 결과가 불명인 반납 종료를 다시 확인하는 주기다. |
+| `tools/node_sim/fleet.example.json`의 `light_observable` | 후속 시뮬레이터 작업에서 관측 부재로 `unknown`을 만드는 이전 시나리오를 제거한다. |
 
 서버와 ESP32는 같은 독립 AP의 Wi-Fi를 사용하고 MQTT 3.1.1로 통신한다.
 휴대폰의 BLE 비콘을 ESP32가 수신하고 RSSI를 MQTT로 보고한다. 외부 인터넷은 필요 없다.

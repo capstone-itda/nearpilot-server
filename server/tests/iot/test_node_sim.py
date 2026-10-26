@@ -212,35 +212,12 @@ def test_FR04_reconnect_announces_new_session(make):
     assert (second.capability.value, second.occupancy.value) == ("locker", "rental")
 
 
-@pytest.mark.parametrize("capability,setup,criteria,version,outcome,valid", [
-    ("locker", {}, "locker-return", 1, "passed", True),
-    ("locker", dict(open_door=True), "locker-return", 1, "not_ready", True),
-    ("locker", dict(unmeasurable=["locked"]), "locker-return", 1, "unknown", False),
-    ("locker", dict(sensor_fault=True), "locker-return", 1, "fault", True),
-    ("locker", {}, "locker-return", 2, "unknown", True),
-    ("locker", {}, "light-return", 1, "unknown", False),
-    ("light", {}, "light-return", 1, "passed", True),
-    ("light", dict(busy=True), "light-return", 1, "not_ready", True),
-], ids=["passed", "door-open", "unmeasured", "fault", "unknown-version", "other-type",
-        "light-idle", "light-busy"])
-def test_FR20_check_outcome_matrix(make, capability, setup, criteria, version, outcome, valid):
-    flags = {k: setup.pop(k) for k in ("open_door", "busy") if k in setup}
-    node = make(capability, **setup)
-    if flags.get("open_door"):
-        node.handle_command(cmd(node))
-        node.finish()
-        assert node.set_door(False)
-    if flags.get("busy"):
-        node.handle_command(cmd(node))
-    messages = node.handle_check(check(node, criteria=criteria, version=version))
-    assert [m[1]["outcome"] for m in messages] == [outcome]
-    if valid:
-        assert decode(messages[0]).outcome.value == outcome
-    else:  # Incomplete evidence: the server treats it as unconfirmed (#143).
-        with pytest.raises(MessageValidationError):
-            decode(messages[0])
-    if outcome == "unknown":
-        assert all(type(item["value"]) is bool for item in messages[0][1]["evidence"].values())
+def test_FR20_server_rejects_simulator_check_result(make):
+    """서버는 반납 검사 결과를 받지 않는다. 시뮬레이터의 검사 응답 제거는 시뮬레이터 후속 작업이다."""
+    node = make()
+    messages = node.handle_check(check(node))
+    with pytest.raises(MessageValidationError):
+        decode(messages[0])
 
 
 def test_FR20_check_conflict_keeps_record(make):

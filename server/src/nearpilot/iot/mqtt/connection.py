@@ -18,8 +18,7 @@ import paho.mqtt.client as mqtt
 
 log = logging.getLogger(__name__)
 
-REPORT_QOS = {"announce": 1, "rssi": 0, "status": 1, "result": 1,
-              "safety_check_result": 1}
+REPORT_QOS = {"announce": 1, "rssi": 0, "status": 1, "result": 1}
 SUBSCRIPTIONS = tuple((f"nearpilot/node/+/{kind}", qos)
                       for kind, qos in REPORT_QOS.items())
 
@@ -185,14 +184,14 @@ class MqttConnection:
             self._stop_done.set()
 
     def publish_request(self, node_id: str, kind: str, payload: bytes):
-        """Transport only; called by the CORE-facing command/check modules.
+        """Transport only; called by the CORE-facing command module.
 
         Returns Paho's publish receipt, never a physical command result.
         """
         if (not isinstance(node_id, str) or not node_id
                 or any(char in node_id for char in "/+#\x00")):
             raise ValueError("Invalid MQTT node ID")
-        if kind not in ("cmd", "safety_check") or not isinstance(payload, bytes):
+        if kind != "cmd" or not isinstance(payload, bytes):
             raise ValueError("Invalid MQTT request")
         with self._condition:
             if not self._running or not self._ready:

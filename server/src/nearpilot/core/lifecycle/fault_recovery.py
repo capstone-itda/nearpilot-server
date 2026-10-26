@@ -1,7 +1,8 @@
 """FAULT 복구 건, 복구 준비 조회, 복구 승인 (NFR-04, NFR-03, FR-12A, FR-19).
 
 FaultRecoveryService는 복구 건 생성·저장 재시도와 RecoveryService(readiness, approve)를 함께 맡는다.
-안전 근거는 현재 연결에 보낸 검사의 passed, 동기화 근거는 그 뒤 같은 연결의 정상 status다 (#85).
+복구는 현재 연결의 신선한 명령 처리 대기 보고와 명령 결과의 대조를 확인한 뒤 소유자 승인을 받는다.
+물리 안전 검사와 물리 상태 동기화는 조건에서 제외한다 (2026-10-26 결정).
 """
 
 from __future__ import annotations
@@ -16,22 +17,22 @@ from threading import Lock
 from typing import Any
 from uuid import uuid4
 
-from nearpilot.core.lifecycle.check_criteria import criteria_of, evidence_valid
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
     ActuatorState, ApprovalUsageState, DeviceState, EndReason, ExecutionStatus, RecoveryBlocker,
-    RecoveryOutcome, RecoveryReason, RecoveryStatus, SafetyCheckOutcome, SessionState,
+    RecoveryOutcome, RecoveryReason, RecoveryStatus, SessionState,
     StoreOutcome, TrustState,
 )
 from nearpilot.shared.errors import StoreError, StoreNotApplied, StoreOutcomeUnknown
-from nearpilot.shared.interfaces import ExecutionStore, Repository, SafetyCheckGateway
+from nearpilot.shared.interfaces import ExecutionStore, Repository
 from nearpilot.shared.models import (
-    ApprovalUsageSettlement, CheckCriteria, CommandRecord, NodeInfo, NodeStatus,
+    ApprovalUsageSettlement, CommandRecord, NodeInfo, NodeStatus,
     RecoveryApprovalResult, RecoveryEvidence, RecoveryReadiness, RecoveryRecord,
-    RecoverySettlement, RestoreBundle, SafetyCheckRequest, SafetyCheckResult, UseSession,
+    RecoverySettlement, RestoreBundle,
 )
 
-SETTLEMENT_DIGEST_VERSION = 1
+# 2: 근거의 safety_confirmed·physical_state_synced를 command_idle로 바꿨다 (2026-10-26 결정).
+SETTLEMENT_DIGEST_VERSION = 2
 
 
 def settlement_digest(
@@ -70,8 +71,7 @@ def settlement_digest(
                 "session_id": item.session_id,
                 "observed_at": _utc(item.observed_at),
                 "execution_outcome": _value(item.execution_outcome),
-                "safety_confirmed": item.safety_confirmed,
-                "physical_state_synced": item.physical_state_synced,
+                "command_idle": item.command_idle,
             }
             for item in sorted(evidence, key=lambda e: e.evidence_id)
         ],
@@ -107,17 +107,21 @@ class NotPlaceOwner(PermissionError):
 
 
 @dataclass
-class _Check:
-    """복구 건 하나와 기기 연결 하나에 묶인 안전 검사. 메모리에만 둔다."""
+class _Idle:
+    """기기의 마지막 status와 같은 연결에서 이어진 대기(idle) 보고의 첫 보고. 메모리에만 둔다.
 
-    recovery_id: str
-    request: SafetyCheckRequest
-    passed: SafetyCheckResult | None = None
-    synced: NodeStatus | None = None
+    근거 참조는 since로 만든다. 같은 대기 구간의 재승인은 같은 정산 요약값을 만든다.
+    신선도는 latest로 잰다.
+    """
+
+    latest: NodeStatus
+    since: NodeStatus | None = None
 
 
-# 보류 사용분을 반환하는 명령 결과. 확인 불가(UNKNOWN)와 성공은 소진한다 (NFR-04).
+# 보류 사용분을 반환하는 명령 결과. 성공은 소진한다 (NFR-04).
 _RELEASED_BY = (ExecutionStatus.FAILED, ExecutionStatus.NOT_SENT, ExecutionStatus.REJECTED)
+# 결과 불명은 반환도 소진도 하지 않고 보류를 유지한다. 정산 기준은 미결이다 (NFR-04).
+_HELD_BY = (ExecutionStatus.UNKNOWN,)
 # 결과를 확정하지 못한 명령. 복구 승인의 실행 여부 미확인이다.
 _UNRESOLVED = (ExecutionStatus.PENDING, ExecutionStatus.IN_PROGRESS)
 
@@ -134,7 +138,6 @@ class FaultRecoveryService:
         self, *, repository: Repository, store: ExecutionStore,
         clock: Callable[[], datetime],
         lock_for: Callable[[str], AbstractContextManager[Any]],
-        gateway: SafetyCheckGateway | None = None,
         settings: Callable[[], Settings] = Settings,
         new_id: Callable[[], str] = lambda: str(uuid4()),
     ) -> None:
@@ -142,21 +145,17 @@ class FaultRecoveryService:
         self._store = store
         self._clock = clock
         self._lock_for = lock_for
-        self._gateway = gateway
         self._settings = settings
         self._new_id = new_id
         self._pending: dict[str, _Pending] = {}
-        self._checks: dict[str, _Check] = {}
+        self._idle: dict[str, _Idle] = {}
         self._settling: dict[str, RecoverySettlement] = {}
         self._index_lock = Lock()
 
     # ── 복구 준비 조회와 복구 승인 (FR-12A, NFR-04) ─────────────────
 
     def readiness(self, user_id: str, node_id: str) -> RecoveryReadiness:
-        """소유자에게 준비 상태를 반환한다. 저장 함수를 부르지 않는다.
-
-        안전 근거가 없으면 현재 연결에 검사를 요청한다. 검사 요청은 기기 상태를 바꾸지 않는다.
-        """
+        """소유자에게 준비 상태를 반환한다. 저장 함수를 부르지 않고 기기에 요청을 보내지 않는다."""
         with self._lock_for(node_id):
             if not self._repository.is_place_owner(user_id, node_id):
                 raise NotPlaceOwner()
@@ -207,47 +206,22 @@ class FaultRecoveryService:
                 return self._completed(stored, now)
             return self._confirm(recovery_id, readiness, now)
 
-    def on_check_result(self, result: SafetyCheckResult) -> bool:
-        """IOT가 검증한 검사 결과다. 복구 검사의 결과이면 처리하고 True를 반환한다."""
-        with self._lock_for(result.node_id):
-            check = self._checks.get(result.node_id)
-            if check is None or check.request.check_id != result.check_id:
-                return False
-            request = check.request
-            if (
-                result.session_id != request.target_session_id or result.criteria != request.criteria
-                or not request.issued_at <= result.received_at <= request.expires_at
-                or not evidence_valid(request.criteria, result.outcome, result.evidence)
-            ):
-                # 유효하지 않은 결과는 응답 기한 초과와 같게 다룬다.
-                return True
-            if result.outcome != SafetyCheckOutcome.PASSED:
-                del self._checks[result.node_id]
-                return True
-            if check.passed is not None:
-                return True
-            # 근거 저장이 실패해도 저장 대기가 같은 근거를 재시도한다.
-            check.passed = result
-            self.record_isolated(result.node_id, evidence=(RecoveryEvidence(
-                result.event_id, result.session_id, result.checked_at, safety_confirmed=True),))
-            return True
-
     def on_status(self, status: NodeStatus) -> None:
-        """안전 근거 뒤 같은 연결의 정상 status를 물리 상태 동기화 근거로 쓴다."""
+        """기기의 마지막 status를 기억한다. 복구 준비 조회가 명령 처리 대기 근거로 쓴다."""
         with self._lock_for(status.node_id):
-            check = self._checks.get(status.node_id)
-            if (
-                check is None or check.passed is None or check.synced is not None
-                or status.session_id != check.passed.session_id
-                or status.received_at <= check.passed.received_at
-                or status.physical.sensor_fault is not False
-                or status.physical.actuator_state != ActuatorState.IDLE
-            ):
-                return
-            check.synced = status
-            self.record_isolated(status.node_id, evidence=(RecoveryEvidence(
-                f"status:{status.node_id}:{status.session_id}:{status.seq}", status.session_id,
-                status.observed_at, physical_state_synced=True),))
+            with self._index_lock:
+                previous = self._idle.get(status.node_id)
+                if previous is not None and (
+                    previous.latest.session_id == status.session_id
+                    and previous.latest.received_at > status.received_at
+                ):
+                    return
+                since = None
+                if status.physical.actuator_state == ActuatorState.IDLE:
+                    keep = previous is not None and previous.since is not None and (
+                        previous.since.session_id == status.session_id)
+                    since = previous.since if keep else status
+                self._idle[status.node_id] = _Idle(status, since)
 
     def _assess(
         self, node_id: str,
@@ -261,7 +235,6 @@ class FaultRecoveryService:
         if len(active) > 1:
             raise StoreError("기기에 미완료 복구 건이 둘 이상이다")
         if not active:
-            self._checks.pop(node_id, None)
             return (RecoveryReadiness(node_id, None, RecoveryStatus.NOT_READY,
                                       (RecoveryBlocker.NO_RECOVERY_REQUIRED,), (), now), None, bundle)
         record = active[0]
@@ -277,31 +250,16 @@ class FaultRecoveryService:
             blockers.append(RecoveryBlocker.OFFLINE)
         if any(c.status in _UNRESOLVED for c in self._commands(record)):
             blockers.append(RecoveryBlocker.EXECUTION_UNCONFIRMED)
-        check = self._checks.get(node_id)
-        if check is not None and (check.recovery_id != record.recovery_id or node is None
-                                  or check.request.target_session_id != node.session_id):
-            # 재접속이나 새 장애는 기존 근거를 무효로 한다.
-            del self._checks[node_id]
-            check = None
-        if check is None or check.passed is None:
-            blockers.append(RecoveryBlocker.SAFETY_UNCONFIRMED)
-        if check is None or check.synced is None:
-            blockers.append(RecoveryBlocker.PHYSICAL_STATE_UNSYNCED)
+        idle = self._current_idle(node, record, now, settings)
+        if idle is None:
+            blockers.append(RecoveryBlocker.COMMAND_STATE_UNCONFIRMED)
         if self._get(node_id) is not None or record.recovery_id in self._settling:
             blockers.append(RecoveryBlocker.STORE_OUTCOME_UNKNOWN)
-        # 실행 근거는 저장한 참조를 쓴다. 안전·동기화 근거는 현재 연결에서 확인한 것만 쓴다.
+        # 명령 결과는 저장한 참조를 쓴다. 명령 처리 대기 근거는 현재 연결에서 확인한 것만 쓴다.
         evidence = [e for e in record.evidence if e.execution_outcome is not None]
-        if check is not None and check.passed is not None:
-            evidence.append(RecoveryEvidence(check.passed.event_id, check.passed.session_id,
-                                             check.passed.checked_at, safety_confirmed=True))
-        if check is not None and check.synced is not None:
-            synced = check.synced
-            evidence.append(RecoveryEvidence(f"status:{synced.node_id}:{synced.session_id}:{synced.seq}",
-                                             synced.session_id, synced.observed_at,
-                                             physical_state_synced=True))
-        if (online and trusted and RecoveryBlocker.EXECUTION_UNCONFIRMED not in blockers
-                and (check is None or (check.passed is None and now > check.request.expires_at))):
-            self._request_check(record, node, settings, now)
+        if idle is not None:
+            evidence.append(RecoveryEvidence(f"status:{idle.node_id}:{idle.session_id}:{idle.seq}",
+                                             idle.session_id, idle.observed_at, command_idle=True))
         if record.recovery_id in self._settling:
             status = RecoveryStatus.RECOVERING
         else:
@@ -309,24 +267,29 @@ class FaultRecoveryService:
         return (RecoveryReadiness(node_id, record.recovery_id, status, tuple(blockers),
                                   tuple(evidence), now), record, bundle)
 
-    def _request_check(self, record: RecoveryRecord, node: NodeInfo, settings: Settings,
-                       now: datetime) -> None:
-        # 점유 세션이 있으면 세션 생성 당시 기준, 없거나 끝났으면 기기의 현재 기준을 쓴다 (#85).
-        session = None if record.use_id is None else self._repository.session(record.use_id)
-        if session is not None and session.state != SessionState.CLOSED:
-            criteria: CheckCriteria | None = session.check_criteria
-        else:
-            criteria = criteria_of(node.release_policy)
-        if criteria is None or self._gateway is None:
-            return
-        request = SafetyCheckRequest(self._new_id(), node.node_id, node.session_id, criteria, now,
-                                     now + timedelta(seconds=settings.safety_check_timeout_sec))
-        self._checks[node.node_id] = _Check(record.recovery_id, request)
-        try:
-            self._gateway.request_check(request)
-        except Exception:
-            # 전송 실패는 응답 기한 초과와 같다. 기한이 지난 뒤의 조회에서 다시 요청한다.
-            pass
+    def _current_idle(
+        self, node: NodeInfo | None, record: RecoveryRecord, now: datetime, settings: Settings,
+    ) -> NodeStatus | None:
+        """현재 연결의 신선한 마지막 status가 대기이면 근거로 쓸 대기 보고를 반환한다.
+
+        근거는 복구 건이 생긴 뒤에 받은 보고다. 같은 대기 구간에서는 같은 보고를 반환한다.
+        """
+        if node is None or not node.session_id:
+            return None
+        with self._index_lock:
+            idle = self._idle.get(node.node_id)
+            if idle is None or idle.since is None or idle.latest.session_id != node.session_id:
+                return None
+            if idle.latest.received_at <= record.created_at:
+                return None
+            if idle.since.received_at <= record.created_at:
+                # 장애 전부터 이어진 대기 구간이면 장애 뒤의 첫 확인 보고부터 센다.
+                idle.since = idle.latest
+            since, latest = idle.since, idle.latest
+        age = (now - latest.received_at).total_seconds()
+        if not 0 <= age <= settings.online_ttl_sec:
+            return None
+        return since
 
     def _settlement(
         self, user_id: str, now: datetime, record: RecoveryRecord, bundle: RestoreBundle,
@@ -340,6 +303,9 @@ class FaultRecoveryService:
             ):
                 continue
             command = commands.get(usage.internal_request_id)
+            if command is not None and command.send_attempted and command.status in _HELD_BY:
+                # 결과 불명을 미실행이나 성공으로 바꾸지 않는다. 사용분은 보류로 남긴다.
+                continue
             # 명령이 없거나 전송을 시작하지 않은 요청은 실행되지 않았다.
             released = command is None or command.status in _RELEASED_BY or not command.send_attempted
             usages.append(ApprovalUsageSettlement(
@@ -392,9 +358,6 @@ class FaultRecoveryService:
 
     def _completed(self, stored: RecoveryRecord, now: datetime) -> RecoveryApprovalResult:
         self._settling.pop(stored.recovery_id, None)
-        check = self._checks.get(stored.node_id)
-        if check is not None and check.recovery_id == stored.recovery_id:
-            del self._checks[stored.node_id]
         completion = stored.completion
         readiness = RecoveryReadiness(stored.node_id, stored.recovery_id, RecoveryStatus.RECOVERED,
                                       (), completion.settlement.evidence, now)
@@ -408,39 +371,6 @@ class FaultRecoveryService:
         return nodes[0] if nodes else None
 
     # ── 복구 건 생성과 저장 재시도 ──────────────────────────────────
-
-    def record_fault(self, session: UseSession, evidence: Mapping[str, Any]) -> None:
-        """ReleaseService(record_fault=service.record_fault)의 필수 접점이다.
-
-        fault 보고의 참조만 근거로 보존한다. 확인 불능 진단은 안전 근거가 아니다.
-        """
-        with self._lock_for(session.node_id):
-            command = self._store.execution(session.internal_request_id)
-            if command is not None and (
-                command.node_id != session.node_id or command.use_id != session.use_id
-                or command.internal_request_id != session.internal_request_id
-            ):
-                raise StoreError("반납의 명령 연결이 다르다")
-            references: tuple[RecoveryEvidence, ...] = ()
-            if evidence.get("event_id") is not None:
-                event_id = evidence["event_id"]
-                connection_id = evidence.get("session_id")
-                checked_at = evidence.get("checked_at")
-                if (
-                    not isinstance(event_id, str) or not event_id
-                    or not isinstance(connection_id, str) or not connection_id
-                    or not isinstance(checked_at, datetime)
-                    or evidence.get("outcome") != "fault"
-                ):
-                    raise ValueError("반납 장애 보고의 근거 참조가 부족하다")
-                references = (RecoveryEvidence(
-                    event_id, connection_id, checked_at, safety_confirmed=False,
-                ),)
-            self.record_isolated(
-                session.node_id, internal_request_ids=(session.internal_request_id,),
-                command_ids=() if command is None else (command.command_id,),
-                use_id=session.use_id, evidence=references,
-            )
 
     def record_isolated(
         self, node_id: str, *, internal_request_ids: tuple[str, ...] = (),

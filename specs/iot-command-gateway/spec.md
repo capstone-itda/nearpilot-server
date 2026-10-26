@@ -1,10 +1,10 @@
-# 명령 전송·결과 대기와 반납 검사 요청
+# 명령 전송과 결과 대기
 
 - 담당: 이 작업을 지시한 담당자 (상태 관리의 IOT 구현 범위)
 - 구현 브랜치: `feat/iot-command-gateway`
 - 요구사항: FR-06, FR-07, FR-20, NFR-08
-- 따르는 결정: architecture.md에 반영한 #17, #19, #37, #38, #140~#143이다.
-- 상태: 명령 전송·결과 대기와 검사 요청을 구현했다. 메시지·연결·보고 인계 모듈을 사용한다.
+- 따르는 결정: architecture.md에 반영한 #17, #19, #38, #140이다. 2026-10-26 센서 기반 물리 검증 제외 (#196)로 반납 검사 요청을 없앴다.
+- 상태: 명령 전송·결과 대기를 구현했다. 메시지·연결·보고 인계 모듈을 사용한다. 반납 검사 요청은 제거했다.
 
 ## 1. 왜
 
@@ -13,10 +13,10 @@ CORE는 발행 확인과 물리 실행 결과를 구분해야 한다.
 
 ## 2. 무엇
 
-- 입력: `send(NodeCommand, timeout_sec)`와 `request_check(SafetyCheckRequest)`다.
+- 입력: `send(NodeCommand, timeout_sec)`다.
 - 입력: 보고 검증 모듈이 확인한 `NodeResult`와 연결 끊김이다.
-- 출력: `cmd`·`safety_check` 발행과 `CommandResult`다. 검사 요청은 결과를 기다리지 않는다.
-- 바뀌는 상태: 명령별 전송 시도·대기 상태와 검사 요청 연결의 메모리다.
+- 출력: `cmd` 발행과 `CommandResult`다.
+- 바뀌는 상태: 명령별 전송 시도·대기 상태의 메모리다.
 - 약속:
   - CORE가 넘긴 ID·대상 연결·동작·기준·유효 시간을 보존한다.
   - 명령 대기와 CORE 인계는 같은 사건 ID의 보고를 쓴다.
@@ -37,8 +37,7 @@ CORE는 발행 확인과 물리 실행 결과를 구분해야 한다.
 - 기기 결과는 `CommandResult.report`에 원래 모델을 담는다. CORE 이벤트에도 같은 `event_id`를 쓴다 (FR-07).
 - 명령 대기는 기기 ID와 명령 ID가 맞는 보고만 따른다. 다른 결과로 다른 명령을 끝내지 않는다 (FR-07).
 - 상충 결과를 임의의 성공으로 합치지 않는다. 각 원래 보고를 CORE 정산 경로에 남긴다 (FR-07).
-- `request_check()`는 결과를 기다리지 않는다. 응답 기한·재검사·확인 불능 타이머는 CORE가 맡는다 (FR-20).
-- 검사 요청의 재전송은 내용을 보존한다. 새 측정에는 CORE가 발급한 새 검사 ID를 쓴다 (FR-20).
+- 반납 검사 요청을 보내지 않는다. 반납은 CORE가 논리적으로 종료한다 (FR-20).
 - 송신은 허용한 필드만 쓴다. 사용자 ID·요청자·승인·점유 정보를 넣지 않는다 (NFR-08).
 - 시간 값은 CORE가 전달한 적용 설정과 제한 시간을 따른다. 별도 명령 만료 기본값을 만들지 않는다 (requirements.md §1.2).
 - 보고 인계가 포화이면 새 명령을 발행하지 않고 `NOT_SENT`로 반환한다 (S4 A안).
@@ -47,7 +46,7 @@ CORE는 발행 확인과 물리 실행 결과를 구분해야 한다.
 
 ### 고치는 곳
 
-- `server/src/nearpilot/iot/mqtt/`의 명령·대기·검사 요청 파일이다.
+- `server/src/nearpilot/iot/mqtt/`의 명령·대기 파일이다.
 - `server/tests/iot/`의 명령 전송·대기 테스트다.
 
 ### 고치지 않는 곳
@@ -60,9 +59,7 @@ CORE는 발행 확인과 물리 실행 결과를 구분해야 한다.
 | 계약 | 사용 또는 제공 | 상대 영역 |
 |---|---|---|
 | `NodeCommandGateway.send` | 제공한다 | CORE |
-| `SafetyCheckGateway.request_check` | 제공한다 | CORE |
 | `NodeCommand`, `CommandResult`, `NodeResult` | 사용한다 | shared |
-| `SafetyCheckRequest` | 사용한다 | shared |
 
 ### 만들지 않는 것
 
@@ -85,8 +82,7 @@ CORE는 발행 확인과 물리 실행 결과를 구분해야 한다.
 | `DEVICE_BUSY` 또는 다른 거부가 왔다 | 결과 변환과 원래 보고를 보존한다 | `test_FR07_rejection_mapping_preserves_report` |
 | CORE 인계가 기기 잠금을 기다린다 | `send()` 대기는 독립적으로 끝날 수 있다 | `test_FR07_wait_and_sink_no_deadlock` |
 | 대기 뒤 늦은 결과가 왔다 | 보고 인계 경로가 계속 받는다 | `test_FR07_late_result_subscription_remains` |
-| 검사 요청 발행이 실패했다 | 실패를 호출자에게 알린다. 자체 재검사를 만들지 않는다 | `test_FR20_check_send_failure_not_passed` |
-| 검사 요청을 정상 발행했다 | 결과를 기다리지 않고 반환한다 | `test_FR20_request_check_does_not_wait` |
+| 기기가 이전 계약의 검사 결과를 보낸다 | CORE에 인계하지 않는다 | `test_FR20_release_check_result_not_handed_to_core` |
 | 미인계 보고가 용량에 닿았다 | 새 명령을 발행하지 않고 `NOT_SENT`다 | `test_FR06_saturation_not_sent` |
 
 ## 6. 결정
@@ -94,7 +90,7 @@ CORE는 발행 확인과 물리 실행 결과를 구분해야 한다.
 - 명령 대기와 CORE 인계를 분리한다 — 담당자가 2026-10-15에 선택했다.
 - 보고 수신이 먼저 명령 대기를 깨울 수 있게 한다 — 실행 서비스의 잠금과 교착하지 않게 한다.
 - 서버가 만든 결과와 기기 결과를 다른 경로로 만든다 — 서버 결과에 기기 사건 ID를 붙이지 않는다.
-- 구현은 `mqtt/commands.py`의 `MqttCommandGateway`다. `NodeCommandGateway`와 `SafetyCheckGateway`를 함께 제공한다. 발행은 `MqttConnection.publish_request()`, 결과는 `ReportDelivery`의 결과 알림으로 받는다.
+- 구현은 `mqtt/commands.py`의 `MqttCommandGateway`다. `NodeCommandGateway`를 제공한다. `request_check()`는 없다. 발행은 `MqttConnection.publish_request()`, 결과는 `ReportDelivery`의 결과 알림으로 받는다.
 - 조립은 `MqttConnection`의 연결 상실 콜백을 `on_connection_lost()`에 연결한다 (S3 A안).
 - `NOT_SENT`는 발행 호출 전에 끝난 경우다. 명령을 MQTT 본문으로 만들 수 없을 때, 보고 인계가 포화일 때(S4 A안), 연결이 `NotReady`로 발행 전에 거부했을 때다.
 - 발행 호출이 `PublishUncertain`이나 다른 예외로 끝나면 바로 `UNKNOWN`이다. 발행 뒤 연결 상실이나 응답 기한 초과도 `UNKNOWN`이다.
@@ -102,14 +98,13 @@ CORE는 발행 확인과 물리 실행 결과를 구분해야 한다.
 - 같은 명령 ID·같은 내용을 대기 중에 다시 받으면 발행하지 않고 같은 대기의 결과를 받는다. 대기가 끝난 뒤의 같은 내용은 재전송으로 다시 발행한다.
 - 같은 명령 ID의 다른 내용은 발행하지 않고 `ValueError`를 낸다. 이미 보낸 ID를 `NOT_SENT`로 알리지 않는다. CORE는 `send()`의 예외를 `UNKNOWN`으로 다룬다.
 - 대기의 첫 종료 결과를 반환한다. 이후의 상충 결과도 `ReportDelivery`가 CORE에 인계한다.
-- `request_check()`는 `expect_check()`로 요청을 먼저 등록한 뒤 발행한다. 같은 검사 ID의 다른 내용과 발행 실패는 예외로 알린다. 포화 중에도 검사 요청은 막지 않는다 — 검사는 물리 구동이 아니고 검사 결과는 포화 중에도 보존한다.
+- 반납 검사 요청과 `expect_check()` 등록을 없앤다 — 2026-10-26 결정으로 반납 검사를 제외했다.
 
 ## 7. 가정
 
 - 실제 기기의 검증 전 실행은 #140에 따라 차단한다. 시각 검증 근거의 주입은 서버 조립 계약에서 연결한다.
 - 서버 실행 진입점에서의 최종 조립은 #88에서 한다. 이 spec은 조립에 쓰는 접점만 제공한다.
 - CORE·DB는 같은 사건의 중복 정산을 막는다. 게이트웨이의 메모리 중복 목록은 저장 완료의 증거가 아니다.
-- 검사 충돌과 불완전한 근거는 #143 A안을 따른다. 전용 오류 결과를 추가하지 않는다.
 
 ## 8. 테스트
 
@@ -117,8 +112,8 @@ CORE는 발행 확인과 물리 실행 결과를 구분해야 한다.
 |---|---|---|
 | FR-06 | 5절의 `test_FR06_*` | CORE 인계·동일 ID·미전송 근거를 확인한다 |
 | FR-07 | 5절의 `test_FR07_*` | 결과 변환·상관관계·늦은 결과·교착을 확인한다 |
-| FR-20 | 5절의 `test_FR20_*` | 검사 결과를 기다리지 않고 실패를 알린다 |
-| NFR-08 | `test_NFR08_command_and_check_payload_minimal` | 송신 본문에 내부 계정 정보를 넣지 않는다 |
+| FR-20 | `test_FR20_release_check_result_not_handed_to_core` | 검사 결과를 CORE에 넘기지 않는다 |
+| NFR-08 | `test_NFR08_command_payload_minimal` | 송신 본문에 내부 계정 정보를 넣지 않는다 |
 
 전송·시계·CORE 인계는 fake를 쓴다. 명령의 실제 물리 중복 방지는 시뮬레이터 spec이 검증한다.
 

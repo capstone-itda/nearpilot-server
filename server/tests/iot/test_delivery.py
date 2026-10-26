@@ -11,8 +11,7 @@ import pytest
 from nearpilot.iot.mqtt.connection import IncomingReport
 from nearpilot.iot.mqtt.delivery import DeliveryConfig, ReportDelivery
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import NodeResultState, SafetyCheckOutcome
-from nearpilot.shared.models import CheckCriteria, SafetyCheckRequest
+from nearpilot.shared.enums import NodeResultState
 
 S1 = "11111111-1111-1111-1111-111111111111"
 S2 = "22222222-2222-2222-2222-222222222222"
@@ -20,7 +19,7 @@ EVENT = "87654321-4321-4321-4321-cba987654321"
 EVENT2 = "87654321-4321-4321-4321-cba987654322"
 BEACON = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 T0 = datetime(2026, 10, 16, 3, 0, 0, tzinfo=timezone.utc)
-QOS = {"announce": 1, "rssi": 0, "status": 1, "result": 1, "safety_check_result": 1}
+QOS = {"announce": 1, "rssi": 0, "status": 1, "result": 1}
 
 
 def iso(value):
@@ -40,11 +39,6 @@ def body(kind, node, session, seq, at):
         "rssi": dict(frame_ts=iso(at), observations=[dict(uuid=BEACON, major=1, minor=1, rssi=-60)]),
         "result": dict(command_id="command-1", event_id=EVENT, state="succeeded",
                        occurred_at=iso(at)),
-        "safety_check_result": dict(
-            check_id="check-1", event_id=EVENT, criteria_id="locker-return",
-            criteria_version=1, checked_at=iso(at), outcome="passed",
-            evidence={name: dict(value=True, observed_at=iso(at))
-                      for name in ("door_closed", "locked")}),
     }[kind])
     return data
 
@@ -54,13 +48,6 @@ def incoming(kind, node="locker-1", *, session=S1, seq=1, at=T0, received=None,
     data = body(kind, node, session, seq, at) | fields
     return IncomingReport(f"nearpilot/node/{node}/{kind}", json.dumps(data).encode(),
                           QOS[kind], retain, False, received or at + sec(0.1))
-
-
-def check_request(**fields):
-    return SafetyCheckRequest(**(dict(
-        check_id="check-1", node_id="locker-1", target_session_id=S1,
-        criteria=CheckCriteria("locker-return", 1),
-        issued_at=T0 - sec(1), expires_at=T0 + sec(2)) | fields))
 
 
 class Sink:
@@ -88,9 +75,6 @@ class Sink:
 
     def on_result(self, report):
         self._call("on_result", report)
-
-    def on_safety_check_result(self, report):
-        self._call("on_safety_check_result", report)
 
     def of(self, method):
         return [report for name, report in self.calls if name == method]
@@ -201,9 +185,7 @@ def test_FR13_stale_or_future_status_rejected(observed, sent, accepted):
 
 def test_FR13_unverified_freshness_not_live():
     h = Harness(skew={})
-    h.delivery.expect_check(check_request())
-    h.feed(incoming("announce"), incoming("status"), incoming("rssi"),
-           incoming("result"), incoming("safety_check_result"))
+    h.feed(incoming("announce"), incoming("status"), incoming("rssi"), incoming("result"))
     assert [name for name, _ in h.sink.calls] == ["on_announce", "on_result"]
     with pytest.raises(ValueError):
         DeliveryConfig({"locker-1": -1.0}, 1, 1.0, 1.0)
@@ -284,58 +266,17 @@ def test_FR07_waiter_not_blocked_by_sink():
     assert notified == ["command-1", "command-2"]
 
 
-@pytest.mark.parametrize("request_fields,result_fields,received", [
-    (dict(check_id="check-2"), {}, None),
-    (dict(node_id="light-1"), {}, None),
-    ({}, dict(session=S2), None),
-    (dict(criteria=CheckCriteria("locker-return", 2)), {}, None),
-    (dict(issued_at=T0 + sec(0.5), expires_at=T0 + sec(3)), {}, None),
-    (dict(issued_at=T0 - sec(3), expires_at=T0 - sec(0.5)), {}, None),
-    ({}, {}, T0 + sec(3.5)),
-    ({}, dict(evidence={name: dict(value=True, observed_at=iso(T0 - sec(2)))
-                        for name in ("door_closed", "locked")}), None),
-], ids=["unknown-id", "other-node", "other-session", "other-criteria", "before-request",
-        "after-expiry", "stale", "old-evidence"])
-def test_FR20_invalid_check_not_close_evidence(h, request_fields, result_fields, received):
-    h.delivery.expect_check(check_request(**request_fields))
-    h.feed(incoming("safety_check_result", received=received, **result_fields))
-    assert h.sink.of("on_safety_check_result") == []
-    h2 = Harness()
-    h2.delivery.expect_check(check_request())
-    h2.feed(incoming("safety_check_result"))
-    assert len(h2.sink.of("on_safety_check_result")) == 1
-
-
-def evidence(door, locked, *, at=T0):
-    return {name: dict(value=value, observed_at=iso(at))
-            for name, value in (("door_closed", door), ("locked", locked))}
-
-
-@pytest.mark.parametrize("fields,criteria,delivered", [
-    (dict(evidence={"door_closed": dict(value=True, observed_at=iso(T0))}), None, False),
-    (dict(evidence=evidence(True, None)), None, False),
-    (dict(evidence=evidence(True, False)), None, False),
-    (dict(outcome="not_ready", evidence=evidence(True, True)), None, False),
-    (dict(criteria_version=2), CheckCriteria("locker-return", 2), False),
-    (dict(outcome="not_ready", evidence=evidence(True, False)), None, True),
-    (dict(outcome="unknown", evidence=evidence(True, True)), None, True),
-    (dict(outcome="fault", evidence=evidence(False, False)), None, True),
-], ids=["missing-item", "null-value", "passed-with-false", "not-ready-all-true",
-        "unsupported-version", "valid-not-ready", "unknown", "fault"])
-def test_FR20_incomplete_evidence_unconfirmed(h, fields, criteria, delivered):
-    h.delivery.expect_check(check_request(**({"criteria": criteria} if criteria else {})))
-    h.feed(incoming("safety_check_result", **fields))
-    results = h.sink.of("on_safety_check_result")
-    assert len(results) == (1 if delivered else 0)
-    if delivered:
-        assert results[0].outcome == SafetyCheckOutcome(fields["outcome"])
-
-
-def test_FR20_expect_check_conflict_rejected(h):
-    h.delivery.expect_check(check_request())
-    h.delivery.expect_check(check_request())
-    with pytest.raises(ValueError):
-        h.delivery.expect_check(check_request(target_session_id=S2))
+def test_FR20_release_check_result_not_handed_over(h, caplog):
+    """반납 검사 결과 토픽은 이전 계약이다. 검증에서 거부하고 CORE에 넘기지 않는다."""
+    data = dict(schema_version=1, node_id="locker-1", session_id=S1, seq=1, sent_at=iso(T0),
+                check_id="check-1", event_id=EVENT, criteria_id="locker-return", criteria_version=1,
+                checked_at=iso(T0), outcome="passed", evidence={})
+    report = IncomingReport("nearpilot/node/locker-1/safety_check_result", json.dumps(data).encode(),
+                            1, False, False, T0 + sec(0.1))
+    with caplog.at_level(logging.WARNING):
+        h.feed(report)
+    assert h.sink.calls == []
+    assert "kind=safety_check_result" in caplog.text
 
 
 def test_FR07_restart_does_not_claim_delivery():

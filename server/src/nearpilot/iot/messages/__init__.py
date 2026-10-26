@@ -14,14 +14,12 @@ from uuid import UUID
 
 from nearpilot.shared.enums import (
     Action, ActuatorState, Capability, NodeResultState, Occupancy, RejectCode,
-    SafetyCheckOutcome,
 )
 from nearpilot.shared.models import (
-    BeaconKey, CheckCriteria, NodeAnnounce, NodeCommand, NodeResult, NodeStatus,
-    PhysicalState, RssiFrame, SafetyCheckRequest, SafetyCheckResult,
+    BeaconKey, NodeAnnounce, NodeCommand, NodeResult, NodeStatus, PhysicalState, RssiFrame,
 )
 
-__all__ = ["MessageValidationError", "decode_message", "encode_command", "encode_safety_check"]
+__all__ = ["MessageValidationError", "decode_message", "encode_command"]
 
 
 class MessageValidationError(ValueError):
@@ -111,7 +109,7 @@ def _finite_json(value: object) -> None:
 
 def decode_message(
     topic: str, payload: bytes | str, *, received_at: datetime,
-) -> NodeAnnounce | tuple[RssiFrame, ...] | NodeStatus | NodeResult | SafetyCheckResult:
+) -> NodeAnnounce | tuple[RssiFrame, ...] | NodeStatus | NodeResult:
     """Validate a complete report before returning shared models.
 
     RSSI returns a tuple, including an empty tuple for an empty batch. The caller
@@ -123,7 +121,7 @@ def decode_message(
     if len(parts) != 4 or parts[:2] != ["nearpilot", "node"] or not parts[2] or any(c in parts[2] for c in "+#\x00"):
         _fail("topic")
     node_id, kind = parts[2:]
-    if kind not in ("announce", "rssi", "status", "result", "safety_check_result"):
+    if kind not in ("announce", "rssi", "status", "result"):
         _fail("topic")
     if not isinstance(received_at, datetime) or received_at.utcoffset() != timedelta(0):
         _fail("received_at")
@@ -177,36 +175,16 @@ def decode_message(
                 light_on=_nullable_bool(physical, "light_on"),
                 actuator_state=_enum(ActuatorState, physical.get("actuator_state"), "actuator_state"),
                 sensor_fault=_nullable_bool(physical, "sensor_fault")))
-    if kind == "result":
-        state = _enum(NodeResultState, data.get("state"), "state")
-        error = data.get("error_code")
-        if "error_code" in data:
-            _string(error, "error_code")
-        if state == NodeResultState.REJECTED:
-            _enum(RejectCode, error, "error_code")
-        return NodeResult(**common, state=state, error_code=error,
-            command_id=_string(data.get("command_id"), "command_id"),
-            event_id=_uuid(data.get("event_id"), "event_id"),
-            occurred_at=_time(data.get("occurred_at"), "occurred_at"))
-    criteria = CheckCriteria(
-        _string(data.get("criteria_id"), "criteria_id"),
-        _integer(data.get("criteria_version"), "criteria_version", 1))
-    evidence = _object(data.get("evidence"), "evidence")
-    # Only v1 has defined required items. CORE still checks the requested
-    # criteria, values, freshness and whether this result can end a use.
-    items = {"locker-return": ("door_closed", "locked"),
-             "light-return": ("actuator_idle",), "speaker-return": ("actuator_idle",)}
-    if criteria.criteria_version == 1:
-        for name in items.get(criteria.criteria_id, ()):
-            item = _object(evidence.get(name), "evidence item")
-            if type(item.get("value")) is not bool:
-                _fail("evidence value")
-            _time(item.get("observed_at"), "evidence observed_at")
-    return SafetyCheckResult(**common, criteria=criteria, evidence=evidence,
-        check_id=_string(data.get("check_id"), "check_id"),
+    state = _enum(NodeResultState, data.get("state"), "state")
+    error = data.get("error_code")
+    if "error_code" in data:
+        _string(error, "error_code")
+    if state == NodeResultState.REJECTED:
+        _enum(RejectCode, error, "error_code")
+    return NodeResult(**common, state=state, error_code=error,
+        command_id=_string(data.get("command_id"), "command_id"),
         event_id=_uuid(data.get("event_id"), "event_id"),
-        checked_at=_time(data.get("checked_at"), "checked_at"),
-        outcome=_enum(SafetyCheckOutcome, data.get("outcome"), "outcome"))
+        occurred_at=_time(data.get("occurred_at"), "occurred_at"))
 
 
 def _wire_time(value: datetime, field: str) -> str:
@@ -215,7 +193,7 @@ def _wire_time(value: datetime, field: str) -> str:
     return value.isoformat().replace("+00:00", "Z")
 
 
-def _outbound(request: NodeCommand | SafetyCheckRequest) -> dict:
+def _outbound(request: NodeCommand) -> dict:
     node_id = _string(request.node_id, "node_id")
     if any(c in node_id for c in "/+#\x00"):
         _fail("node_id")
@@ -230,13 +208,4 @@ def encode_command(command: NodeCommand) -> bytes:
     data = _outbound(command)
     data.update(command_id=_string(command.command_id, "command_id"),
                 action=_enum(Action, command.action, "action").value)
-    return json.dumps(data, allow_nan=False).encode("utf-8")
-
-
-def encode_safety_check(request: SafetyCheckRequest) -> bytes:
-    """Encode only MQTT check fields; preserve the requested criteria."""
-    data = _outbound(request)
-    data.update(check_id=_string(request.check_id, "check_id"),
-        criteria_id=_string(request.criteria.criteria_id, "criteria_id"),
-        criteria_version=_integer(request.criteria.criteria_version, "criteria_version", 1))
     return json.dumps(data, allow_nan=False).encode("utf-8")

@@ -144,8 +144,8 @@ def test_FR06_collect_only_has_no_mcp(tmp_path):
     try:
         status, _ = asyncio.run(_request_use_in_lifespan(app, broker, cfg))
         assert status == 404  # 토큰이 맞아도 /mcp 가 없다
-        # 같은 시간 동안 서버는 보고를 저장했지만 기기에 실행 명령도 반납 검사도 보내지 않았다
-        assert broker.commands() == [] and broker.commands("safety_check") == []
+        # 같은 시간 동안 서버는 보고를 저장했지만 기기에 실행 명령을 보내지 않았다
+        assert broker.commands() == []
         # 요청이 CORE 에 닿지 않았다
         assert query(cfg.database.path, "SELECT count(*) c FROM request")[0]["c"] == 0
         assert query(cfg.database.path, "SELECT count(*) c FROM node_command")[0]["c"] == 0

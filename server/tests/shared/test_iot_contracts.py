@@ -16,7 +16,6 @@ from nearpilot.shared.enums import (
     Occupancy,
     ReasonCode,
     RejectCode,
-    SafetyCheckOutcome,
     SessionState,
     TrustState,
 )
@@ -25,11 +24,9 @@ from nearpilot.shared.interfaces import (
     NodeCommandGateway,
     NodeEventSink,
     Repository,
-    SafetyCheckGateway,
 )
 from nearpilot.shared.models import (
     BeaconKey,
-    CheckCriteria,
     CloseResult,
     CommandResult,
     NodeAnnounce,
@@ -39,21 +36,18 @@ from nearpilot.shared.models import (
     NodeStatus,
     PhysicalState,
     RssiFrame,
-    SafetyCheckRequest,
-    SafetyCheckResult,
     UseSession,
 )
 
 NOW = datetime(2026, 10, 13)
 REPORT_FIELDS = {"node_id", "session_id", "seq", "sent_at", "received_at"}
-CRITERIA = CheckCriteria("locker-door", 1)
 RESULT = NodeResult(
     "locker-1", "sess-1", 3, NOW, NOW, "cmd-1", "evt-1", NodeResultState.SUCCEEDED, NOW,
 )
 
 
 @pytest.mark.parametrize(
-    "model", [NodeAnnounce, RssiFrame, NodeStatus, NodeResult, SafetyCheckResult]
+    "model", [NodeAnnounce, RssiFrame, NodeStatus, NodeResult]
 )
 def test_fr04_fr05_fr07_device_reports_share_common_field_names(model):
     assert REPORT_FIELDS <= {f.name for f in fields(model)}
@@ -62,7 +56,7 @@ def test_fr04_fr05_fr07_device_reports_share_common_field_names(model):
 @pytest.mark.parametrize(
     "model",
     [NodeAnnounce, RssiFrame, NodeStatus, NodeResult, NodeCommand,
-     SafetyCheckRequest, SafetyCheckResult, CloseResult],
+     CloseResult],
 )
 def test_nfr08_device_models_have_no_user_fields(model):
     names = {f.name for f in fields(model)}
@@ -129,46 +123,16 @@ def test_fr06_node_command_targets_a_session_and_expires():
     assert command.issued_at < command.expires_at
 
 
-def test_fr07_safety_check_outcome_values():
-    assert {o.value for o in SafetyCheckOutcome} == {"passed", "not_ready", "fault", "unknown"}
+def test_fr20_close_result_is_logical_close_without_check_evidence():
+    record = CloseResult("use-1", NOW, EndReason.RELEASE)
+    assert {f.name for f in fields(CloseResult)} == {"use_id", "closed_at", "end_reason"}
+    assert record.end_reason == EndReason.RELEASE
 
 
-def test_fr20_safety_check_request_and_result_share_check_id_and_criteria():
-    request = SafetyCheckRequest(
-        "chk-1", "locker-1", "sess-1", CRITERIA, NOW, NOW + timedelta(seconds=3),
-    )
-    result = SafetyCheckResult(
-        "locker-1", "sess-1", 5, NOW, NOW, request.check_id, "evt-3",
-        request.criteria, NOW, SafetyCheckOutcome.NOT_READY, {"door_closed": False},
-    )
-    assert result.check_id == request.check_id
-    assert result.criteria == request.criteria
-    with pytest.raises(TypeError):
-        result.evidence["door_closed"] = True
-
-
-def test_fr20_use_session_reads_check_criteria_from_creation_release_policy():
-    policy = {"check_criteria": {"id": "locker-door", "version": 1}}
-    session = UseSession("use-1", "ir-1", "locker-1", SessionState.CLOSING, release_policy=policy)
-    policy["check_criteria"]["version"] = 2
-    assert session.check_criteria == CRITERIA
-
-
-@pytest.mark.parametrize(
-    "policy",
-    [{}, {"check_criteria": None}, {"check_criteria": {"id": "", "version": 1}},
-     {"check_criteria": {"id": "locker-door"}}, {"check_criteria": {"id": "x", "version": True}}],
-)
-def test_fr20_use_session_without_valid_criteria_has_none(policy):
-    session = UseSession("use-1", "ir-1", "locker-1", SessionState.CLOSING, release_policy=policy)
-    assert session.check_criteria is None
-
-
-def test_fr20_close_result_keeps_adopted_check_and_evidence():
-    record = CloseResult("use-1", NOW, EndReason.RELEASE, "chk-1", {"outcome": "passed"})
-    assert record.check_id == "chk-1"
-    with pytest.raises(TypeError):
-        record.evidence["outcome"] = "unknown"
+def test_fr20_use_session_has_no_check_criteria():
+    session = UseSession("use-1", "ir-1", "locker-1", SessionState.CLOSING,
+                         release_policy={"check_criteria": {"id": "locker-door", "version": 1}})
+    assert not hasattr(session, "check_criteria")
 
 
 def test_fr04_node_info_exposes_current_session():
@@ -199,8 +163,6 @@ def test_fr07_fr20_fake_sink_and_gateways_satisfy_protocols():
 
         def on_result(self, result): ...
 
-        def on_safety_check_result(self, result): ...
-
     class OldSink:
         def on_announce(self, announce): ...
 
@@ -212,9 +174,6 @@ def test_fr07_fr20_fake_sink_and_gateways_satisfy_protocols():
         def send(self, command, timeout_sec):
             return CommandResult(command.command_id, CommandOutcome.SUCCEEDED, RESULT, NOW)
 
-        def request_check(self, request): ...
-
     assert isinstance(FakeSink(), NodeEventSink)
     assert not isinstance(OldSink(), NodeEventSink)
     assert isinstance(FakeGateway(), NodeCommandGateway)
-    assert isinstance(FakeGateway(), SafetyCheckGateway)

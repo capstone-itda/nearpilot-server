@@ -154,9 +154,6 @@ class _ScopedSink:
     def on_result(self, result) -> None:
         self._call("on_result", result)
 
-    def on_safety_check_result(self, result) -> None:
-        self._call("on_safety_check_result", result)
-
 
 class _SharedLightSuccess:
     """사용자 요청의 실행 결과 중 저장을 확인한 공용 조명 성공을 유지 대상자 접점에 넘긴다.
@@ -318,9 +315,9 @@ class Runtime:
 
         # 상태 관리. 모든 서비스가 같은 잠금과 복구 서비스를 쓴다 (NFR-04).
         recovery = FaultRecoveryService(repository=repo, store=store, clock=clock, lock_for=locks,
-                                        gateway=gateway, settings=settings)
-        release = ReleaseService(repository=repo, store=store, gateway=gateway, settings=settings,
-                                 clock=clock, lock_for=locks, record_fault=recovery.record_fault)
+                                        settings=settings)
+        release = ReleaseService(repository=repo, store=store, settings=settings, clock=clock,
+                                 lock_for=locks)
         execute_off = Late("shared_light_execute")
         shared_light = SharedLightService(repository=repo, policy=policy, settings=settings,
                                           clock=clock, lock_for=locks, execute=execute_off)
@@ -343,7 +340,7 @@ class Runtime:
             store=store, release=release, window=window)
         node_events = NodeEventService(
             repository=repo, store=store, proximity=proximity, execution=execution,
-            release=release, restore=restore, recovery=recovery, shared_light=shared_light,
+            restore=restore, recovery=recovery, shared_light=shared_light,
             context_for=store.execution_context, lock_for=locks)
         sink.bind(node_events)
         self.core.bind(core)

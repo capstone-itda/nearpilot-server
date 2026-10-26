@@ -60,7 +60,7 @@ def _record(command_id):
         evidence=(
             RecoveryEvidence(
                 evidence_id="ev1", session_id="connection-1", observed_at=_NOW,
-                execution_outcome=CommandOutcome.UNKNOWN, safety_confirmed=True, physical_state_synced=True,
+                execution_outcome=CommandOutcome.UNKNOWN, command_idle=True,
             ),
         ),
     )

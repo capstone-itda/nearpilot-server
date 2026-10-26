@@ -1,4 +1,7 @@
-"""복구 준비 조회와 복구 승인 (FR-12A, NFR-04). DB·IOT는 shared 계약의 fake다."""
+"""복구 준비 조회와 복구 승인 (FR-12A, NFR-04). DB는 shared 계약의 fake다.
+
+복구는 물리 안전 검사 없이 현재 연결의 명령 처리 대기 보고를 확인한다 (2026-10-26 결정).
+"""
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -15,26 +18,21 @@ from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
     Action, ActuatorState, ApprovalUsageState, Capability, CommandOutcome, DeviceState, EndReason,
     ExecutionKind, ExecutionStatus, Occupancy, RecoveryBlocker, RecoveryOutcome, RecoveryReason,
-    RecoveryStatus, SafetyCheckOutcome, SessionState, StoreOutcome, TrustState,
+    RecoveryStatus, SessionState, StoreOutcome, TrustState,
 )
 from nearpilot.shared.errors import StoreNotApplied, StoreOutcomeUnknown
 from nearpilot.shared.interfaces import RecoveryService
 from nearpilot.shared.models import (
-    ApprovalUsageRecord, CheckCriteria, CommandRecord, NodeInfo, NodeStatus, PhysicalState,
-    RecoveryCompletion, RecoveryEvidence, RecoveryRecord, RestoreBundle, SafetyCheckResult,
-    StoreResult, UseSession,
+    ApprovalUsageRecord, CommandRecord, NodeInfo, NodeStatus, PhysicalState,
+    RecoveryCompletion, RecoveryEvidence, RecoveryRecord, RestoreBundle, StoreResult, UseSession,
 )
-
-LOCKER_CRITERIA = {"check_criteria": {"id": "locker-return", "version": 1}}
 
 
 class RepositoryFake:
     def __init__(self, at):
         self.node = NodeInfo("locker-1", "place-1", Capability.LOCKER, Occupancy.RENTAL,
-                             TrustState.TRUSTED, DeviceState.FAULT, None, at,
-                             release_policy=LOCKER_CRITERIA, session_id="connection-1")
-        self.use = UseSession("use-1", "request-1", "locker-1", SessionState.ACTIVE,
-                              rental_due_at=at, release_policy=LOCKER_CRITERIA)
+                             TrustState.TRUSTED, DeviceState.FAULT, None, at, session_id="connection-1")
+        self.use = UseSession("use-1", "request-1", "locker-1", SessionState.ACTIVE, rental_due_at=at)
         self.owner_calls = []
 
     def nodes(self, capability=None):
@@ -96,32 +94,22 @@ class StoreFake:
             return StoreResult(StoreOutcome.APPLIED, recovery=done)
 
 
-class GatewayFake:
-    def __init__(self):
-        self.requests = []
-
-    def request_check(self, request):
-        self.requests.append(request)
-
-
 @pytest.fixture
 def env():
     time = [datetime(2026, 10, 15, tzinfo=timezone.utc)]
     clock = lambda: time[0]
     repository = RepositoryFake(clock())
     store = StoreFake(repository, clock)
-    gateway = GatewayFake()
     locks, index_lock = {}, Lock()
 
     def lock_for(node_id):
         with index_lock:
             return locks.setdefault(node_id, RLock())
 
-    ids = iter(f"check-{n}" for n in range(1, 1000))
     service = FaultRecoveryService(repository=repository, store=store, clock=clock, lock_for=lock_for,
-                                   gateway=gateway, settings=Settings, new_id=lambda: next(ids))
+                                   settings=Settings)
     env = SimpleNamespace(time=time, clock=clock, repository=repository, store=store,
-                          gateway=gateway, service=service, seq=0)
+                          service=service, seq=0)
     fault(env)
     return env
 
@@ -153,20 +141,6 @@ def online(env):
     env.repository.node = replace(env.repository.node, last_seen_at=env.clock())
 
 
-def check_result(env, request=None, outcome=SafetyCheckOutcome.PASSED, **changes):
-    request = request or env.gateway.requests[-1]
-    advance(env, 1)
-    online(env)
-    now = env.clock()
-    items = {"door_closed": True, "locked": outcome == SafetyCheckOutcome.PASSED}
-    evidence = {k: {"value": v, "observed_at": now.isoformat()} for k, v in items.items()}
-    env.seq += 1
-    result = SafetyCheckResult("locker-1", request.target_session_id, env.seq, now, now,
-                               request.check_id, "check-event-" + request.check_id, request.criteria,
-                               now, outcome, evidence)
-    return replace(result, **changes)
-
-
 def status(env, **physical):
     advance(env, 1)
     online(env)
@@ -179,9 +153,6 @@ def status(env, **physical):
 
 
 def make_ready(env):
-    online(env)
-    env.service.readiness("owner-1", "locker-1")
-    assert env.service.on_check_result(check_result(env))
     status(env)
     readiness = env.service.readiness("owner-1", "locker-1")
     assert (readiness.status, readiness.blockers) == (RecoveryStatus.READY, ())
@@ -198,7 +169,7 @@ def test_NFR04_readiness_without_recovery(env):
     readiness = env.service.readiness("owner-1", "locker-1")
     assert (readiness.recovery_id, readiness.status, readiness.blockers) == (
         None, RecoveryStatus.NOT_READY, (RecoveryBlocker.NO_RECOVERY_REQUIRED,))
-    assert env.store.saves == [] and env.gateway.requests == []
+    assert env.store.saves == []
 
 
 def test_NFR04_readiness_not_owner(env):
@@ -206,7 +177,6 @@ def test_NFR04_readiness_not_owner(env):
     with pytest.raises(NotPlaceOwner) as raised:
         env.service.readiness("visitor-1", "locker-1")
     assert "locker-1" not in str(raised.value)
-    assert env.gateway.requests == []
     assert env.repository.owner_calls == [("visitor-1", "locker-1")]
 
 
@@ -214,13 +184,8 @@ def test_NFR04_readiness_does_not_change_state(env):
     online(env)
     readiness = env.service.readiness("owner-1", "locker-1")
     assert readiness.status == RecoveryStatus.NOT_READY
-    assert set(readiness.blockers) == {RecoveryBlocker.SAFETY_UNCONFIRMED,
-                                       RecoveryBlocker.PHYSICAL_STATE_UNSYNCED}
-    request = env.gateway.requests[0]
-    assert (request.target_session_id, request.criteria) == ("connection-1", CheckCriteria("locker-return", 1))
-    # 응답 기한 안의 재조회는 검사를 다시 보내지 않는다.
+    assert readiness.blockers == (RecoveryBlocker.COMMAND_STATE_UNCONFIRMED,)
     env.service.readiness("owner-1", "locker-1")
-    assert len(env.gateway.requests) == 1
     assert env.store.saves == [] and env.store.settlements == []
     assert env.repository.node.device_state == DeviceState.FAULT
     make_ready(env)
@@ -228,57 +193,47 @@ def test_NFR04_readiness_does_not_change_state(env):
     assert env.repository.node.device_state == DeviceState.FAULT
 
 
-def test_NFR04_safety_and_sync_evidence_saved_to_recovery(env):
+def test_NFR04_no_physical_safety_or_sync_condition(env):
+    """복구 조건에 물리 안전 검사와 물리 상태 동기화가 없다 (NFR-04)."""
+    assert not hasattr(env.service, "on_check_result")
+    assert {b.name for b in RecoveryBlocker}.isdisjoint({"SAFETY_UNCONFIRMED", "PHYSICAL_STATE_UNSYNCED"})
+    # 센서 값이 없거나 이상을 말해도 명령 처리 대기이면 조건을 채운다.
+    status(env, door_closed=None, sensor_fault=None)
+    assert env.service.readiness("owner-1", "locker-1").status == RecoveryStatus.READY
+
+
+def test_NFR04_command_idle_evidence_from_current_connection(env):
     readiness = make_ready(env)
-    saved = env.store.records["recovery-1"].evidence
-    assert any(e.safety_confirmed for e in saved)
-    assert any(e.physical_state_synced for e in saved)
-    assert set(readiness.evidence) <= set(saved)
+    idle = [e for e in readiness.evidence if e.command_idle]
+    assert [(e.session_id, e.command_idle) for e in idle] == [("connection-1", True)]
+    assert {e.evidence_id for e in readiness.evidence} >= {"result-1"}
+    assert env.store.saves == []  # 조회는 근거를 저장하지 않는다. 정산이 근거를 함께 저장한다.
 
 
-def test_NFR04_status_before_safety_is_not_sync(env):
-    online(env)
-    env.service.readiness("owner-1", "locker-1")
-    status(env)
-    env.service.on_check_result(check_result(env))
-    readiness = env.service.readiness("owner-1", "locker-1")
-    assert readiness.blockers == (RecoveryBlocker.PHYSICAL_STATE_UNSYNCED,)
+def test_NFR04_busy_or_unknown_command_state_blocks(env):
     status(env, actuator_state=ActuatorState.BUSY)
-    status(env, sensor_fault=True)
-    assert env.service.readiness("owner-1", "locker-1").blockers == (RecoveryBlocker.PHYSICAL_STATE_UNSYNCED,)
+    assert env.service.readiness("owner-1", "locker-1").blockers == (RecoveryBlocker.COMMAND_STATE_UNCONFIRMED,)
+    status(env, actuator_state=ActuatorState.UNKNOWN)
+    assert env.service.readiness("owner-1", "locker-1").blockers == (RecoveryBlocker.COMMAND_STATE_UNCONFIRMED,)
+    status(env)
+    assert env.service.readiness("owner-1", "locker-1").blockers == ()
 
 
-@pytest.mark.parametrize("change", ["missing_item", "other_connection", "other_criteria", "late"])
-def test_NFR04_invalid_check_result_is_not_safety(env, change):
-    online(env)
-    env.service.readiness("owner-1", "locker-1")
-    result = check_result(env)
-    if change == "missing_item":
-        result = replace(result, evidence={"door_closed": result.evidence["door_closed"]})
-    elif change == "other_connection":
-        result = replace(result, session_id="connection-2")
-    elif change == "other_criteria":
-        result = replace(result, criteria=CheckCriteria("locker-return", 2))
-    else:
-        result = replace(result, received_at=env.clock() + timedelta(seconds=Settings().safety_check_timeout_sec))
-    assert env.service.on_check_result(result)
-    assert RecoveryBlocker.SAFETY_UNCONFIRMED in env.service.readiness("owner-1", "locker-1").blockers
-    assert env.store.saves == []
+def test_NFR04_stale_command_state_blocks(env):
+    status(env)
+    advance(env, Settings().online_ttl_sec + 1)
+    online(env)  # 다른 보고로 온라인이어도 status가 오래되면 근거가 아니다.
+    assert RecoveryBlocker.COMMAND_STATE_UNCONFIRMED in env.service.readiness("owner-1", "locker-1").blockers
 
 
-def test_NFR04_not_ready_check_requests_again(env):
-    online(env)
-    env.service.readiness("owner-1", "locker-1")
-    env.service.on_check_result(check_result(env, outcome=SafetyCheckOutcome.NOT_READY))
-    env.service.readiness("owner-1", "locker-1")
-    assert [r.check_id for r in env.gateway.requests] == ["check-1", "check-2"]
-
-
-def test_NFR04_unrelated_check_result_goes_to_release(env):
-    online(env)
-    env.service.readiness("owner-1", "locker-1")
-    other = replace(check_result(env), check_id="release-check")
-    assert env.service.on_check_result(other) is False
+def test_NFR04_status_before_fault_is_not_evidence(env):
+    status(env)
+    record = env.store.records["recovery-1"]
+    env.store.records["recovery-1"] = replace(record, created_at=env.clock() + timedelta(seconds=1))
+    advance(env, 1)
+    assert RecoveryBlocker.COMMAND_STATE_UNCONFIRMED in env.service.readiness("owner-1", "locker-1").blockers
+    status(env)
+    assert env.service.readiness("owner-1", "locker-1").blockers == ()
 
 
 def test_NFR04_approve_settles_once(env):
@@ -293,9 +248,8 @@ def test_NFR04_approve_settles_once(env):
     assert settlement.expected_sessions == {"use-1": SessionState.ACTIVE}
     assert (settlement.use_id, settlement.closed_at, settlement.end_reason) == (
         "use-1", env.clock(), EndReason.FAULT)
-    # 확인 불가를 미실행으로 보지 않는다.
-    assert [(u.usage_id, u.expected_state, u.state) for u in settlement.usage_settlements] == [
-        ("usage-1", ApprovalUsageState.HELD, ApprovalUsageState.CONSUMED)]
+    # 결과 불명을 미실행이나 성공으로 보지 않는다. 사용분은 보류로 남긴다.
+    assert settlement.usage_settlements == ()
     assert settlement.settlement_digest == settlement_digest(
         recovery_id="recovery-1", node_id="locker-1", expected_node_state=DeviceState.FAULT,
         expected_recovery_status=RecoveryStatus.NOT_READY,
@@ -308,13 +262,26 @@ def test_NFR04_approve_settles_once(env):
 @pytest.mark.parametrize("outcome,attempted,expected", [
     (ExecutionStatus.FAILED, True, ApprovalUsageState.RELEASED),
     (ExecutionStatus.SUCCEEDED, True, ApprovalUsageState.CONSUMED),
-    (ExecutionStatus.UNKNOWN, True, ApprovalUsageState.CONSUMED),
+    (ExecutionStatus.UNKNOWN, True, None),
+    (ExecutionStatus.UNKNOWN, False, ApprovalUsageState.RELEASED),
 ])
 def test_FR19_usage_settlement_follows_execution_result(env, outcome, attempted, expected):
     fault(env, outcome=outcome, attempted=attempted)
     make_ready(env)
-    env.service.approve("owner-1", "locker-1", "recovery-1")
-    assert env.store.settlements[0].usage_settlements[0].state == expected
+    result = env.service.approve("owner-1", "locker-1", "recovery-1")
+    assert result.outcome == RecoveryOutcome.COMPLETED
+    states = [u.state for u in env.store.settlements[0].usage_settlements]
+    assert states == ([] if expected is None else [expected])
+
+
+def test_NFR04_unknown_usage_stays_held_after_recovery(env):
+    """결과 불명 명령의 사용분 정산 기준은 미결이다. 복구는 완료하고 사용분은 보류로 둔다."""
+    make_ready(env)
+    result = env.service.approve("owner-1", "locker-1", "recovery-1")
+    assert result.outcome == RecoveryOutcome.COMPLETED
+    assert env.repository.node.device_state == DeviceState.AVAILABLE
+    assert env.repository.use.state == SessionState.CLOSED
+    assert env.store.usages[0].state == ApprovalUsageState.HELD
 
 
 def test_FR12A_recovery_service_uses_authenticated_account(env):
@@ -339,7 +306,7 @@ def test_NFR04_approve_unconfirmed_execution(env):
     result = env.service.approve("owner-1", "locker-1", "recovery-1")
     assert (result.outcome, result.reason_code) == (RecoveryOutcome.REJECTED, RecoveryReason.NOT_READY)
     assert RecoveryBlocker.EXECUTION_UNCONFIRMED in result.readiness.blockers
-    assert env.store.settlements == [] and env.gateway.requests == []
+    assert env.store.settlements == []
 
 
 def test_NFR04_approve_offline(env):
@@ -428,33 +395,25 @@ def test_NFR04_reconnect_invalidates_evidence(env):
     env.repository.node = replace(env.repository.node, session_id="connection-2")
     result = env.service.approve("owner-1", "locker-1", "recovery-1")
     assert (result.outcome, result.reason_code) == (RecoveryOutcome.REJECTED, RecoveryReason.NOT_READY)
-    assert RecoveryBlocker.SAFETY_UNCONFIRMED in result.readiness.blockers
-    assert env.gateway.requests[-1].target_session_id == "connection-2"
+    assert RecoveryBlocker.COMMAND_STATE_UNCONFIRMED in result.readiness.blockers
     assert env.store.settlements == []
+    status(env)
+    assert env.service.approve("owner-1", "locker-1", "recovery-1").outcome == RecoveryOutcome.COMPLETED
 
 
-def test_NFR04_new_fault_invalidates_evidence(env):
+def test_NFR04_new_fault_needs_report_after_it(env):
     make_ready(env)
     record = env.store.records.pop("recovery-1")
-    env.store.records["recovery-2"] = replace(record, recovery_id="recovery-2")
+    env.store.records["recovery-2"] = replace(record, recovery_id="recovery-2", created_at=env.clock())
+    advance(env, 1)
     readiness = env.service.readiness("owner-1", "locker-1")
     assert readiness.recovery_id == "recovery-2"
-    assert RecoveryBlocker.SAFETY_UNCONFIRMED in readiness.blockers
+    assert RecoveryBlocker.COMMAND_STATE_UNCONFIRMED in readiness.blockers
 
 
-def test_NFR04_shared_recovery_uses_node_criteria_and_no_close(env):
+def test_NFR04_shared_recovery_has_no_close(env):
     fault(env, use=False)
     make_ready(env)
-    assert env.gateway.requests[0].criteria == CheckCriteria("locker-return", 1)
     env.service.approve("owner-1", "locker-1", "recovery-1")
     settlement = env.store.settlements[0]
     assert (settlement.use_id, settlement.closed_at, settlement.expected_sessions) == (None, None, {})
-
-
-def test_NFR04_missing_criteria_stays_unconfirmed(env):
-    fault(env, use=False)
-    env.repository.node = replace(env.repository.node, release_policy={})
-    online(env)
-    readiness = env.service.readiness("owner-1", "locker-1")
-    assert RecoveryBlocker.SAFETY_UNCONFIRMED in readiness.blockers
-    assert env.gateway.requests == []

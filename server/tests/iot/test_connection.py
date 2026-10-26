@@ -21,7 +21,7 @@ class FakeClient:
         self.publications = []
         self.mid = 0
         self.auth_reason = 0
-        self.granted = [1, 0, 1, 1, 1]
+        self.granted = [1, 0, 1, 1]
         self.subscribe_rc = 0
         self.publish_rc = 0
         self.publish_exception = None
@@ -115,11 +115,11 @@ def test_NFR11_mqtt_version_qos_retain(setup_connection):
     assert client.backoff == (1, 4)
     assert client.credentials == ("nearpilot-server", "test-private-password")
     assert not client.publications
-    for kind in ("cmd", "safety_check"):
-        receipt = connection.publish_request("node-a", kind, b"{}")
-        assert receipt.rc == 0
-    assert client.publications == [(f"nearpilot/node/node-a/{kind}", b"{}", 1, False)
-                                    for kind in ("cmd", "safety_check")]
+    receipt = connection.publish_request("node-a", "cmd", b"{}")
+    assert receipt.rc == 0
+    assert client.publications == [("nearpilot/node/node-a/cmd", b"{}", 1, False)]
+    with pytest.raises(ValueError):
+        connection.publish_request("node-a", "safety_check", b"{}")  # 반납 검사 토픽은 없다 (FR-20).
 
 
 def test_FR13_readiness_waits_for_suback(setup_connection):
@@ -184,7 +184,7 @@ def test_NFR08_failed_auth_or_subscribe_not_ready(setup_connection, failure):
     elif failure == "missing":
         client.granted = [1]
     elif failure == "downgrade":
-        client.granted = [0] * 5
+        client.granted = [0] * 4
     else:
         client.loop_rc = 1
     with pytest.raises(ConnectionFailure):

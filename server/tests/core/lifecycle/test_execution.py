@@ -750,9 +750,7 @@ def test_FR19_execution_uses_real_restore_gate(env):
     node = env.repository.items[env.ctx.node_id]
     env.repository.items[node.node_id] = replace(node, device_state=DeviceState.AVAILABLE)
     release = ReleaseService(repository=env.repository, store=env.store,
-        gateway=SimpleNamespace(request_check=lambda request: None),
-        settings=lambda: env.ctx.settings, clock=env.clock, lock_for=env.lock_for,
-        record_fault=env.recovery.record_fault)
+        settings=lambda: env.ctx.settings, clock=env.clock, lock_for=env.lock_for)
     light = SharedLightService(repository=env.repository,
         policy=SimpleNamespace(check=lambda *args: None), settings=lambda: env.ctx.settings,
         clock=env.clock, lock_for=env.lock_for)

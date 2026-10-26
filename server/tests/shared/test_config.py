@@ -1,5 +1,7 @@
 """Regression checks for requirements.md section 1.2 operational settings."""
 
+from dataclasses import fields
+
 import pytest
 
 from nearpilot.shared.config import Settings
@@ -11,8 +13,6 @@ NUMERIC_FIELDS = (
     "beacon_recent_sec", "online_ttl_sec", "status_report_sec",
     "reservation_wait_sec", "exec_timeout_sec",
     "rental_duration_sec", "approval_ttl_sec", "approval_pending_ttl_sec",
-    "safety_report_max_age_sec", "safety_check_timeout_sec",
-    "safety_check_retry_sec", "safety_unconfirmed_limit_sec",
     "use_history_retention_days", "audit_retention_days",
     "request_dedup_ttl_sec", "dedup_entry_limit",
 )
@@ -94,31 +94,9 @@ def test_fr03_fr19_fr21_fr22_new_settings_reject_non_positive(name, value):
         Settings(**{name: value})
 
 
-def test_fr07_fr20_safety_check_time_settings_match_initial_baseline():
-    settings = Settings()
-    assert settings.safety_report_max_age_sec == 3.0
-    assert settings.safety_check_timeout_sec == 3.0
-    assert settings.safety_check_retry_sec == 1.0
-    assert settings.safety_unconfirmed_limit_sec == 30.0
-
-
-@pytest.mark.parametrize(
-    "name",
-    [
-        "safety_report_max_age_sec", "safety_check_timeout_sec",
-        "safety_check_retry_sec", "safety_unconfirmed_limit_sec",
-    ],
-)
-@pytest.mark.parametrize("value", [0, -1])
-def test_fr07_fr20_safety_check_settings_reject_non_positive(name, value):
-    with pytest.raises(ValueError):
-        Settings(**{name: value})
-
-
-def test_fr20_unconfirmed_limit_is_not_shorter_than_check_timeout():
-    with pytest.raises(ValueError):
-        Settings(safety_unconfirmed_limit_sec=2.0)
-    assert Settings(safety_unconfirmed_limit_sec=3.0).safety_unconfirmed_limit_sec == 3.0
+def test_fr07_fr20_release_check_settings_are_removed():
+    names = {f.name for f in fields(Settings)}
+    assert not {name for name in names if name.startswith("safety_")}
 
 
 def test_fr13_online_ttl_is_not_shorter_than_status_report_period():

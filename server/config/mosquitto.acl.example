@@ -5,24 +5,18 @@ topic read nearpilot/node/+/announce
 topic read nearpilot/node/+/rssi
 topic read nearpilot/node/+/status
 topic read nearpilot/node/+/result
-topic read nearpilot/node/+/safety_check_result
 topic write nearpilot/node/+/cmd
-topic write nearpilot/node/+/safety_check
 
 user node-a
 topic write nearpilot/node/node-a/announce
 topic write nearpilot/node/node-a/rssi
 topic write nearpilot/node/node-a/status
 topic write nearpilot/node/node-a/result
-topic write nearpilot/node/node-a/safety_check_result
 topic read nearpilot/node/node-a/cmd
-topic read nearpilot/node/node-a/safety_check
 
 user node-b
 topic write nearpilot/node/node-b/announce
 topic write nearpilot/node/node-b/rssi
 topic write nearpilot/node/node-b/status
 topic write nearpilot/node/node-b/result
-topic write nearpilot/node/node-b/safety_check_result
 topic read nearpilot/node/node-b/cmd
-topic read nearpilot/node/node-b/safety_check

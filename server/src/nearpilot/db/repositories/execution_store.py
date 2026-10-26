@@ -477,13 +477,12 @@ class SqliteExecutionStore:
             updated = self._conn.execute("SELECT * FROM use_session WHERE use_id = ?", (use_id,)).fetchone()
             return StoreResult(outcome=StoreOutcome.APPLIED, session=self._session_from_row(updated))
 
-    def finish_close(
-        self, use_id: str, closed_at: datetime, check_id: str, evidence: Mapping[str, Any],
-    ) -> StoreResult:
-        """세션 `CLOSED`, 기기 `AVAILABLE`, `closed_at`, 채택한 검사 근거를 한 트랜잭션에서 저장한다.
+    def finish_close(self, use_id: str, closed_at: datetime, end_reason: EndReason) -> StoreResult:
+        """세션 `CLOSED`, 기기 `AVAILABLE`, `closed_at`, 종료 사유와 감사를 한 트랜잭션에서 저장한다.
 
-        같은 `use_id`·같은 `check_id`의 재호출은 `ALREADY_APPLIED`다. 다른 `check_id`나 다른
-        근거는 `CONFLICT`다. DB는 문·구동부·센서 조건을 다시 판단하지 않는다 (FR-20).
+        같은 `use_id`·같은 종료 사유의 재호출은 `ALREADY_APPLIED`이고 처음 저장한 종료 시각을 유지한다.
+        다른 종료 사유는 `CONFLICT`다. 같은 기기의 결과를 확정하지 못한 구동 명령이 있으면
+        `CONFLICT`·`COMMAND_IN_PROGRESS`다. 검사 ID와 센서 근거를 받지 않는다 (FR-20).
         """
         with immediate_transaction(self._conn):
             row = self._conn.execute("SELECT * FROM use_session WHERE use_id = ?", (use_id,)).fetchone()
@@ -491,7 +490,7 @@ class SqliteExecutionStore:
                 raise LookupError(f"점유 세션 {use_id} 가 없다")
             state = SessionState(row["state"])
             if state == SessionState.CLOSED:
-                if row["check_id"] == check_id and _evidence_matches(row["check_evidence"], evidence):
+                if row["end_reason"] == end_reason.value:
                     return StoreResult(outcome=StoreOutcome.ALREADY_APPLIED, session=self._session_from_row(row))
                 return StoreResult(
                     outcome=StoreOutcome.CONFLICT, session=self._session_from_row(row),
@@ -499,6 +498,11 @@ class SqliteExecutionStore:
                 )
             if state != SessionState.CLOSING:
                 return StoreResult(outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.STATE_CONFLICT)
+            if row["end_reason"] != end_reason.value:
+                return StoreResult(
+                    outcome=StoreOutcome.CONFLICT, session=self._session_from_row(row),
+                    conflict_reason=StoreConflictReason.CONTENT_CONFLICT,
+                )
             node_row = self._conn.execute(
                 "SELECT device_state FROM node WHERE node_id = ?", (row["node_id"],)
             ).fetchone()
@@ -506,10 +510,17 @@ class SqliteExecutionStore:
                 raise LookupError(f"기기 {row['node_id']} 가 없다")
             if node_row["device_state"] != DeviceState.CLOSING.value:
                 return StoreResult(outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.STATE_CONFLICT)
+            in_progress = self._conn.execute(
+                "SELECT 1 FROM node_command WHERE node_id = ? AND status = ?",
+                (row["node_id"], ExecutionStatus.IN_PROGRESS.value),
+            ).fetchone()
+            if in_progress is not None:
+                return StoreResult(
+                    outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.COMMAND_IN_PROGRESS
+                )
             self._conn.execute(
-                "UPDATE use_session SET state = ?, closed_at = ?, check_id = ?, check_evidence = ? "
-                "WHERE use_id = ?",
-                (SessionState.CLOSED.value, iso(closed_at), check_id, to_json(evidence), use_id),
+                "UPDATE use_session SET state = ?, closed_at = ? WHERE use_id = ?",
+                (SessionState.CLOSED.value, iso(closed_at), use_id),
             )
             self._conn.execute(
                 "UPDATE node SET device_state = ? WHERE node_id = ?",
@@ -517,29 +528,24 @@ class SqliteExecutionStore:
             )
             self._append_audit(
                 row["internal_request_id"], None,
-                {
-                    "event": "finish_close", "use_id": use_id, "check_id": check_id,
-                    "evidence": dict(evidence),
-                },
+                {"event": "finish_close", "use_id": use_id, "end_reason": end_reason.value},
                 step=Step.CLOSE,
             )
             updated = self._conn.execute("SELECT * FROM use_session WHERE use_id = ?", (use_id,)).fetchone()
             return StoreResult(outcome=StoreOutcome.APPLIED, session=self._session_from_row(updated))
 
     def close_result(self, use_id: str) -> CloseResult | None:
-        """반납의 저장된 완료 기록을 돌려준다. 기기의 현재 상태가 아니다 (FR-20).
+        """세션의 저장된 종료 기록을 돌려준다. 기기의 현재 상태가 아니다 (FR-20).
 
-        `check_id`가 없으면 (취소·거부로 `CLOSED`된 세션 포함) 반납 완료 기록이 아니다.
+        `CLOSED`가 아니면 `None`이다. 반납 완료인지는 호출자가 `end_reason`으로 확인한다.
         """
         row = self._conn.execute(
-            "SELECT state, closed_at, end_reason, check_id, check_evidence FROM use_session WHERE use_id = ?",
-            (use_id,),
+            "SELECT state, closed_at, end_reason FROM use_session WHERE use_id = ?", (use_id,),
         ).fetchone()
-        if row is None or row["state"] != SessionState.CLOSED.value or row["check_id"] is None:
+        if row is None or row["state"] != SessionState.CLOSED.value or row["closed_at"] is None:
             return None
         return CloseResult(
             use_id=use_id, closed_at=parse_iso(row["closed_at"]), end_reason=EndReason(row["end_reason"]),
-            check_id=row["check_id"], evidence=from_json(row["check_evidence"]),
         )
 
     @staticmethod
@@ -1002,8 +1008,7 @@ class SqliteExecutionStore:
                 execution_outcome=(
                     CommandOutcome(item["execution_outcome"]) if item.get("execution_outcome") else None
                 ),
-                safety_confirmed=item.get("safety_confirmed"),
-                physical_state_synced=item.get("physical_state_synced"),
+                command_idle=item.get("command_idle"),
             )
             for item in json.loads(value or "[]")
         )
@@ -1045,8 +1050,7 @@ class SqliteExecutionStore:
                 "evidence_id": item.evidence_id, "session_id": item.session_id,
                 "observed_at": iso(item.observed_at),
                 "execution_outcome": item.execution_outcome.value if item.execution_outcome else None,
-                "safety_confirmed": item.safety_confirmed,
-                "physical_state_synced": item.physical_state_synced,
+                "command_idle": item.command_idle,
             }
             for item in evidence
         ])
@@ -1132,7 +1136,7 @@ class SqliteExecutionStore:
     def settle_recovery(self, settlement: RecoverySettlement) -> StoreResult:
         """연결과 예상 상태를 검사하고 승인·근거·사용분·점유 종료·기기 복구·감사를 한 트랜잭션에서 커밋한다.
 
-        `finish_close`를 거치지 않는다 — 반납 `check_id` 대신 복구 근거를 쓴다. 같은
+        `finish_close`를 거치지 않는다 — 복구 근거로 점유를 종료한다. 같은
         `recovery_id`·같은 논리 정산(`settlement_digest`로 비교)은 `ALREADY_APPLIED`다.
         다른 연결·요약값·예상 상태는 `CONFLICT`다. 늦은 결과로 완료 정산을 뒤집지 않는다
         (NFR-04).

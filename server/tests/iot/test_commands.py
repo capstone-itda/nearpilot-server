@@ -1,4 +1,4 @@
-"""Command sending, result waits and safety-check requests with a transport fake."""
+"""Command sending and result waits with a transport fake."""
 
 from datetime import datetime, timedelta, timezone
 import json
@@ -12,15 +12,13 @@ from nearpilot.iot.mqtt.connection import IncomingReport, NotReady, PublishUncer
 from nearpilot.iot.mqtt.delivery import DeliveryConfig, ReportDelivery
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import Action, CommandOutcome, NodeResultState
-from nearpilot.shared.interfaces import NodeCommandGateway, SafetyCheckGateway
-from nearpilot.shared.models import CheckCriteria, NodeCommand, SafetyCheckRequest
+from nearpilot.shared.interfaces import NodeCommandGateway
+from nearpilot.shared.models import NodeCommand
 
 S1 = "11111111-1111-1111-1111-111111111111"
 EVENT = "87654321-4321-4321-4321-cba987654321"
 T0 = datetime(2026, 10, 16, 3, 0, 0, tzinfo=timezone.utc)
 COMMAND = NodeCommand("command-1", "locker-1", Action.OPEN, S1, T0, T0 + timedelta(seconds=3))
-CHECK = SafetyCheckRequest("check-1", "locker-1", S1, CheckCriteria("locker-return", 1),
-                           T0, T0 + timedelta(seconds=3))
 
 
 def iso(value):
@@ -62,9 +60,6 @@ class Sink:
 
     def on_result(self, report):
         self._call("on_result", report)
-
-    def on_safety_check_result(self, report):
-        self._call("on_safety_check_result", report)
 
 
 class Connection:
@@ -120,7 +115,7 @@ def wait_for(predicate, timeout=2.0):
 def test_FR06_gateway_implements_shared_contracts(env):
     gateway = env[3]
     assert isinstance(gateway, NodeCommandGateway)
-    assert isinstance(gateway, SafetyCheckGateway)
+    assert not hasattr(gateway, "request_check")  # 반납 검사 요청을 보내지 않는다 (FR-20).
 
 
 def test_FR06_no_publish_without_core_call(env):
@@ -189,8 +184,6 @@ def test_FR06_saturation_not_sent(env):
     assert delivery.saturated
     assert gateway.send(COMMAND, 5).outcome == CommandOutcome.NOT_SENT
     assert connection.publications == []
-    gateway.request_check(CHECK)
-    assert [kind for _, kind, _ in connection.publications] == ["safety_check"]
 
 
 def test_FR07_disconnect_timeout_unknown(env):
@@ -302,49 +295,25 @@ def test_FR07_late_result_subscription_remains(env):
     assert [(m, r.command_id) for m, r in sink.calls] == [("on_result", "command-1")]
 
 
-@pytest.mark.parametrize("error", [NotReady("not ready"), PublishUncertain("unknown")])
-def test_FR20_check_send_failure_not_passed(env, error):
-    _, connection, _, gateway = env
-    connection.error = error
-    with pytest.raises(type(error)):
-        gateway.request_check(CHECK)
-    assert len(connection.publications) == 1  # No self-made retry.
-    connection.error = None
-    changed = SafetyCheckRequest("check-1", "locker-1", S1, CheckCriteria("locker-return", 1),
-                                 T0, T0 + timedelta(seconds=9))
-    with pytest.raises(ValueError):
-        gateway.request_check(changed)
-    assert len(connection.publications) == 1
-
-
-def test_FR20_request_check_does_not_wait(env):
+def test_FR20_release_check_result_not_handed_to_core(env):
     sink, connection, delivery, gateway = env
-    started = time.monotonic()
-    assert gateway.request_check(CHECK) is None
-    assert time.monotonic() - started < 0.5
-    assert [(node, kind) for node, kind, _ in connection.publications] == [
-        ("locker-1", "safety_check")]
     data = dict(schema_version=1, node_id="locker-1", session_id=S1, seq=1,
                 sent_at=iso(T0 + timedelta(seconds=0.5)), check_id="check-1", event_id=EVENT,
                 criteria_id="locker-return", criteria_version=1,
-                checked_at=iso(T0 + timedelta(seconds=0.5)), outcome="passed",
-                evidence={name: dict(value=True, observed_at=iso(T0 + timedelta(seconds=0.5)))
-                          for name in ("door_closed", "locked")})
+                checked_at=iso(T0 + timedelta(seconds=0.5)), outcome="passed", evidence={})
     delivery.process(IncomingReport("nearpilot/node/locker-1/safety_check_result",
                                     json.dumps(data).encode(), 1, False, False,
                                     T0 + timedelta(seconds=0.6)))
     delivery.deliver_due()
-    assert [m for m, _ in sink.calls] == ["on_safety_check_result"]
+    assert sink.calls == []
 
 
-def test_NFR08_command_and_check_payload_minimal(env):
+def test_NFR08_command_payload_minimal(env):
     _, connection, delivery, gateway = env
     connection.on_publish = lambda node, kind, payload: (
         delivery.process(result()) if kind == "cmd" else None)
     gateway.send(COMMAND, 5)
-    gateway.request_check(CHECK)
-    command, check = (json.loads(payload) for _, _, payload in connection.publications)
+    (command,) = (json.loads(payload) for _, _, payload in connection.publications)
     common = {"schema_version", "node_id", "target_session_id", "issued_at", "expires_at"}
     assert set(command) == common | {"command_id", "action"}
-    assert set(check) == common | {"check_id", "criteria_id", "criteria_version"}
     assert command["expires_at"] == iso(COMMAND.expires_at)

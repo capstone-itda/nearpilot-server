@@ -11,10 +11,10 @@ import pytest
 from nearpilot.shared.enums import Action, ActuatorState, Capability, DeviceState, Occupancy, Step, TrustState
 from nearpilot.shared.enums import SessionState
 from nearpilot.shared.models import (
-    AuditEvent, CloseResult, NodeInfo, NodeResult, NodeStatus, PhysicalState, ProximityResult,
-    ReserveRequest, SafetyCheckResult, CheckCriteria, UseSession,
+    AuditEvent, NodeInfo, NodeResult, NodeStatus, PhysicalState, ProximityResult,
+    ReserveRequest, UseSession,
 )
-from nearpilot.shared.enums import EndReason, NodeResultState, SafetyCheckOutcome
+from nearpilot.shared.enums import NodeResultState
 
 
 NOW = datetime(2026, 10, 1)
@@ -28,10 +28,6 @@ STATUS = NodeStatus("locker-1", NOW, "sess-1", 1, NOW, NOW, PHYSICAL)
 RESULT = NodeResult(
     "locker-1", "sess-1", 1, NOW, NOW, "cmd-1", "evt-1", NodeResultState.SUCCEEDED, NOW,
 )
-CHECK = SafetyCheckResult(
-    "locker-1", "sess-1", 1, NOW, NOW, "chk-1", "evt-2",
-    CheckCriteria("locker-door", 1), NOW, SafetyCheckOutcome.PASSED,
-)
 
 
 @pytest.mark.parametrize(
@@ -43,8 +39,6 @@ CHECK = SafetyCheckResult(
         (UseSession("s1", "r1", "locker-1", SessionState.RESERVED), "release_policy"),
         (STATUS, "detail"),
         (RESULT, "detail"),
-        (CHECK, "evidence"),
-        (CloseResult("s1", NOW, EndReason.RELEASE, "chk-1"), "evidence"),
         (AuditEvent("e1", Step.CLOSE, {}), "payload"),
     ],
 )
