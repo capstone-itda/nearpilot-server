@@ -24,6 +24,12 @@ major = 1
 version = "eval-1"
 status_report_sec = 0.5
 rssi_frame_sec = 0.5
+# 지표 6은 시간이 지나야 보이는 사건(결과 불명, 이탈, 대여시간 초과)을 시나리오마다 기다린다. 운영 기본값(3초, 10+5초, 1시간)이면
+# 한 시나리오 30회에 수십 분이 걸려서 짧게 둔다. 서버 판단은 같고 기다리는 시간만 줄어든다.
+exec_timeout_sec = 2.0     # 명령 결과가 오지 않으면 기기를 FAULT로 보는 시간
+leave_absent_sec = 1.0     # 이탈 판단: 비콘을 연속으로 못 받은 시간
+leave_grace_sec = 0.5      # 이탈 판단: 유예
+rental_duration_sec = 3.0  # 대여 시간. 넘겨도 자동 반납하지 않는다. 이탈 판단(1.5초 + 여유)보다 길어서 이탈 시나리오가 초과와 겹치지 않는다
 
 # 사용자. 첫 owner가 장소의 소유자이자 restricted 기기의 승인자다. owner는 한 명 이상 있어야 한다.
 [[users]]
@@ -49,6 +55,10 @@ minor = 4
 # 시뮬레이터 기기. 모두 장소 place-a에 놓인다.
 # capability: locker | light | speaker, occupancy: rental | shared, mode: open | restricted(승인 필요),
 # trusted: false면 신뢰하지 않은 기기(discovered)로 둔다.
+# restricted 기기의 승인 정책(선택): approval_mode(one_time | time_window, 기본 one_time),
+# approval_ttl_sec(승인 유효시간, 초), max_uses(승인 한 건으로 쓸 수 있는 횟수, 없으면 무제한).
+# 지표 5는 approval_mode가 one_time인 trusted restricted 기기에서 1회 승인을, time_window이고 approval_ttl_sec가 있는 기기에서
+# 기간 승인을 잰다. 설정에 그 기기가 없으면 그 시나리오는 건너뛰고 보고서 행의 note에 쓴다.
 [[nodes]]
 node_id = "locker-1"
 capability = "locker"
@@ -73,12 +83,15 @@ capability = "light"
 occupancy = "shared"
 mode = "open"
 
-# 승인이 필요한 기기. 모델 syn-a-1에 사물함이 3대뿐이라서 제한 기기는 조명이다.
+# 승인이 필요한 기기. 모델 syn-a-1에 사물함이 3대뿐이라서 제한 기기는 조명이다. 조명은 기간 승인이 기본이다 (FR-14).
+# 지표 5가 시도마다 유효시간이 끝나기를 기다려서 짧게 둔다. 1회 승인(approval_mode = "one_time")을 재려면 제한 기기를 하나 더한다.
 [[nodes]]
 node_id = "light-2"
 capability = "light"
 occupancy = "shared"
 mode = "restricted"
+approval_mode = "time_window"
+approval_ttl_sec = 5
 
 # 신뢰하지 않은 기기. 모델에 없어도 된다. 후보로 나오면 안 된다.
 [[nodes]]

@@ -327,7 +327,10 @@ class Harness:
                         "nodes": [node.node_id for node in config.nodes]}],
             "nodes": [{"node_id": node.node_id, "trust": "trusted"} for node in config.nodes if node.trusted],
             "policies": [{"node_id": node.node_id, "visibility": "public", "mode": node.mode,
-                          "approval_mode": "one_time", **({"approver": owner} if node.mode == "restricted" else {})}
+                          "approval_mode": node.approval_mode,
+                          **({"approver": owner} if node.mode == "restricted" else {}),
+                          **({"approval_ttl_sec": node.approval_ttl_sec} if node.approval_ttl_sec is not None else {}),
+                          **({"max_uses": node.max_uses} if node.max_uses is not None else {})}
                          for node in config.nodes],
         }
         seed_path = self.workdir / "seed.toml"

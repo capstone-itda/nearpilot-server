@@ -6,7 +6,8 @@
   [beacon]           uuid, major. 모든 사용자의 비콘 공통 값이다
   [server_settings]  서버 설정 `[settings]`를 덮어쓸 값(선택). 키는 `Settings`의 필드다
   [[users]]          user_id, role(owner|visitor), minor
-  [[nodes]]          node_id, capability, occupancy, mode(선택, 기본 open), trusted(선택, 기본 true)
+  [[nodes]]          node_id, capability, occupancy, mode(선택, 기본 open), trusted(선택, 기본 true),
+                     approval_mode(선택, 기본 one_time), approval_ttl_sec(선택), max_uses(선택). 뒤 셋은 정책 시드 값이다
   [counts]           지표별 횟수. 값은 1 이상의 정수다
   [acceptance]       통과 기준. 값은 0 이상의 수다. 키가 `_rate`로 끝나면 0~1, `_sec`로 끝나면 0보다 크다
   [rssi]             시뮬레이터 RSSI(dBm). 값은 유한한 수다
@@ -27,7 +28,7 @@ from types import MappingProxyType
 from typing import Any
 
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import AccessMode, Capability, Occupancy, Role
+from nearpilot.shared.enums import AccessMode, ApprovalMode, Capability, Occupancy, Role
 
 # 기기 ID는 MQTT 토픽, Mosquitto 계정 이름, ACL, 파일 이름에 그대로 쓰인다.
 _NODE_ID = re.compile(r"[A-Za-z0-9._-]+")
@@ -39,8 +40,8 @@ _TOP_KEYS = {
 }
 _OPTIONAL_TOP_KEYS = {"server_settings"}
 _USER_KEYS = ("user_id", "role", "minor")
-_NODE_KEYS = ("node_id", "capability", "occupancy", "mode", "trusted")
-_OPTIONAL_NODE_KEYS = ("mode", "trusted")
+_NODE_KEYS = ("node_id", "capability", "occupancy", "mode", "trusted", "approval_mode", "approval_ttl_sec", "max_uses")
+_OPTIONAL_NODE_KEYS = ("mode", "trusted", "approval_mode", "approval_ttl_sec", "max_uses")
 
 
 class EvalConfigError(ValueError):
@@ -56,6 +57,9 @@ class NodeSpec:
     occupancy: str  # rental | shared
     mode: str = "open"  # open | restricted
     trusted: bool = True
+    approval_mode: str = "one_time"  # one_time | time_window. 정책 시드 값
+    approval_ttl_sec: int | None = None  # 승인 유효시간. 없으면 정책에 쓰지 않는다
+    max_uses: int | None = None  # 승인 한 건의 사용 횟수. 없으면 정책에 쓰지 않는다 (무제한)
 
 
 @dataclass(frozen=True)
@@ -261,7 +265,12 @@ def _nodes(value: Any, problems: list[str]) -> tuple[NodeSpec, ...]:
         occupancy = _take(problems, f"{where}.occupancy", partial(_member, Occupancy), row.get("occupancy"))
         mode = _take(problems, f"{where}.mode", partial(_member, AccessMode), row.get("mode", "open"))
         trusted = _take(problems, f"{where}.trusted", _boolean, row.get("trusted", True))
-        nodes.append((where, NodeSpec(node_id, capability, occupancy, mode, trusted)))
+        approval_mode = _take(problems, f"{where}.approval_mode", partial(_member, ApprovalMode),
+                              row.get("approval_mode", ApprovalMode.ONE_TIME.value))
+        # 없는 키는 None이라서 `_take`가 건너뛴다
+        ttl = _take(problems, f"{where}.approval_ttl_sec", partial(_integer, minimum=1), row.get("approval_ttl_sec"))
+        max_uses = _take(problems, f"{where}.max_uses", partial(_integer, minimum=1), row.get("max_uses"))
+        nodes.append((where, NodeSpec(node_id, capability, occupancy, mode, trusted, approval_mode, ttl, max_uses)))
     _report_duplicates(((f"{where}.node_id", node.node_id) for where, node in nodes), problems)
     return tuple(node for _, node in nodes)
 
