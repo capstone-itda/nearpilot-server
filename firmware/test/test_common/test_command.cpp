@@ -7,7 +7,7 @@ namespace {
 const double NOW = 1792713610.0;  // 2026-10-23T00:00:10Z
 
 void fill(JsonDocument& doc) {
-    doc["schema_version"] = 1;
+    doc["schema_version"] = 2;
     doc["command_id"] = "cmd-1";
     doc["node_id"] = "light-01";
     doc["action"] = "on";
@@ -43,7 +43,7 @@ void test_FR06_validate_order() {
     TEST_ASSERT_NULL(check("action", "off"));
     JsonDocument doc;
     fill(doc);
-    doc["schema_version"] = 2;
+    doc["schema_version"] = 1;  // MQTT v1 is rejected, not reinterpreted.
     TEST_ASSERT_EQUAL_STRING("INVALID_MESSAGE", np::validateCommand(doc, context()));
     TEST_ASSERT_EQUAL_STRING("INVALID_MESSAGE", check("schema_version", "1"));
     TEST_ASSERT_EQUAL_STRING("INVALID_MESSAGE", check("node_id", "light-02"));

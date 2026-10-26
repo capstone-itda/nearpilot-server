@@ -10,7 +10,7 @@ from tools.node_lab.session import Lab
 BOOT = [
     "NODE_START node=light-1 config=loaded generation=1 mode=serial_only storage=1 reset_reason=external_pin",
     "WIFI_CONNECTED ip=10.0.0.7 rssi=-50",
-    "MQTT_CONNECTED session_id=s1 subscribed=cmd,safety_check",
+    "MQTT_CONNECTED session_id=s1 subscribed=cmd",
     "ANNOUNCE_DEFERRED session_id=s1 reason=clock_unverified",
     "CLOCK_SYNCED utc=2026-10-23T00:00:00.000000Z",
     "CLOCK_TRUSTED age_ms=3",
@@ -43,7 +43,7 @@ def test_FR04_boot_check_uses_last_boot_and_tracks_recovery():
     again = BOOT + ["NODE_NOT_READY reason=wifi_disconnected uptime_ms=9000",
                     "MQTT_DISCONNECTED session_id=s1 error=-3",
                     "WIFI_CONNECTED ip=10.0.0.7 rssi=-50",
-                    "MQTT_CONNECTED session_id=s2 subscribed=cmd,safety_check",
+                    "MQTT_CONNECTED session_id=s2 subscribed=cmd",
                     "ANNOUNCED session_id=s2",
                     "NODE_READY session_id=s2 clock_age_ms=5 uptime_ms=20000"]
     summary = summarize(previous + lines(again, start=100.0))

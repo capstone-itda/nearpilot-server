@@ -19,8 +19,7 @@ public:
     virtual std::string newEventId() = 0;
     virtual std::string utcNow() = 0;
     virtual void publish(JsonDocument& record) = 0;
-    virtual Device& device() = 0;
-    virtual uint64_t monotonicMs() = 0;
+    virtual Actuator& actuator() = 0;
     virtual void log(const std::string& line) = 0;
     // Unset by default: adapters must explicitly provide a verified clock for reclamation.
     virtual CommandContext retentionContext() { return {}; }
@@ -36,9 +35,6 @@ public:
     // receivedBusy: the message arrived while another command was being handled.
     void handle(const std::string& payload, bool receivedBusy);
 
-    // Poll once from loop(); no waiting or automatic restart of the actuator.
-    void poll();
-
     // Restored receipts become unknown; a live execution is kept intact on reconnect.
     void replay();
 
@@ -48,6 +44,9 @@ public:
     bool replayNext();
 
     bool busy() const { return busy_; }
+
+    // MQTT v2 `status.command_state`: unknown when the record store cannot vouch for the state.
+    const char* commandState() const { return !ledger_.ready() ? "unknown" : busy_ ? "busy" : "idle"; }
 
 private:
     void event(JsonDocument& record, const char* state, const char* error = nullptr);
@@ -62,9 +61,6 @@ private:
     bool busy_ = false;
     int activeSlot_ = -1;
     JsonDocument activeRecord_;
-    Actuation activeRequest_;
-    Device* activeDevice_ = nullptr;
-    CompletionPolicy activePolicy_;
     int replayCursor_ = -1;
 };
 
