@@ -28,15 +28,16 @@ describe('railView', () => {
     expect(v.steps[0]).toMatchObject({ detail: '방문자 A가 AI에게 말함', code: '' });
     expect(v.steps[2].detail).toBe('모두 통과');
     expect(checksOf(s)).toEqual([['pass', '누구인지'], ['pass', '사물함 1 앞'], ['pass', '정책 통과'], ['pass', '비어 있음']]);
-    expect(v.steps[3]).toMatchObject({ tone: 'ok', mark: '실행 중', detail: '사물함 1에 열기 명령', code: 'locker-1 · open · MQTT' });
+    expect(v.steps[3]).toMatchObject({ tone: 'ok', mark: '명령 결과 대기', detail: '사물함 1에 열기 명령', code: 'locker-1 · open · MQTT' });
   });
 
-  it('FR12B 실행 완료: 5단계가 완료', () => {
+  it.each(['open', 'on', 'off'] as const)('FR07 FR12B %s 성공은 제어 신호 출력 완료다', (action) => {
     const s = SCENES.flow();
+    s.request!.action = action;
     s.request!.execution = 'succeeded';
     const v = railView(s, PLACES, 'p-a');
     expect(v.steps[3].status).toBe('done');
-    expect(v.steps[4]).toMatchObject({ status: 'current', tone: 'ok', mark: '완료', detail: '사물함 1이 열렸어요' });
+    expect(v.steps[4]).toMatchObject({ status: 'current', tone: 'ok', mark: '완료', detail: '제어 신호 출력 완료' });
   });
 
   it('FR12B 고장 격리: 5단계가 빨강, 결과 불명', () => {
@@ -137,7 +138,7 @@ describe('railView 판정 전', () => {
 describe('railView 명령 전', () => {
   it('FR12B 판정은 OK지만 명령 이벤트가 오기 전에는 허가로 보이고, 명령이 오면 실행 중', () => {
     expect(railView(stateAt(sec('14:28:10.205')), PLACES, 'p-a').steps[3]).toMatchObject({ status: 'current', mark: '허가' });
-    expect(railView(stateAt(sec('14:28:10.215')), PLACES, 'p-a').steps[3]).toMatchObject({ status: 'current', mark: '실행 중' });
+    expect(railView(stateAt(sec('14:28:10.215')), PLACES, 'p-a').steps[3]).toMatchObject({ status: 'current', mark: '명령 결과 대기' });
   });
 });
 
@@ -198,7 +199,7 @@ describe('railView 여러 장소', () => {
   it('FR12B 라운지가 주 장소여도 옆방 기기의 이름으로 레일과 서버 랙을 채운다', () => {
     const s = SCENES['side-room']();
     expect(railView(s, PLACES, 'p-a')).toMatchObject({ mode: 'live', title: '방문자 A · 조명 켜기' });
-    expect(railView(s, PLACES, 'p-a').steps[3]).toMatchObject({ tone: 'ok', mark: '실행 중', detail: '무드등에 켜기 명령' });
+    expect(railView(s, PLACES, 'p-a').steps[3]).toMatchObject({ tone: 'ok', mark: '명령 결과 대기', detail: '무드등에 켜기 명령' });
     expect(checksOf(s)[1]).toEqual(['pass', '무드등 앞']);
     // 공용형인 무드등은 점유 칸을 생략한다
     expect(checksOf(s)[3]).toEqual(['none', '공용형 생략']);

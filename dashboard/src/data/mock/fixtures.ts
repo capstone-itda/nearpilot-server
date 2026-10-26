@@ -63,11 +63,11 @@ export const APPROVALS: { [K in keyof Approvals]: Since<ApprovalRow>[] } = {
 };
 
 export const AUDIT: AuditRow[] = [
-  { id: 'a9', at: '14:43:49', step: 'exec', nodeId: 'mood-1', text: '켜짐 완료', code: 'OK' },
+  { id: 'a9', at: '14:43:49', step: 'exec', nodeId: 'mood-1', text: '제어 신호 출력 완료', code: 'OK' },
   { id: 'a8', at: '14:30:58', step: '4', nodeId: 'light-1', text: '승인 필요', code: 'APPROVAL_REQUIRED' },
   { id: 'a7', at: '14:30:58', step: '3', nodeId: 'light-1', text: '근접 통과 0.91', code: 'OK' },
   { id: 'a6', at: '14:29:40', step: 'fault', nodeId: 'locker-2', text: '결과 불명으로 격리', code: 'EXEC_UNKNOWN' },
-  { id: 'a5', at: '14:28:11', step: 'exec', nodeId: 'locker-1', text: '열림 완료', code: 'OK' },
+  { id: 'a5', at: '14:28:11', step: 'exec', nodeId: 'locker-1', text: '제어 신호 출력 완료', code: 'OK' },
   { id: 'a4', at: '14:26:12', step: '3', text: '어느 사물함 앞인지 확신 부족', code: 'LOW_CONFIDENCE' },
   { id: 'a3', at: '14:22:05', step: '5', nodeId: 'locker-3', text: '다른 사람이 점유 중', code: 'DEVICE_BUSY' },
   { id: 'a2', at: '14:20:41', step: '1', text: '비콘 수신 없음', code: 'BEACON_NOT_SEEN' },
@@ -75,20 +75,20 @@ export const AUDIT: AuditRow[] = [
 ];
 
 export const HISTORY: Since<HistoryRow>[] = [
-  { requestId: 'r-1443', at: '14:43', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'OK', nodeId: 'mood-1', outcome: '켜짐', since: '14:43:49' },
+  { requestId: 'r-1443', at: '14:43', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'OK', nodeId: 'mood-1', outcome: '제어 신호 출력 완료', since: '14:43:49' },
   { requestId: 'r-1430', at: '14:30', personId: 'p-b', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함', code: 'APPROVAL_REQUIRED', since: '14:30:58' },
   { requestId: 'r-1429', at: '14:29', personId: 'p-b', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-2', outcome: '결과 불명 → 고장 격리', code: 'EXEC_UNKNOWN', since: '14:29:40' },
-  { requestId: 'r-1428', at: '14:28', personId: 'p-a', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-1', outcome: '열림', since: '14:28:11' },
+  { requestId: 'r-1428', at: '14:28', personId: 'p-a', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-1', outcome: '제어 신호 출력 완료', since: '14:28:11' },
   { requestId: 'r-1426', at: '14:26', personId: 'p-a', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'ASK', outcome: '다시 질문', code: 'LOW_CONFIDENCE', since: '14:26:12' },
   { requestId: 'r-1422', at: '14:22', personId: 'p-b', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'BUSY', nodeId: 'locker-3', outcome: '실행 안 함', code: 'DEVICE_BUSY', since: '14:22:05' },
   { requestId: 'r-1420', at: '14:20', personId: 'p-c', target: { kind: 'nearest', capability: 'speaker' }, action: 'on', verdict: 'DENY', outcome: '실행 안 함', code: 'BEACON_NOT_SEEN', since: '14:20:41' },
-  { requestId: 'r-1403', at: '14:03', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'OK', nodeId: 'light-1', outcome: '켜짐 · 시간 승인 사용', since: '14:03:00' },
+  { requestId: 'r-1403', at: '14:03', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'OK', nodeId: 'light-1', outcome: '제어 신호 출력 완료 · 시간 승인 사용', since: '14:03:00' },
   { requestId: 'r-1401', at: '14:01', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함 · 시간 승인됨', code: 'APPROVAL_REQUIRED', since: '14:01:00' },
-  { requestId: 'r-1358', at: '13:58', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'OK', nodeId: 'light-2', outcome: '켜짐 · 1회 승인 소진', since: '13:58:00' },
+  { requestId: 'r-1358', at: '13:58', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'OK', nodeId: 'light-2', outcome: '제어 신호 출력 완료 · 1회 승인 소진', since: '13:58:00' },
   { requestId: 'r-1347', at: '13:47', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-2', outcome: '실행 안 함 · 1회 승인됨', code: 'APPROVAL_REQUIRED', since: '13:47:00' },
   { requestId: 'r-1342', at: '13:42', personId: 'p-c', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-2', outcome: '실행 안 함 · 승인 신청 만료', code: 'APPROVAL_REQUIRED', since: '13:42:00' },
   { requestId: 'r-1339', at: '13:39', personId: 'p-c', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함 · 소유자 거절', code: 'APPROVAL_REQUIRED', since: '13:39:00' },
-  { requestId: 'r-1321', at: '13:21', personId: 'p-c', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-3', outcome: '열림 · 대여 시작', since: '13:21:05' }
+  { requestId: 'r-1321', at: '13:21', personId: 'p-c', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-3', outcome: '제어 신호 출력 완료 · 대여 시작', since: '13:21:05' }
 ];
 
 /** 실시간 집계의 바탕. 목 어댑터가 지금까지 보인 HISTORY를 센다. 이력 "오늘"과 같은 수가 된다. */
@@ -119,13 +119,13 @@ export const TRUST: TrustReport = {
 
 export const RENTALS: Record<string, RentalInfo> = {
   'locker-3': { nodeId: 'locker-3', personId: 'p-c', startedAt: '13:21', overdueMinutes: 0, timeline: [
-    { at: '13:21:04', text: '예약 · RESERVED' }, { at: '13:21:05', text: '열림 · ACTIVE' }, { at: '14:21:05', text: '대여 시간 초과' }
+    { at: '13:21:04', text: '예약 · RESERVED' }, { at: '13:21:05', text: '제어 신호 출력 완료 · ACTIVE' }, { at: '14:21:05', text: '대여 시간 초과' }
   ] },
   'locker-2': { nodeId: 'locker-2', personId: 'p-b', startedAt: '14:29', overdueMinutes: 0, timeline: [
     { at: '14:29:37', text: '예약 · RESERVED' }, { at: '14:29:40', text: '결과 불명 · 고장 격리' }
   ] },
   'locker-1': { nodeId: 'locker-1', personId: 'p-a', startedAt: '14:28', overdueMinutes: 0, timeline: [
-    { at: '14:28:10', text: '예약 · RESERVED' }, { at: '14:28:11', text: '열림 · ACTIVE' }
+    { at: '14:28:10', text: '예약 · RESERVED' }, { at: '14:28:11', text: '제어 신호 출력 완료 · ACTIVE' }
   ] }
 };
 

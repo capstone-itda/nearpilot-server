@@ -1,7 +1,7 @@
 // 모니터 상태 → 흐름 레일 다섯 단계. 쉬운 말이 크게, 코드는 보조 글자로.
 // 서버의 확인 네 칸은 무대의 서버 랙이 보이고(serverChecks), 레일은 한 줄로 줄인다.
 import { isDecided, type DeviceInfo, type PlaceInfo, type RequestProgress, type MonitorState } from '../model/types';
-import { ACTION_DONE, ACTION_NAME, CIRCLED, STEP_SHORT, approvalText, josa, reasonText, requestTitle, toolCall } from './text';
+import { OUTPUT_COMPLETE, ACTION_NAME, CIRCLED, STEP_SHORT, approvalText, josa, reasonText, requestTitle, toolCall } from './text';
 
 export type CheckResult = 'pass' | 'fail' | 'wait' | 'unsure' | 'none' | 'skip';
 export type StepTone = 'accent' | 'ok' | 'ask' | 'appr' | 'busy' | 'deny';
@@ -110,14 +110,14 @@ export function railView(s: MonitorState, places: PlaceInfo[], mirroredPersonId:
         s4 = { status: 'current', tone: 'ok', mark: '허가', detail: `${name}에 ${act} 명령 보낼 차례`, code: nodeAct };
         s5 = { status: 'todo' };
       } else if (r.execution === 'sent') {
-        s4 = { status: 'current', tone: 'ok', mark: '실행 중', detail: `${name}에 ${act} 명령`, code: `${nodeAct} · MQTT` };
+        s4 = { status: 'current', tone: 'ok', mark: '명령 결과 대기', detail: `${name}에 ${act} 명령`, code: `${nodeAct} · MQTT` };
         s5 = { status: 'todo' };
       } else {
         s4 = { status: 'done', detail: `${act} 명령 보냄`, code: nodeAct };
         // 결과가 온 실행의 종류를 모두 가른다. 거절(rejected)은 고장 격리가 아니다: 기기를 격리하지 않고 사용분을 돌려준다
         switch (r.execution) {
           case 'succeeded':
-            s5 = { status: 'current', tone: 'ok', mark: '완료', detail: `${josa(name, '이', '가')} ${ACTION_DONE[r.action]}`, code: 'OK' };
+            s5 = { status: 'current', tone: 'ok', mark: '완료', detail: OUTPUT_COMPLETE, code: 'OK' };
             break;
           case 'failed':
             s5 = { status: 'current', tone: 'deny', mark: '고장 격리', detail: '기기가 실패를 알림', code: 'EXEC_FAILED → FAULT' };
@@ -126,7 +126,7 @@ export function railView(s: MonitorState, places: PlaceInfo[], mirroredPersonId:
             s5 = { status: 'current', tone: 'busy', mark: '거절됨', detail: '기기가 실행 전에 거절', code: 'rejected' };
             break;
           case 'unknown':
-            s5 = { status: 'current', tone: 'deny', mark: '고장 격리', detail: '응답 없음 · 결과 불명', code: 'EXEC_UNKNOWN → FAULT' };
+            s5 = { status: 'current', tone: 'deny', mark: '고장 격리', detail: '제어 신호 출력 결과 불명', code: 'EXEC_UNKNOWN → FAULT' };
             break;
         }
       }

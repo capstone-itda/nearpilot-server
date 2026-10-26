@@ -3,7 +3,7 @@ import { isDecided, type DecidedRequest, type RequestProgress, type Verdict } fr
 import { KeyValue, ProbBars, Section, StepList, Timeline, VerdictTag, type StepRowResult } from '../components/common';
 import { Panel } from '../components/Panel';
 import { useData } from '../data/context';
-import { ACTION_DONE, ACTION_NAME, ACTION_VERB, CAPABILITY_NAME, CIRCLED, STEP_SHORT, VERDICT_LABEL, approvalText, josa, reasonText, requestTitle, toolCall } from '../view/text';
+import { OUTPUT_COMPLETE, ACTION_NAME, ACTION_VERB, CAPABILITY_NAME, CIRCLED, STEP_SHORT, VERDICT_LABEL, approvalText, reasonText, requestTitle, toolCall } from '../view/text';
 
 const STOP_RESULT: Record<Verdict, StepRowResult> = { OK: 'pass', ASK: 'ask', NEED_APPROVAL: 'appr', BUSY: 'fail', DENY: 'fail' };
 
@@ -26,11 +26,11 @@ function stopHint(r: RequestProgress, cap: string): string {
   return why[r.reason] ? `${CIRCLED[i]} ${STEP_SHORT[i]}에서 ${why[r.reason]} 멈췄어요` : `${CIRCLED[i]} ${STEP_SHORT[i]}에서 멈췄어요 · ${reasonText(r.reason)}`;
 }
 
-function execText(r: RequestProgress, subject: string): string {
+function execText(r: RequestProgress): string {
   switch (r.execution) {
-    case 'succeeded': return `${subject} ${ACTION_DONE[r.action]}`;
+    case 'succeeded': return OUTPUT_COMPLETE;
     case 'failed': return '기기가 실패를 알려 고장 격리했어요 (EXEC_FAILED)';
-    case 'unknown': return '응답이 없어 결과를 몰라 고장 격리했어요 (EXEC_UNKNOWN)';
+    case 'unknown': return '제어 신호 출력 결과를 몰라 고장 격리했어요 (EXEC_UNKNOWN)';
     case 'rejected': return '기기가 실행 전에 거절했어요 · 격리하지 않았어요 (rejected)';
     case 'sent': return '명령 보냄 · 결과 기다림';
     default: return '허가 · 명령 보낼 차례';
@@ -67,7 +67,7 @@ export function RequestPanel({ r, onClose }: { r: RequestProgress; onClose: () =
       </Section>
       {r.verdict === 'OK' && r.nodeId ? (
         <Section title="실행 결과">
-          <KeyValue rows={[['명령', `${deviceName(r.nodeId)} ${ACTION_NAME[r.action]}`], ['결과', execText(r, josa(deviceName(r.nodeId), '이', '가'))]]} />
+          <KeyValue rows={[['명령', `${deviceName(r.nodeId)} ${ACTION_NAME[r.action]}`], ['결과', execText(r)]]} />
         </Section>
       ) : null}
       {showBars ? (

@@ -1,7 +1,7 @@
 # 대시보드 조회 서비스와 모니터링 발행
 
 - 담당: dnnals (대시보드)
-- 요구사항: FR-11, FR-12A, FR-12B, NFR-07, NFR-08
+- 요구사항: FR-07, FR-11, FR-12A, FR-12B, FR-20, NFR-07, NFR-08
 - 따르는 결정: #168, 2026-10-23 팀 대면 논의 (조회는 CORE 조회 서비스, 설정은 선택 섹션 `[dashboard]`), 2026-10-24 담당자 결정 (6절: 대시보드에 필요한 서버 쪽 일을 이 작업에 모두 넣는다, 발행은 커밋된 행을 따라 읽어서 한다), 2026-10-25 팀 확인 (6절의 다른 역할 폴더 작업과 발행 방식, 2절 형식 변경 `accessEnd`·`rejected`·`period`, `[dashboard]` 키, 기기 이름 쓰기 `set_node_name`, `evaluation`·`confusion` 선택 키, architecture §2 미결 닫기)
 
 ## 1. 왜
@@ -130,6 +130,11 @@
 
 ## 6. 결정
 
+- 2026-10-26 센서 기반 물리 검증 제외 결정을 대시보드 조회 문구에 적용한다 (FR-07, FR-12A, FR-12B, FR-20).
+  - 감사 로그, 이력과 대여 타임라인의 성공은 `제어 신호 출력 완료`로 쓴다. 기존 `열림`·`켜짐`·`꺼짐` 문구를 대체한다.
+  - `CLOSING` 메모는 `점유 해제 중`, 종료 완료 기록은 `반납 완료 · 점유 해제`로 쓴다.
+  - 조회 형식과 판정, 실행 결과 값은 바꾸지 않는다. `command_state`를 기기·점유 상태에서 추정하지 않는다.
+
 - 대시보드에 필요한 서버 쪽 일은 다른 역할의 폴더여도 이 작업에 넣는다 (2026-10-24 담당자 결정) — 4절 고치는 곳의 `db/`, `runtime/`, `core/lifecycle/shared_light.py`, `core/admin/`, `cli/seed.py`, `shared/`가 그 범위다. 대시보드가 실제 서버로 동작해야 끝나는 작업이라, 다른 담당의 일정을 기다리지 않는다. 2026-10-25 팀이 확인했다.
 - 조회 서비스, 문구, 따라 읽기는 `core/dashboard/`에 두고 대시보드 담당이 맡는다 — architecture.md §2의 미결을 2026-10-24 담당자가 정했다. 대시보드만 쓰는 읽기라 판정·상태 관리의 서비스와 섞지 않는다.
 - 발행은 사건이 난 자리에서 하지 않고, 따라 읽기가 커밋된 행을 읽어 한다 (2026-10-23 팀 결정의 "사건이 난 영역이 그 자리에서 넘긴다"를 바꾼다, 2026-10-24 담당자 결정) — 감사 행과 상태 쓰기는 DB 트랜잭션 안에 있어 그 자리에서 발행하면 되돌려진 쓰기를 알린다. 저장 결과가 새 상태를 돌려주지 않고, 사람 역할과 내부 요청 ID를 모르는 자리가 많다. 따라 읽기는 다른 영역 코드를 고치지 않고 커밋 순서를 지킨다. 화면까지 최대 `tail_interval_sec`만큼 늦다.
@@ -146,11 +151,11 @@
 - 단계 결과: 판정이 멈춘 단계(마지막 판정 행이 남은 단계)는 `stop`, 그 앞은 `pass`, 뒤는 `skip`. OK면 닿은 단계는 `pass`이고, 공용형은 ⑤⑥이 `skip`이다. ⓪은 감사 행이 없어도 ①이 있으면 `pass`이고 시각은 요청을 받은 시각이다. ⑤⑥은 감사 행 하나를 같이 쓰므로 그 행에서 멈추면 사유로 나눈다 (`DEVICE_BUSY`는 ⑤ `stop`, `USER_BUSY`·`APPROVAL_EXHAUSTED`는 ⑤ `pass`·⑥ `stop`). ④에서 나온 `APPROVAL_EXHAUSTED`는 ④ `stop`이다. 판정 중이면 닿지 않은 단계는 `pending`이다. 서버 오류로 판정 행이 없으면 닿은 마지막 단계에서 멈춘 것으로 본다. 오류 뒤 다시 판정한 요청은 마지막 재판정(⓪ `link_request_retry` 행) 뒤의 행만 본다. 요청 한 건 조회와 스트림이 같은 함수로 만든다.
 - 감사 행 `code`: payload의 `reason` 또는 `result`가 `ReasonCode` 값이면 그 값. 실행 결과는 `succeeded` → `OK`, `failed`·`rejected` → `EXEC_FAILED`, `unknown` → `EXEC_UNKNOWN`. 판정 중(`IN_PROGRESS`)은 `COMMAND_IN_PROGRESS`. 그 밖은 `OK`.
 - `fault.cause`: 격리 근거 `device_result`의 `unknown` → `EXEC_UNKNOWN`, 그 밖의 결과 → `EXEC_FAILED`, 다른 근거(`sensor_fault`, `announce_changed` 등) → `TARGET_UNAVAILABLE`. 근거는 기기마다 마지막 고장 근거 행이다 (`isolate_device`, 결과 `unknown`·`failed`인 `record_result`). `rejected` 결과는 기기를 격리하지 않으므로 근거가 아니다.
-- 문구는 `core/dashboard/text.py` 한 곳에서 만든다. 지금 대시보드 목 데이터와 같은 짧은 한국어다 (`열림`, `실행 안 함`, `결과 불명 → 고장 격리`, `근접 통과 0.91`, `비콘 수신 없음`).
+- 문구는 `core/dashboard/text.py` 한 곳에서 만든다. 지금 대시보드 목 데이터와 같은 짧은 한국어다 (`제어 신호 출력 완료`, `실행 안 함`, `결과 불명 → 고장 격리`, `근접 통과 0.91`, `비콘 수신 없음`).
 - 이력 `period`는 `today`(서버 시간대의 오늘 0시부터) 또는 `HH:MM~HH:MM`(서버 시간대 오늘의 구간)이다 — 대시보드 이력 화면의 두 선택지다. 시각 비교는 UTC로 한다.
 - 지연 시간과 `respondedAt`은 요청을 받은 시각부터 그 요청의 마지막 감사 행(반납 완료 행은 뺀다)까지다 — 응답 시각을 저장하지 않는다. 반납 완료 행은 대여를 만든 요청의 ID를 달고 반납할 때 붙어서, 넣으면 반납이 늦을수록 지연이 길어진다. 중앙값과 p95는 시연 세션(서버 시작 뒤)의 판정만으로 센다. `since`는 서버가 시작한 시각이다.
 - `doubleOccupancy`는 같은 기기에 끝나지 않은 점유가 둘 이상인 기기 수다 (보통 0).
-- 점유 목록: 대여형은 끝나지 않은 `use_session`, 공용형은 `SharedLightService`의 유지 대상자 (2026-10-24 담당자 결정). `startedAt`은 대여형은 예약 시각(없으면 받은 시각), 공용형은 유지 대상자의 마지막 요청 시각이다. `overdueMinutes`는 `ReleaseService`와 같은 규칙(대여 만료 시각부터, 0 이상)이고 0이면 뺀다. `sessionNote`는 기기가 `FAULT`면 `고장으로 보존`, 기기나 세션이 `CLOSING`이면 `반납 확인 중`, 초과면 `대여 시간 초과`.
+- 점유 목록: 대여형은 끝나지 않은 `use_session`, 공용형은 `SharedLightService`의 유지 대상자 (2026-10-24 담당자 결정). `startedAt`은 대여형은 예약 시각(없으면 받은 시각), 공용형은 유지 대상자의 마지막 요청 시각이다. `overdueMinutes`는 `ReleaseService`와 같은 규칙(대여 만료 시각부터, 0 이상)이고 0이면 뺀다. `sessionNote`는 기기가 `FAULT`면 `고장으로 보존`, 기기나 세션이 `CLOSING`이면 `점유 해제 중`, 초과면 `대여 시간 초과`.
 - 승인 분류: 대기는 `pending`이고 대기 기한 전, 유효는 `approved`이고 유효 기한 전이며 남은 횟수가 있음, 나머지는 끝남. `endReason`은 `RepositoryPolicyChecker`와 같은 규칙이다. `remainingMinutes`는 대기면 대기 기한까지, 유효면 유효 기한까지다.
 - 점검: `connected`는 판정 ②와 같은 규칙(마지막 수신이 `online_ttl_sec` 안이고 세션이 있음). 비콘은 활성 비콘이 있는 사람만 (2026-10-24 담당자 결정). `lastSeenSec`은 그 비콘의 마지막 관측부터, 없으면 `None`. `note`는 `beacon_recent_sec`을 넘기거나 관측이 없으면 `최근 신호 없음`. `server.database`는 `SELECT 1`의 성공, `mqtt`는 연결 준비 상태, `model`은 장소마다 `{모델} · {보정}`을 ` / `로 이은 문자열이다.
 - 평가: 설정 파일 폴더의 부모 아래 `var/reports/`(CLI `dirs_for`와 같은 폴더)의 CSV 가운데 `generated_at`이 가장 늦은 것 하나를 읽는다 (2026-10-24 담당자 결정). 지표 행마다 `id`는 1부터의 순번, `name`은 지표 이름의 한국어(`앞 기기 오선택률`, `보정 오차`, `전환 시간`, `흔들림`), `pass`는 통과 여부(비면 `None`), `label`은 `통과`·`✕ 미통과`·`미측정`, `sample`은 시행 수, `sampleNote`는 리포트의 비고다. `date`는 `generated_at`의 날짜다.
@@ -187,3 +192,7 @@
 | FR-12B | `test_FR12B_요청_하나의_이벤트가_순서대로_나간다` | `mcp_call` → `step`… → `posterior` → `verdict` → `command` → `exec_result` → `mcp_result` |
 | FR-12A, FR-12B | `test_FR12B_서버에서_대시보드까지_이어진다` (`tests/integration/`) | `[dashboard]`가 있는 조립 서버에서 MCP `request_use` 하나가 스트림 이벤트로 오고, 조회 REST 9개가 200이다 |
 | NFR-07 | `test_NFR07_따라_읽기_실패는_다음_주기에_이어_간다`, `test_NFR07_발행_실패가_판정을_바꾸지_않는다` | 따라 읽기와 허브의 실패가 판정·실행 결과에 닿지 않는다 |
+
+2026-10-26 표시 문구 변경 검증: `server/`에서 전체 `pytest`를 실행했다.
+실제 Mosquitto를 포함해 3,661개 통과, 기존 건너뜀 2개와 예상 실패 1개다.
+수정한 Python 테스트 함수 목록은 이전 커밋과 같다.

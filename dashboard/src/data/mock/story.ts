@@ -142,12 +142,12 @@ const REQUEST_SCRIPTS: RequestScript[] = [
   { id: 'r-1428', at: '14:28:10', personId: 'p-a', target: LOCKER, action: 'open',
     steps: ALL_PASS(['새 요청', '비콘 최근 수신', '사물함 3대', 'P(locker-1) 0.97 ≥ 0.95 (설정값)', '열림 정책', '비어 있음', '다른 점유 없음']),
     posterior: { at: 3, posteriors: { 'locker-1': 0.97, 'locker-2': 0.02, 'locker-3': 0.01 }, threshold: 0.95 },
-    verdict: 'OK', reason: 'OK', nodeId: 'locker-1', exec: { at: '14:28:11', result: 'succeeded' }, said: '내 앞 사물함 열어 줘', reply: '사물함 1을 열었어요.' },
+    verdict: 'OK', reason: 'OK', nodeId: 'locker-1', exec: { at: '14:28:11', result: 'succeeded' }, said: '내 앞 사물함 열어 줘', reply: '사물함 1의 제어 신호 출력을 마쳤어요.' },
   { id: 'r-1429', at: '14:29:37', personId: 'p-b', target: LOCKER, action: 'open',
     steps: ALL_PASS(['새 요청', '비콘 최근 수신', '사물함 3대', 'P(locker-2) 0.96 ≥ 0.95 (설정값)', '열림 정책', '비어 있음', '다른 점유 없음']),
     posterior: { at: 3, posteriors: { 'locker-2': 0.96, 'locker-3': 0.03, 'locker-1': 0.01 }, threshold: 0.95 },
     verdict: 'OK', reason: 'OK', nodeId: 'locker-2', exec: { at: '14:29:40', result: 'unknown' }, said: '내 앞 사물함 열어 줘',
-    reply: '사물함 2가 열렸는지 확인되지 않아 사용을 멈췄어요. 소유자에게 알려 주세요.' },
+    reply: '사물함 2의 제어 신호 출력 결과를 확인하지 못해 사용을 멈췄어요. 소유자에게 알려 주세요.' },
   { id: 'r-1430', at: '14:30:58', personId: 'p-b', target: { kind: 'nearest', capability: 'light' }, action: 'on',
     steps: [...ALL_PASS(['새 요청', '비콘 최근 수신', '조명 3대', 'P(light-1) 0.91 ≥ 0.75 (설정값)']), ['stop']],
     posterior: { at: 3, posteriors: { 'light-1': 0.91, 'light-2': 0.06, 'light-3': 0.03 }, threshold: 0.75 },
@@ -156,7 +156,7 @@ const REQUEST_SCRIPTS: RequestScript[] = [
   { id: 'r-1443', at: '14:43:48', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on',
     steps: ALL_PASS(['새 요청', '비콘 최근 수신', '조명 1대', 'P(mood-1) 0.98 ≥ 0.75 (설정값)', '켜기 정책']),
     posterior: { at: 3, posteriors: { 'mood-1': 0.98 }, threshold: 0.75 },
-    verdict: 'OK', reason: 'OK', nodeId: 'mood-1', exec: { at: '14:43:49', result: 'succeeded' }, said: '조명 켜 줘', reply: '무드등을 켰어요.' }
+    verdict: 'OK', reason: 'OK', nodeId: 'mood-1', exec: { at: '14:43:49', result: 'succeeded' }, said: '조명 켜 줘', reply: '무드등의 제어 신호 출력을 마쳤어요.' }
 ];
 
 /** 승인 신청과 만료 (대기 10분은 목 값, 실제 값은 설정 approval_pending_ttl_sec) */

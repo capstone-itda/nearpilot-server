@@ -13,7 +13,6 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from nearpilot.shared.enums import (
-    Action,
     CommandOutcome,
     DeviceState,
     NodeResultState,
@@ -74,12 +73,12 @@ _ADMIN_TEXT: dict[str, str] = {
 
 # 실행 결과 기록 (event == record_result). 어떤 동작이었는지는 payload 에 없다.
 _RESULT_TEXT: dict[str, str] = {
-    CommandOutcome.SUCCEEDED.value: "실행 완료",
+    CommandOutcome.SUCCEEDED.value: "제어 신호 출력 완료",
     CommandOutcome.FAILED.value: "실행 실패 → 고장 격리",
     CommandOutcome.REJECTED.value: "기기가 실행을 거절",
     CommandOutcome.UNKNOWN.value: "결과 불명 → 고장 격리",
 }
-_EVENT_TEXT: dict[str, str] = {"finish_close": "반납 완료", "settle_recovery": "고장 복구 정산"}
+_EVENT_TEXT: dict[str, str] = {"finish_close": "반납 완료 · 점유 해제", "settle_recovery": "고장 복구 정산"}
 _ISOLATE_TEXT: dict[ReasonCode, str] = {
     ReasonCode.EXEC_UNKNOWN: "결과 불명으로 격리",
     ReasonCode.EXEC_FAILED: "실행 실패로 격리",
@@ -92,7 +91,7 @@ _STEP_NOTE: dict[Step, str] = {
     Step.FAULT: "고장 기록",
 }
 
-_DONE_TEXT: dict[Action, str] = {Action.OPEN: "열림", Action.ON: "켜짐", Action.OFF: "꺼짐"}
+OUTPUT_COMPLETE = "제어 신호 출력 완료"
 _CODE_OF_RESULT: dict[str, ReasonCode] = {  # 실행 결과 → 감사 행 code (spec 6절)
     CommandOutcome.SUCCEEDED.value: ReasonCode.OK,
     CommandOutcome.FAILED.value: ReasonCode.EXEC_FAILED,
@@ -335,18 +334,18 @@ def outcome(req: DashboardRequest, commands: Sequence[DashboardCommand]) -> tupl
     if last is None or last.outcome is None:
         return "실행 중", None
     if last.outcome == CommandOutcome.SUCCEEDED.value:
-        return _DONE_TEXT[last.action], None
+        return OUTPUT_COMPLETE, None
     if last.outcome == CommandOutcome.NOT_SENT.value:  # 보내지 않고 취소했다. 취소 사유가 code 다
         return "실행 안 함", _reason(last.evidence.get("reason")) or ReasonCode.COMMAND_NOT_SENT
     return _HISTORY_OUTCOME.get(last.outcome, ("실행 중", None))
 
 
 def session_note(state: SessionState | None, device_state: DeviceState, overdue_minutes: float) -> str | None:
-    """점유 행의 메모 (spec 6절). 고장, 반납 확인, 대여 시간 초과 순으로 먼저 맞는 것 하나."""
+    """점유 행의 메모 (spec 6절). 고장, 점유 해제, 대여 시간 초과 순으로 먼저 맞는 것 하나."""
     if device_state is DeviceState.FAULT:
         return "고장으로 보존"
     if state is SessionState.CLOSING or device_state is DeviceState.CLOSING:
-        return "반납 확인 중"
+        return "점유 해제 중"
     if overdue_minutes > 0:
         return OVERDUE
     return None
@@ -371,7 +370,7 @@ def fault_cause(evidence: Mapping[str, Any]) -> ReasonCode:
 def timeline_command(cmd: DashboardCommand) -> str | None:
     """대여 타임라인에 쓰는 명령 결과 문구. 결과가 없거나 보내지 않고 취소한 명령은 `None`."""
     if cmd.outcome == CommandOutcome.SUCCEEDED.value:
-        return f"{_DONE_TEXT[cmd.action]} · {SessionState.ACTIVE.value}"
+        return f"{OUTPUT_COMPLETE} · {SessionState.ACTIVE.value}"
     return _TIMELINE_FAILED.get(cmd.outcome)
 
 

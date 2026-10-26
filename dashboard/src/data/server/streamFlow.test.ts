@@ -42,7 +42,7 @@ describe('서버 스트림의 실행 결과', () => {
   it('FR12B 기기가 실행 전에 거절하면(exec_result rejected) 요청의 실행이 rejected이고 레일 5칸이 거절 문구다', () => {
     const s = session();
     s.message([BEACON, CALL, VERDICT_OK, COMMAND]);
-    expect(s.rail().steps[3]).toMatchObject({ status: 'current', mark: '실행 중' });
+    expect(s.rail().steps[3]).toMatchObject({ status: 'current', mark: '명령 결과 대기' });
     expect(s.rail().steps[4]).toEqual({ status: 'todo' });
 
     s.message([exec('rejected')]);
@@ -68,7 +68,7 @@ describe('서버 스트림 다시 연결', () => {
   it('FR12B 명령을 보낸 뒤 끊겼다 다시 연결했는데 지금 상태에 그 요청이 없으면 요청이 사라지고 레일은 실행 중이 아니다', () => {
     const s = session();
     s.message([BEACON, CALL, VERDICT_OK, COMMAND]);
-    expect(s.rail().steps[3].mark).toBe('실행 중');
+    expect(s.rail().steps[3].mark).toBe('명령 결과 대기');
 
     // 끊긴 동안 요청이 끝났다. 지금 상태에는 기기 전이와 비콘만 있다
     s.disconnect();
@@ -115,7 +115,7 @@ describe('서버 스트림 다시 연결', () => {
     // 서버가 진행 중인 요청의 이벤트를 처음부터 다시 보낸다 (명령 결과를 아직 받지 못했다)
     s.message([NOW_ACTIVE, BEACON, CALL, VERDICT_OK, COMMAND]);
     expect(s.state.request).toMatchObject({ id: 'r1', verdict: 'OK', execution: 'sent' });
-    expect(s.rail().steps[3].mark).toBe('실행 중');
+    expect(s.rail().steps[3].mark).toBe('명령 결과 대기');
   });
 
   it('FR12B 끊기기만 했을 때는 마지막 화면을 그대로 둔다. 요청을 지우는 것은 다시 연결할 때다', () => {
@@ -144,7 +144,7 @@ describe('서버 스트림 다시 연결', () => {
     s.message([NOW_ACTIVE, CALL, VERDICT_OK, COMMAND]);
     vi.advanceTimersByTime(JUDGE_GAUGE_MS);
     expect(s.state.request).toMatchObject({ id: 'r1', verdict: 'OK', execution: 'sent' });
-    expect(s.rail().steps[3].mark).toBe('실행 중');
+    expect(s.rail().steps[3].mark).toBe('명령 결과 대기');
   });
 
   it('FR12B 판정 게이지가 붙들었던 옛 이벤트가 나중에 넘어와도, 지운 요청은 되살아나지 않는다', () => {

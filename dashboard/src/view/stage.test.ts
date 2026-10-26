@@ -33,7 +33,7 @@ describe('stageView', () => {
   it('FR12B 요청 진행(OK, 명령 보냄): 대상만 강조, MCP와 명령 선, RSSI', () => {
     const v = stageView(SCENES.flow(), LAYOUT, { panelOpen: false });
     expect(v.scene).toBe('flow');
-    expect(dev(v, 'locker-1')).toMatchObject({ status: '여는 중', code: 'RESERVED', tone: 'ok', dim: false });
+    expect(dev(v, 'locker-1')).toMatchObject({ status: '결과 대기', code: 'RESERVED', tone: 'ok', dim: false });
     expect(v.devices.filter((d) => d.nodeId !== 'locker-1').every((d) => d.dim)).toBe(true);
     expect(dev(v, 'locker-3').status).toBe('사용 중 · 대여 초과');
     expect(v).toMatchObject({ host: true, server: true, mcp: true, cmd: 'locker-1', fault: null, push: false, rssiOn: true });
@@ -74,7 +74,7 @@ describe('stageView', () => {
     expect(v.scene).toBe('fault');
     expect(dev(v, 'locker-2')).toMatchObject({ status: '고장 격리', tone: 'deny', dim: false });
     expect(v).toMatchObject({ fault: 'locker-2', cmd: null, mcp: false });
-    expect(v.callout).toMatchObject({ tone: 'deny', title: '사물함 2 격리', body: '열었는지 몰라 사용을 막음' });
+    expect(v.callout).toMatchObject({ tone: 'deny', title: '사물함 2 격리', body: '제어 신호 출력 결과 불명' });
     expect(v.callout.x - v.shift).toBeLessThanOrEqual(440);
   });
 
@@ -171,7 +171,7 @@ describe('무대의 사람 자리 (표시용)', () => {
   it('FR12B 실행이 끝난 요청은 호출·신호 선을 끈다', () => {
     const v = stageView(SCENES.done(), LAYOUT, { panelOpen: false });
     expect(v).toMatchObject({ mcp: false, rssiOn: false, cmd: null });
-    expect(v.callout.title).toBe('사물함 1 열기 완료');
+    expect(v.callout).toMatchObject({ title: '사물함 1 열기', body: '제어 신호 출력 완료' });
   });
   it('FR12B 예약된 기기는 사용 중이 아니라 예약으로 보인다', () => {
     const v = stageView(SCENES.flow(), LAYOUT, { panelOpen: false, layoutCheck: true });

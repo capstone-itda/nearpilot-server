@@ -26,7 +26,7 @@ const PLACES = {
 const USE_B = { nodeId: 'locker-2', personId: 'p-2', occupancy: 'rental', session: 'ACTIVE', startedAt: at(20, 0) };
 const USE_A = { nodeId: 'locker-1', personId: 'p-1', occupancy: 'rental', session: 'ACTIVE', startedAt: at(28, 11, 120) };
 const AUDIT_OLD = { id: 'a-1', at: at(28, 9), step: '3', nodeId: 'locker-1', text: '근접 통과', code: 'OK' };
-const AUDIT_EXEC = { id: 'a-2', at: at(28, 11, 160), step: 'exec', nodeId: 'locker-1', text: '열림 명령 성공', code: 'OK' };
+const AUDIT_EXEC = { id: 'a-2', at: at(28, 11, 160), step: 'exec', nodeId: 'locker-1', text: '제어 신호 출력 완료', code: 'OK' };
 const TRUST = { live: { since: at(0, 0), decisions: 1, doubleOccupancy: 0, latencyMedianSec: 0.21, latencyP95Sec: null, counts: { OK: 1, BUSY: 0, ASK: 0, DENY: 0, NEED_APPROVAL: 0 } } };
 
 /** 연결 직후 서버가 보내는 지금 상태: 방문자 둘과 이미 사용 중인 사물함 2 */
@@ -186,7 +186,7 @@ test('FR12A FR12B 토큰을 넣으면 가짜 서버의 지금 상태와 사물�
   fake.send(DONE);
   const lastStep = page.locator('[data-component="FlowStep"]').nth(4);
   await expect(lastStep.locator('.np-step__mark')).toHaveText('완료', { timeout: 15_000 });
-  await expect(lastStep.locator('.np-step__detail')).toContainText('열렸어요');
+  await expect(lastStep.locator('.np-step__detail')).toContainText('제어 신호 출력 완료');
   await expect(device(page, '사물함 1').locator('.np-stage__device-status')).toHaveText('사용 중');
   await expect(page.locator('.np-topbar__recv')).toHaveText('수신 14:28:11');
 
@@ -206,7 +206,7 @@ test('FR12A FR12B 토큰을 넣으면 가짜 서버의 지금 상태와 사물�
   const audit = panel.getByRole('table', { name: '감사 로그' }).locator('tbody tr');
   await expect(audit).toHaveCount(2);
   await expect(audit.first()).toContainText('14:28:11');
-  await expect(audit.first()).toContainText('열림 명령 성공');
+  await expect(audit.first()).toContainText('제어 신호 출력 완료');
   await expect(audit.last()).toContainText('14:28:09');
 
   await side.getByRole('button', { name: '신뢰도 지표' }).click();
@@ -296,7 +296,7 @@ test('FR12B 스트림이 끊기면 끊김을 알리고, 버튼을 누르지 않�
   fake.send([CALL, ...JUDGING]);
   const railTitle = page.locator('.np-rail__title');
   await expect(railTitle).toHaveText('방문자 A · 사물함 열기');
-  await expect(page.locator('[data-component="FlowStep"]').nth(3).locator('.np-step__mark')).toHaveText('실행 중');
+  await expect(page.locator('[data-component="FlowStep"]').nth(3).locator('.np-step__mark')).toHaveText('명령 결과 대기');
 
   fake.close(1013);
   const banner = page.locator('[data-component="OfflineBanner"]');
