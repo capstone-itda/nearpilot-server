@@ -70,7 +70,7 @@
 - 요청 한도 집계와 거부는 기존 DB·판정 spec의 fix가 맡는다.
 - REST와 WebSocket의 내부 구현, 관리 서비스의 내부 동작과 시드 스크립트는 별도 작업이다.
 - 계정·승인 REST의 기존 서비스 생성과 라우터 연결은 이 조립에 포함한다.
-- 인증 실패 감사 접점과 원래 요청 연결의 새 계약은 만들지 않는다.
+- 인증 실패를 원래 요청과 연결하는 새 계약은 만들지 않는다. 인증 실패는 요청 참조 없이 기록한다 (`docs/architecture.md` `audit_log`).
 
 ## 5. 예외 상황
 
@@ -92,6 +92,9 @@
 | 초기화 중간에 실패했다 | 이미 시작한 작업과 연결만 종료한다 | `test_NFR04_runtime_partial_startup_cleanup` |
 | 종료 대기 제한을 넘겼다 | 오류를 알린다. 미완료 기록을 다음 복원 대상으로 유지한다 | `test_FR07_runtime_shutdown_timeout_keeps_unknown` |
 | 다른 계정의 사용을 MCP로 조회한다 | 기존 본인 조회 제한을 유지한다 | `test_FR21_runtime_mcp_ownership` |
+| MCP, REST, 대시보드에서 인증이 실패한다 | 요청 참조 없는 `auth` 감사 사건을 하나 남기고 기존 거부 응답을 그대로 보낸다 | `test_FR22_runtime_auth_failure_audited` |
+| 인증 실패의 감사 저장이 실패한다 | 경고를 남기고 기존 거부 응답을 그대로 보낸다 | `test_FR22_runtime_auth_audit_failure_is_nonblocking` |
+| 인증이 성공한다 | `auth` 감사 사건을 남기지 않는다 | `test_FR22_runtime_auth_success_not_audited` |
 
 ## 6. 결정
 
@@ -120,6 +123,15 @@
 - DB 연결은 REST 작업 스레드에서 열고 닫는다. 여러 저장소 호출은 서비스 호출 하나의 연결 범위를 쓴다.
 - `AdminRepository`의 저장 규칙, CORE의 승인 판정과 API의 응답 계약을 바꾸지 않는다.
 - 계정·승인 REST의 기존 spec이 제공하는 라우터와 서비스 계약을 사용한다.
+
+### 인증 실패 감사 기록
+
+- 2026-10-26 담당자 결정. api는 db를 직접 호출하지 않으므로(의존 규칙 1) 조립이 기록한다.
+- `runtime/auth_audit.py`의 `AuditedAuthenticator`는 `Authenticator`를 상속한다. 생성자에서 `AccountLookup`, `AuditLog`, 시계를 받는다. `Runtime.authenticator`가 이 객체이므로 MCP, 계정·승인·복구 REST, 대시보드가 모두 같은 기록을 쓴다.
+- `authenticate`가 `AuthenticationError`를 내면 `AuditEvent(event_id=UUID, step=Step.AUTH, payload={"reason", "credential", "at"})`를 `AuditLog.append`로 저장하고 같은 예외를 다시 낸다. `credential`은 헤더가 없거나 비었으면 `missing`, 있으면 `presented`다. `internal_request_id`와 `command_id`는 `None`이다.
+- payload에 토큰 원문, 토큰 해시, 헤더 값, 계정 정보를 넣지 않는다 (NFR-08).
+- 저장 실패는 `log.warning`만 남기고 거부 응답을 바꾸지 않는다. 기록이 인증 결과를 바꾸지 않는다.
+- 기록 횟수 제한은 두지 않는다. 독립 AP 안에서만 접근하는 전제(NFR-14)라 반복 실패의 양이 작다. 감사 보존 기간 정리(FR-22)가 오래된 기록을 지운다.
 
 ### 설정과 모델
 
@@ -228,7 +240,7 @@
 | FR-19 | `test_FR19_runtime_startup_restore_cleanup_failure` | 복원·정리 전에는 접수하지 않는다 |
 | FR-20 | `test_FR20_runtime_release_and_leave_off` | 반납 검사 없는 논리적 반납과 내부 꺼짐의 주기 호출 연결이다 |
 | FR-21 | `test_FR21_runtime_mcp_ownership` | 본인 사용 조회 제한이다 |
-| FR-22 | `test_FR22_runtime_*` | 설정 검증, 진입점 종료, 정리 재시도, JSONL 내보내기와 실패 격리다 |
+| FR-22 | `test_FR22_runtime_*` | 설정 검증, 진입점 종료, 정리 재시도, JSONL 내보내기와 실패 격리, 인증 실패 감사 기록이다 |
 | FR-23 | `test_FR23_runtime_shares_allocation_window` | 동시 할당 요청을 함께 배정한다 |
 | NFR-03, NFR-04 | `test_NFR03_runtime_*`, `test_NFR04_runtime_*` | 연결 소유권, 기기 차단과 자원 정리다 |
 | NFR-08 | `test_NFR08_runtime_config_keeps_secret_out` | 설정 오류와 설정 객체에 비밀이 없다 |
