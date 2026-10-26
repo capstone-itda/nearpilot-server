@@ -126,7 +126,7 @@ nearpilot-server/
 - 승인 REST가 부르는 `ApprovalService`의 구현(`core/approval/`)은 앱이 맡는다 (#186).
 - 조립은 서버 설정에 선택 섹션 `[dashboard]`가 있을 때만 대시보드 라우터(`create_dashboard_router`)를 붙인다. MCP 앱이 루트(`/`)를 잡으므로 그보다 먼저 붙인다. 섹션의 값은 대기열 크기, 묶음 크기, 인증 기한, 감사 조회 한도다 (2026-10-23 팀 결정). 약한 신호 기준(`weak_rssi_dbm`)과 따라 읽기 간격(`tail_interval_sec`)도 이 섹션에서 받는다 (2026-10-24 대시보드 담당 결정).
 - 대시보드 조회 서비스와 모니터링 따라 읽기는 `core/dashboard/`에 두고 대시보드 담당이 맡는다. 판정·상태 관리의 서비스와 섞지 않는다 (2026-10-24 대시보드 담당 결정).
-- 미결: 앱(`app/`)과 앱용 REST의 담당. 서버 담당 업무를 먼저 마친 사람이 맡는다.
+- 앱(`app/`)과 앱용 REST(계정, 승인)는 앱 담당이 맡는다 (`specs/app-*`, `specs/api-rest-account`, `specs/api-rest-approval`).
 - 미결: 펌웨어(`firmware/`)의 담당과 IOT 구현의 담당 배정. 팀이 펌웨어 담당을 배정할 때 함께 정한다.
 
 ## 3. 의존 관계
@@ -210,8 +210,7 @@ api  ──▶  core  ──▶  db
 - ⓪의 `input_digest`는 판정이 정규화 입력(대상 지정, 동작, 원 요청 연결 ID)으로 계산해서 `Repository.link_request`에 넘긴다. DB는 값을 저장하고 비교만 한다. 정규화 필드가 바뀌어도 DB 스키마는 바뀌지 않는다.
 - 판정 단계에서 예상하지 못한 예외가 나면 `DENY`와 `INTERNAL_ERROR`로 반환한다. 호스트 응답에는 일반 안내만 넣는다. 예외 내용과 오류 단계는 감사 기록에만 남긴다.
 - `INTERNAL_ERROR`로 거부한 요청을 같은 `(계정, request_id)`와 같은 정규화 입력으로 재전송하면 판정은 다시 판정한다 ([#76](https://github.com/capstone-itda/nearpilot-server/issues/76)). 일시 장애로 거부한 요청이 영구 거부로 남지 않는다.
-- 미결: `Repository.link_request`가 오류로 끝난 키를 새 시도로 인정하는 방법과 이중 예약을 막는 조건. 판정과 DB 담당이 spec에서 정한다.
-  - 이 미결은 이전 시도가 남긴 예약의 처리도 포함한다. 실행 인계 전에 오류로 끝난 예약은 상태 관리가 `ExecutionContext.reserved_at`을 받지 못해 예약 대기 제한으로 만료 취소할 수 없다 ([#80](https://github.com/capstone-itda/nearpilot-server/issues/80)).
+- `Repository.link_request`는 `INTERNAL_ERROR`로 끝난 키의 같은 입력 재전송에서 판정 칸을 비우고 새 시도로 인정한다. 동시 재전송은 한쪽만 새 시도가 된다. 이전 시도가 남긴 예약은 `reserve_if_free`가 같은 `internal_request_id`로 다시 돌려줘서 예약이 둘이 되지 않는다 (`specs/db-internal-error-retry`, [#80](https://github.com/capstone-itda/nearpilot-server/issues/80)).
 - `recheck()`가 예외를 던지면 상태 관리는 검사 오류와 같게 처리한다.
 - `ExecutionResult`는 재검사가 전송을 막았을 때 그 `Decision`을 함께 담는다. 호스트 응답 변환은 판정이 맡는다 (FR-09).
 - 재검사 밖의 이유로 실행을 막으면 `ExecutionResult.reason`에 중단 사유를 담는다. `reason`은 `recheck`가 없을 때만 쓴다. 판정은 `recheck`가 있으면 그 판정을, 없으면 `reason`으로 `DENY` 사유를 정한다.
@@ -282,7 +281,7 @@ api  ──▶  core  ──▶  db
 - 결정은 `Repository.decide_approval`이 반영한다. 승인 권한, 대기 상태, 정책 버전은 CORE가 검증한다 (FR-03).
 - 서버 조립이 `ApprovalService`를 만들어 승인 라우터에 넘긴다.
 - 반환에 요청자 정보를 넣지 않는다 (NFR-08).
-- 미결: 세 함수의 반환 모델 (REST 응답의 `node_id`를 담는다), 승인 한 건 조회의 저장소 접점, 소유자별 대기 승인 조회의 함수 이름과 시그니처
+- 저장소 조회는 `pending_approvals_for(user_id, now)`, `approval(approval_id)`, `is_approver(user_id, approval_id)`다. 반환 모델은 `specs/core-approval-service`를 따른다 (#186).
 
 ### 승인 이력과 승인 필요 사유
 
@@ -466,6 +465,7 @@ DB는 기기별 복원 묶음을 반환한다. 복원 묶음 하나는 현재 �
 - 과거 명령 결과는 복원 자료다. 현재 연결과 명령 처리 상태는 신선한 `status`로 확인한다.
 - 상태 관리는 기기의 복원과 확인을 끝내기 전에 그 기기의 새 실행과 재사용을 허가하지 않는다.
 - 상태 관리는 기기별 새 실행 가능 여부를 `ExecutionReadiness.can_execute(node_id)`로 판정에 제공한다 ([#82](https://github.com/capstone-itda/nearpilot-server/issues/82)). 최초 복원 조회가 실패했거나 현재 연결의 신선한 명령 처리 대기 보고를 확인하지 못한 기기는 `False`다. 센서값은 요구하지 않는다.
+- 최초 복원은 시작할 때의 기기 목록만 읽는다. 실행 중 처음 발표한 기기는 서버를 재시작할 때까지 `False`다. 알려진 한계로 둔다 (2026-10-26 결정, FR-04).
 - 판정은 ②에서 `False`인 기기를 미신뢰·오프라인·`FAULT` 기기처럼 후보에서 뺀다. ③에는 ②에서 걸러낸 후보만 넘긴다. 복원 중인 기기만 남아 명시 지정이 막히면 `TARGET_UNAVAILABLE`로 거부한다. 호스트에 복원 중이라는 사실을 따로 공개하지 않는다.
 - 상태 관리는 전송 직전에도 실행 가능 여부를 다시 검사한다. 막히면 `ExecutionResult.reason`으로 알린다.
 - 공용형 기기의 과거 참여자 목록은 복원 묶음에 넣지 않는다. 공용형 기기의 현재 기기 상태, 미완료 명령, 승인 사용분, 장애와 복구 기록은 복원 대상이다.
@@ -658,7 +658,7 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - DB는 판정에 적용한 버전을 기록한다. 파라미터와 기기 배치를 `node`에 저장하지 않는다.
 - `NodeInfo.anchor_params`와 논리 데이터 계약의 `node.anchor_params`를 제거한다. 관리 쓰기 접점은 추가하지 않는다.
 - 배포한 DB 스키마가 없어서 데이터 이전은 필요 없다. 후속 DB 구현은 제거한 필드를 만들지 않는다.
-- 미결: 모델 파일의 경로와 형식. 근접 추정 구현 담당이 spec의 "결정" 절에 쓴다.
+- 모델 파일은 `{모델 루트}/{place_id}/{model_version}.json`의 JSON이다 (`specs/core-proximity-estimator`, `specs/core-proximity-model-fit`).
 
 ### 기기 보고의 인계
 
@@ -773,7 +773,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
   - DB는 등록되지 않은 비콘을 `BEACON_NOT_FOUND`로, 없는 회차를 `COLLECTION_NOT_FOUND`로 거부한다.
   - 비활성 비콘으로 회차를 시작하면 `BEACON_NOT_FOUND`로 거부한다 ([#138](https://github.com/capstone-itda/nearpilot-server/issues/138)). `save_rssi`는 비활성 비콘의 프레임을 저장하지 않아 관측이 연결될 수 없는 회차를 만들지 않는다.
   - 회차 쓰기는 다른 관리 쓰기처럼 감사와 한 트랜잭션으로 반영한다.
-- 미결: 수집 회차의 조회 접점과 구간 변경의 처리. 평가 도구 spec에서 맞춘다.
+- 수집 회차의 조회 접점은 `tools/evaluation/runs.py`의 `list_runs`, `load_labeled_runs`다. 구간은 바꾸지 않는다. 잘못 수집한 회차는 분할에서 뺀다 (2026-10-27 담당자 위임 결정, `specs/core-ops-cli`).
 - 미결: 지표 8의 세부 측정 정의. 별도 이슈에서 정한다.
 
 ### 복구 준비 조회와 복구 승인
