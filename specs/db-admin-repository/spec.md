@@ -3,7 +3,7 @@
 - 상태: 완료
 - 담당: paiwhy (DB)
 - 요구사항: FR-01, FR-12A, FR-14, FR-16, NFR-08
-- 따르는 결정: #29, #30, #41, #42, #131 (PR #132)
+- 따르는 결정: #29, #30, #41, #42, #131 (PR #132), 2026-10-26 담당자 결정 (점유 중인 기기의 장소·정책 변경 거부)
 
 ## 1. 왜
 
@@ -20,6 +20,7 @@
   - `AdminRepository`의 함수 7개(`register_account`, `register_beacon`, `set_node_trust`, `assign_place`, `set_policy`, `start_collection`, `end_collection`)를 모두 구현한다.
   - 쓰기 하나는 감사 기록과 함께 `BEGIN IMMEDIATE` 트랜잭션 하나다.
   - 거부하거나 저장에 실패하면 아무것도 바뀌지 않는다.
+  - 점유 중인 기기의 장소 이동과 접근 정책 변경은 `CONFLICT`, `NODE_OCCUPIED`로 거부한다. 검사와 쓰기는 같은 트랜잭션이다.
 
 ## 3. 제약
 
@@ -60,6 +61,7 @@
 
 ### 고치지 않는 곳
 - 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
+  - 예외 (2026-10-26 담당자 결정): `shared/enums.py`의 `AdminWriteReason`에 `NODE_OCCUPIED`를 더한다. `docs/requirements.md`와 `docs/architecture.md`의 해당 미결을 결정으로 바꾼다.
 - 이 작업: `core/`, `api/`, `iot/`, `tools/`
 
 ### 다른 영역과 닿는 곳
@@ -108,6 +110,12 @@
 | 없는 기기나 없는 승인자다 | `REJECTED`, `NODE_NOT_FOUND` 또는 `ACCOUNT_NOT_FOUND` | `test_FR14_set_policy_missing_refs` |
 | 두 정책 변경이 같은 기대 버전으로 동시에 온다 | 하나만 `APPLIED`, 나머지는 `POLICY_VERSION_MISMATCH` | `test_NFR03_set_policy_concurrent` |
 | 정책을 바꿔도 기존 승인과 세션은 그대로다 | 기존 행이 바뀌지 않는다 | `test_FR14_set_policy_no_retroactive` |
+| 점유 중인 기기의 정책을 바꾼다 | `CONFLICT`, `NODE_OCCUPIED`. 정책·감사가 바뀌지 않는다 | `test_FR12A_set_policy_occupied_rejected` |
+| 점유 중인 기기를 다른 장소로 옮긴다 | `CONFLICT`, `NODE_OCCUPIED`. 장소 생성과 다른 기기 연결도 하지 않는다 | `test_FR12A_assign_place_occupied_rejected` |
+| 점유 중인 기기를 이미 있는 같은 장소에 다시 연결한다 (시드 재실행) | `APPLIED`. 장소가 바뀌지 않으므로 허용한다 | `test_FR12A_assign_place_same_place_while_occupied` |
+| 반납을 마친 기기(세션 `CLOSED`, 기기 `AVAILABLE`)의 정책을 바꾼다 | `APPLIED` | `test_FR12A_change_after_release_applied` |
+| `FAULT`인데 닫지 않은 세션이 있다 | 점유 중으로 보고 `CONFLICT`, `NODE_OCCUPIED` | `test_FR12A_fault_with_open_session_is_occupied` |
+| 종료 정책·이름·신뢰 상태를 점유 중에 바꾼다 | 기존대로 허용한다 | `test_FR12A_other_writes_ignore_occupancy` |
 | 수집 회차를 시작한다 | `APPLIED`, `ended_at`은 비어 있다 | `test_FR16_start_collection_applied` |
 | 같은 비콘에 진행 중인 회차가 있다 | `REJECTED`, `COLLECTION_OVERLAP` | `test_FR16_start_collection_overlap_open` |
 | 끝난 회차와 구간이 겹친다 | `REJECTED`, `COLLECTION_OVERLAP` | `test_FR16_start_collection_overlap_closed` |
@@ -131,19 +139,22 @@
 - 활성 비콘 교체는 기존 활성 비콘을 먼저 끄고 새 비콘을 켠다 — `beacon_one_active_per_user` 부분 UNIQUE 인덱스가 트랜잭션 중간에도 위반되지 않게 한다.
 - 수집 회차 겹침 검사는 `BEGIN IMMEDIATE` 안에서 조회와 삽입을 함께 한다 — 동시에 두 회차가 열려도 하나만 들어간다.
 - `AdminRepository` 구현은 `db/repositories/admin_repository.py`의 `SqliteAdminRepository`에 둔다. `SqliteRepository`와 같은 연결을 받는다 — DB 쓰기 경로는 하나다 (`AGENTS.md` 의존 규칙 5).
+- 점유 중은 기기의 `device_state`가 `RESERVED`·`ACTIVE`·`CLOSING`이거나, 그 기기에 `state`가 `CLOSED`가 아닌 `use_session`이 있는 경우다 — `FAULT` 기기도 닫지 않은 세션이 있으면 점유 중이다. 공용형 기기는 점유 세션이 없으므로 이 검사에 걸리지 않는다 (2026-10-26 담당자 결정).
+- 거부하는 쓰기는 `assign_place`에서 장소가 실제로 바뀌는 기기(`node.place_id`가 `req.place_id`와 다름)와 `set_policy`다. 종료 정책(`set_release_policy`)은 세션이 생성 당시 값을 보존하므로, 이름과 신뢰 상태는 점유 판단과 관계없으므로 허용한다.
+- 검사는 CORE가 아니라 DB 쓰기 트랜잭션 안에서 한다 — 검사와 쓰기 사이에 서버가 새 예약을 만들 수 없게 한다 (AGENTS.md 의존 규칙 5). 결과 종류는 지금 상태와 어긋난 입력이므로 `CONFLICT`다.
+- `assign_place`는 점유 검사를 기기 존재 검사 다음, 장소 생성 전에 한다. 하나라도 걸리면 아무것도 바꾸지 않는다.
 - `AdminWriteReason.PLACE_NOT_FOUND`는 이번에 쓰지 않는다 — `assign_place`의 `place_id`는 새로 만드는 대상이라 "없음"을 거부할 상황이 없다.
 
 ## 7. 가정
 
 - #131 이슈 댓글에서 "같은 끝 시각으로 다시 끝내면 성공"이라고 했지만, PR #132가 반영한 계약은 "이미 끝난 회차는 `STATE_CONFLICT`"다. 계약을 따른다.
-- 점유 중인 기기의 장소·정책 변경 제한은 `architecture.md` §4의 미결이다. 이 작업은 점유 여부와 상관없이 `assign_place`·`set_policy`를 허용한다. 제한이 정해지면 관리 기능(CORE)이 검사한다.
 
 ## 8. 테스트
 
 | 요구사항 | 테스트 | 확인하는 것 |
 |---|---|---|
 | FR-01 | `test_FR01_*` | 계정·비콘 등록, 활성 비콘 교체 |
-| FR-12A | `test_FR12A_*` | 장소 등록과 기기 연결 |
+| FR-12A | `test_FR12A_*` | 장소 등록과 기기 연결, 점유 중인 기기의 장소·정책 변경 거부 |
 | FR-14 | `test_FR14_set_policy_*` | 정책 리비전과 버전 검사, 소급 없음 |
 | FR-16 | `test_FR16_*` | 신뢰 상태, 수집 회차 시작·끝, 관측 연결 |
 | NFR-03 | `test_NFR03_*` | 동시 쓰기에서 한쪽만 반영 |

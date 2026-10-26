@@ -76,7 +76,6 @@
 | — | 지표 1~7, 9의 평가 | `tools/evaluation` 후속 spec |
 | — | 관리 REST, GUI | 관리 쓰기 REST는 두지 않는다 (FR-12A). GUI는 CLI 사용 뒤 정한다 |
 | — | 공개용 데이터셋 추출 | `db-evaluation-dataset` (가칭) |
-| — | 점유 중인 기기의 장소·정책 변경 제한 | architecture.md 미결 |
 
 ## 5. 예외 상황
 
