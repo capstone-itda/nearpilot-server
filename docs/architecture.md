@@ -34,7 +34,7 @@ flowchart TB
         SHARED["shared<br/>계층 간 계약 (공동 소유)"]
     end
 
-    Host -- "MCP / HTTPS + 토큰" --> API
+    Host -- "MCP / HTTP + 토큰" --> API
     App -- "REST · WebSocket" --> API
     API --> CORE
     CORE --> DB

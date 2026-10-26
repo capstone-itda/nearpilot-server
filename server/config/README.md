@@ -70,6 +70,27 @@ keepalive, 접속·시작·종료 제한 시간, 재접속 최소·최대 대기
 하나라도 실패하면 요청을 받지 않고 끝낸다. 종료할 때 제한 시간을 넘긴 작업은 오류로 알리고,
 미완료 기록은 다음 시작의 복원에서 다시 확인한다.
 
+# AI 호스트 연결
+
+AI 호스트는 MCP Streamable HTTP로 `http://<서버 AP 주소>:<[http] port>/mcp`에 붙고, 헤더 `Authorization: Bearer <토큰>`을 보낸다.
+독립 AP 안에서는 평문 HTTP를 쓴다 (NFR-08, NFR-14). 토큰은 시드 때 화면에 나온 방문자 토큰이다.
+
+| 호스트 | 연결 방법 | 확인 |
+|---|---|---|
+| Claude Code CLI | 아래 `mcp.json`을 `claude --mcp-config mcp.json`으로 넘긴다 | 2026-10-27 실제 서버·시뮬레이터 기기로 조회→사용→반납 성공 |
+| Codex CLI | `codex -c mcp_servers.nearpilot.url="http://.../mcp" -c mcp_servers.nearpilot.bearer_token_env_var="NP_TOKEN"` (토큰은 환경 변수 `NP_TOKEN`) | 2026-10-27 같은 확인 성공 |
+| Gemini CLI | 설정의 `mcpServers`에 `httpUrl`과 `headers`를 쓴다 | 미확인 (이 PC에 설치하지 않았다) |
+| claude.ai, ChatGPT, Gemini 웹·앱 | 각 서비스의 클라우드가 서버에 접속한다. 공개 HTTPS 주소가 필요하다 | 독립 AP 안의 서버에는 붙지 않는다 |
+
+```json
+{"mcpServers": {"nearpilot": {"type": "http", "url": "http://<서버 AP 주소>:8000/mcp",
+  "headers": {"Authorization": "Bearer <토큰>"}}}}
+```
+
+CLI 호스트도 LLM을 부르려면 호스트를 돌리는 노트북에 인터넷이 필요하다. 서버와 기기는 독립 AP만 쓴다.
+웹·앱 호스트는 서버를 인터넷에 공개해야 쓸 수 있다. 이는 독립 AP 동작(NFR-12)과 평문 허용(NFR-08, NFR-14)의 전제와 맞지 않는다.
+미결: 시연에서 웹·앱 호스트를 쓸지, AP 안 노트북의 CLI 호스트만 쓸지.
+
 # 운영 명령
 
 `pip install -e .` 뒤 `server/`에서 `nearpilot <명령>`으로 쓴다. `nearpilot serve`는 위의 `python -m nearpilot`과 같은 서버를 띄운다. 다만 `--config`의 기본값이 있고, DB 폴더(`var/`)를 만들고, 시작에 실패하면 종료 코드 1이다.

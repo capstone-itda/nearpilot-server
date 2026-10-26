@@ -60,7 +60,7 @@
 ### 만들지 않는 것
 - 나머지 도구 5개 (`find_available_devices`, `get_device_state`, `request_access`, `release_use`, `get_use_status`). 후속 spec에서 같은 응답 변환과 인증 위에 얹는다.
 - 서버 진입점, `CoreService`와 서비스 조립, 서버 실행 (#88)
-- HTTPS 종단. 배포 환경이 맡는다 (NFR-08).
+- HTTPS 종단. 독립 AP 안에서는 평문 HTTP를 쓴다 (NFR-08, NFR-14).
 - 인증 실패의 감사 기록. 서버 조립이 맡는다 (`core-server-assembly` 6절)
 - `any:locker` 전역 할당 (FR-23)
 
