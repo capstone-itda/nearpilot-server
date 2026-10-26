@@ -3,7 +3,7 @@
 - 상태: 구현 중. 실제 Mosquitto·SQLite·시뮬레이터 연결 검증을 통과했다. 전체 `pytest`를 통과한 뒤에만 같은 feat PR을 머지한다.
 - 담당: JM-220 (상태 관리, 판정)
 - 요구사항: FR-01, FR-03, FR-05, FR-06, FR-07, FR-08, FR-09, FR-11, FR-19, FR-20, FR-21, FR-22, FR-23, NFR-03, NFR-04, NFR-08, NFR-12, NFR-13
-- 따르는 결정: #34, #40, #82, #83, #88, #140, #164, #165
+- 따르는 결정: #34, #40, #82, #83, #88, #140, #164, #165, 2026-10-26 담당자 결정(전권 위임, 인증 실패 감사 기록)
 - 내부 선택: 담당자가 2026-10-16 대화에서 경로, 실행 방식, 설정, 주기와 실패 정책, 근접 복원의 관측 조회를 선택했다.
 
 ## 1. 왜
@@ -16,7 +16,7 @@
 
 - 입력: TOML 설정 경로, DB 파일, 장소별 모델 파일, 비밀 파일과 MQTT 보고다.
 - 출력: 같은 프로세스의 FastAPI와 MCP 엔드포인트, 주기 작업과 종료 결과다.
-- 바뀌는 상태: 기존 서비스가 각 계약에 따라 바꾸는 DB·기기·감사 상태다.
+- 바뀌는 상태: 기존 서비스가 각 계약에 따라 바꾸는 DB·기기·감사 상태와, 조립이 직접 남기는 인증 실패 감사 사건이다.
 - 약속:
   - `server/`에서 `python -m nearpilot --config config/server.toml`로 실행한다.
   - 단일 프로세스와 단일 worker를 쓴다.
@@ -92,7 +92,7 @@
 | 초기화 중간에 실패했다 | 이미 시작한 작업과 연결만 종료한다 | `test_NFR04_runtime_partial_startup_cleanup` |
 | 종료 대기 제한을 넘겼다 | 오류를 알린다. 미완료 기록을 다음 복원 대상으로 유지한다 | `test_FR07_runtime_shutdown_timeout_keeps_unknown` |
 | 다른 계정의 사용을 MCP로 조회한다 | 기존 본인 조회 제한을 유지한다 | `test_FR21_runtime_mcp_ownership` |
-| MCP, REST, 대시보드에서 인증이 실패한다 | 요청 참조 없는 `auth` 감사 사건을 하나 남기고 기존 거부 응답을 그대로 보낸다 | `test_FR22_runtime_auth_failure_audited` |
+| MCP, REST, 대시보드에서 `authenticate`가 인증을 거부한다 | 요청 참조 없는 `auth` 감사 사건을 하나 남기고 기존 거부 응답을 그대로 보낸다 | `test_FR22_runtime_auth_failure_audited` |
 | 인증 실패의 감사 저장이 실패한다 | 경고를 남기고 기존 거부 응답을 그대로 보낸다 | `test_FR22_runtime_auth_audit_failure_is_nonblocking` |
 | 인증이 성공한다 | `auth` 감사 사건을 남기지 않는다 | `test_FR22_runtime_auth_success_not_audited` |
 
@@ -114,7 +114,7 @@
 - 담당자가 2026-10-26 대화에서 기존 계정·승인 REST의 서버 연결을 지시했다.
 - `DefaultAdminService`에 일반 저장소와 스레드별 `AdminRepository` 접점을 넘긴다.
 - `OwnerApprovalService`에 일반 저장소와 서버의 `clock`을 넘긴다.
-- `build_account_router`와 `build_approval_router`에 기존 `Authenticator`를 넘긴다.
+- `build_account_router`와 `build_approval_router`에 `Runtime.authenticator`(`AuditedAuthenticator`, 아래 "인증 실패 감사 기록")를 넘긴다.
 - 두 라우터를 대시보드처럼 MCP 루트 마운트보다 먼저 등록한다.
 - 두 라우터는 대시보드 설정과 관계없이 등록한다. 수집 전용에서도 등록한다.
 - 수집 전용은 MCP 판정 요청만 막는다. 계정 등록과 승인 결정은 기기에 실행 명령을 보내지 않는다.

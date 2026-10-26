@@ -39,7 +39,7 @@ def _server(tmp_path, *, dashboard=False):
             DashboardSettings(100, 20, 5.0, 100), -80.0, 0.1, tmp_path / "reports"))
     seed(cfg.database.path)
     broker = SimBroker(tmp_path, node_ids=())
-    now = datetime.now(timezone.utc)
+    now = NOW
     runtime = Runtime(cfg, client_factory=broker.factory, clock=lambda: now)
     try:
         with TestClient(create_app(runtime)) as client:
@@ -135,9 +135,12 @@ class _Audit:
 
 def test_FR22_runtime_auth_audit_failure_is_nonblocking(caplog):
     presented = "tok-lost-5e7a"
-    auth = AuditedAuthenticator(
-        _Accounts(), _Audit(sqlite3.OperationalError("database is locked")), lambda: NOW)
-    for authorization in (None, f"Bearer {presented}"):
+    for error, authorization in (
+        (sqlite3.OperationalError("database is locked"), None),
+        (sqlite3.OperationalError("database is locked"), f"Bearer {presented}"),
+        (RuntimeError("database is locked"), None),  # sqlite 밖의 예외도 거부 사유를 바꾸지 않는다
+    ):
+        auth = AuditedAuthenticator(_Accounts(), _Audit(error), lambda: NOW)
         caplog.clear()
         with caplog.at_level(logging.WARNING), pytest.raises(AuthenticationError) as raised:
             auth.authenticate(authorization)
