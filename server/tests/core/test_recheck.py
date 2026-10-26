@@ -56,10 +56,10 @@ def frame(node_id="locker-1") -> RssiFrame:
 
 
 def ctx(use_id="use-1", node_id="locker-1", target="nearest:locker",
-        kind=ExecutionKind.RENTAL_INITIAL, settings=None) -> ExecutionContext:
+        kind=ExecutionKind.RENTAL_INITIAL, settings=None, usage_id=None) -> ExecutionContext:
     req = UseRequest(user_id="u1", request_id="r1", target=TargetSpec.parse(target),
                      action=Action.OPEN, host_kind="claude", received_at=NOW - timedelta(seconds=4))
-    return ExecutionContext("i1", req, node_id, use_id, None, settings or Settings(version="v1"),
+    return ExecutionContext("i1", req, node_id, use_id, usage_id, settings or Settings(version="v1"),
                             execution_kind=kind)
 
 
@@ -197,6 +197,28 @@ def test_FR18_재검사는_다른_기기를_고르지_않는다():
 def test_FR18_재검사_정책_결과를_그대로_반영한다(verdict, reason):
     rc, *_ = build(policy=FakePolicy(PolicyCheckResult(verdict, reason, 2)))
     d = rc.recheck(ctx())
+    assert (d.verdict, d.reason) == (verdict, reason)
+
+
+def test_FR19_recheck_ignores_own_reserved_usage():
+    # 승인 소진은 ⑤가 예약한 이 요청의 사용분까지 센 결과다. usage_id 가 있으면 통과하고 없으면 거부한다
+    exhausted = PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED, 2)
+    rc, *_ = build(policy=FakePolicy(exhausted))
+    d = rc.recheck(ctx(usage_id="usage-1"))
+    assert (d.verdict, d.reason) == (Verdict.OK, ReasonCode.OK)
+    d = rc.recheck(ctx())
+    assert (d.verdict, d.reason) == (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED)
+
+
+@pytest.mark.parametrize("verdict,reason", [
+    (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_PENDING),
+    (Verdict.NEED_APPROVAL, ReasonCode.ACTION_NOT_ALLOWED),
+    (Verdict.DENY, ReasonCode.POLICY_DENIED),
+    (Verdict.DENY, ReasonCode.APPROVAL_EXHAUSTED),
+])
+def test_FR19_재검사_자기_사용분은_승인_소진만_통과시킨다(verdict, reason):
+    rc, *_ = build(policy=FakePolicy(PolicyCheckResult(verdict, reason, 2)))
+    d = rc.recheck(ctx(usage_id="usage-1"))
     assert (d.verdict, d.reason) == (verdict, reason)
 
 

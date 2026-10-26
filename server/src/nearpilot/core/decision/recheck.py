@@ -110,7 +110,12 @@ class Rechecker:
         if check.verdict is not Verdict.OK:
             if check.verdict not in (Verdict.NEED_APPROVAL, Verdict.DENY):
                 raise ValueError(f"정책 검사의 알 수 없는 판정: {check.verdict!r}")
-            raise stop(check.verdict, check.reason, p_max=p)
+            # 승인 소진은 ⑤가 예약한 이 요청의 사용분까지 센 결과다. ⑤의 reserve_if_free() 가 한도 검사와 같은
+            # 트랜잭션에서 사용분을 확보했으므로 usage_id 가 있으면 통과로 본다 (FR-14, FR-19)
+            own_usage = (ctx.usage_id is not None and check.verdict is Verdict.NEED_APPROVAL
+                         and check.reason is ReasonCode.APPROVAL_EXHAUSTED)
+            if not own_usage:
+                raise stop(check.verdict, check.reason, p_max=p)
 
         # 자기 예약 — 타인 점유로 보지 않는다. 대여형만 세션이 있다.
         # 최초 대여는 RESERVED, 재조작은 기존 ACTIVE 세션이어야 한다 (#35)
