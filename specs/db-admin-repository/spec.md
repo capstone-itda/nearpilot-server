@@ -3,7 +3,7 @@
 - 상태: 완료
 - 담당: paiwhy (DB)
 - 요구사항: FR-01, FR-12A, FR-14, FR-16, NFR-08
-- 따르는 결정: #29, #30, #41, #42, #131 (PR #132), 2026-10-26 담당자 결정 (점유 중인 기기의 장소·정책 변경 거부)
+- 따르는 결정: #29, #30, #41, #42, #131 (PR #132), 2026-10-26 결정 (점유 중인 기기의 장소·정책 변경 거부. 담당자가 팀 전권으로 정함)
 
 ## 1. 왜
 
@@ -109,13 +109,15 @@
 | 정책이 이미 있는데 `expected_version=None`이다 | `CONFLICT`, `POLICY_VERSION_MISMATCH` | `test_FR14_set_policy_first_but_exists` |
 | 없는 기기나 없는 승인자다 | `REJECTED`, `NODE_NOT_FOUND` 또는 `ACCOUNT_NOT_FOUND` | `test_FR14_set_policy_missing_refs` |
 | 두 정책 변경이 같은 기대 버전으로 동시에 온다 | 하나만 `APPLIED`, 나머지는 `POLICY_VERSION_MISMATCH` | `test_NFR03_set_policy_concurrent` |
-| 정책을 바꿔도 기존 승인과 세션은 그대로다 | 기존 행이 바뀌지 않는다 | `test_FR14_set_policy_no_retroactive` |
+| 점유 중이 아닌 기기(닫힌 세션, 대기·승인된 승인이 있다)의 정책을 바꾼다 | `APPLIED`. 기존 승인과 세션 행은 바뀌지 않는다 | `test_FR14_set_policy_no_retroactive` |
 | 점유 중인 기기의 정책을 바꾼다 | `CONFLICT`, `NODE_OCCUPIED`. 정책·감사가 바뀌지 않는다 | `test_FR12A_set_policy_occupied_rejected` |
 | 점유 중인 기기를 다른 장소로 옮긴다 | `CONFLICT`, `NODE_OCCUPIED`. 장소 생성과 다른 기기 연결도 하지 않는다 | `test_FR12A_assign_place_occupied_rejected` |
 | 점유 중인 기기를 이미 있는 같은 장소에 다시 연결한다 (시드 재실행) | `APPLIED`. 장소가 바뀌지 않으므로 허용한다 | `test_FR12A_assign_place_same_place_while_occupied` |
 | 장소가 없던 점유 기기를 처음 배치한다 | `APPLIED`. 이동이 아니다 | `test_FR12A_assign_place_applied` |
 | 반납을 마친 기기(세션 `CLOSED`, 기기 `AVAILABLE`)의 정책을 바꾼다 | `APPLIED` | `test_FR12A_change_after_release_applied` |
-| `FAULT`인데 닫지 않은 세션이 있다 | 점유 중으로 보고 `CONFLICT`, `NODE_OCCUPIED` | `test_FR12A_fault_with_open_session_is_occupied` |
+| `FAULT`인데 닫지 않은 세션(`RESERVED`·`ACTIVE`·`CLOSING`)이 있다 | 점유 중으로 보고 `CONFLICT`, `NODE_OCCUPIED`. 정책·감사가 바뀌지 않는다 | `test_FR12A_fault_with_open_session_is_occupied` |
+| 다른 기기가 점유 중이다 | 이 기기의 정책 변경과 장소 이동은 `APPLIED` | `test_FR12A_other_node_occupancy_does_not_block` |
+| 점유 검사와 쓰기 | 같은 `BEGIN IMMEDIATE` 트랜잭션 하나에서 한다 | `test_NFR03_occupied_check_inside_write_transaction` |
 | 종료 정책·이름·신뢰 상태를 점유 중에 바꾼다 | 기존대로 허용한다 | `test_FR12A_other_writes_ignore_occupancy` |
 | 수집 회차를 시작한다 | `APPLIED`, `ended_at`은 비어 있다 | `test_FR16_start_collection_applied` |
 | 같은 비콘에 진행 중인 회차가 있다 | `REJECTED`, `COLLECTION_OVERLAP` | `test_FR16_start_collection_overlap_open` |
@@ -144,6 +146,7 @@
 - 거부하는 쓰기는 `assign_place`에서 다른 장소에 있던 기기를 옮기는 경우(`node.place_id`가 NULL이 아니고 `req.place_id`와 다름)와 `set_policy`다. 장소가 없던 기기의 첫 배치는 이동이 아니므로 허용한다. 종료 정책(`set_release_policy`)은 세션이 생성 당시 값을 보존하므로, 이름과 신뢰 상태는 점유 판단과 관계없으므로 허용한다.
 - 검사는 CORE가 아니라 DB 쓰기 트랜잭션 안에서 한다 — 검사와 쓰기 사이에 서버가 새 예약을 만들 수 없게 한다 (AGENTS.md 의존 규칙 5). 결과 종류는 지금 상태와 어긋난 입력이므로 `CONFLICT`다.
 - `assign_place`는 점유 검사를 기기 존재 검사 다음, 장소 생성 전에 한다. 하나라도 걸리면 아무것도 바꾸지 않는다.
+- 거부 사유의 순서: `set_policy`는 `NODE_NOT_FOUND`, `ACCOUNT_NOT_FOUND`(승인자), `NODE_OCCUPIED`, `POLICY_VERSION_MISMATCH`, `STATE_CONFLICT` 순으로 본다. `assign_place`는 `ACCOUNT_NOT_FOUND`, `NODE_NOT_FOUND`, `NODE_OCCUPIED`, `STATE_CONFLICT`(다른 소유자의 장소) 순이다. 점유 중이면 버전이 맞아도 바꿀 수 없으므로 점유를 먼저 알린다.
 - `AdminWriteReason.PLACE_NOT_FOUND`는 이번에 쓰지 않는다 — `assign_place`의 `place_id`는 새로 만드는 대상이라 "없음"을 거부할 상황이 없다.
 
 ## 7. 가정
