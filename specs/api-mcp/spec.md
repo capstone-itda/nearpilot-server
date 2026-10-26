@@ -61,7 +61,7 @@
 - 나머지 도구 5개 (`find_available_devices`, `get_device_state`, `request_access`, `release_use`, `get_use_status`). 후속 spec에서 같은 응답 변환과 인증 위에 얹는다.
 - 서버 진입점, `CoreService`와 서비스 조립, 서버 실행 (#88)
 - HTTPS 종단. 배포 환경이 맡는다 (NFR-08).
-- 인증 실패의 감사 기록 (`api-auth` spec 7절의 미결)
+- 인증 실패의 감사 기록. 서버 조립이 맡는다 (`core-server-assembly` 6절)
 - `any:locker` 전역 할당 (FR-23)
 
 ## 5. 예외 상황

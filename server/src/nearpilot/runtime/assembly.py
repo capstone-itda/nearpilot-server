@@ -16,7 +16,6 @@ from typing import Any, cast
 
 import paho.mqtt.client as mqtt
 
-from nearpilot.api.auth.authenticator import Authenticator
 from nearpilot.api.ws.hub import MonitorHub
 from nearpilot.api.ws.names import PersonNames
 from nearpilot.core.admin import DefaultAdminService
@@ -36,6 +35,7 @@ from nearpilot.core.proximity.estimator import HmmProximityEstimator
 from nearpilot.core.proximity.model import ProximityModel, load_models
 from nearpilot.db.repositories import SqliteDashboardReads
 from nearpilot.iot.mqtt import ConnectionFailure, MqttCommandGateway, MqttConnection, ReportDelivery
+from nearpilot.runtime.auth_audit import AuditedAuthenticator
 from nearpilot.runtime.config import DashboardConfig, ServerConfig
 from nearpilot.runtime.database import ThreadDatabase
 from nearpilot.runtime.tasks import CallGate, Late, NodeLocks, NotAccepting, PeriodicTask
@@ -243,7 +243,7 @@ class Runtime:
             config.database.path, settings=config.settings, audit_jsonl=config.database.audit_jsonl,
             busy_timeout_ms=config.runtime.sqlite_busy_timeout_ms)
         self.core = GuardedCore(self.gate, self.db)
-        self.authenticator = Authenticator(self.db.accounts())
+        self.authenticator = AuditedAuthenticator(self.db.accounts(), self.db.audit_log(), self._clock)
         self.admin = cast(AdminService, _GuardedRestService(
             DefaultAdminService(self.db.repository(), self.db.admin_repository()), self.gate, self.db))
         self.approvals = cast(ApprovalService, _GuardedRestService(

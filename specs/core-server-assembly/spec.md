@@ -127,9 +127,10 @@
 ### 인증 실패 감사 기록
 
 - 2026-10-26 담당자 결정. api는 db를 직접 호출하지 않으므로(의존 규칙 1) 조립이 기록한다.
-- `runtime/auth_audit.py`의 `AuditedAuthenticator`는 `Authenticator`를 상속한다. 생성자에서 `AccountLookup`, `AuditLog`, 시계를 받는다. `Runtime.authenticator`가 이 객체이므로 MCP, 계정·승인·복구 REST, 대시보드가 모두 같은 기록을 쓴다.
+- `runtime/auth_audit.py`의 `AuditedAuthenticator`는 `Authenticator`를 상속한다. 생성자에서 `AccountLookup`, `AuditLog`, 시계를 받는다. `Runtime.authenticator`가 이 객체이므로 MCP, 계정·승인 REST, 대시보드 REST·스트림이 모두 같은 기록을 쓴다. 복구 REST도 이 객체를 받으면 같은 기록을 쓴다.
 - `authenticate`가 `AuthenticationError`를 내면 `AuditEvent(event_id=UUID, step=Step.AUTH, payload={"reason", "credential", "at"})`를 `AuditLog.append`로 저장하고 같은 예외를 다시 낸다. `credential`은 헤더가 없거나 비었으면 `missing`, 있으면 `presented`다. `internal_request_id`와 `command_id`는 `None`이다.
 - payload에 토큰 원문, 토큰 해시, 헤더 값, 계정 정보를 넣지 않는다 (NFR-08).
+- `authenticate`를 부르기 전에 끝나는 거부(대시보드 스트림의 첫 메시지 형식 오류, 인증 제한 시간 초과)는 기록하지 않는다. api를 고치지 않는다.
 - 저장 실패는 `log.warning`만 남기고 거부 응답을 바꾸지 않는다. 기록이 인증 결과를 바꾸지 않는다.
 - 기록 횟수 제한은 두지 않는다. 독립 AP 안에서만 접근하는 전제(NFR-14)라 반복 실패의 양이 작다. 감사 보존 기간 정리(FR-22)가 오래된 기록을 지운다.
 
