@@ -247,6 +247,19 @@ def test_FR18_재검사_예약이_유효하지_않으면_RECHECK_FAILED(mutate):
     assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.RECHECK_FAILED)
 
 
+@pytest.mark.parametrize("mutate", [
+    lambda r: setattr(r, "session_obj", None),
+    lambda r: setattr(r, "session_obj", UseSession("use-1", "i1", "locker-1", SessionState.CLOSED)),
+    lambda r: setattr(r, "owner_ok", False),
+])
+def test_FR19_자기_사용분으로_정책을_통과해도_예약을_검사한다(mutate):
+    exhausted = PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED, 2)
+    rc, repo, *_ = build(policy=FakePolicy(exhausted))
+    mutate(repo)
+    d = rc.recheck(ctx(usage_id="usage-1"))
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.RECHECK_FAILED)
+
+
 @pytest.mark.parametrize("name", ["beacons_of", "rssi_since", "nodes", "session", "session_owner_matches"])
 def test_FR18_재검사_예외는_RECHECK_FAILED로_거부한다(name):
     rc, repo, prox, pol, audit = build()

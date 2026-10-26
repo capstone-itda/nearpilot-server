@@ -90,6 +90,7 @@
 | `serve`(일반)에서 모델 표가 비었다 | 기존대로 시작하지 않는다 | `test_FR16_serve_requires_models_without_collect_only` |
 | `serve`가 시작에 실패한다 (MQTT 접속, 포트 등) | 종료 코드 1 | `test_FR16_serve_startup_failure_exits_1` |
 | 시드 파일의 형식이 틀리다 (모르는 키, 빠진 키, 잘못된 enum) | 아무것도 쓰지 않고 잘못된 필드를 모두 쓴다. 종료 코드 2 | `test_FR12A_seed_invalid_file_writes_nothing` |
+| 정책이 `one_time`인데 `max_uses`가 1이 아니다 | 입력 오류. 종료 코드 2 | `test_FR14_seed_rejects_one_time_max_uses_over_one` |
 | 시드를 두 번 실행한다 | 계정은 "이미 있음", 같은 정책은 "변경 없음"이다. 비콘, 장소, 신뢰, 종료 정책은 같은 값으로 다시 반영한다(DB 내용은 같고 다시 반영한 항목만 감사 행이 는다). 새 토큰을 만들지 않는다 | `test_FR12A_seed_is_rerunnable` |
 | 시드의 기기가 DB에 없다 (아직 발표 안 됨) | 그 기기 항목을 거부 사유와 함께 쓰고 종료 코드 1. 앞서 반영한 항목은 유지한다 | `test_FR13_seed_unknown_node_reports_and_continues` |
 | 시드 `--dry-run` | DB에 쓰지 않고 반영할 항목만 쓴다 | `test_FR12A_seed_dry_run_writes_nothing` |
@@ -235,6 +236,7 @@
 | FR-12A | `test_FR12A_seed_invalid_file_writes_nothing` | 잘못된 시드는 아무것도 쓰지 않음 |
 | FR-12A | `test_FR12A_seed_is_rerunnable` | 두 번 실행해도 같은 상태, 토큰 재발급 없음 |
 | FR-12A | `test_FR12A_seed_dry_run_writes_nothing` | dry-run은 쓰지 않음 |
+| FR-14 | `test_FR14_seed_rejects_one_time_max_uses_over_one`, `test_FR14_seed_accepts_one_time_max_uses_one` | `one_time`의 `max_uses`는 없거나 1이다 |
 | FR-12A | `test_FR12A_admin_rejects_non_owner` | 소유자가 아닌 행위자의 장소 쓰기 거부 |
 | FR-13 | `test_FR13_seed_unknown_node_reports_and_continues` | 없는 기기만 거부, 나머지 반영, 종료 코드 1 |
 | FR-13 | `test_FR13_set_release_policy_unknown_node` | 없는 기기는 `NODE_NOT_FOUND` |
