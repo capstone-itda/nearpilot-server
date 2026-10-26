@@ -1,5 +1,10 @@
 # NearPilot 기기 펌웨어
 
+2026-10-26에 센서 기반 물리 상태 검증과 반납 검사를 범위에서 제외했다 (`docs/product.md`, `docs/requirements.md`).
+이 README와 `specs/firmware-contracts/spec.md`의 모듈·검사 설명은 현재 구현의 기록이다.
+센서 제외 구현은 아직 반영하지 않았다. 후속 fix PR에서 코드와 spec을 함께 바꾼다.
+새 목표는 제어 신호 출력 완료 보고와 논리적 점유 해제다. 실제 상태와 물리 안전은 검증하지 않는다.
+
 모든 기기 종류가 함께 쓰는 ESP32 펌웨어다. 계약과 단계는 `specs/firmware-contracts/spec.md`를 따른다.
 `node_lab/`은 연결 시험용 별도 프로젝트다 (`specs/core-node-lab/spec.md`).
 
