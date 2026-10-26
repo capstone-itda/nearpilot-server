@@ -2,7 +2,7 @@
 
 - 상태: 구현 중. 실제 Mosquitto·SQLite·시뮬레이터 연결 검증을 통과했다. 전체 `pytest`를 통과한 뒤에만 같은 feat PR을 머지한다.
 - 담당: JM-220 (상태 관리, 판정)
-- 요구사항: FR-05, FR-06, FR-07, FR-08, FR-09, FR-11, FR-19, FR-20, FR-21, FR-22, FR-23, NFR-03, NFR-04, NFR-08, NFR-12, NFR-13
+- 요구사항: FR-01, FR-03, FR-05, FR-06, FR-07, FR-08, FR-09, FR-11, FR-19, FR-20, FR-21, FR-22, FR-23, NFR-03, NFR-04, NFR-08, NFR-12, NFR-13
 - 따르는 결정: #34, #40, #82, #83, #88, #140, #164, #165
 - 내부 선택: 담당자가 2026-10-16 대화에서 경로, 실행 방식, 설정, 주기와 실패 정책, 근접 복원의 관측 조회를 선택했다.
 
@@ -67,13 +67,17 @@
 - `CoreService` 위임 객체는 `core-service`가 맡는다.
 - 기록 삭제는 `db-retention`이 맡는다.
 - 요청 한도 집계와 거부는 기존 DB·판정 spec의 fix가 맡는다.
-- REST, WebSocket, 관리 서비스와 시드 스크립트는 별도 작업이다.
+- REST와 WebSocket의 내부 구현, 관리 서비스의 내부 동작과 시드 스크립트는 별도 작업이다.
+- 계정·승인 REST의 기존 서비스 생성과 라우터 연결은 이 조립에 포함한다.
 - 인증 실패 감사 접점과 원래 요청 연결의 새 계약은 만들지 않는다.
 
 ## 5. 예외 상황
 
 | 상황 | 기대 동작 | 테스트 |
 |---|---|---|
+| 계정·비콘 등록 요청이 작업 스레드에서 온다 | 작업 스레드의 DB 연결로 저장하고 토큰을 인증에 쓴다 | `test_FR01_runtime_account_rest` |
+| 승인 조회·결정 요청이 온다 | 기존 CORE 권한 검사와 같은 결정의 재전송 결과를 유지한다 | `test_FR03_runtime_approval_rest` |
+| REST 서비스 호출 중 종료한다 | 새 호출을 거부하고 진행 중인 호출을 기다린다 | `test_NFR03_runtime_rest_scope_and_shutdown` |
 | 필수 설정이나 모델 파일이 잘못됐다 | 요청을 받지 않는다. 획득한 자원을 정리한다 | `test_FR22_runtime_invalid_config_stops_startup` |
 | 문서가 허용한 임계값이 미설정이다 | 서버는 기존 실행 차단 동작을 유지한다 | `test_FR09_runtime_unset_threshold_stays_blocked` |
 | MQTT 구독이 실패했다 | 복원과 요청 접수로 진행하지 않는다 | `test_FR06_runtime_requires_suback` |
@@ -99,6 +103,21 @@
 - 외부 MCP 경로는 기존 `/mcp`를 유지한다 — MCP 앱을 루트에 마운트해서 경로를 중복하지 않는다.
 - HTTP 주소와 포트는 TOML `[http]`로 받는다. uvicorn은 수명주기 시작이 끝난 뒤에만 요청을 받는다.
 - 설정이 잘못되면 진입점은 HTTP 서버를 시작하지 않고 종료 코드 2로 끝난다.
+
+### 앱용 계정·승인 REST 연결
+
+- 담당자가 2026-10-26 대화에서 기존 계정·승인 REST의 서버 연결을 지시했다.
+- `DefaultAdminService`에 일반 저장소와 스레드별 `AdminRepository` 접점을 넘긴다.
+- `OwnerApprovalService`에 일반 저장소와 서버의 `clock`을 넘긴다.
+- `build_account_router`와 `build_approval_router`에 기존 `Authenticator`를 넘긴다.
+- 두 라우터를 대시보드처럼 MCP 루트 마운트보다 먼저 등록한다.
+- 두 라우터는 대시보드 설정과 관계없이 등록한다. 수집 전용에서도 등록한다.
+- 수집 전용은 MCP 판정 요청만 막는다. 계정 등록과 승인 결정은 기기에 실행 명령을 보내지 않는다.
+- 서비스 호출은 기존 CORE 진입처럼 접수 문과 DB 연결 범위로 감싼다.
+- 종료는 진행 중인 REST 서비스 호출을 기다린다. 접수 전과 종료 중에는 새 호출을 거부한다.
+- DB 연결은 REST 작업 스레드에서 열고 닫는다. 여러 저장소 호출은 서비스 호출 하나의 연결 범위를 쓴다.
+- `AdminRepository`의 저장 규칙, CORE의 승인 판정과 API의 응답 계약을 바꾸지 않는다.
+- 계정·승인 REST의 기존 spec이 제공하는 라우터와 서비스 계약을 사용한다.
 
 ### 설정과 모델
 
@@ -197,6 +216,9 @@
 
 | 요구사항 | 테스트 | 확인하는 것 |
 |---|---|---|
+| FR-01 | `test_FR01_runtime_account_rest` | 실제 앱 수명주기에서 계정 생성과 비콘 교체, 토큰 인증을 확인한다 |
+| FR-03 | `test_FR03_runtime_approval_rest` | 승인 목록, 상세, 권한 검사, 결정과 재전송을 확인한다 |
+| NFR-03 | `test_NFR03_runtime_rest_scope_and_shutdown` | 서비스 호출의 연결 범위와 종료 대기를 확인한다 |
 | FR-05, FR-06 | `test_FR05_runtime_buffers_startup_reports`, `test_FR06_runtime_requires_suback` | 보고 수신과 실행 접수의 순서다 |
 | FR-07 | `test_FR07_runtime_shutdown_timeout_keeps_unknown` | 종료 불명과 재시작 복원이다 |
 | FR-08, FR-09, FR-11 | `test_FR08_runtime_mcp_real_app_tools`, `test_FR09_runtime_unset_threshold_stays_blocked` | 인증, 여섯 도구와 응답 정보 제한, 미설정 임계값 차단이다 |
