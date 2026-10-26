@@ -71,7 +71,7 @@
 | 승인 요청에 본문이 있다 | 본문을 읽지 않는다. 계정은 토큰으로만 정한다 | `test_NFR04_approve_ignores_body` |
 | 서비스가 예외를 냈다 | `500`과 `INTERNAL_ERROR`. 예외 내용은 응답에 넣지 않는다 | `test_FR12A_recovery_service_error_is_internal_error` |
 | 서버가 아직 시작을 마치지 않아 복구 서비스가 연결되지 않았다 | 래퍼가 `RuntimeError`를 내고 라우터는 `500`과 `INTERNAL_ERROR` | `test_FR12A_runtime_recovery_unbound_is_internal_error` |
-| 명령: 토큰 파일이 없거나 비었다 | 종료 코드 2, 요청을 보내지 않는다 | `test_FR12A_recover_cli_token_file_errors` |
+| 명령: 토큰 파일이 없거나 비었거나, 토큰 하나가 아니다(공백·줄바꿈·ASCII 밖 글자, UTF-8 아님) | 종료 코드 2, 요청을 보내지 않는다. 토큰 원문을 오류에 쓰지 않는다 | `test_FR12A_recover_cli_token_file_errors` |
 | 명령: 서버에 연결할 수 없다 | 종료 코드 1과 연결 실패 안내 | `test_FR12A_recover_cli_connection_error` |
 | 명령: 서버가 거부했다 | 종료 코드 1과 사유 코드 | `test_FR12A_recover_cli_rejected` |
 
@@ -87,6 +87,7 @@
 - 조회의 소유권 없음은 `PermissionError`로 받는다 — API는 core의 예외 클래스를 import하지 않는다 (AGENTS.md 의존 규칙 4). `NotPlaceOwner`는 `PermissionError`의 하위 클래스다.
 - 복구 명령은 `nearpilot recover status <node_id>`와 `nearpilot recover approve <node_id> <recovery_id>`다. 토큰은 `--token-file PATH`(필수)로 받는다 — 명령줄 인자는 셸 기록에 남는다. 서버 주소는 `--server URL`이고, 없으면 설정 파일의 `[http]` `host`·`port`로 `http://{host}:{port}`를 만든다(`host`가 `0.0.0.0`이면 `127.0.0.1`). 설정은 `load_config(require_models=False)`로 읽는다.
 - 명령의 종료 코드: 준비 조회 성공 0 (상태가 `not_ready`여도 0), 승인 `completed` 0, 승인 `pending`과 거부와 연결 실패 1, 입력 오류 2. 출력은 사람이 읽는 한국어 줄이다. `status`는 상태, 복구 ID, 부족한 조건을 쓰고, `ready`이면 실행할 `approve` 명령 한 줄을 함께 쓴다.
+- `--server`는 `http://`나 `https://`로 시작해야 한다. 아니면 입력 오류 2다. 요청 하나를 10초까지 기다린다 — 서버 운영 수치가 아니라 명령이 기다리는 한계라 명령 모듈의 값이다. 2xx지만 예상하지 못한 응답과 끊긴 응답은 종료 코드 1이다.
 - HTTP 호출은 표준 라이브러리 `urllib.request`로 한다 — 새 의존성을 더하지 않는다.
 
 ## 7. 가정
