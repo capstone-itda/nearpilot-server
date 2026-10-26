@@ -115,6 +115,7 @@ nearpilot-server/
 | **근접 추정** | `src/nearpilot/core/proximity/`, `core/admin/`, `tools/data_collection/` | 관측 모델과 HMM, 사후확률 계산, 근접 추정 인터페이스, 수집 회차와 라벨 기록, `AdminService` (`AdminRepository` 위의 관리 쓰기) |
 | **상태 관리** | `src/nearpilot/core/lifecycle/`, `iot/`, `tools/node_sim/` | 예약 뒤의 상태 전이, 대여 점유 유지와 초과시간 계산, 명시적 해제, `FAULT` 복구, MQTT 게이트웨이, 기기 시뮬레이터, CORE 쪽 `NodeEventSink`, 서버 실행 진입점과 CORE 서비스 조립 |
 | **DB** | `src/nearpilot/db/`, `core/policy/`, `tools/evaluation/` | 스키마, 저장소, 원자적 점유와 승인 사용분, 감사 로그, 평가 스크립트, 접근 정책과 승인 검사, 토큰 해시로 계정 조회 (`AccountLookup`), 관리 쓰기 접점 (`AdminRepository`) |
+| **앱** | 저장소 루트의 `app/`, `api/rest/`의 계정·승인, `core/approval/` | 소유자·방문자 앱, 계정과 승인 REST, 승인 조회·결정 서비스 |
 | **대시보드** | `src/nearpilot/api/ws/`, `api/rest/`의 대시보드 조회, `core/dashboard/`, 저장소 루트의 `dashboard/` | 운영 대시보드 화면, 모니터링 WebSocket과 메시지 형식 (FR-12B), 대시보드 조회 REST (FR-12A), 대시보드 조회 서비스와 모니터링 따라 읽기 |
 | **공동** | `src/nearpilot/shared/`, `tests/integration/` | 계층 간 계약, 계층을 합친 시나리오 테스트 |
 
@@ -210,7 +211,8 @@ api  ──▶  core  ──▶  db
 - ⓪의 `input_digest`는 판정이 정규화 입력(대상 지정, 동작, 원 요청 연결 ID)으로 계산해서 `Repository.link_request`에 넘긴다. DB는 값을 저장하고 비교만 한다. 정규화 필드가 바뀌어도 DB 스키마는 바뀌지 않는다.
 - 판정 단계에서 예상하지 못한 예외가 나면 `DENY`와 `INTERNAL_ERROR`로 반환한다. 호스트 응답에는 일반 안내만 넣는다. 예외 내용과 오류 단계는 감사 기록에만 남긴다.
 - `INTERNAL_ERROR`로 거부한 요청을 같은 `(계정, request_id)`와 같은 정규화 입력으로 재전송하면 판정은 다시 판정한다 ([#76](https://github.com/capstone-itda/nearpilot-server/issues/76)). 일시 장애로 거부한 요청이 영구 거부로 남지 않는다.
-- `Repository.link_request`는 `INTERNAL_ERROR`로 끝난 키의 같은 입력 재전송에서 판정 칸을 비우고 새 시도로 인정한다. 동시 재전송은 한쪽만 새 시도가 된다. 이전 시도가 남긴 예약은 `reserve_if_free`가 같은 `internal_request_id`로 다시 돌려줘서 예약이 둘이 되지 않는다 (`specs/db-internal-error-retry`, [#80](https://github.com/capstone-itda/nearpilot-server/issues/80)).
+- `Repository.link_request`는 `INTERNAL_ERROR`로 끝난 키의 같은 입력 재전송에서 판정 칸을 비우고 새 시도로 인정한다. 동시 재전송은 한쪽만 새 시도가 된다. 재판정이 ⑤⑥에 닿으면 이전 시도가 남긴 예약을 `reserve_if_free`가 같은 `internal_request_id`로 다시 돌려줘서 예약이 둘이 되지 않는다 (`specs/db-internal-error-retry`).
+  - 미결: 예약 뒤 감사 기록이나 판정 저장이 실패해 오류로 끝난 요청의 예약은 남는다. 재판정이 ⑤⑥ 전에 거부로 끝나도 남는다. 상태 관리는 `ExecutionContext.reserved_at`을 받지 못해 예약 대기 제한으로 만료 취소할 수 없고, 재시작 복원도 이 예약을 정리하지 않는다 ([#80](https://github.com/capstone-itda/nearpilot-server/issues/80)).
 - `recheck()`가 예외를 던지면 상태 관리는 검사 오류와 같게 처리한다.
 - `ExecutionResult`는 재검사가 전송을 막았을 때 그 `Decision`을 함께 담는다. 호스트 응답 변환은 판정이 맡는다 (FR-09).
 - 재검사 밖의 이유로 실행을 막으면 `ExecutionResult.reason`에 중단 사유를 담는다. `reason`은 `recheck`가 없을 때만 쓴다. 판정은 `recheck`가 있으면 그 판정을, 없으면 `reason`으로 `DENY` 사유를 정한다.
@@ -773,7 +775,8 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
   - DB는 등록되지 않은 비콘을 `BEACON_NOT_FOUND`로, 없는 회차를 `COLLECTION_NOT_FOUND`로 거부한다.
   - 비활성 비콘으로 회차를 시작하면 `BEACON_NOT_FOUND`로 거부한다 ([#138](https://github.com/capstone-itda/nearpilot-server/issues/138)). `save_rssi`는 비활성 비콘의 프레임을 저장하지 않아 관측이 연결될 수 없는 회차를 만들지 않는다.
   - 회차 쓰기는 다른 관리 쓰기처럼 감사와 한 트랜잭션으로 반영한다.
-- 수집 회차의 조회 접점은 `tools/evaluation/runs.py`의 `list_runs`, `load_labeled_runs`다. 구간은 바꾸지 않는다. 잘못 수집한 회차는 분할에서 뺀다 (2026-10-27 담당자 위임 결정, `specs/core-ops-cli`).
+- 수집 회차의 조회 접점은 `tools/evaluation/runs.py`의 `list_runs`, `load_labeled_runs`다. 구간은 바꾸지 않는다 (`specs/core-ops-cli`).
+- 미결: 잘못 수집한 회차와 중단한 회차를 분할에서 빼는 방법. 지금 분할은 진행 중, 관측 없음, 장소를 정할 수 없는 회차만 뺀다.
 - 미결: 지표 8의 세부 측정 정의. 별도 이슈에서 정한다.
 
 ### 복구 준비 조회와 복구 승인

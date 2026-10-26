@@ -60,7 +60,7 @@
 | `ExecutionReadiness.can_execute` | 사용 | 상태 관리 |
 
 ### 만들지 않는 것
-- `INTERNAL_ERROR`로 거부한 요청의 재판정 (#76). 결정은 났지만 `link_request`와 `save_decision`이 오류로 끝난 키를 새 시도로 인정하는 방법을 DB 담당이 DB spec에서 정한다. 지금 재판정하면 `save_decision`이 충돌하고, 이미 만든 예약이 남는다.
+- `INTERNAL_ERROR`로 거부한 요청의 재판정 (#76). `core-internal-error-retry`와 `db-internal-error-retry`가 만든다.
 - `ExecutionContext`의 서버 내부 요청(`SERVER_INTERNAL`)과 실행 문맥 조회 (#83, #86). 상태 관리와 DB의 일이다.
 - 서버 진입점과 서비스 조립 (#88). 상태 관리가 만든다. 진입점이 `ExecutionReadiness`를 주입한다.
 - 실행 직전 재검사의 ② 변경
