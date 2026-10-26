@@ -477,7 +477,7 @@ def test_FR11_Decision에는_사용자_ID가_없다():
 # ── 비콘과 장소 (#39, #42) ──────────────────────────────────────────
 
 
-def test_FR18_활성_비콘이_둘이면_INTERNAL_ERROR():
+def test_FR15_활성_비콘이_둘이면_INTERNAL_ERROR():
     pipe, repo, *_ = build()
     repo.beacons = [BEACON, BeaconKey("u", 1, 2)]
     d = pipe.decide(request())
@@ -485,7 +485,7 @@ def test_FR18_활성_비콘이_둘이면_INTERNAL_ERROR():
     assert "rssi_since" not in repo.calls
 
 
-def test_FR18_활성_비콘이_없으면_BEACON_NOT_SEEN():
+def test_FR15_활성_비콘이_없으면_BEACON_NOT_SEEN():
     pipe, repo, *_ = build()
     repo.beacons = []
     d = pipe.decide(request())
@@ -493,7 +493,7 @@ def test_FR18_활성_비콘이_없으면_BEACON_NOT_SEEN():
     assert "rssi_since" not in repo.calls
 
 
-def test_FR18_신뢰하지_않는_기기만_비콘을_봤으면_BEACON_NOT_SEEN():
+def test_FR15_신뢰하지_않는_기기만_비콘을_봤으면_BEACON_NOT_SEEN():
     pipe, repo, prox, pol, audit = build()
     repo.nodes_list = [node(trust_state=TrustState.DISCOVERED)]
     d = pipe.decide(request())
