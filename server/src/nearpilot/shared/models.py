@@ -42,7 +42,6 @@ from nearpilot.shared.enums import (
     ReasonCode,
     ReserveOutcome,
     Role,
-    SafetyCheckOutcome,
     SessionState,
     Step,
     StoreOutcome,
@@ -352,31 +351,6 @@ class UseSession:
     def __post_init__(self) -> None:
         object.__setattr__(self, "release_policy", _freeze(self.release_policy))
 
-    @property
-    def check_criteria(self) -> CheckCriteria | None:
-        """생성 당시 종료 정책이 정한 반납 검사 기준. 없으면 None.
-
-        `release_policy["check_criteria"]` 의 `id` 와 `version` 을 읽는다.
-        기준이 없는 점유 세션을 검사 통과로 추정하지 않는다 (FR-20).
-        """
-        raw = self.release_policy.get("check_criteria")
-        if not isinstance(raw, Mapping):
-            return None
-        criteria_id, version = raw.get("id"), raw.get("version")
-        if not isinstance(criteria_id, str) or not criteria_id:
-            return None
-        if isinstance(version, bool) or not isinstance(version, int):
-            return None
-        return CheckCriteria(criteria_id, version)
-
-
-@dataclass(frozen=True, slots=True)
-class CheckCriteria:
-    """반납 검사 기준의 ID 와 버전. 점유 세션 생성 당시 종료 정책과 함께 보존한다 (FR-20)."""
-
-    criteria_id: str
-    criteria_version: int
-
 
 # ── 실행 인계와 사건별 저장 (#16, #17) ──────────────────────────────
 
@@ -491,16 +465,12 @@ class CloseResult:
     """`ExecutionStore.close_result` 가 반환하는 반납 완료 기록 (FR-20).
 
     기기의 현재 상태가 아니라 그 반납의 저장된 완료 기록이다.
+    반납 완료는 논리적 점유 해제다. 문 닫힘과 잠금의 증명이 아니다.
     """
 
     use_id: str
     closed_at: datetime
     end_reason: EndReason
-    check_id: str  # 종료 근거로 채택한 반납 검사
-    evidence: Mapping[str, Any] = field(default_factory=dict)  # 채택한 검사 근거
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "evidence", _freeze(self.evidence))
 
 
 # ── 노드 이벤트·명령 (IOT ↔ CORE) ──────────────────────────────────
@@ -611,45 +581,6 @@ class CommandResult:
     reported_at: datetime | None = None  # 서버가 결과를 정한 시각
 
 
-@dataclass(frozen=True, slots=True)
-class SafetyCheckRequest:
-    """CORE → IOT 반납 검사 요청 (FR-20). 물리 구동 명령이 아니다.
-
-    검사 시도마다 새 check_id 를 쓴다. 반납(use_id)과의 연결은 서버 안에만 둔다.
-    사용자 ID·점유 주체 필드를 두지 않는다.
-    """
-
-    check_id: str
-    node_id: str
-    target_session_id: str  # 대상 기기 연결 ID
-    criteria: CheckCriteria  # 점유 세션 생성 당시 종료 정책의 검사 기준
-    issued_at: datetime
-    expires_at: datetime  # issued_at + Settings.safety_check_timeout_sec
-
-
-@dataclass(frozen=True, slots=True)
-class SafetyCheckResult:
-    """기기가 보고한 반납 검사 결과 (FR-07, FR-20).
-
-    기기는 요청을 받은 뒤 새로 검사한다. 같은 check_id 의 재전송에는 같은 결과를 보고한다.
-    종료는 CORE 가 결정한다. PASSED 는 점유 해제 결정이 아니다.
-    """
-
-    node_id: str
-    session_id: str
-    seq: int
-    sent_at: datetime
-    received_at: datetime
-    check_id: str
-    event_id: str  # 결과 사건 ID. 기기가 붙인다.
-    criteria: CheckCriteria  # 기기가 실제로 적용한 검사 기준
-    checked_at: datetime  # 검사 시각
-    outcome: SafetyCheckOutcome
-    evidence: Mapping[str, Any] = field(default_factory=dict)  # 검사 근거
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "evidence", _freeze(self.evidence))
-
 
 # ── 감사 (FR-22) ────────────────────────────────────────────────────
 
@@ -723,8 +654,7 @@ class RecoveryEvidence:
     session_id: str
     observed_at: datetime
     execution_outcome: CommandOutcome | None = None
-    safety_confirmed: bool | None = None
-    physical_state_synced: bool | None = None
+    command_idle: bool | None = None  # 현재 연결의 status 가 명령 처리 대기(idle)를 보고했다
 
 
 @dataclass(frozen=True, slots=True)

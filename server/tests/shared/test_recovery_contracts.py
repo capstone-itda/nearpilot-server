@@ -22,7 +22,7 @@ from nearpilot.shared.models import (
 NOW = datetime(2026, 10, 13)
 REQUEST = UseRequest('u1', 'r1', TargetSpec(TargetKind.EXPLICIT, Capability.LOCKER, 'locker-1'),
                      Action.OPEN, 'chatgpt', NOW)
-EVIDENCE = RecoveryEvidence('ev1', 'connection-1', NOW, CommandOutcome.SUCCEEDED, True, True)
+EVIDENCE = RecoveryEvidence('ev1', 'connection-1', NOW, CommandOutcome.SUCCEEDED, True)
 SETTLEMENT = RecoverySettlement('rec1', 'locker-1', 'owner', NOW, 'digest1',
                                 DeviceState.FAULT, RecoveryStatus.READY,
                                 {'cmd1': ExecutionStatus.UNKNOWN}, {}, (EVIDENCE,), ())

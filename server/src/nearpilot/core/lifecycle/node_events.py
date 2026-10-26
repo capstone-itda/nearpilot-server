@@ -11,7 +11,6 @@ from typing import Any
 
 from nearpilot.core.lifecycle.execution import ExecutionService
 from nearpilot.core.lifecycle.fault_recovery import FaultRecoveryService
-from nearpilot.core.lifecycle.release import ReleaseService
 from nearpilot.core.lifecycle.restore import RestoreService
 from nearpilot.core.lifecycle.shared_light import SharedLightService
 from nearpilot.shared.enums import Action, DeviceState, ExecutionStatus, SessionState, StoreOutcome
@@ -19,7 +18,7 @@ from nearpilot.shared.errors import StoreError
 from nearpilot.shared.interfaces import ExecutionStore, ProximityEstimator, Repository
 from nearpilot.shared.models import (
     ExecutionContext, ExecutionResult, NodeAnnounce, NodeInfo, NodeResult, NodeStatus,
-    RestoreBundle, RssiFrame, SafetyCheckResult,
+    RestoreBundle, RssiFrame,
 )
 
 _log = logging.getLogger(__name__)
@@ -57,14 +56,14 @@ class NodeEventService:
     def __init__(
         self, *, repository: Repository, store: ExecutionStore,
         proximity: ProximityEstimator, execution: ExecutionService,
-        release: ReleaseService, restore: RestoreService,
+        restore: RestoreService,
         recovery: FaultRecoveryService, shared_light: SharedLightService,
         context_for: Callable[[str], ExecutionContext | None],
         lock_for: Callable[[str], AbstractContextManager[Any]],
     ) -> None:
         self._repository, self._store = repository, store
         self._proximity, self._execution = proximity, execution
-        self._release, self._restore = release, restore
+        self._restore = restore
         self._recovery, self._shared_light = recovery, shared_light
         self._context_for, self._lock_for = context_for, lock_for
         self._faults: dict[str, _Fault] = {}
@@ -202,14 +201,8 @@ class NodeEventService:
                     command_id=saved.command_id, use_id=saved.use_id,
                 ))
 
-    def on_safety_check_result(self, result: SafetyCheckResult) -> None:
-        with self._lock_for(result.node_id):
-            # 복구 검사의 결과는 복구 서비스가, 나머지는 반납 서비스가 처리한다 (#85).
-            if not self._recovery.on_check_result(result):
-                self._release.on_safety_check_result(result)
-
     def latest_status(self, node_id: str) -> NodeStatus | None:
-        """내부 물리 관측 조회다. 반납 안전이나 재사용 허가가 아니다."""
+        """내부 상태 보고 조회다. 반납 조건이나 재사용 허가가 아니다."""
         with self._lock_for(node_id):
             with self._index_lock:
                 return self._statuses.get(node_id)

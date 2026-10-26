@@ -28,7 +28,7 @@ from nearpilot.shared.models import TargetSpec, UseRequest
 from tools.node_sim import Beacon, BrokerConfig, CommandStore, Credentials, Scenario, SimDevice, SimNode
 
 NODE = "locker-1"  # target_spec 형식의 기기 ID. 임시 ACL 에 계정 절을 추가한다
-NODES = {NODE: ("locker", "rental", "locker-return")}
+NODES = {NODE: ("locker", "rental")}
 
 
 @pytest.fixture
@@ -50,8 +50,8 @@ def broker(tmp_path):
     server_section = example[example.index("user nearpilot-server"):example.index("user node-a")]
     device = [f"user {NODE}"]
     device += [f"topic write nearpilot/node/{NODE}/{kind}"
-               for kind in ("announce", "rssi", "status", "result", "safety_check_result")]
-    device += [f"topic read nearpilot/node/{NODE}/{kind}" for kind in ("cmd", "safety_check")]
+               for kind in ("announce", "rssi", "status", "result")]
+    device += [f"topic read nearpilot/node/{NODE}/cmd"]
     acl.write_text(server_section + "\n".join(device) + "\n", encoding="utf-8")
     text = (SERVER / "config" / "mosquitto.conf").read_text(encoding="utf-8")
     text = text.replace("listener 1883 127.0.0.1", f"listener {port} 127.0.0.1")

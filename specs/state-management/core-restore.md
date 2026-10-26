@@ -2,7 +2,7 @@
 
 - 담당: JM-220 (상태 관리)
 - 요구사항: FR-19, FR-20, NFR-04
-- 따르는 결정: #15, #17, #78, #81, #82, #83, #88
+- 따르는 결정: #15, #17, #78, #81, #82, #83, #88, 2026-10-26 센서 기반 물리 검증 제외 (#196)
 
 ## 1. 왜
 
@@ -18,7 +18,7 @@
 - 바뀌는 상태:
   - 전송을 시작하지 않은 예약 중 예약 대기 제한을 넘긴 예약의 취소 (`cancel_not_sent(expected=PENDING, RESERVATION_EXPIRED)`)
   - 결과를 확정하지 못한 명령의 기기 `FAULT`와 복구 건
-  - `CLOSING` 세션의 반납 검사 재개
+  - `CLOSING` 세션의 논리적 종료 재개
   - 상태 관리 메모리의 기기별 복원 상태
 - 약속:
   - 기기별 복원과 현재 상태 확인을 마치기 전에는 그 기기의 새 실행과 재사용을 허가하지 않는다.
@@ -38,14 +38,14 @@
 | 전송을 시작했고 결과가 없는 명령 (`in_progress`) | 실행 여부가 불명이다. `record_result(UNKNOWN)`으로 격리하고 복구 건을 만든다 |
 | `RESERVED` 세션 | 연결된 요청과 명령의 처리를 따른다. 명령이 없으면 예약 요청의 만료 처리를 따른다 |
 | `ACTIVE` 세션 | 점유를 유지한다. `rental_due_at`을 바꾸지 않는다 |
-| `CLOSING` 세션 | 이전 검사 결과로 종료하지 않는다. 기기 확인 뒤 새 `check_id`로 반납 검사를 다시 요청한다 |
+| `CLOSING` 세션 | 저장된 과거 근거로 종료하지 않는다. 현재 연결 확인 뒤 `core-release`의 `resume_close`로 같은 논리 조건을 다시 검사하고 종료 저장을 재개한다 |
 | 미해결 `FAULT` 기기와 미완료 복구 건 | 기존 복구 건을 복원한다. 복구 건 저장 전에 중단됐다면 누락된 복구 건을 보완한다. 현재 유효한 근거를 다시 확인한다 |
 | 승인 사용분 | 연결된 요청·명령·복구 건의 처리를 따른다. 명령이 없는 공용형 예약도 포함한다. 사용분만 따로 반환하지 않는다 |
 
 - 서버 중단 시간은 예약 대기와 대여시간·초과시간 계산에 포함한다 (FR-20 재시작).
 - 대여시간 초과만으로 점유를 종료하지 않는다 (FR-20).
 - 서버 중단 중 비콘을 받지 못한 시간으로 이탈을 확정하지 않는다 (FR-20).
-- 과거의 안전 근거는 복원 자료다. 현재 안전 확인을 대신하지 않는다 (FR-19).
+- 서버는 과거 명령 결과를 복원한다. 현재 연결과 명령 처리 상태는 신선한 보고로 다시 확인한다 (FR-19).
 - 기기의 현재 상태 확인은 재시작 뒤 현재 연결의 신선한 `status` 수신이다. 확인 전에는 복원 상태를 끝내지 않는다 (architecture.md §5 MQTT 6절).
 - 오프라인, `FAULT`, 현재 상태를 확인하지 못한 기기에는 공용 조명 규칙만으로 새 명령을 보내지 않는다 (FR-20).
 - 공용 조명의 유지 대상자를 복원하지 않는다. 기기별 복원을 마친 뒤 `core-shared-light`에 관측 재개를 알린다 (FR-20).
@@ -67,13 +67,13 @@
 | 계약 | 사용 또는 제공 | 상대 영역 |
 |---|---|---|
 | `ExecutionStore.restore_pending`, `record_result`, `save_recovery`, `recovery` | 사용 | DB |
-| `SafetyCheckGateway.request_check` | 사용 (`core-release`를 거친다) | IOT |
+| `ReleaseService.resume_close` | 사용 (`CLOSING` 세션의 종료 재개) | 상태 관리 |
 | `ExecutionStore.cancel_not_sent` | 사용 (예약 만료 취소, 명령 미연결 요청 포함) | DB |
 | `ExecutionReadiness.can_execute` | 제공 | 판정, `core-execution` |
 
 ### 만들지 않는 것
 - 복원 묶음의 조회 (DB)
-- 반납 검사의 판단 (`core-release`)
+- 반납 종료의 판단과 저장 (`core-release`)
 - 복구 정산 (`core-fault-recovery`)
 - 근접 추정의 HMM 복원 (근접 추정)
 
@@ -92,7 +92,8 @@
 | `in_progress` 명령이 있다 | 새 명령을 보내지 않는다. `UNKNOWN`으로 격리하고 복구 건을 만든다 | `test_FR19_restore_in_progress_isolated` |
 | `in_progress` 명령의 늦은 성공 결과가 재시작 뒤 온다 | 원래 실행 문맥으로 `record_result`에 넘긴다. `FAULT`를 자동으로 해제하지 않는다 (#83) | `test_FR07_restore_late_success_keeps_fault` |
 | `ACTIVE` 세션의 `rental_due_at`이 서버 중단 중에 지났다 | 점유를 유지한다. 초과시간에 중단 시간을 포함한다 | `test_FR20_restore_overdue_kept` |
-| `CLOSING` 세션이 있다 | 새 `check_id`로 반납 검사를 다시 요청한다 | `test_FR20_restore_closing_new_check` |
+| `CLOSING` 세션이 있다 | 현재 연결 확인 뒤 논리적 종료를 다시 저장한다 | `test_FR20_restore_closing_resumes_logical_close` |
+| 복원 묶음에 과거 검사 근거가 있다 | 근거로 쓰지 않고 같은 논리 조건으로 종료한다 | `test_FR20_restore_closing_ignores_saved_check_evidence` |
 | 기기가 재시작 뒤 `status`를 보내지 않는다 | 복원 상태를 끝내지 않는다. 새 실행을 막는다 | `test_FR19_restore_blocks_new_execution_until_confirmed` |
 | 미완료 복구 건이 있다 | 같은 `recovery_id`로 복원한다. 새 복구 건을 만들지 않는다 | `test_NFR04_restore_keeps_recovery_id_and_evidence_without_trusting_it` |
 | 저장한 생성 시각과 기준 시각이 있다 | 재시작 시각으로 바꾸지 않는다 | `test_FR20_pending_uses_stored_time_and_settings_snapshot` |
@@ -104,7 +105,7 @@
 - `restore()`가 최초 조회를 맡고 외부 `tick()`이 실패와 미완료 기기를 재시도한다 — 자체 스레드와 새 시간 설정을 만들지 않는다.
 - `on_status()`는 검증을 마친 현재 연결의 보고만 받는다 — 발표와 과거 결과로 복원을 끝내지 않는다.
 - 현재 연결과 온라인 유지 시간을 다시 확인하는 `can_execute()`를 `ExecutionReadiness` 구현으로 제공한다 — #82로 `shared`에 계약이 생겼다. 서비스 자체가 Protocol을 만족한다.
-- `is_restored()`와 `blockers()`로 내부 복원 상태를 읽는다 — 실행 가능 여부와 반납 검사 재개를 구분한다.
+- `is_restored()`와 `blockers()`로 내부 복원 상태를 읽는다 — 실행 가능 여부와 반납 종료 재개를 구분한다.
 - `FaultRecoveryService.record_isolated`, `ReleaseService.resume_close`, `SharedLightService.resume`를 연결한다 — 기존 상태 관리 기능을 재사용한다.
 - 공용 조명에는 `resume()` 뒤 확인한 보고를 `on_status()`로 넘긴다 — 초기 참여 대기는 실제 인계 시각부터 잰다.
 - 재시작의 불명 근거와 확정 시각을 보존한다 — 저장 재시도에서 사건 내용을 바꾸지 않는다.
@@ -142,7 +143,7 @@
 | FR-19 | `test_FR19_new_reservation_after_restore_can_reach_execution` | 복원 완료 뒤 정상 예약의 실행 인계를 허용한다 |
 | FR-19 | `test_FR19_same_status_redelivery_retries_failed_handover` | 같은 보고의 재인계에서 실패한 인계를 재시도한다 |
 | FR-20 | `test_FR20_restore_overdue_kept` | 점유와 기준 시각을 유지하고 서버 중단 시간을 초과시간에 포함한다 |
-| FR-20 | `test_FR20_restore_closing_new_check` | 현재 연결 확인 뒤 새 반납 검사를 요청한다 |
+| FR-20 | `test_FR20_restore_closing_resumes_logical_close` | 현재 연결 확인 뒤 논리적 종료를 다시 저장한다 |
 | NFR-04 | `test_NFR04_completed_recovery_rechecks_current_status` | 복구 정산 완료 기록과 현재 보고를 확인한다 |
 | NFR-03 | `test_NFR03_concurrent_restore_settles_once` | 동시 복원에서도 불명 저장과 복구 건 생성을 중복하지 않는다 |
 

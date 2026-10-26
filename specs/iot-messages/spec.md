@@ -3,7 +3,7 @@
 - 담당: 이 작업을 지시한 담당자 (상태 관리의 IOT 구현 범위)
 - 구현 브랜치: `feat/iot-messages`
 - 요구사항: FR-04, FR-05, FR-06, FR-07, FR-20, NFR-08, NFR-11
-- 따르는 결정: architecture.md에 반영한 #19, #31, #38, #140~#143이다.
+- 따르는 결정: architecture.md에 반영한 #19, #31, #38, #140이다. 2026-10-26 센서 기반 물리 검증 제외 (#196)로 반납 검사 형식을 없앴다.
 - 상태: 메시지 검증·변환과 단위 테스트를 구현했다. 전체 계획은 [plan.md](../iot-mqtt-gateway/plan.md)에 있다.
 
 ## 1. 왜
@@ -14,8 +14,8 @@
 ## 2. 무엇
 
 - 입력: 토픽, UTF-8 본문, 최초 서버 수신 시각과 MQTT 전달 정보다.
-- 출력: `NodeAnnounce`, 비콘별 `RssiFrame`, `NodeStatus`, `NodeResult`, `SafetyCheckResult`다.
-- 출력: `NodeCommand`와 `SafetyCheckRequest`에서 만든 MQTT 본문이다.
+- 출력: `NodeAnnounce`, 비콘별 `RssiFrame`, `NodeStatus`, `NodeResult`다.
+- 출력: `NodeCommand`에서 만든 MQTT 본문이다.
 - 바뀌는 상태: 없음. 변환은 현재 연결·순번·명령 대기를 저장하지 않는다.
 - 약속:
   - 일곱 토픽의 v1 필드 의미를 보존한다.
@@ -39,7 +39,7 @@
 - 실행 결과의 상태·오류 코드·사건 ID를 그대로 담는다. 서버 타임아웃을 `NodeResult`로 만들지 않는다 (FR-07).
 - `rejected`의 오류 코드는 `RejectCode`다. 검사 결과에 실행용 거부 코드를 추가하지 않는다 (FR-07, #143).
 - 송신 본문에 사용자 ID·외부 요청 ID·승인 정보·점유 주체를 넣지 않는다 (NFR-08).
-- 명령·검사 ID, 대상 연결·기준·발행 시각·만료 시각을 변환 중 바꾸지 않는다 (FR-06, FR-20).
+- 명령 ID, 대상 연결·발행 시각·만료 시각을 변환 중 바꾸지 않는다 (FR-06).
 
 ## 4. 경계
 
@@ -57,8 +57,8 @@
 
 | 계약 | 사용 또는 제공 | 상대 영역 |
 |---|---|---|
-| 기기 보고의 다섯 shared 모델 | 변환에 사용한다 | shared |
-| `NodeCommand`, `SafetyCheckRequest` | 송신에 사용한다 | CORE |
+| 기기 보고의 네 shared 모델 | 변환에 사용한다 | shared |
+| `NodeCommand` | 송신에 사용한다 | CORE |
 | MQTT v1 본문 | 검증·변환한다 | 펌웨어 |
 
 ### 만들지 않는 것
@@ -78,9 +78,8 @@
 | 관측 배열이 비었다 | 빈 결과다. 가짜 프레임을 만들지 않는다 | `test_FR05_empty_observations_no_fake_frame` |
 | 본문에 여러 비콘이 있다 | 공통 메타데이터로 비콘별 모델을 만든다 | `test_FR05_batch_preserves_metadata` |
 | IR 무드등이 `light_on=null`을 보고한다 | `None`을 보존한다 | `test_FR07_unobserved_light_is_none` |
-| 검사 결과에 필수 근거가 없다 | 유효한 통과로 만들지 않는다 | `test_FR20_missing_evidence_never_passes` |
+| `safety_check_result` 토픽의 보고다 | 알 수 없는 토픽으로 거부한다 | `test_FR20_release_check_result_topic_rejected` |
 | 명령을 직렬화한다 | 내부 계정 정보 없이 허용한 필드만 담는다 | `test_FR06_encode_preserves_command` |
-| 검사를 직렬화한다 | ID·기준·연결·시각을 보존한다 | `test_FR20_encode_preserves_check` |
 
 ## 6. 결정
 
@@ -92,11 +91,10 @@
 
 - `decode_message(topic, payload, received_at=...)`는 보고를 shared 모델로 변환한다. RSSI는 `RssiFrame` 튜플을 반환한다.
 - 호출자는 최초 수신 시각을 UTC `datetime`으로 전달한다. MQTT 전달 정보는 호출자가 보존한다.
-- `encode_command(NodeCommand)`와 `encode_safety_check(SafetyCheckRequest)`는 UTF-8 JSON 바이트를 반환한다.
+- `encode_command(NodeCommand)`는 UTF-8 JSON 바이트를 반환한다. `encode_safety_check`는 없앴다.
 - 형식이 잘못되면 `MessageValidationError`를 던진다. 예외 메시지에 본문을 넣지 않는다. 호출자가 거부를 기록한다.
 - 중복 JSON 키와 유한하지 않은 JSON 수를 거부한다. 알 수 없는 추가 필드는 판정 필드에 넣지 않는다.
-- 알려진 v1 검사 기준은 모든 결과에서 필수 bool 근거와 관측 시각을 검사한다. 근거의 값과 결과의 일치는 CORE가 검사한다.
-- 다른 검사 기준과 버전은 값을 보존한다. CORE가 요청한 기준과 유효성을 검사한다.
+- 반납 검사 결과의 변환과 검사 요청의 직렬화를 없앤다 — 2026-10-26 결정으로 반납 검사를 제외했다. status 형식의 새 버전은 미결이라 v1 `physical_state`를 그대로 변환한다.
 
 ## 7. 가정
 
@@ -113,7 +111,7 @@
 | FR-05 | 5절의 `test_FR05_*` | 빈 배열·일괄 관측·비콘과 RSSI를 검증한다 |
 | FR-06 | `test_FR06_encode_preserves_command` | 명령과 유효 시간을 보존한다 |
 | FR-07 | 5절의 `test_FR07_*` | 원시 관측과 결과 사건을 보존한다 |
-| FR-20 | 5절의 `test_FR20_*` | 검사 요청과 근거를 변환한다 |
+| FR-20 | `test_FR20_release_check_result_topic_rejected` | 반납 검사 결과 토픽을 받지 않는다 |
 | NFR-08 | `test_NFR08_outbound_allowlist` | 내부 계정 정보를 보내지 않는다 |
 | NFR-11 | `test_NFR11_all_v1_message_shapes` | 일곱 토픽의 v1 형식을 확인한다 |
 

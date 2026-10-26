@@ -13,8 +13,8 @@ from nearpilot.iot.mqtt import (
     DeliveryConfig, MqttCommandGateway, MqttConfig, MqttConnection, ReportDelivery,
 )
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import Action, CommandOutcome, NodeResultState, SafetyCheckOutcome
-from nearpilot.shared.models import CheckCriteria, NodeCommand, SafetyCheckRequest
+from nearpilot.shared.enums import Action, CommandOutcome, NodeResultState
+from nearpilot.shared.models import NodeCommand
 from tools.node_sim import (
     Beacon, BrokerConfig, CommandStore, Credentials, Scenario, SimDevice, SimNode,
 )
@@ -44,9 +44,6 @@ class Sink:
 
     def on_result(self, report):
         self._call("on_result", report)
-
-    def on_safety_check_result(self, report):
-        self._call("on_safety_check_result", report)
 
     def of(self, method, node="node-a"):
         with self.condition:
@@ -111,12 +108,6 @@ def command(session, command_id="command-1", node="node-a", action=Action.OPEN):
     return NodeCommand(command_id, node, action, session, now, now + timedelta(seconds=3))
 
 
-def check_request(session, check_id, node="node-a"):
-    now = datetime.now(timezone.utc)
-    return SafetyCheckRequest(check_id, node, session, CheckCriteria("locker-return", 1),
-                              now, now + timedelta(seconds=3))
-
-
 def live_session(sink, device):
     # The device creates its session on CONNACK; read it when each status arrives.
     return sink.wait("on_status", lambda r: r.session_id == device.node.session_id).session_id
@@ -135,13 +126,6 @@ def test_NFR12_simulator_local_ap(iot, sims):
     assert again.outcome == CommandOutcome.SUCCEEDED
     assert again.report.event_id == first.report.event_id
     assert device.node.actuations == 1
-    gateway.request_check(check_request(session, "check-1"))
-    not_ready = sink.wait("on_safety_check_result", lambda r: r.check_id == "check-1")
-    assert not_ready.outcome == SafetyCheckOutcome.NOT_READY  # Unlocked by `open`.
-    assert device.node.set_door(False) and device.node.set_door(True)
-    gateway.request_check(check_request(session, "check-2"))
-    passed = sink.wait("on_safety_check_result", lambda r: r.check_id == "check-2")
-    assert passed.outcome == SafetyCheckOutcome.PASSED
 
 
 def test_FR07_delayed_or_lost_result(iot, sims, broker):

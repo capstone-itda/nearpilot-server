@@ -3,7 +3,7 @@
 - 담당: 이 작업을 지시한 담당자 (상태 관리의 IOT 구현 범위)
 - 구현 브랜치: `feat/iot-mqtt-gateway`
 - 요구사항: FR-06, FR-07, FR-13, NFR-08, NFR-11, NFR-12
-- 따르는 결정: architecture.md에 반영한 #19, #38, #88, #140이다.
+- 따르는 결정: architecture.md에 반영한 #19, #38, #88, #140이다. 2026-10-26 센서 기반 물리 검증 제외 (#196)로 검사 토픽을 없앴다.
 - 상태: 연결 책임을 구현했다. 전체 분할과 순서는 [plan.md](plan.md)에 있다. CORE와 후속 IOT 모듈의 최종 조립은 후속 작업이다.
 
 ## 1. 왜
@@ -29,20 +29,18 @@ CORE가 기기와 통신하려면 MQTT 연결과 구독이 먼저 준비되어�
 | `rssi` | 기기 → 서버 | 0 | false |
 | `status` | 기기 → 서버 | 1 | false |
 | `result` | 기기 → 서버 | 1 | false |
-| `safety_check_result` | 기기 → 서버 | 1 | false |
 | `cmd` | 서버 → 기기 | 1 | false |
-| `safety_check` | 서버 → 기기 | 1 | false |
 
 ## 3. 제약
 
 - MQTT는 3.1.1이며 `clean_session=true`다. 재접속하면 다시 구독한다 (NFR-11, architecture.md §5 MQTT 1절).
 - 연결은 `paho-mqtt` 2.x의 스레드 방식을 쓴다 (architecture.md §8·9).
-- Mosquitto는 익명 접속을 거부한다. 기기는 자기 보고만 발행하고 자기 명령·검사 요청만 구독한다 (NFR-08).
-- 서버만 `cmd`와 `safety_check`를 발행한다. CORE가 인계한 명령만 발행 경로에 연결한다 (FR-06).
+- Mosquitto는 익명 접속을 거부한다. 기기는 자기 보고만 발행하고 자기 명령만 구독한다 (NFR-08).
+- 서버만 `cmd`를 발행한다. CORE가 인계한 명령만 발행 경로에 연결한다 (FR-06).
 - Mosquitto의 계정별 ACL로 인증 주체와 허용 토픽을 묶고, 토픽·본문의 기기 ID 대조는 보고 검증 모듈이 한다 (NFR-08, S2 A안).
 - 접속 설정은 실행 설정에서 받는다. 실제 비밀번호 파일은 커밋하지 않는다 (NFR-08).
 - 독립 AP 안에서 실행한다. 외부 인터넷을 연결 조건으로 두지 않는다 (NFR-12).
-- 서버 조립은 `start()`가 필요한 다섯 구독의 SUBACK을 확인한 뒤 복원하고 신규 요청을 받는다 (architecture.md §2, S3 A안).
+- 서버 조립은 `start()`가 필요한 네 구독의 SUBACK을 확인한 뒤 복원하고 신규 요청을 받는다 (architecture.md §2, S3 A안).
 - 연결 복구만으로 기기 온라인·현재 연결·안전을 확정하지 않는다 (FR-13).
 - 시작·종료·재접속의 제한 시간과 주기는 설정에서 받는다. 미결 수치를 상수로 넣지 않는다 (requirements.md §1.2).
 - IOT는 `shared` 계약만으로 CORE와 연결한다. CORE·DB 구현을 불러오지 않는다 (AGENTS.md 의존 규칙 4).
@@ -65,14 +63,14 @@ CORE가 기기와 통신하려면 MQTT 연결과 구독이 먼저 준비되어�
 | 계약 | 사용 또는 제공 | 상대 영역 |
 |---|---|---|
 | `NodeEventSink` | 조립에서 주입받는다 | CORE |
-| `NodeCommandGateway`, `SafetyCheckGateway` | 구현 모듈을 조립한다 | CORE |
+| `NodeCommandGateway` | 구현 모듈을 조립한다 | CORE |
 | MQTT v1 | 연결·구독을 제공한다 | 펌웨어 |
 | 구독 뒤 복원 | 연결한다. 접점은 S3에서 확정한다 | 서버 조립 |
 
 ### 만들지 않는 것
 
 - 본문 변환은 `iot-messages`, 현재 연결과 재인계는 `iot-event-delivery`가 맡는다.
-- 명령별 결과 대기와 검사 요청은 `iot-command-gateway`가 맡는다.
+- 명령별 결과 대기는 `iot-command-gateway`가 맡는다.
 - 서버 실행 진입점과 CORE 서비스 조립은 #88의 별도 작업이다.
 
 ## 5. 예외 상황
@@ -91,7 +89,7 @@ CORE가 기기와 통신하려면 MQTT 연결과 구독이 먼저 준비되어�
 ## 6. 결정
 
 - S2 A안: 브로커가 계정별 토픽 접근을 강제하고 IOT가 토픽·본문 ID를 대조한다 — 담당자가 2026-10-16에 선택했다. 서버 계정과 기기 계정을 분리한 명시적 ACL 예시를 제공한다.
-- S3 A안: IOT가 접속 설정과 `start()`·`stop()`을 제공한다 — 담당자가 2026-10-16에 선택했다. 시작은 다섯 보고 구독의 SUBACK까지 기다리고, 재접속 때 같은 구독을 다시 확인한다.
+- S3 A안: IOT가 접속 설정과 `start()`·`stop()`을 제공한다 — 담당자가 2026-10-16에 선택했다. 시작은 네 보고 구독의 SUBACK까지 기다리고, 재접속 때 같은 구독을 다시 확인한다.
 - 접속 설정은 IOT 내부의 `MqttConfig`다. 주소·포트·클라이언트 ID·계정·비밀번호 파일 경로·keepalive·접속 제한·시작 제한·종료 제한·재접속 최소·최대 대기를 필수로 받는다. 시간의 임의 기본값을 만들지 않는다.
 - 연결 구현은 `mqtt/connection.py`다. `MqttConnection`은 보고와 연결 상실을 후속 IOT 모듈에 짧은 콜백으로 인계한다. 콜백에서 CORE를 직접 호출하지 않는다. CORE 인계 작업·용량·재시도는 후속 보고 spec이 맡는다.
 - 수신은 `IncomingReport`에 토픽·bytes 본문·QoS·retain·dup·최초 UTC 수신 시각을 보존한다. 연결만으로 기기 온라인 상태를 만들지 않는다.
@@ -116,7 +114,7 @@ CORE가 기기와 통신하려면 MQTT 연결과 구독이 먼저 준비되어�
 | FR-07 | `test_FR07_disconnect_keeps_uncertainty` | 연결 끊김을 미전송·성공으로 바꾸지 않는다 |
 | FR-13 | `test_FR13_reconnect_resubscribes` | 재구독과 현재 연결 확인을 구분한다 |
 | NFR-08 | 5절의 `test_NFR08_*` | 익명·교차 기기 접근을 막는다 |
-| NFR-11 | `test_NFR11_mqtt_version_qos_retain` | 일곱 토픽의 전달 설정을 확인한다 |
+| NFR-11 | `test_NFR11_mqtt_version_qos_retain` | 다섯 토픽의 전달 설정을 확인한다 |
 | NFR-12 | `test_NFR12_local_broker_without_internet` | 외부 서비스 없이 연결한다 |
 
 단위 테스트는 MQTT 전송과 CORE의 fake를 쓴다. 접근 제어는 임시 자격정보와 실제 Mosquitto로 검증한다.

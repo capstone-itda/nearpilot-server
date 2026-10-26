@@ -2,7 +2,7 @@
 
 - 담당: paiwhy (DB)
 - 요구사항: FR-06, FR-07, FR-19, FR-20, FR-21, FR-22, NFR-03, NFR-04
-- 따르는 결정: #17, #19, #20, #35, #37, #38, #78, #81, #84, #92, #113, PR #50, PR #51, PR #103, PR #104, PR #105
+- 따르는 결정: #17, #19, #20, #35, #37, #38, #78, #81, #84, #92, #113, PR #50, PR #51, PR #103, PR #104, PR #105, 2026-10-26 센서 기반 물리 검증 제외 (#196)
 
 ## 1. 왜
 
@@ -16,7 +16,8 @@
 - 출력: `StoreResult`, `CommandRecord`, `CloseResult`, `Sequence[RestoreBundle]`, `RecoveryRecord`
 - 바뀌는 상태:
   - `node_command`, `use_session`, `approval_usage`, `node.device_state`, `recovery`, `audit_log` 행
-  - 새 마이그레이션으로 `use_session`에 `check_id`·`check_evidence`, `recovery`에 `settlement_json` 컬럼을 추가한다. `0001_initial.sql`은 고치지 않는다.
+  - 새 마이그레이션으로 `recovery`에 `settlement_json` 컬럼을 추가한다. `0001_initial.sql`은 고치지 않는다.
+  - `0007_drop_release_check.sql`로 `use_session`의 `check_id`·`check_evidence` 컬럼을 지운다 (2026-10-26 결정).
 - 약속:
   - `ExecutionStore`의 함수 13개(`link_command`, `begin_send`, `cancel_not_sent`, `record_result`, `isolate_device`, `begin_close`, `finish_close`, `close_result`, `execution`, `restore_pending`, `save_recovery`, `recovery`, `settle_recovery`)를 모두 구현한다.
   - 쓰기 함수 하나는 `BEGIN IMMEDIATE` 트랜잭션 하나다. 조회 전용 함수(`close_result`, `execution`, `recovery`, `restore_pending`)는 읽기만 한다.
@@ -33,7 +34,10 @@
 - 늦은 성공으로 `FAULT`를 해제하지 않는다. 늦은 결과와 복구 재호출은 중복 정산과 완료 상태의 되돌림을 만들지 않는다 (FR-07, `architecture.md` §4).
 - `cancel_not_sent`는 기대 상태(`expected`)가 다르면 `CONFLICT`다. 재조작 취소는 기존 점유와 기존 사용분을 건드리지 않는다 (`interfaces.py`, FR-19 본인 재조작).
 - `isolate_device`는 기기만 `FAULT`로 둔다. 점유 세션과 승인 사용분은 바꾸지 않는다 (NFR-04).
-- `finish_close`는 채택한 `check_id`와 근거를 함께 저장한다. 같은 `use_id`·같은 `check_id`는 `ALREADY_APPLIED`, 다른 내용은 `CONFLICT`다 (FR-20).
+- `finish_close(use_id, closed_at, end_reason)`는 세션 `CLOSED`, 기기 `AVAILABLE`, `closed_at`과 감사를 함께 저장한다. 검사 ID와 센서 근거를 받지 않는다 (FR-20).
+- `finish_close`는 세션과 기기가 `CLOSING`이고 종료 사유가 `begin_close`의 값과 같은지, 같은 기기에 `in_progress` 구동 명령이 없는지 같은 트랜잭션에서 검사한다. 구동 명령이 있으면 `CONFLICT`·`COMMAND_IN_PROGRESS`다.
+- 이미 `CLOSED`인 세션에 같은 종료 사유로 다시 부르면 `ALREADY_APPLIED`이고 처음 종료 시각을 유지한다. 다른 종료 사유는 `CONFLICT`·`CONTENT_CONFLICT`다.
+- `close_result`는 `CLOSED` 세션의 `use_id`, `closed_at`, `end_reason`을 반환한다. 반납 완료인지는 호출자가 종료 사유로 확인한다.
 - `restore_pending`은 일관된 읽기 시점에 조회한다. 조회 오류를 빈 목록으로 바꾸지 않는다 (FR-19 재시작 복원).
 - `settle_recovery`는 연결과 예상 상태를 검사하고 승인, 근거, 사용분 정산, 점유 종료, 기기 복구, 감사를 한 트랜잭션에서 커밋한다. 같은 정산은 `settlement_digest`로 비교한다 (NFR-04, `architecture.md` §4 "복구 건과 복구 정산").
 - `cancel_not_sent`는 `node_command` 행이 없어도 `expected=PENDING`으로 호출할 수 있다. 이때는 예약·사용분 정리만 반영하고 `StoreResult.command`는 `None`이다 (6절 결정, `specs/state-management/core-restore.md`).
@@ -103,11 +107,14 @@
 | `ACTIVE` 세션의 반납을 시작한다 | `APPLIED`와 `CLOSING`이다 | `test_FR20_begin_close_applied` |
 | 다른 미완료 구동 명령이 있는데 반납을 시작한다 | `CONFLICT`와 `COMMAND_IN_PROGRESS`다 | `test_FR19_begin_close_command_in_progress` |
 | 같은 `use_id`로 반납 시작을 다시 부른다 | `ALREADY_APPLIED`다 | `test_FR20_begin_close_idempotent` |
-| 유효한 `passed` 검사로 종료를 저장한다 | `CLOSED`·`AVAILABLE`·`closed_at`·`check_id`·근거를 함께 반영한다 | `test_FR20_finish_close_applied` |
-| 같은 `use_id`·같은 `check_id`로 다시 호출한다 | `ALREADY_APPLIED`다 | `test_FR20_finish_close_idempotent` |
-| 다른 `check_id`나 다른 내용으로 호출한다 | `CONFLICT`다 | `test_FR20_finish_close_conflict` |
+| 논리적 종료를 저장한다 | `CLOSED`·`AVAILABLE`·`closed_at`·종료 사유를 함께 반영한다 | `test_FR20_finish_close_applied` |
+| 종료 기록에 검사 열이 있다 | 없다. `check_id`·`check_evidence`를 지웠다 | `test_FR20_finish_close_has_no_check_columns` |
+| 같은 `use_id`·같은 종료 사유로 다시 호출한다 | `ALREADY_APPLIED`다. 처음 종료 시각을 유지한다 | `test_FR20_finish_close_idempotent_keeps_first_closed_at` |
+| 다른 종료 사유로 호출한다 | `CONFLICT`다 | `test_FR20_finish_close_conflict_different_reason` |
+| 종료 직전에 구동 명령이 진행 중이다 | `CONFLICT`와 `COMMAND_IN_PROGRESS`다. `CLOSING`을 유지한다 | `test_FR19_finish_close_command_in_progress` |
 | 기기·세션 상태가 저장 사이에 바뀌었다 | `CONFLICT`다 | `test_FR20_finish_close_state_conflict` |
 | 완료 기록을 조회한다 | `CloseResult`를 반환한다 | `test_FR20_close_result_found` |
+| 취소로 끝난 세션의 기록을 조회한다 | 종료 사유 `cancelled`로 반환한다 | `test_FR20_close_result_reports_other_end_reason` |
 | 완료 기록이 없다 | `None`을 반환한다. 미반영의 증거로 쓰지 않는다 | `test_FR20_close_result_none` |
 | `execution()`으로 명령을 다시 조회한다 | 저장된 `CommandRecord`를 반환한다. 없으면 `None`이다 | `test_FR19_execution_lookup` |
 | 복원 묶음을 조회한다 | 미완료 요청·명령·세션·사용분·`FAULT` 기기·복구 건을 기기별로 일관된 시점에 반환한다 | `test_FR19_restore_pending_bundle` |
@@ -122,7 +129,7 @@
 | 다른 연결·요약값·예상 상태로 정산을 요청한다 | `CONFLICT`다 | `test_NFR04_settle_recovery_conflict` |
 | 공용형 복구를 정산한다 | 점유 세션을 만들거나 종료하지 않는다 | `test_NFR04_settle_recovery_shared_no_session` |
 | 두 스레드가 같은 복구 건을 동시에 정산한다 | 한쪽만 커밋한다. 중복 정산은 0건이다 | `test_NFR03_settle_recovery_concurrent_once` |
-| 상태 관리의 `release.py`를 실제 SQLite 저장소로 돌린다 | fake 없이 반납·반납검사·격리 흐름이 끝난다 | `test_integration_release_with_sqlite_store` (`tests/integration/`) |
+| 상태 관리의 `release.py`를 실제 SQLite 저장소로 돌린다 | fake 없이 논리적 반납 흐름이 끝난다 | `test_integration_release_with_sqlite_store` (`tests/integration/`) |
 | DB가 잠겨서 쓰기를 시작하지 못한다 | `StoreNotApplied`를 던진다. 아무것도 바뀌지 않는다 | `test_NFR03_store_not_applied_on_busy` |
 | `restore_pending` 조회가 실패한다 | 빈 목록이 아니라 예외를 던진다 | `test_FR19_restore_pending_error_raises` |
 
@@ -132,8 +139,10 @@
 - 같은 `internal_request_id`가 취소된 뒤 `link_command`로 다시 오면 `CONFLICT`를 반환하고 명령 행을 만들지 않는다 — 취소된 요청에 새 명령이 뒤늦게 연결되면 미전송 확정이 무의미해진다. 담당자가 2026-10-15에 확정했다.
 - 같은 취소를 다시 호출하면 `ALREADY_APPLIED`다 — `ExecutionStore` 전체의 재호출 규칙과 같다. 담당자가 2026-10-15에 확정했다.
 - `recovery` 정산 내용은 컬럼을 늘리지 않고 JSON TEXT 컬럼 `settlement_json` 하나에 저장한다 — `RecoverySettlement`의 `expected_node_state`, `expected_recovery_status`, `expected_commands`, `expected_sessions`, `usage_settlements`, `use_id`, `closed_at`, `end_reason`을 한 번에 직렬화해서 보존한다. `settlement_digest`, `approved_by_user_id`, `approved_at`, `completed_at`은 `0001_initial.sql`의 기존 컬럼을 그대로 쓴다. 담당자 지시.
-- `use_session`에 `check_id`, `check_evidence`(JSON) 컬럼을 추가한다 — `finish_close`가 채택한 반납 검사를 보존하고 `close_result`가 돌려줘야 한다. `0001_initial.sql`에는 이 컬럼이 없었다.
-- 새 컬럼은 `0002_execution_store.sql`로 추가한다. `0001_initial.sql`은 고치지 않는다 (`db/schema/__init__.py`의 `PRAGMA user_version` 마이그레이션 규칙).
+- `0002_execution_store.sql`이 더한 `use_session.check_id`, `check_evidence`는 `0007_drop_release_check.sql`로 지운다 — 2026-10-26 결정으로 반납 검사를 제외했다. 이전 마이그레이션은 고치지 않는다 (`db/schema/__init__.py`의 `PRAGMA user_version` 마이그레이션 규칙).
+- `finish_close`의 재호출 판단은 종료 사유로 한다 — 검사 ID가 없어졌다. 종료 시각이 달라도 같은 사유이면 처음 기록을 유지한다.
+- 마이그레이션이 7개가 되어 `server/tools/evaluation/db.py`의 `EXPECTED_SCHEMA_VERSION`도 7로 올린다 — `test_NFR13_expected_schema_version_matches_migrations`가 둘을 대조한다.
+- 기존 점유 세션·미완료 반납의 이전 절차는 미결 (#196)이다. 배포한 운영 데이터가 없어서 검사 열을 이전 없이 지운다고 가정한다 (담당자 확인, 2026-10-26).
 - `settlement_digest`의 해시·직렬화 방식은 상태 관리가 계산해서 넘긴다. DB는 비어 있지 않은 임의의 문자열로 저장하고 문자열 비교만 한다 — `architecture.md` §4 "복구 건과 복구 정산"이 이미 계산 책임을 상태 관리에 두었다. 이 선택은 DB 구현을 막지 않는다.
   - 상태 관리가 정한 방식(#92): 정규 JSON(키 정렬, 공백 없음, UTF-8)으로 직렬화한 뒤 SHA-256을 적용한다. 값은 소문자 hex 64자다. `core/lifecycle/fault_recovery.settlement_digest()`가 계산한다. DB는 이 값을 계산하지 않고 `recovery.settlement_digest` 컬럼에 저장·대조만 한다.
 - `SqliteExecutionStore`를 `db/repositories/execution_store.py`에 둔다. `SqliteRepository`와 같은 `sqlite3.Connection`을 받는다 — DB 쓰기 경로는 하나다 (`AGENTS.md` 의존 규칙 5).

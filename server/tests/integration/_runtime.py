@@ -33,19 +33,19 @@ from nearpilot.shared.models import ProximityResult  # noqa: E402
 from nearpilot.shared.tokens import hash_token  # noqa: E402
 
 MODEL_ROOT = SERVER / "tests" / "core" / "proximity" / "fixtures" / "models"
-GRANTED = [1, 0, 1, 1, 1]
+GRANTED = [1, 0, 1, 1]
 OWNER, VISITOR_A, VISITOR_B = "owner", "visitor-a", "visitor-b"
 TOKENS = {OWNER: "tok-owner", VISITOR_A: "tok-a", VISITOR_B: "tok-b"}
 UUID = "11111111-2222-3333-4444-555555555555"
 MINOR = {OWNER: 1, VISITOR_A: 2, VISITOR_B: 3}
 # fixture 모델(place-a)의 기기와 같다
 NODES = {
-    "locker-1": ("locker", "rental", "locker-return"),
-    "locker-2": ("locker", "rental", "locker-return"),
-    "locker-3": ("locker", "rental", "locker-return"),
-    "light-1": ("light", "shared", "light-return"),
-    "light-2": ("light", "shared", "light-return"),
-    "speaker-1": ("speaker", "shared", "speaker-return"),
+    "locker-1": ("locker", "rental"),
+    "locker-2": ("locker", "rental"),
+    "locker-3": ("locker", "rental"),
+    "light-1": ("light", "shared"),
+    "light-2": ("light", "shared"),
+    "speaker-1": ("speaker", "shared"),
 }
 
 
@@ -88,7 +88,7 @@ def make_config(tmp: Path, *, settings: Mapping[str, Any] | None = None,
 
 
 def seed(db_path: Path, *, modes: Mapping[str, str] | None = None,
-         nodes: Mapping[str, tuple[str, str, str]] = NODES) -> None:
+         nodes: Mapping[str, tuple[str, str]] = NODES) -> None:
     """계정·비콘·장소·기기·정책을 넣는다. 기기의 연결과 온라인은 시뮬레이터 보고가 정한다."""
     conn = connect(str(db_path))
     try:
@@ -99,8 +99,8 @@ def seed(db_path: Path, *, modes: Mapping[str, str] | None = None,
                          "VALUES (?, ?, ?, 1, ?, 1)", (f"b-{user_id}", user_id, UUID, MINOR[user_id]))
         conn.execute("INSERT INTO place (place_id, owner_user_id, name) VALUES ('place-a', ?, 'lab')",
                      (OWNER,))
-        for node_id, (capability, occupancy, criteria) in nodes.items():
-            policy = json.dumps({"check_criteria": {"id": criteria, "version": 1}})
+        for node_id, (capability, occupancy) in nodes.items():
+            policy = "{}"
             conn.execute(
                 "INSERT INTO node (node_id, place_id, capability, occupancy, trust_state, device_state, "
                 "exclusive_group, release_policy) VALUES (?, 'place-a', ?, ?, 'trusted', 'AVAILABLE', NULL, ?)",
@@ -158,7 +158,7 @@ class SimBroker:
         users = beacons or {node_id: (VISITOR_A, VISITOR_B) for node_id in node_ids}
         self.nodes: dict[str, SimNode] = {}
         for node_id in node_ids:
-            capability, occupancy, _ = NODES[node_id]
+            capability, occupancy = NODES[node_id]
             scenario = Scenario(actuation_sec=0.0, beacons=tuple(
                 Beacon(UUID, 1, MINOR[user], -55.0) for user in users.get(node_id, ())))
             store = CommandStore(tmp / "sim" / f"{node_id}.sqlite3")

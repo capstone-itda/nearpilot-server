@@ -1,4 +1,4 @@
-"""CORE-facing command sending and safety-check requests (iot-command-gateway spec).
+"""CORE-facing command sending (iot-command-gateway spec).
 
 The gateway publishes only what CORE hands it. It never decides permission,
 issues new command IDs or retries on its own. PUBACK, `accepted` and `running`
@@ -15,11 +15,11 @@ import math
 import threading
 import time
 
-from nearpilot.iot.messages import MessageValidationError, encode_command, encode_safety_check
+from nearpilot.iot.messages import MessageValidationError, encode_command
 from nearpilot.iot.mqtt.connection import NotReady
 from nearpilot.iot.mqtt.delivery import ReportDelivery
 from nearpilot.shared.enums import CommandOutcome, NodeResultState, RejectCode
-from nearpilot.shared.models import CommandResult, NodeCommand, NodeResult, SafetyCheckRequest
+from nearpilot.shared.models import CommandResult, NodeCommand, NodeResult
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class _Waiter:
 
 
 class MqttCommandGateway:
-    """NodeCommandGateway and SafetyCheckGateway over one MqttConnection.
+    """NodeCommandGateway over one MqttConnection.
 
     Wire `on_connection_lost` to MqttConnection. Results arrive from
     ReportDelivery's processing worker, never through CORE handover.
@@ -158,11 +158,3 @@ class MqttCommandGateway:
                 if waiter.published:
                     waiter.lost = True
             self._condition.notify_all()
-
-    # ── SafetyCheckGateway ─────────────────────────────────────────
-
-    def request_check(self, request: SafetyCheckRequest) -> None:
-        """Publish without waiting. Failures raise; CORE owns deadlines and retries."""
-        payload = encode_safety_check(request)
-        self._delivery.expect_check(request)
-        self._connection.publish_request(request.node_id, "safety_check", payload)

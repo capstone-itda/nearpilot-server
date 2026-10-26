@@ -2,7 +2,7 @@
 
 - 담당: JM-220 (상태 관리)
 - 요구사항: FR-04, FR-05, FR-07, FR-13, NFR-04
-- 따르는 결정: #18, #31, #32, #38, #83, #86, #88
+- 따르는 결정: #18, #31, #32, #38, #83, #86, #88, 2026-10-26 센서 기반 물리 검증 제외 (#196)
 
 ## 1. 왜
 
@@ -16,7 +16,7 @@
 
 ## 2. 무엇
 
-- 입력: `NodeEventSink`의 다섯 호출 (`on_announce`, `on_rssi`, `on_status`, `on_result`, `on_safety_check_result`)
+- 입력: `NodeEventSink`의 네 호출 (`on_announce`, `on_rssi`, `on_status`, `on_result`). 반납 검사 결과의 인계는 2026-10-26 결정으로 없앴다.
 - 출력: 없음. 반영에 실패하면 예외를 던진다. IOT가 다시 인계한다.
 - 바뀌는 상태:
   - 기기 발표, 신뢰 되돌림, 현재 기기 연결 ID, `last_seen_at` (`Repository`)
@@ -27,8 +27,8 @@
 - 약속:
   - 기기별 관측과 장애 반영을 한 번에 하나씩 순서대로 한다.
   - 같은 보고를 다시 받아도 결과가 같다.
-  - 과거 명령의 결과로 현재 온라인 시각과 안전 상태를 갱신하지 않는다.
-  - 실행 결과는 `core-execution`, 반납 검사 결과는 `core-release`로 넘긴다.
+  - 과거 명령의 결과로 현재 온라인 시각과 명령 처리 상태를 갱신하지 않는다.
+  - 실행 결과는 `core-execution`, 상태 보고는 `core-restore`, `core-shared-light`, `core-fault-recovery`로 넘긴다.
   - 서버 내부 요청의 실행 결과도 같은 경로로 넘긴다 (#86).
 
 ## 3. 제약
@@ -37,7 +37,7 @@
 - retained 발표만으로 현재 기기 연결 ID와 `last_seen_at`을 바꾸지 않는다 (FR-13, architecture.md §5 MQTT 6절).
 - 현재 연결의 `status`를 받으면 `set_node_session()`과 `touch_node()`를 부른다. 시각은 서버 수신 시각이다 (FR-04, FR-13).
 - 현재 연결의 RSSI 프레임도 `touch_node()`를 부른다. 유효한 기기 메시지의 마지막 수신이 온라인의 기준이다 (requirements.md §1.2 `online_ttl_sec`).
-- `on_result()`와 `on_safety_check_result()`는 `touch_node()`를 부르지 않는다. 과거 결과는 현재 온라인 시각의 근거가 아니다 (FR-13).
+- `on_result()`는 `touch_node()`를 부르지 않는다. 과거 결과는 현재 온라인 시각의 근거가 아니다 (FR-13).
 - RSSI는 `save_rssi()`로 저장한다. 등록하지 않은 비콘의 거부는 DB가 한다 (FR-05).
 - RSSI는 `ProximityEstimator.observe(frame, node=NodeInfo)`로 넘긴다. `NodeInfo`는 `Repository.nodes()`로 조회한 값이다 (architecture.md §4 "근접 사후확률의 범위").
 - RSSI 저장과 근접 추정 전달은 별개다. 근접 추정이 예외를 던져도 저장한 관측은 그대로 둔다.
@@ -46,7 +46,7 @@
 - 격리와 복구 건 저장은 별개다. `ALREADY_APPLIED`만으로 복구 건의 저장 완료를 추정하지 않는다 (architecture.md §4 "복구 건과 복구 정산").
 - 복구 건 저장에 실패하면 재인계에서도 같은 장애의 저장을 계속한다. `core-fault-recovery`가 같은 복구 ID로 저장 여부를 확인한다 (NFR-04).
 - `actuator_state=busy`는 이상이 아니다. 기기 상태 `ACTIVE`와 구분한다 (FR-19).
-- 일반 `status`는 종료 안전의 근거가 아니다. 반납 종료는 반납 검사 결과로만 결정한다 (FR-07).
+- 일반 `status`는 반납 종료의 근거가 아니다. 반납은 `core-release`가 논리 조건으로 결정한다 (FR-07, FR-20).
 - 기기별 관측, 장애 반영, 복구는 같은 기기 잠금으로 직렬화한다 (architecture.md §4 "복구 준비 조회와 복구 승인").
 - 저장 함수가 `StoreError`를 던지면 예외를 다시 던진다. 인계 실패를 성공으로 처리하지 않는다 (architecture.md §4 "기기 보고의 인계").
 - 실행 결과의 원래 문맥은 `context_for(command_id)`로 읽는다. 서버 조립은 `ExecutionStore.execution_context`를 연결한다 (#83). 문맥이 없거나 조회가 실패하면 인계 실패로 알린다.
@@ -72,7 +72,7 @@
 
 ### 만들지 않는 것
 - 실행 결과의 정산 (`core-execution`)
-- 반납 검사 결과의 처리 (`core-release`)
+- 반납의 처리 (`core-release`)
 - 공용 조명의 이탈 판단 (`core-shared-light`)
 - 보고의 형식, 연결, 순번, 최신성 검사 (IOT 담당의 별도 작업)
 
@@ -114,7 +114,7 @@
 - #88 A안: 상태 관리가 CORE 쪽 `NodeEventSink`를 구현하고 서버 조립에서 연결한다. 서버 조립은 이 spec에 넣지 않는다.
 - #83 A안: `ExecutionStore.execution_context(command_id)`가 원래 문맥을 반환한다. 서버 조립은 이 함수를 `context_for`에 연결한다.
 - 관측의 형식과 최신성 검사는 IOT의 계약을 따른다. 이 spec은 검증을 마친 보고를 받는다. 시각 오차는 근접 추정 담당에게 맡기며 이 작업에서 결정하지 않는다.
-- 실행 결과는 `core-execution`, 반납 검사는 `core-release`, 복구 건은 `core-fault-recovery`, 이탈 관측은 `core-shared-light`를 쓴다. CORE 내부 접점은 실제 서비스로 연결했다.
+- 실행 결과는 `core-execution`, 복구 건은 `core-fault-recovery`, 이탈 관측은 `core-shared-light`를 쓴다. 반납 서비스는 이 서비스에 주입하지 않는다. CORE 내부 접점은 실제 서비스로 연결했다.
 - IOT가 현재 연결과 최신성을 검증한다. 이 서비스는 같은 보고의 재인계도 받는다. 재시작 뒤 RSSI의 중복 저장은 DB가 막는다. 근접 추정은 메모리 관측을 새로 시작한다.
 - CORE 내부 서비스 연결은 실제 구현으로 검증한다. DB·근접 추정·IOT는 `shared` 계약의 fake로 대신한다. 실제 MQTT 연결은 이 spec에 넣지 않는다.
 
@@ -125,7 +125,8 @@
 | FR-04 | `test_FR04_status_sets_node_session` | 현재 연결의 `status`로 기기 연결 ID를 저장한다 |
 | FR-05 | `test_FR05_rssi_saved_and_observed` | RSSI를 저장하고 조회한 `NodeInfo`와 함께 근접 추정에 넘긴다 |
 | FR-07 | `test_FR07_routes_result_to_real_execution` | 실행 결과를 실제 실행 서비스에 넘긴다. 같은 사건은 한 번만 정산한다 |
-| FR-07 | `test_FR07_routes_safety_check_to_real_release` | 실제 반납 서비스가 유효한 반납 검사로 점유를 종료한다 |
+| FR-07 | `test_FR07_status_does_not_change_logical_release` | 상태 보고는 논리적으로 끝난 반납을 바꾸지 않는다 |
+| FR-20 | `test_FR20_sink_has_no_release_check_handover` | 반납 검사 결과의 인계 접점이 없다 |
 | FR-13 | `test_FR13_status_touches_with_received_at` | `last_seen_at`을 서버 수신 시각으로 갱신한다 |
 | NFR-04 | `test_NFR04_sensor_fault_isolates` | 센서 이상이면 점유를 보존하고 기기만 격리한다 |
 | NFR-04 | `test_NFR04_retry_missing_recovery_after_isolation` | 격리 뒤 실패한 복구 건 저장을 같은 ID로 재시도한다 |

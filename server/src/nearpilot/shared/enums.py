@@ -234,15 +234,6 @@ class ActuatorState(StrEnum):
     UNKNOWN = "unknown"
 
 
-class SafetyCheckOutcome(StrEnum):
-    """반납 검사 결과 (FR-07, FR-20, architecture.md §4 반납 검사와 종료)."""
-
-    PASSED = "passed"  # 검사 기준 충족. 종료 결정은 CORE 가 한다.
-    NOT_READY = "not_ready"  # 종료 조건 미충족 (예: 문 열림). 정상 대기다.
-    FAULT = "fault"  # 기기가 고장을 확인했다. 즉시 격리한다.
-    UNKNOWN = "unknown"  # 기기가 결과를 확인하지 못했다. 통과로 보지 않는다.
-
-
 class ExecutionStatus(StrEnum):
     """요청 하나의 저장된 실행 진행 상태 (#16, architecture.md §4).
 
@@ -307,8 +298,7 @@ class RecoveryStatus(StrEnum):
 class RecoveryBlocker(StrEnum):
     NO_RECOVERY_REQUIRED = "NO_RECOVERY_REQUIRED"
     EXECUTION_UNCONFIRMED = "EXECUTION_UNCONFIRMED"
-    SAFETY_UNCONFIRMED = "SAFETY_UNCONFIRMED"
-    PHYSICAL_STATE_UNSYNCED = "PHYSICAL_STATE_UNSYNCED"
+    COMMAND_STATE_UNCONFIRMED = "COMMAND_STATE_UNCONFIRMED"  # 현재 연결의 명령 처리 대기 보고가 없다
     OFFLINE = "OFFLINE"
     NOT_TRUSTED = "NOT_TRUSTED"
     STORE_OUTCOME_UNKNOWN = "STORE_OUTCOME_UNKNOWN"

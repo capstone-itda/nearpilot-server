@@ -105,7 +105,7 @@ def world(tmp_path):
 
 def test_FR06_runtime_requires_suback(world, monkeypatch):
     w = world()
-    w.broker.granted = [1, 0, 1, 1, 0]  # 결과 검사 구독의 QoS 가 다르다
+    w.broker.granted = [1, 0, 1, 0]  # 결과 구독의 QoS 가 다르다
     restored = []
     monkeypatch.setattr(RestoreService, "restore", lambda self: restored.append(True))
     with pytest.raises(ConnectionFailure):
@@ -367,13 +367,12 @@ def test_FR20_runtime_release_and_leave_off(world):
         w.ready("locker-1", "light-1")
         rented = w.use(VISITOR_A, "locker-1", "rent")
         assert rented.verdict is Verdict.OK
-        w.broker.nodes["locker-1"].set_door(True)  # 문을 닫아 다시 잠근다
-        w.broker.status("locker-1")
-        w.runtime.core.release_use(VISITOR_A, rented.use_id)
-        # 반납 검사 요청과 주기 반납 검사가 종료를 확정한다.
-        wait_until(lambda: query(w.db, "SELECT state FROM use_session WHERE use_id = ?",
-                                 rented.use_id)[0]["state"] == "CLOSED")
-        assert w.broker.commands("safety_check")
+        released = w.runtime.core.release_use(VISITOR_A, rented.use_id)
+        # 반납은 반납 검사 없이 논리적 종료를 저장한다 (2026-10-26 결정).
+        assert released.verdict is Verdict.OK
+        assert query(w.db, "SELECT state FROM use_session WHERE use_id = ?",
+                     rented.use_id)[0]["state"] == "CLOSED"
+        assert w.broker.commands("safety_check") == []
         status = w.runtime.core.get_use_status(VISITOR_A, rented.use_id)
         assert status["closed_at"] is not None
 

@@ -7,14 +7,13 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from nearpilot.iot.messages import (
-    MessageValidationError, decode_message, encode_command, encode_safety_check,
+    MessageValidationError, decode_message, encode_command,
 )
 from nearpilot.shared.enums import (
-    Action, ActuatorState, Capability, NodeResultState, Occupancy, SafetyCheckOutcome,
+    Action, ActuatorState, Capability, NodeResultState, Occupancy,
 )
 from nearpilot.shared.models import (
-    BeaconKey, CheckCriteria, NodeAnnounce, NodeCommand, NodeResult, NodeStatus,
-    PhysicalState, RssiFrame, SafetyCheckRequest, SafetyCheckResult,
+    BeaconKey, NodeAnnounce, NodeCommand, NodeResult, NodeStatus, PhysicalState, RssiFrame,
 )
 
 SESSION = "12345678-1234-1234-1234-123456789abc"
@@ -34,9 +33,6 @@ def body(kind):
         "status": dict(observed_at=STAMP, physical_state=dict(
             door_closed=True, light_on=None, actuator_state="idle", sensor_fault=False)),
         "result": dict(command_id="command-1", event_id=EVENT, state="succeeded", occurred_at=STAMP),
-        "safety_check_result": dict(check_id="check-1", event_id=EVENT,
-            criteria_id="locker-return", criteria_version=1, checked_at=STAMP, outcome="passed",
-            evidence={key: dict(value=True, observed_at=STAMP) for key in ("door_closed", "locked")}),
     }[kind])
     return data
 
@@ -139,7 +135,7 @@ def test_FR07_rejected_requires_reject_code(error):
         decode("result", body("result") | dict(state="rejected", error_code=error))
 
 
-@pytest.mark.parametrize("kind", ["announce", "rssi", "status", "result", "safety_check_result"])
+@pytest.mark.parametrize("kind", ["announce", "rssi", "status", "result"])
 @pytest.mark.parametrize("field,value", [
     ("schema_version", True), ("schema_version", 1.0), ("schema_version", 2),
     ("seq", True), ("seq", 0), ("seq", 1.0), ("seq", "1"),
@@ -152,7 +148,7 @@ def test_FR07_invalid_payload_rejected(kind, field, value):
         decode(kind, body(kind) | {field: value})
 
 
-@pytest.mark.parametrize("kind", ["announce", "rssi", "status", "result", "safety_check_result"])
+@pytest.mark.parametrize("kind", ["announce", "rssi", "status", "result"])
 def test_NFR11_every_required_field_is_required(kind):
     for key in body(kind):
         data = body(kind)
@@ -167,13 +163,6 @@ def test_NFR11_every_required_field_is_required(kind):
     ("status", "physical_state", {}), ("result", "state", "timeout"),
     ("result", "command_id", ""), ("result", "event_id", "bad"),
     ("result", "occurred_at", "today"), ("result", "error_code", 1),
-    ("safety_check_result", "criteria_version", True),
-    ("safety_check_result", "criteria_version", 0),
-    ("safety_check_result", "criteria_id", ""),
-    ("safety_check_result", "check_id", None),
-    ("safety_check_result", "outcome", "rejected"),
-    ("safety_check_result", "checked_at", "today"),
-    ("safety_check_result", "event_id", "bad"),
 ])
 def test_NFR11_invalid_topic_specific_fields(kind, field, value):
     with pytest.raises(MessageValidationError):
@@ -225,44 +214,17 @@ def test_NFR11_received_time_requires_utc(received):
         decode_message("nearpilot/node/locker-1/announce", json.dumps(body("announce")), received_at=received)
 
 
-@pytest.mark.parametrize("criteria_id,items", [("locker-return", ("door_closed", "locked")),
-    ("light-return", ("actuator_idle",)), ("speaker-return", ("actuator_idle",))])
-@pytest.mark.parametrize("outcome", list(SafetyCheckOutcome))
-def test_FR20_check_result_preserves_criteria_and_evidence(criteria_id, items, outcome):
-    data = body("safety_check_result") | dict(criteria_id=criteria_id, outcome=outcome,
-        evidence={key: dict(value=outcome == "passed", observed_at=STAMP) for key in items})
-    assert decode("safety_check_result", data) == SafetyCheckResult(**COMMON,
-        check_id="check-1", event_id=EVENT, criteria=CheckCriteria(criteria_id, 1),
-        checked_at=SENT, outcome=outcome, evidence=data["evidence"])
-
-
-@pytest.mark.parametrize("evidence", [{}, {"door_closed": {"value": True, "observed_at": STAMP}},
-    {key: {"value": 1, "observed_at": STAMP} for key in ("door_closed", "locked")},
-    {key: {"value": True} for key in ("door_closed", "locked")},
-    {key: {"value": True, "observed_at": "yesterday"} for key in ("door_closed", "locked")},
-    None, []])
-@pytest.mark.parametrize("outcome", list(SafetyCheckOutcome))
-def test_FR20_missing_evidence_never_passes(evidence, outcome):
+def test_FR20_release_check_result_topic_rejected():
+    """센서 기반 반납 검사를 제외했다. 검사 결과 토픽은 보고로 받지 않는다 (2026-10-26 결정)."""
+    data = dict(schema_version=1, node_id="locker-1", session_id=SESSION, seq=7, sent_at=STAMP,
+                check_id="check-1", event_id=EVENT, criteria_id="locker-return", criteria_version=1,
+                checked_at=STAMP, outcome="passed", evidence={})
     with pytest.raises(MessageValidationError):
-        decode("safety_check_result", body("safety_check_result") | dict(evidence=evidence, outcome=outcome))
-
-
-def test_FR20_values_and_unrecognized_criteria_are_left_to_core():
-    data = body("safety_check_result")
-    data["evidence"]["locked"]["value"] = False
-    assert decode("safety_check_result", data).outcome == SafetyCheckOutcome.PASSED
-    data.update(criteria_id="future-return", criteria_version=2, evidence={})
-    report = decode("safety_check_result", data)
-    assert report.criteria == CheckCriteria("future-return", 2)
-    assert report.evidence == {}
+        decode_message("nearpilot/node/locker-1/safety_check_result", json.dumps(data), received_at=RECEIVED)
 
 
 def command():
     return NodeCommand("command-1", "locker-1", Action.OPEN, SESSION, SENT, RECEIVED)
-
-
-def check():
-    return SafetyCheckRequest("check-1", "locker-1", SESSION, CheckCriteria("locker-return", 1), SENT, RECEIVED)
 
 
 @pytest.mark.parametrize("action", list(Action))
@@ -275,25 +237,16 @@ def test_FR06_encode_preserves_command(action):
         target_session_id=SESSION)
 
 
-def test_FR20_encode_preserves_check():
-    assert json.loads(encode_safety_check(check())) == dict(schema_version=1, node_id="locker-1",
-        check_id="check-1", target_session_id=SESSION, criteria_id="locker-return", criteria_version=1,
-        issued_at="2026-10-15T03:00:00.123000Z", expires_at="2026-10-15T03:00:01.123000Z")
-
-
 def test_NFR08_outbound_allowlist():
     assert set(json.loads(encode_command(command()))) == {
         "schema_version", "node_id", "command_id", "action", "target_session_id", "issued_at", "expires_at"}
-    assert set(json.loads(encode_safety_check(check()))) == {
-        "schema_version", "node_id", "check_id", "target_session_id", "criteria_id", "criteria_version", "issued_at", "expires_at"}
 
 
 @pytest.mark.parametrize("field,value", [("node_id", ""), ("node_id", "other/node"),
     ("target_session_id", "bad"), ("issued_at", SENT.replace(tzinfo=None)), ("expires_at", None)])
-@pytest.mark.parametrize("factory,encoder", [(command, encode_command), (check, encode_safety_check)])
-def test_NFR11_invalid_outbound_fields_rejected(factory, encoder, field, value):
+def test_NFR11_invalid_outbound_fields_rejected(field, value):
     with pytest.raises(MessageValidationError):
-        encoder(replace(factory(), **{field: value}))
+        encode_command(replace(command(), **{field: value}))
 
 
 def test_NFR11_all_v1_message_shapes():
@@ -301,6 +254,4 @@ def test_NFR11_all_v1_message_shapes():
     assert isinstance(decode("rssi")[0], RssiFrame)
     assert isinstance(decode("status"), NodeStatus)
     assert isinstance(decode("result"), NodeResult)
-    assert isinstance(decode("safety_check_result"), SafetyCheckResult)
     assert json.loads(encode_command(command()))["schema_version"] == 1
-    assert json.loads(encode_safety_check(check()))["schema_version"] == 1

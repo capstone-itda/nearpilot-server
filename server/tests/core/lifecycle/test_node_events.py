@@ -18,14 +18,14 @@ from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
     Action, ActuatorState, Capability, CommandOutcome, DeviceState, EndReason,
     ExecutionKind, ExecutionStatus, NodeResultState, Occupancy, ReasonCode,
-    SafetyCheckOutcome, SessionState, StoreOutcome, TrustState, Verdict,
+    SessionState, StoreOutcome, TrustState, Verdict,
 )
 from nearpilot.shared.errors import StoreError, StoreNotApplied, StoreOutcomeUnknown
 from nearpilot.shared.interfaces import NodeEventSink
 from nearpilot.shared.models import (
-    BeaconKey, CheckCriteria, CloseResult, CommandRecord, CommandResult, Decision, ExecutionContext,
+    BeaconKey, CloseResult, CommandRecord, CommandResult, Decision, ExecutionContext,
     NodeAnnounce, NodeInfo, NodeResult, NodeStatus, PhysicalState, PolicyCheckResult,
-    RestoredSession, RestoreBundle, RssiFrame, SafetyCheckResult, StoreResult,
+    RestoredSession, RestoreBundle, RssiFrame, StoreResult,
     TargetSpec, UseRequest, UseSession,
 )
 
@@ -158,17 +158,17 @@ class StoreFake:
 
     def begin_close(self, use_id, reason):
         session = self.repo.sessions[use_id]
-        self.repo.sessions[use_id] = replace(session, state=SessionState.CLOSING)
+        self.repo.sessions[use_id] = replace(session, state=SessionState.CLOSING, end_reason=reason)
         self.repo.items[session.node_id] = replace(self.repo.items[session.node_id], device_state=DeviceState.CLOSING)
         return StoreResult(StoreOutcome.APPLIED, session=self.repo.sessions[use_id])
 
-    def finish_close(self, use_id, closed_at, check_id, evidence):
+    def finish_close(self, use_id, closed_at, end_reason):
         self.fail("finish")
         session = self.repo.sessions[use_id]
         self.repo.sessions[use_id] = replace(session, state=SessionState.CLOSED,
             closed_at=closed_at, end_reason=EndReason.RELEASE)
         self.repo.items[session.node_id] = replace(self.repo.items[session.node_id], device_state=DeviceState.AVAILABLE)
-        self.closed[use_id] = CloseResult(use_id, closed_at, EndReason.RELEASE, check_id, evidence)
+        self.closed[use_id] = CloseResult(use_id, closed_at, end_reason)
         return StoreResult(StoreOutcome.APPLIED, session=self.repo.sessions[use_id])
 
     def close_result(self, use_id):
@@ -188,10 +188,8 @@ def env():
     settings = Settings()
     policy = SimpleNamespace(check=lambda *args: PolicyCheckResult(Verdict.OK, ReasonCode.OK, 1))
     recovery = FaultRecoveryService(repository=repo, store=store, clock=clock, lock_for=lock_for)
-    requests = []
-    release = ReleaseService(repository=repo, store=store,
-        gateway=SimpleNamespace(request_check=requests.append), settings=lambda: settings,
-        clock=clock, lock_for=lock_for, record_fault=recovery.record_fault)
+    release = ReleaseService(repository=repo, store=store, settings=lambda: settings,
+        clock=clock, lock_for=lock_for)
     light = SharedLightService(repository=repo, policy=policy, settings=lambda: settings,
         clock=clock, lock_for=lock_for)
     restore = RestoreService(repository=repo, store=store, release=release, recovery=recovery,
@@ -204,12 +202,12 @@ def env():
     proximity = SimpleNamespace(observe=lambda frame, *, node: observations.append((frame, node)))
     def create():
         return NodeEventService(repository=repo, store=store, proximity=proximity,
-            execution=execution, release=release, restore=restore, recovery=recovery,
+            execution=execution, restore=restore, recovery=recovery,
             shared_light=light, context_for=contexts.get, lock_for=lock_for)
     return SimpleNamespace(time=time, clock=clock, repo=repo, store=store, settings=settings,
         lock_for=lock_for, release=release, restore=restore, recovery=recovery, light=light,
         execution=execution, observations=observations, contexts=contexts, proximity=proximity,
-        requests=requests, create=create, sink=create())
+        create=create, sink=create())
 
 
 def status(env, **changes):
@@ -231,8 +229,7 @@ def frame(env, **changes):
 
 def occupied(env):
     session = UseSession("use", "request", "locker", SessionState.ACTIVE,
-        env.clock() + timedelta(seconds=123),
-        release_policy={"check_criteria": {"id": "locker-return", "version": 1}})
+        env.clock() + timedelta(seconds=123))
     env.repo.sessions[session.use_id] = session
     env.repo.items["locker"] = replace(env.repo.items["locker"], device_state=DeviceState.ACTIVE)
     return session
@@ -447,26 +444,20 @@ def test_FR19_busy_actuator_not_fault(env):
     assert env.store.recoveries == {}
 
 
-def test_FR07_normal_status_does_not_finish_release(env):
+def test_FR07_status_does_not_change_logical_release(env):
     occupied(env)
-    env.release.release_use("visitor", "use")
-    env.sink.on_status(status(env))
-    assert env.repo.sessions["use"].state == SessionState.CLOSING
-
-
-def test_FR07_routes_safety_check_to_real_release(env):
-    occupied(env)
-    env.release.release_use("visitor", "use")
-    request, = env.requests
-    report = SafetyCheckResult("locker", "connection", 2, env.clock(), env.clock(),
-        request.check_id, "safety-event", request.criteria, env.clock(), SafetyCheckOutcome.PASSED,
-        {name: {"value": True, "observed_at": env.clock().isoformat()} for name in ("door_closed", "locked")})
-    before = env.repo.items["locker"].last_seen_at
-    env.sink.on_safety_check_result(report)
-    env.sink.on_safety_check_result(report)
+    decision = env.release.release_use("visitor", "use")
+    assert decision.verdict == Verdict.OK
+    before = env.repo.items["locker"].device_state
+    env.sink.on_status(status(env, physical=PhysicalState(False, None, ActuatorState.IDLE, False)))
     assert env.repo.sessions["use"].state == SessionState.CLOSED
-    assert env.repo.items["locker"].last_seen_at == before
+    assert env.repo.items["locker"].device_state == before == DeviceState.AVAILABLE
     assert len(env.store.closed) == 1
+
+
+def test_FR20_sink_has_no_release_check_handover(env):
+    """반납 검사 결과의 인계 접점이 없다 (2026-10-26 결정)."""
+    assert not hasattr(env.sink, "on_safety_check_result")
 
 
 def test_FR07_routes_result_to_real_execution(env):
@@ -730,22 +721,11 @@ def test_FR07_reports_during_gateway_wait_do_not_deadlock(env):
     assert len([c for c in env.store.calls if c[0] == "result"]) == 1
 
 
-def test_NFR04_recovery_check_and_status_routed_to_recovery(env):
-    handled, statuses, released = [], [], []
-    recovery = SimpleNamespace(
-        on_check_result=lambda result: handled.append(result) or result.check_id == "recovery-check",
-        on_status=statuses.append, record_isolated=env.recovery.record_isolated)
-    release = SimpleNamespace(on_safety_check_result=released.append)
+def test_NFR04_status_routed_to_recovery(env):
+    statuses = []
+    recovery = SimpleNamespace(on_status=statuses.append, record_isolated=env.recovery.record_isolated)
     sink = NodeEventService(repository=env.repo, store=env.store, proximity=env.proximity,
-        execution=env.execution, release=release, restore=env.restore, recovery=recovery,
+        execution=env.execution, restore=env.restore, recovery=recovery,
         shared_light=env.light, context_for=env.contexts.get, lock_for=env.lock_for)
-    at = env.clock()
-    report = SafetyCheckResult("locker", "connection", 2, at, at, "recovery-check", "event",
-        CheckCriteria("locker-return", 1), at, SafetyCheckOutcome.PASSED, {})
-    sink.on_safety_check_result(report)
-    assert (handled, released) == ([report], [])
-    other = replace(report, check_id="release-check")
-    sink.on_safety_check_result(other)
-    assert released == [other]
     sink.on_status(status(env))
     assert len(statuses) == 1

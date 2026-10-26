@@ -85,7 +85,7 @@
 | 결과가 지연·유실되거나 연결이 끊긴다 | 서버의 불명·늦은 결과 경로를 재현한다 | `test_FR07_delayed_or_lost_result` |
 | 비콘이 없거나 복수다 | 빈 배열 또는 비콘별 관측을 보고한다 | `test_FR05_empty_and_multiple_beacons` |
 | 재접속한다 | 새 연결 ID로 발표하고 순번을 새로 시작한다 | `test_FR04_reconnect_announces_new_session` |
-| 검사 항목이 false이거나 측정 불능이다 | 정상 `not_ready`와 확인 불능을 구분한다 | `test_FR20_check_outcome_matrix` |
+| 시뮬레이터가 이전 계약의 검사 결과를 만든다 | 서버 디코더가 거부한다. 검사 응답의 제거는 시뮬레이터 후속 작업이다 (2026-10-26 결정) | `test_FR20_server_rejects_simulator_check_result` |
 | 같은 검사 ID의 내용이 다르다 | 새 측정·덮어쓰기를 하지 않는다 | `test_FR20_check_conflict_keeps_record` |
 | 일반 상태·명령 성공만 있다 | 반납 검사 통과를 대신하지 않는다 | `test_FR20_status_not_check_evidence` |
 | 실제 관측이 없는 무드등 시나리오다 | `null`과 확인 불가를 보존한다 | `test_FR07_unobserved_light_not_success` |

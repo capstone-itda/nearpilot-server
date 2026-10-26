@@ -1,4 +1,4 @@
-"""복구 건 생성과 반납 연결 검증. DB·IOT는 shared 계약의 fake다."""
+"""복구 건 생성과 정산 요약값 검증. DB는 shared 계약의 fake다."""
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -10,16 +10,14 @@ from types import SimpleNamespace
 import pytest
 
 from nearpilot.core.lifecycle.fault_recovery import FaultRecoveryService, settlement_digest
-from nearpilot.core.lifecycle.release import ReleaseService
-from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, ApprovalUsageState, Capability, CommandOutcome, DeviceState, EndReason, ExecutionStatus, Occupancy, RecoveryStatus,
-    SafetyCheckOutcome, SessionState, StoreConflictReason, StoreOutcome, TrustState,
+    ApprovalUsageState, Capability, CommandOutcome, DeviceState, EndReason, ExecutionStatus, Occupancy, RecoveryStatus,
+    SessionState, StoreConflictReason, StoreOutcome, TrustState,
 )
 from nearpilot.shared.errors import StoreError, StoreNotApplied, StoreOutcomeUnknown
 from nearpilot.shared.models import (
-    ApprovalUsageSettlement, CommandRecord, NodeInfo, RecoveryCompletion, RecoveryEvidence, RecoveryRecord,
-    RecoverySettlement, RestoreBundle, SafetyCheckResult, StoreResult, UseSession,
+    ApprovalUsageSettlement, NodeInfo, RecoveryCompletion, RecoveryEvidence, RecoveryRecord,
+    RecoverySettlement, RestoreBundle, StoreResult, UseSession,
 )
 
 
@@ -32,7 +30,6 @@ class RepositoryFake:
         self.use = UseSession(
             "use-1", "request-1", self.node.node_id, SessionState.CLOSING,
             rental_due_at=at - timedelta(seconds=10),
-            release_policy={"check_criteria": {"id": "locker-return", "version": 1}},
         )
 
     def nodes(self, capability=None):
@@ -133,7 +130,8 @@ def env():
 
 
 def evidence(env, id="event-1", **changes):
-    return replace(RecoveryEvidence(id, "connection-1", env.clock(), safety_confirmed=False), **changes)
+    return replace(RecoveryEvidence(id, "connection-1", env.clock(), execution_outcome=CommandOutcome.UNKNOWN),
+                   **changes)
 
 
 def record(env, **changes):
@@ -334,7 +332,7 @@ def test_NFR04_same_fault_preserves_target_links(env, changes):
 def test_NFR04_conflicting_evidence_does_not_overwrite(env):
     first = record(env)
     with pytest.raises(StoreError):
-        record(env, evidence=(evidence(env, safety_confirmed=True),))
+        record(env, evidence=(evidence(env, execution_outcome=CommandOutcome.FAILED),))
     assert env.store.records[first.recovery_id] == first
 
 
@@ -435,102 +433,10 @@ def test_NFR04_returned_target_mismatch_keeps_pending(env):
     assert len(env.store.saves) == 1
 
 
-def test_NFR04_release_adapter_preserves_report_reference(env):
-    env.store.command = CommandRecord("command-1", "request-1", "locker-1", Action.OPEN,
-                                      ExecutionStatus.SUCCEEDED, use_id="use-1")
-    env.service.record_fault(env.repository.use, {
-        "event_id": "event-1", "session_id": "connection-1", "checked_at": env.clock(), "outcome": "fault",
-    })
-    saved = env.store.saves[0]
-    assert saved.command_ids == ("command-1",)
-    assert saved.evidence == (evidence(env),)
-
-
-def test_NFR04_release_unknown_has_no_invented_safety_reference(env):
-    env.service.record_fault(env.repository.use, {"reason": "safety_unconfirmed", "use_id": "use-1"})
-    assert env.store.saves[0].evidence == ()
-    assert env.store.saves[0].command_ids == ()
-
-
-def test_NFR04_release_adapter_rejects_wrong_command_link(env):
-    env.store.command = CommandRecord("command-1", "request-1", "other-node", Action.OPEN,
-                                      ExecutionStatus.SUCCEEDED, use_id="use-1")
-    with pytest.raises(StoreError):
-        env.service.record_fault(env.repository.use, {})
-    assert not env.store.saves
-
-
-@pytest.mark.parametrize("changes", [{"session_id": None}, {"checked_at": None}, {"outcome": "passed"}])
-def test_NFR04_release_report_requires_reference(env, changes):
-    report = dict(event_id="event-1", session_id="connection-1", checked_at=env.clock(), outcome="fault")
-    report.update(changes)
-    with pytest.raises(ValueError):
-        env.service.record_fault(env.repository.use, report)
-    assert not env.store.saves
-
-
-def release_service(env):
-    gateway = SimpleNamespace(requests=[])
-    gateway.request_check = gateway.requests.append
-    service = ReleaseService(
-        repository=env.repository, store=env.store, gateway=gateway,
-        settings=Settings, clock=env.clock, lock_for=env.lock_for,
-        record_fault=env.service.record_fault,
-    )
-    env.repository.node = replace(env.repository.node, device_state=DeviceState.ACTIVE)
-    env.repository.use = replace(env.repository.use, state=SessionState.ACTIVE)
-    service.release_use("visitor-1", "use-1")
-    request = gateway.requests[0]
-    report = SafetyCheckResult(
-        request.node_id, request.target_session_id, 1, env.clock(), env.clock(),
-        request.check_id, "event-1", request.criteria, env.clock(), SafetyCheckOutcome.FAULT,
-        {"sensor_fault": True},
-    )
-    return service, report
-
-
-def test_NFR04_release_fault_connected_to_recovery_creation(env):
-    release, report = release_service(env)
-    release.on_safety_check_result(report)
-    assert env.repository.node.device_state == DeviceState.FAULT
-    assert env.repository.use.state == SessionState.CLOSING
-    assert len(env.store.saves) == 1
-    assert env.store.saves[0].use_id == "use-1"
-    assert env.store.saves[0].evidence == (evidence(env),)
-
-
-def test_NFR04_release_rehandoff_after_recovery_save_failure(env):
-    release, report = release_service(env)
-    env.store.save_errors = [StoreNotApplied()]
-    with pytest.raises(StoreNotApplied):
-        release.on_safety_check_result(report)
-    assert env.repository.node.device_state == DeviceState.FAULT
-    release.on_safety_check_result(report)
-    assert env.store.saves[0] == env.store.saves[1]
-    assert len(env.store.records) == 1
-
-
-def test_NFR04_release_and_recovery_tick_share_pending_case(env):
-    release, report = release_service(env)
-    env.store.save_errors = [StoreNotApplied()]
-    with pytest.raises(StoreNotApplied):
-        release.on_safety_check_result(report)
-    env.service.tick()
-    release.tick()
-    assert len(env.store.saves) == 2
-    assert len(env.store.records) == 1
-
-
-def test_NFR04_release_unconfirmed_limit_connected_to_recovery(env):
-    release, _ = release_service(env)
-    env.time[0] += timedelta(seconds=Settings().safety_check_timeout_sec)
-    release.tick()
-    env.time[0] += timedelta(seconds=Settings().safety_unconfirmed_limit_sec)
-    release.tick()
-    assert env.repository.node.device_state == DeviceState.FAULT
-    assert env.repository.use.state == SessionState.CLOSING
-    assert env.store.saves[0].evidence == ()
-    assert env.store.usage_state == "held"
+def test_NFR04_release_has_no_fault_adapter(env):
+    """반납은 검사 결과로 격리하지 않는다. 반납 전용 복구 건 생성 접점이 없다 (2026-10-26 결정)."""
+    assert not hasattr(env.service, "record_fault")
+    assert not hasattr(env.service, "on_check_result")
 
 
 # ── 정산 요약값 (NFR-04, architecture.md §4 "복구 건과 복구 정산") ─────────
@@ -544,8 +450,8 @@ def _digest_fields(**overrides):
         expected_commands={"command-1": ExecutionStatus.UNKNOWN, "command-2": ExecutionStatus.FAILED},
         expected_sessions={"use-1": SessionState.CLOSING},
         evidence=(
-            RecoveryEvidence("evidence-1", "connection-2", at, safety_confirmed=True),
-            RecoveryEvidence("evidence-2", "connection-2", at, physical_state_synced=True),
+            RecoveryEvidence("evidence-1", "connection-2", at, execution_outcome=CommandOutcome.UNKNOWN),
+            RecoveryEvidence("evidence-2", "connection-2", at, command_idle=True),
         ),
         usage_settlements=(
             ApprovalUsageSettlement("usage-1", ApprovalUsageState.HELD, ApprovalUsageState.CONSUMED),
@@ -590,7 +496,7 @@ def test_NFR04_settlement_digest_ignores_input_order_and_time_zone():
     {"evidence": (
         RecoveryEvidence(
             "evidence-1", "connection-2", datetime(2026, 10, 15, 3, 0, tzinfo=timezone.utc),
-            safety_confirmed=False,
+            command_idle=False,
         ),
     )},
     {"closed_at": datetime(2026, 10, 15, 3, 1, tzinfo=timezone.utc)},
@@ -619,12 +525,12 @@ def test_NFR04_settlement_digest_canonical_format():
         usage_settlements=(),
     )
     canonical = (
-        '{"closed_at":null,"end_reason":null,"evidence":[{"evidence_id":"e",'
+        '{"closed_at":null,"end_reason":null,"evidence":[{"command_idle":null,"evidence_id":"e",'
         '"execution_outcome":"failed","observed_at":"2026-10-15T03:00:00+00:00",'
-        '"physical_state_synced":null,"safety_confirmed":null,"session_id":"c"}],'
+        '"session_id":"c"}],'
         '"expected_commands":{},"expected_node_state":"FAULT","expected_recovery_status":"ready",'
         '"expected_sessions":{},"node_id":"n","recovery_id":"r","usage_settlements":[],'
-        '"use_id":null,"v":1}'
+        '"use_id":null,"v":2}'
     )
     assert settlement_digest(**fields) == sha256(canonical.encode("utf-8")).hexdigest()
 

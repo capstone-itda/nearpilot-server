@@ -70,6 +70,7 @@ class StoreFake:
         self.cancel_commit = False
         self.cancel_conflict = False
         self.cancelled = {}
+        self.closes = []
 
     def restore_pending(self):
         self.reads += 1
@@ -147,6 +148,19 @@ class StoreFake:
             raise error
         return StoreResult(StoreOutcome.APPLIED, command=current)
 
+    def finish_close(self, use_id, closed_at, end_reason):
+        self.closes.append((use_id, closed_at, end_reason))
+        session = self.repository.sessions[use_id]
+        node = self.repository.items[session.node_id]
+        if session.state != SessionState.CLOSING or node.device_state != DeviceState.CLOSING:
+            return StoreResult(StoreOutcome.CONFLICT)
+        self.repository.sessions[use_id] = replace(session, state=SessionState.CLOSED, closed_at=closed_at)
+        self.repository.items[session.node_id] = replace(node, device_state=DeviceState.AVAILABLE)
+        return StoreResult(StoreOutcome.APPLIED)
+
+    def close_result(self, use_id):
+        return None
+
     def recovery(self, recovery_id):
         return self.recoveries.get(recovery_id)
 
@@ -159,14 +173,6 @@ class StoreFake:
         if error:
             raise error
         return StoreResult(StoreOutcome.APPLIED, recovery=record)
-
-
-class GatewayFake:
-    def __init__(self):
-        self.requests = []
-
-    def request_check(self, request):
-        self.requests.append(request)
 
 
 class PolicyFake:
@@ -185,17 +191,15 @@ def env():
     locks = {"locker-1": RLock(), "light-1": RLock(), "locker-2": RLock()}
     lock_for = lambda node_id: locks.setdefault(node_id, RLock())
     recovery = FaultRecoveryService(repository=repository, store=store, clock=clock, lock_for=lock_for)
-    gateway = GatewayFake()
-    release = ReleaseService(repository=repository, store=store, gateway=gateway,
-                             settings=lambda: settings[0], clock=clock, lock_for=lock_for,
-                             record_fault=recovery.record_fault)
+    release = ReleaseService(repository=repository, store=store, settings=lambda: settings[0],
+                             clock=clock, lock_for=lock_for)
     light = SharedLightService(repository=repository, policy=PolicyFake(),
                                settings=lambda: settings[0], clock=clock, lock_for=lock_for)
     def create():
         return RestoreService(repository=repository, store=store, release=release, recovery=recovery,
                               shared_light=light, settings=lambda: settings[0], clock=clock, lock_for=lock_for)
     return SimpleNamespace(time=time, clock=clock, repository=repository, store=store, settings=settings,
-                           release=release, recovery=recovery, gateway=gateway, light=light,
+                           release=release, recovery=recovery, light=light,
                            create=create, service=create())
 
 
@@ -231,7 +235,7 @@ def command(env, status=ExecutionStatus.IN_PROGRESS, *, shared=False, age=20):
 def rental(env, state=SessionState.ACTIVE):
     session = UseSession("use-1", "request-1", "locker-1", state,
                          rental_due_at=env.clock() - timedelta(hours=1),
-                         release_policy={"check_criteria": {"id": "locker-return", "version": 1}})
+                         end_reason=EndReason.RELEASE if state == SessionState.CLOSING else None)
     env.repository.sessions[session.use_id] = session
     node = env.repository.items[session.node_id]
     env.repository.items[session.node_id] = replace(node, device_state=DeviceState(state.value))
@@ -498,30 +502,27 @@ def test_FR20_restore_overdue_kept(env):
     assert result["overtime_sec"] == 3700
 
 
-def test_FR20_restore_closing_new_check(env):
-    session = rental(env, SessionState.CLOSING)
+def test_FR20_restore_closing_resumes_logical_close(env):
+    rental(env, SessionState.CLOSING)
     env.service.restore()
-    assert env.gateway.requests == []
+    assert env.store.closes == []  # 현재 연결을 확인하기 전에는 종료를 저장하지 않는다.
     status(env)
-    assert len(env.gateway.requests) == 1
-    request = env.gateway.requests[0]
-    assert request.criteria == session.check_criteria
-    assert request.target_session_id == "connection-1"
+    assert [(use_id, reason) for use_id, _, reason in env.store.closes] == [("use-1", EndReason.RELEASE)]
+    assert env.repository.sessions["use-1"].state == SessionState.CLOSED
+    assert env.repository.items["locker-1"].device_state == DeviceState.AVAILABLE
     assert env.service.is_restored("locker-1")
-    assert not env.service.can_execute("locker-1")
     env.service.tick()
-    assert len(env.gateway.requests) == 1
+    assert len(env.store.closes) == 1
 
 
-def test_FR20_restore_closing_does_not_use_saved_safety_evidence(env):
+def test_FR20_restore_closing_ignores_saved_check_evidence(env):
     session = rental(env, SessionState.CLOSING)
     env.store.override = (RestoreBundle(env.repository.items["locker-1"], env.clock(), sessions=(
         RestoredSession(session, "visitor-1", env.clock(), {"safe": True, "check_id": "old"}),
     )),)
     env.service.restore()
     status(env)
-    assert env.gateway.requests[0].check_id != "old"
-    assert env.repository.sessions["use-1"].state == SessionState.CLOSING
+    assert [(use_id, reason) for use_id, _, reason in env.store.closes] == [("use-1", EndReason.RELEASE)]
 
 
 def test_NFR04_restore_fault_without_recovery(env):
@@ -538,7 +539,7 @@ def test_NFR04_restore_keeps_recovery_id_and_evidence_without_trusting_it(env):
     old_at = env.clock() - timedelta(hours=1)
     record = RecoveryRecord("recovery-old", "locker-1", (), (), None, old_at, RecoveryStatus.READY,
                             (RecoveryEvidence("old", "old-connection", old_at,
-                                              safety_confirmed=True, physical_state_synced=True),))
+                                              execution_outcome=CommandOutcome.UNKNOWN, command_idle=True),))
     env.store.recoveries[record.recovery_id] = record
     env.service.restore()
     status(env)
@@ -668,7 +669,7 @@ def test_FR19_failure_in_one_device_does_not_stop_other_restore(env):
     assert not env.service.is_restored("locker-1")
     env.release.resume_close = original
     env.service.tick()
-    assert len(env.gateway.requests) == 1
+    assert len(env.store.closes) == 1
 
 
 def test_FR19_restore_does_not_reclassify_runtime_commands(env):
@@ -794,7 +795,7 @@ def test_FR19_same_status_redelivery_retries_failed_handover(env):
     env.release.resume_close = original
     env.service.on_status(report)
     assert env.service.is_restored("locker-1")
-    assert len(env.gateway.requests) == 1
+    assert len(env.store.closes) == 1
     assert reports == ["use-1"]
 
 

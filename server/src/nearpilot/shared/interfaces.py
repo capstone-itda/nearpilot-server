@@ -72,8 +72,6 @@ from nearpilot.shared.models import (
     ReserveRequest,
     ReserveResult,
     RssiFrame,
-    SafetyCheckRequest,
-    SafetyCheckResult,
     StoreResult,
     UseRequest,
     UseSession,
@@ -335,7 +333,7 @@ class ExecutionStore(Protocol):
     def isolate_device(self, node_id: str, evidence: Mapping[str, Any]) -> StoreResult:
         """명령 결과가 아닌 이상으로 기기를 FAULT 로 격리한다 (NFR-04). 키: node_id
 
-        센서 이상, 종료 뒤 안전 미확인 등이 해당한다. 점유 세션과 승인 사용분은 바꾸지 않는다.
+        발표 내용 변경 등이 해당한다. 점유 세션과 승인 사용분은 바꾸지 않는다.
         이미 FAULT 이면 ALREADY_APPLIED 를 반환하고 새 근거를 감사 기록에 남긴다.
         """
         ...
@@ -348,22 +346,19 @@ class ExecutionStore(Protocol):
         """
         ...
 
-    def finish_close(
-        self, use_id: str, closed_at: datetime, check_id: str, evidence: Mapping[str, Any]
-    ) -> StoreResult:
-        """CORE 가 종료를 결정한 뒤 세션 CLOSED, 기기 AVAILABLE, closed_at, 종료 기록. 키: use_id
+    def finish_close(self, use_id: str, closed_at: datetime, end_reason: EndReason) -> StoreResult:
+        """CORE 가 논리적 종료를 결정한 뒤 세션 CLOSED, 기기 AVAILABLE, closed_at, 종료 기록. 키: use_id
 
-        check_id 는 종료 근거로 채택한 반납 검사다. evidence 는 그 검사의 근거다. 함께 저장한다.
-        기기 상태, 점유 세션, 채택한 검사가 바뀌지 않았는지 같은 트랜잭션에서 검사한다.
-        같은 use_id·같은 check_id 의 재호출은 ALREADY_APPLIED, 다른 check_id 나 내용은 CONFLICT 다.
-        DB 는 문·구동부·센서 조건을 다시 판단하지 않는다.
+        기기와 세션이 CLOSING 이고 종료 사유가 begin_close 의 값과 같은지 같은 트랜잭션에서 검사한다.
+        같은 use_id·같은 종료 사유의 재호출은 ALREADY_APPLIED 와 기존 종료 시각, 다른 내용은 CONFLICT 다.
+        검사 ID 와 센서 근거를 받지 않는다. 반납 완료는 문 닫힘과 잠금의 증명이 아니다 (FR-20).
         """
         ...
 
     def close_result(self, use_id: str) -> CloseResult | None:
-        """반납의 저장된 완료 기록과 채택한 check_id·근거를 조회한다 (FR-20). 키: use_id
+        """반납의 저장된 완료 기록을 조회한다 (FR-20). 키: use_id
 
-        finish_close 의 반영 여부가 불명일 때 쓴다. 기록이 없으면 None 이다.
+        finish_close 의 반영 여부가 불명일 때 쓴다. CLOSED 가 아니면 None 이다.
         None 은 미반영의 증거가 아니다. 저장이 진행 중일 수 있다.
         """
         ...
@@ -404,7 +399,7 @@ class ExecutionStore(Protocol):
     def settle_recovery(self, settlement: RecoverySettlement) -> StoreResult:
         """연결·예상 상태를 검사하고 승인·근거·사용분·점유 종료·기기 복구·감사를 함께 커밋한다.
 
-        finish_close 를 거치지 않는다. 반납 check_id 대신 복구 근거를 쓴다.
+        finish_close 를 거치지 않는다. 복구 근거로 점유를 종료한다.
         같은 recovery_id·논리 정산이면 ALREADY_APPLIED 와 기존 완료 결과를 반환한다.
         다른 연결·요약값·예상 상태는 CONFLICT 다. 늦은 결과로 완료 정산을 뒤집지 않는다.
         """
@@ -512,18 +507,6 @@ class NodeCommandGateway(Protocol):
     def send(self, command: NodeCommand, timeout_sec: float) -> CommandResult: ...
 
 
-@runtime_checkable
-class SafetyCheckGateway(Protocol):
-    """IOT → CORE 반납 검사 요청 (FR-20). 물리 구동 명령과 구분한다.
-
-    결과를 기다리지 않는다. 결과는 `NodeEventSink.on_safety_check_result` 로 온다.
-    응답 기한과 재검사는 CORE 가 `Settings` 값으로 잰다. 전송 실패도 CORE 에서는 응답 기한 초과다.
-    같은 check_id 의 재전송은 내용을 바꾸지 않는다. 다시 측정하려면 새 check_id 를 쓴다.
-    """
-
-    def request_check(self, request: SafetyCheckRequest) -> None: ...
-
-
 # ── CORE 제공 ───────────────────────────────────────────────────────
 
 
@@ -531,7 +514,7 @@ class SafetyCheckGateway(Protocol):
 class NodeEventSink(Protocol):
     """CORE 가 구현하고 IOT 가 호출한다. 검증을 마친 MQTT 메시지만 넘긴다.
 
-    IOT 는 안전을 판정하지 않는다. 점유 해제와 장애 상태 변경은 CORE 가 결정한다.
+    점유 해제와 장애 상태 변경은 CORE 가 결정한다.
     인계가 예외로 실패하면 IOT 는 실패를 기록하고 다시 인계한다. 중복 반영은 CORE 와 DB 가 막는다.
     """
 
@@ -544,12 +527,8 @@ class NodeEventSink(Protocol):
     def on_result(self, result: NodeResult) -> None:
         """기기가 보고한 실행 결과. 결과 대기 중과 결과 대기가 끝난 뒤의 보고를 모두 받는다 (FR-07).
 
-        과거 명령의 결과는 정산과 감사에만 쓴다. 현재 온라인·안전 상태를 갱신하지 않는다.
+        과거 명령의 결과는 정산과 감사에만 쓴다. 현재 온라인과 명령 처리 상태를 갱신하지 않는다.
         """
-        ...
-
-    def on_safety_check_result(self, result: SafetyCheckResult) -> None:
-        """기기가 보고한 반납 검사 결과 (FR-20)."""
         ...
 
 
@@ -580,7 +559,7 @@ class RecoveryService(Protocol):
     """상태 관리 → API 복구 접점 (NFR-04). API 는 인증 계정만 넘긴다.
 
     조회·승인 모두 장소 소유권을 검사한다. 조회는 복구 건을 만들거나 정산하지 않는다.
-    승인은 현재 복구 건·온라인·신뢰·실행·안전·물리 상태를 다시 검사한다.
+    승인은 현재 복구 건·온라인·신뢰·명령 결과와 현재 연결의 명령 처리 상태를 다시 검사한다.
     저장 미반영은 rejected, 저장 불명은 pending 이다. 완료 기록 확인 뒤에만 completed 다.
     """
 

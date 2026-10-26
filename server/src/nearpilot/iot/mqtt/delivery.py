@@ -20,25 +20,13 @@ from types import MappingProxyType
 from nearpilot.iot.messages import MessageValidationError, decode_message
 from nearpilot.iot.mqtt.connection import IncomingReport
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import SafetyCheckOutcome
 from nearpilot.shared.interfaces import NodeEventSink
-from nearpilot.shared.models import (
-    NodeAnnounce, NodeResult, NodeStatus, RssiFrame, SafetyCheckRequest, SafetyCheckResult,
-)
+from nearpilot.shared.models import NodeAnnounce, NodeResult, NodeStatus, RssiFrame
 
 log = logging.getLogger(__name__)
 
-# architecture.md §4 "반납 검사와 종료"의 v1 필수 항목. 다른 기준은 근거를 확인할 수 없다.
-V1_CHECK_ITEMS = {"locker-return": ("door_closed", "locked"),
-                  "light-return": ("actuator_idle",), "speaker-return": ("actuator_idle",)}
-
-
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _parse_time(value: str) -> datetime:
-    return datetime.fromisoformat(value.upper().replace("Z", "+00:00"))
 
 
 @dataclass(frozen=True)
@@ -46,7 +34,7 @@ class DeliveryConfig:
     """IOT runtime settings with no defaults (S1·S4 A, #140).
 
     clock_skew_sec maps node_id to its verified maximum clock error. A node
-    without an entry is unverified: its observations and checks are not used.
+    without an entry is unverified: its observations are not used.
     """
 
     clock_skew_sec: Mapping[str, float]
@@ -91,9 +79,8 @@ class _Pending:
 class ReportDelivery:
     """Validates reports and hands them to CORE in per-lane order.
 
-    Lanes: (node, "observe") for announce/status/RSSI, (node, "result",
-    command_id) and (node, "check", check_id). A failing lane does not block
-    the others. Result listeners run on the processing worker before handover,
+    Lanes: (node, "observe") for announce/status/RSSI and (node, "result",
+    command_id). A failing lane does not block the others. Result listeners run on the processing worker before handover,
     so a sink waiting on a CORE lock cannot delay command waiters.
     """
 
@@ -111,7 +98,6 @@ class ReportDelivery:
         self._sessions: dict[str, _Session] = {}
         self._announces: dict[tuple[str, str, int], NodeAnnounce] = {}
         self._events: dict[tuple[str, str, str], list] = {}
-        self._checks: dict[str, SafetyCheckRequest] = {}
         self._listeners: list[Callable[[NodeResult], None]] = []
         self._started = False
         self._running = False
@@ -123,17 +109,6 @@ class ReportDelivery:
         """Command waiters; called for every validated result, must not block."""
         with self._condition:
             self._listeners.append(listener)
-
-    def expect_check(self, request: SafetyCheckRequest) -> None:
-        """Register a check request before publishing it.
-
-        A result is handed to CORE only when it matches a registered request.
-        """
-        with self._condition:
-            existing = self._checks.get(request.check_id)
-            if existing is not None and existing != request:
-                raise ValueError("Safety check ID registered with different content")
-            self._checks[request.check_id] = request
 
     @property
     def saturated(self) -> bool:
@@ -163,17 +138,14 @@ class ReportDelivery:
             self._reject(node_id, kind, str(error))
             return
         settings = self._settings()
-        self._prune_checks(report.received_at, settings)
         if kind == "announce":
             self._accept_announce(decoded)
         elif kind == "status":
             self._accept_status(decoded, settings)
         elif kind == "rssi":
             self._accept_rssi(node_id, decoded, settings)
-        elif kind == "result":
-            self._accept_result(decoded)
         else:
-            self._accept_check(decoded, settings)
+            self._accept_result(decoded)
 
     def _reject(self, node_id: str, kind: str, reason: str) -> None:
         # Never log payloads or credentials (NFR-08).
@@ -288,18 +260,7 @@ class ReportDelivery:
         content = (result.command_id, result.state, result.occurred_at, result.error_code)
         self._accept_event("result", result, content, (result.node_id, "result", result.command_id))
 
-    def _accept_check(self, result: SafetyCheckResult, settings: Settings) -> None:
-        reason = self._check_mismatch(result, settings)
-        if reason:
-            self._reject(result.node_id, "safety_check_result", reason)
-            return
-        content = (result.check_id, result.criteria, result.checked_at, result.outcome,
-                   result.evidence)
-        self._accept_event("safety_check_result", result, content,
-                           (result.node_id, "check", result.check_id))
-
     def _accept_event(self, kind: str, report, content: tuple, lane: tuple) -> None:
-        method = "on_result" if kind == "result" else "on_safety_check_result"
         with self._condition:
             seen = self._events.setdefault((kind, report.node_id, report.event_id), [])
             if content in seen:
@@ -309,52 +270,7 @@ class ReportDelivery:
                 log.warning("Conflicting report for one event: node=%s kind=%s",
                             report.node_id, kind)
             seen.append(content)
-            self._enqueue(lane, method, report)
-
-    def _check_mismatch(self, result: SafetyCheckResult, settings: Settings) -> str | None:
-        with self._condition:
-            request = self._checks.get(result.check_id)
-        if request is None:
-            return "unknown check request"
-        if request.node_id != result.node_id:
-            return "check node mismatch"
-        if result.session_id != request.target_session_id:
-            return "check connection mismatch"
-        if result.criteria != request.criteria:
-            return "check criteria mismatch"
-        skew = self.config.clock_skew_sec.get(result.node_id)
-        if skew is None:
-            return "clock skew unverified"
-        items = (V1_CHECK_ITEMS.get(result.criteria.criteria_id)
-                 if result.criteria.criteria_version == 1 else None)
-        if items is None:
-            return "unsupported check criteria"
-        earliest = request.issued_at - timedelta(seconds=skew)
-        evidence_times = tuple(_parse_time(result.evidence[name]["observed_at"]) for name in items)
-        if result.checked_at < earliest or any(value < earliest for value in evidence_times):
-            return "check observed before request"
-        if result.checked_at > request.expires_at + timedelta(seconds=skew):
-            return "check after request expiry"
-        reason = self._stale_or_future(result.received_at, result.checked_at,
-                                       (result.checked_at, result.sent_at, *evidence_times),
-                                       settings.safety_report_max_age_sec, skew)
-        if reason:
-            return reason
-        values = [result.evidence[name]["value"] for name in items]
-        if result.outcome == SafetyCheckOutcome.PASSED and not all(values):
-            return "passed without all required evidence"
-        if result.outcome == SafetyCheckOutcome.NOT_READY and all(values):
-            return "not_ready without failing evidence"
-        return None
-
-    def _prune_checks(self, received_at: datetime, settings: Settings) -> None:
-        # Reports are processed in reception order, so a request whose results
-        # would all be stale at this reception time can no longer match.
-        horizon = received_at - timedelta(seconds=settings.safety_report_max_age_sec)
-        with self._condition:
-            for check_id in [key for key, request in self._checks.items()
-                             if request.expires_at < horizon]:
-                del self._checks[check_id]
+            self._enqueue(lane, "on_result", report)
 
     # ── handover ────────────────────────────────────────────────────
 

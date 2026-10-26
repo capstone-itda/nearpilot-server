@@ -60,7 +60,7 @@
 | `RetentionStore.cleanup` | 시작과 주기 호출 | DB |
 | `ProximityEstimator`, 구현의 기존 `restore` 접점 | 생성·관측 복원 | 근접 추정 |
 | `ExecutionReadiness`, `DecisionRechecker` | 생성·연결 | 상태 관리, 판정 |
-| `NodeEventSink`, `NodeCommandGateway`, `SafetyCheckGateway` | 생성·연결 | 상태 관리, IOT |
+| `NodeEventSink`, `NodeCommandGateway` | 생성·연결 | 상태 관리, IOT |
 
 ### 만들지 않는 것
 
@@ -157,7 +157,7 @@
 | 작업 | 초기 주기 | 설정 소유 |
 |---|---|---|
 | 실행 저장 재시도와 예약 만료 | 0.25초 | runtime 실행 설정 |
-| 반납 검사와 재시도 | 0.25초 | runtime 실행 설정 |
+| 저장 결과가 불명인 반납 종료의 재확인 | 0.25초 | runtime 실행 설정 |
 | 미완료 복원 재시도 | 0.25초 | runtime 실행 설정 |
 | 복구 저장 재시도 | 0.25초 | runtime 실행 설정 |
 | 공용 조명 이탈·유지 권한 검사 | 1초 | runtime 실행 설정 |
@@ -202,7 +202,7 @@
 | FR-08, FR-09, FR-11 | `test_FR08_runtime_mcp_real_app_tools`, `test_FR09_runtime_unset_threshold_stays_blocked` | 인증, 여섯 도구와 응답 정보 제한, 미설정 임계값 차단이다 |
 | FR-16 | `test_FR16_runtime_restores_recent_observations` | 최근 관측만 실제 HMM의 복원 접점으로 넣는다 |
 | FR-19 | `test_FR19_runtime_startup_restore_cleanup_failure` | 복원·정리 전에는 접수하지 않는다 |
-| FR-20 | `test_FR20_runtime_release_and_leave_off` | 반납 재검사와 내부 꺼짐의 주기 호출 연결이다 |
+| FR-20 | `test_FR20_runtime_release_and_leave_off` | 반납 검사 없는 논리적 반납과 내부 꺼짐의 주기 호출 연결이다 |
 | FR-21 | `test_FR21_runtime_mcp_ownership` | 본인 사용 조회 제한이다 |
 | FR-22 | `test_FR22_runtime_*` | 설정 검증, 진입점 종료, 정리 재시도, JSONL 내보내기와 실패 격리다 |
 | FR-23 | `test_FR23_runtime_shares_allocation_window` | 동시 할당 요청을 함께 배정한다 |

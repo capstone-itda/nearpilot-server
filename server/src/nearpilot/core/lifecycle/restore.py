@@ -251,7 +251,7 @@ class RestoreService:
         for session in sessions:
             if session.state == SessionState.CLOSING:
                 self._release.resume_close(session.use_id)
-        # 반납 인계가 즉시 격리했으면 초기 참여와 실행 차단 해제를 보류한다.
+        # 그 사이 기기가 격리됐으면 초기 참여와 실행 차단 해제를 보류한다.
         node = self._node(node_id)
         if node is None or node.device_state == DeviceState.FAULT:
             state.blockers = ("fault_recovery",)
