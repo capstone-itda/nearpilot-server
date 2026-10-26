@@ -1,5 +1,5 @@
-// Experimental node: iBeacon -> MQTT, CORE command -> serial / optional GPIO.
-// A serial line or output write is NOT physical completion evidence.
+// Experimental node: iBeacon -> MQTT v2, CORE command -> serial / optional GPIO.
+// Success means the control signal was emitted and stored, not an observed physical state.
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <MQTT.h>
@@ -44,7 +44,7 @@ bool storageReady = false;
 bool handlingCommand = false;
 String session;
 bool announced = false;
-unsigned long seq[5] = {};
+unsigned long seq[4] = {};  // announce, status, rssi, result
 volatile bool synchronizedClock = false;
 volatile unsigned long lastSync = 0;
 
@@ -100,7 +100,7 @@ void onSync(timeval*) {
 }
 
 void common(JsonDocument& doc, int channel) {
-    doc["schema_version"] = 1;
+    doc["schema_version"] = 2;
     doc["node_id"] = config.nodeId;
     doc["session_id"] = session;
     doc["seq"] = ++seq[channel];
@@ -113,7 +113,7 @@ bool report(const char* kind, JsonDocument& doc, int qos, bool retained = false)
     bool sent = mqtt.publish(String("nearpilot/node/") + config.nodeId + "/" + kind, body, retained, qos);
     Serial.printf("MQTT_REPORT kind=%s seq=%lu published=%d\n", kind,
         doc["seq"].as<unsigned long>(), sent);
-    return sent;  // MQTT confirmation alone is not physical success.
+    return sent;  // PUBACK alone is not command success.
 }
 
 bool announce() {
@@ -129,11 +129,8 @@ void status() {
     JsonDocument doc;
     common(doc, 1);
     doc["observed_at"] = utcNow();
-    JsonObject state = doc["physical_state"].to<JsonObject>();
-    state["door_closed"] = nullptr;
-    state["light_on"] = nullptr;  // No light sensor exists on the bare ESP32.
-    state["actuator_state"] = handlingCommand ? "busy" : "idle";
-    state["sensor_fault"] = false; // This diagnostic node has no external sensors.
+    // Command handling only. Without the record store the state cannot be vouched for.
+    doc["command_state"] = !storageReady ? "unknown" : handlingCommand ? "busy" : "idle";
     report("status", doc, 1);
 }
 
@@ -259,7 +256,7 @@ bool parseUtc(const String& raw, double& seconds) {
 }
 
 const char* validate(JsonDocument& doc) {
-    if (!doc["schema_version"].is<int>() || doc["schema_version"].as<int>() != 1 ||
+    if (!doc["schema_version"].is<int>() || doc["schema_version"].as<int>() != 2 ||
         !doc["node_id"].is<String>() || doc["node_id"].as<String>() != config.nodeId ||
         !doc["action"].is<String>() || !doc["target_session_id"].is<String>() ||
         !doc["issued_at"].is<String>() || !doc["expires_at"].is<String>()) return "INVALID_MESSAGE";
@@ -340,12 +337,13 @@ void handleCommand(const String& payload, bool receivedBusy) {
         if (!rejection) {
             bool on = command["action"].as<String>() == "on";
             if (NP_OUTPUT_PIN >= 0) digitalWrite(NP_OUTPUT_PIN, on == NP_OUTPUT_ACTIVE_HIGH ? HIGH : LOW);
-            Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s physical_completion=unverified\n",
+            Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s output_completed=1\n",
                 id.c_str(), on ? "on" : "off", NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only");
         }
     }
-    // Accepted commands are never reported successful without a completion sensor.
-    event(record, "unknown");
+    // A failed recheck means no output was emitted; a finished output is success once stored.
+    if (rejection) event(record, "failed", rejection);
+    else event(record, "succeeded");
     if (saveRecord(empty, record)) result(record);
     else Serial.println("RESULT_STORE_FAILED accepted_record_kept_no_retry");
     handlingCommand = false;
@@ -711,14 +709,14 @@ void loop() {
         if (mqtt.connect((String("np-") + config.nodeId).c_str(), config.mqttUser.c_str(),
                          config.mqttPassword.c_str())) {
             String base = String("nearpilot/node/") + config.nodeId;
-            if (!mqtt.subscribe(base + "/cmd", 1) || !mqtt.subscribe(base + "/safety_check", 1)) {
+            if (!mqtt.subscribe(base + "/cmd", 1)) {
                 mqttDelay = backoff(mqttDelay);
                 Serial.printf("MQTT_SUBSCRIBE_FAILED error=%d next_retry_ms=%lu\n", mqtt.lastError(), mqttDelay);
                 mqtt.disconnect();
             } else {
                 mqttDelay = NP_RECONNECT_MS;
                 wasConnected = true;
-                Serial.printf("MQTT_CONNECTED session_id=%s subscribed=cmd,safety_check\n", session.c_str());
+                Serial.printf("MQTT_CONNECTED session_id=%s subscribed=cmd\n", session.c_str());
             }
         } else {
             mqttDelay = backoff(mqttDelay);
@@ -760,7 +758,6 @@ void loop() {
         Incoming received = inbox.front();
         inbox.erase(inbox.begin());
         if (received.topic.endsWith("/cmd")) handleCommand(received.payload, received.receivedBusy);
-        else Serial.println("SAFETY_CHECK_UNSUPPORTED no_sensor_evidence_no_pass_result");
     }
     if (current - lastStatus >= NP_STATUS_MS) {
         lastStatus = current;

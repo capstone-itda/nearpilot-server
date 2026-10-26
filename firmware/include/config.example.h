@@ -5,12 +5,6 @@
 // No extra board is required. Leave OUTPUT_PIN=-1 for serial-only verification.
 #define NP_OUTPUT_PIN -1
 #define NP_OUTPUT_ACTIVE_HIGH true
-// Milliseconds, 0 = unmeasured/unset; otherwise a positive integer.
-// These are device completion limits, not the server's exec_timeout_sec.
-// No observer is installed and success reporting is disabled for every feature (#142).
-#define NP_LOCKER_COMPLETION_TIMEOUT_MS 0ULL
-#define NP_LIGHT_COMPLETION_TIMEOUT_MS 0ULL
-#define NP_SPEAKER_COMPLETION_TIMEOUT_MS 0ULL
 #define NP_RSSI_FRAME_MS 1000UL
 #define NP_STATUS_MS 1000UL
 // Retry starts at these minimums, doubles after each failure and stops at NP_RETRY_MAX_MS.
@@ -29,10 +23,6 @@
 // one is kept free for rewrites, so at most 7 x 62 = 434 records of the largest size fit.
 // Verified by test_FR22_record_partition_capacity.
 #define NP_MAX_COMMAND_RECORDS 400
-// Return checks use a separate 96-page partition: 1024 bytes occupy 34 entries,
-// three fit per page. 94 data pages allow 282 records; 256 leaves headroom.
-#define NP_MAX_CHECK_RECORDS 256
-#define NP_MAX_CHECK_RECORD_BYTES 1024
 // node_lab slots in the default nvs; at least node_lab's NP_MAX_COMMAND_RECORDS.
 #define NP_LEGACY_COMMAND_RECORDS 64
 #define NP_MAX_BEACONS 16

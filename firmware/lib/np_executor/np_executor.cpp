@@ -83,53 +83,26 @@ void Executor::handle(const std::string& payload, bool receivedBusy) {
     busy_ = true;
     activeSlot_ = empty;
     activeRecord_.set(record);
-    activeDevice_ = &port_.device();
-    activePolicy_ = activeDevice_->policy;
-    activeRequest_ = {id, command["action"].as<std::string>(), 0};
     port_.publish(record);
     // Recheck after the flash write and receipt publish, immediately before output.
     rejection = port_.validate(command);
     if (rejection) return finish("failed", rejection);
-    activeRequest_.startedAtMs = port_.monotonicMs();
-    StartResult started = activeDevice_->actuator.start(activeRequest_);
-    if (started == StartResult::Failed) return finish("failed");
-    if (started != StartResult::Started) return finish("unknown");
     JsonDocument progress;
     progress.set(activeRecord_);
     event(progress, "running");
-    port_.publish(progress);
-    if (!activePolicy_.timeoutMs || !activeDevice_->observer.available()) finish("unknown");
+    port_.publish(progress);  // Not stored: a restart before the result restores the receipt as unknown.
+    OutputResult output = port_.actuator().output({id, command["action"].as<std::string>()});
+    finish(output == OutputResult::Completed ? "succeeded" : output == OutputResult::Failed ? "failed" : "unknown");
 }
 
 void Executor::finish(const char* state, const char* error) {
     event(activeRecord_, state, error);
+    // Success is published only after the result is stored and read back.
     if (ledger_.save(activeSlot_, activeRecord_)) port_.publish(activeRecord_);
     else port_.log("RESULT_STORE_FAILED accepted_record_kept_no_retry");
     busy_ = false;
     activeSlot_ = -1;
-    activeDevice_ = nullptr;
     activeRecord_.clear();
-    activeRequest_ = {};
-}
-
-void Executor::poll() {
-    if (!busy_) return;
-    if (!activeDevice_->observer.available()) return finish("unknown");
-    uint64_t now = port_.monotonicMs();
-    if (now < activeRequest_.startedAtMs || now - activeRequest_.startedAtMs >= activePolicy_.timeoutMs)
-        return finish("unknown");
-    CompletionObservation observation = activeDevice_->observer.observe(activeRequest_);
-    // An observer may have consumed time or become unavailable during this call.
-    now = port_.monotonicMs();
-    if (now < activeRequest_.startedAtMs || now - activeRequest_.startedAtMs >= activePolicy_.timeoutMs)
-        return finish("unknown");
-    if (observation.state == ObservationState::Pending) return;
-    if (observation.state == ObservationState::Unavailable) return finish("unknown");
-    if (observation.commandId != activeRequest_.commandId || observation.source.empty() ||
-        observation.observedAtMs <= activeRequest_.startedAtMs || observation.observedAtMs > now)
-        return finish("unknown");
-    if (observation.state == ObservationState::Failed) return finish("failed");
-    finish(observation.state == ObservationState::Proven && activePolicy_.successEnabled ? "succeeded" : "unknown");
 }
 
 void Executor::replayRecord(int slot, JsonDocument& record) {

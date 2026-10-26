@@ -14,7 +14,7 @@ public:
     static constexpr int NOT_FOUND = -1;
     static constexpr int STORAGE_ERROR = -2;
 
-    explicit Ledger(RecordStore& store, const char* idKey = "command_id") : store_(store), idKey_(idKey) {}
+    explicit Ledger(RecordStore& store) : store_(store) {}
 
     bool ready() const { return store_.ready(); }
 
@@ -60,7 +60,6 @@ private:
     bool write(int slot, const std::string& body, const std::string& id);
 
     RecordStore& store_;
-    const char* idKey_;
     bool loaded_ = false;
     bool unreadable_ = false;
     std::vector<bool> used_;

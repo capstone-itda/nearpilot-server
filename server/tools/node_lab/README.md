@@ -1,9 +1,8 @@
 # ESP32 관측과 명령 연결 시험
 
 2026-10-26에 센서 기반 물리 검증과 반납 검사를 범위에서 제외했다 (`docs/requirements.md` FR-07·FR-20).
-서버 쪽 시험 도구는 MQTT v2로 바꿨다. 상태 표시는 `command_state`이고 검사 기준과 검사 ACL을 쓰지 않는다.
-시험 펌웨어(`firmware/node_lab`)는 아직 MQTT v1이라 서버가 보고를 거부한다. 펌웨어 후속 fix PR에서 맞춘다.
-아래의 물리 상태 필드와 센서 없는 실행의 `unknown` 설명은 이전 v1 시험 펌웨어를 가리킨다.
+서버 쪽 시험 도구와 시험 펌웨어(`firmware/node_lab`)는 MQTT v2를 쓴다. 상태 표시는 `command_state`이고 검사 기준과 검사 ACL을 쓰지 않는다.
+이전 v1 시험 펌웨어를 올린 기기의 보고는 서버가 거부한다. 펌웨어를 다시 올린다.
 `HARDWARE_VALIDATION.md`의 과거 실측과 `KNOWN_ISSUES.md`의 기존 관찰은 보존한다.
 
 앱, 로그인 화면, REST, WebSocket 없이 기존 서버를 직접 부른다.
@@ -33,7 +32,7 @@ CORE가 허가한 명령만 기존 MQTT 경로로 보낸다.
 | `node_configured` | 등록한 시험 기기의 발표를 받아 장소·신뢰·정책을 연결했다 |
 | `inventory_reloaded` | 새 기기를 기존 복원 경로로 읽도록 시험 Runtime을 재시작했다 |
 | `node_readiness` | 연결 ID, 온라인, 신뢰, 장소, `FAULT`, 실행 가능 여부·차단 사유가 바뀌었다. 바뀐 때만 쓴다 |
-| `node_observation` | RSSI, 관측·수신 시각, 물리 상태, 실행 가능 여부와 차단 사유다 |
+| `node_observation` | RSSI, 관측·수신 시각, 명령 처리 상태, 실행 가능 여부와 차단 사유다 |
 | `proximity_pending` | 유효한 현재 비콘 관측이 아직 없다 |
 | `proximity` | 기기별 사후확률, 가장 높은 기기, 임계값과 모델 버전이다 |
 | `decision` | 서버의 허가·재질문·거부와 사유다 |
@@ -45,7 +44,7 @@ CORE가 허가한 명령만 기존 MQTT 경로로 보낸다.
 기존 CORE의 결과 재인계에서 ValueError 경고가 관측되었다. 성공 저장과 인계 경고를 구분한다.
 재현과 후속 작업 초안은 `KNOWN_ISSUES.md`에 있다. 시험 도구가 경고를 숨기거나 CORE를 고치지 않는다.
 화면의 확률은 합성 모델 기준이다. 실제 정확도를 뜻하지 않는다.
-`frame_ts`와 `received_at`은 RSSI 시각이고 `status_observed_at`과 `status_received_at`은 물리 상태 보고의 시각이다.
+`frame_ts`와 `received_at`은 RSSI 시각이고 `status_observed_at`과 `status_received_at`은 상태 보고의 시각이다.
 명령 직후 보이는 이전 상태 보고를 새 명령의 완료 근거로 쓰지 않는다.
 RSSI 보고 수신, 근접 확률 변화, 명령 수신과 실제 물리 성공을 구분한다.
 
@@ -188,14 +187,13 @@ Windows 시간 서비스를 재시작하면 미동기화 상태를 확인한다.
 관리자 PowerShell에서 `w32tm /resync /rediscover` 뒤 실제 NTP 응답과 `CLOCK_SYNCED`를 확인한다.
 로컬 `stripchart`의 오프셋만으로 ESP32 시각 오차를 확정하지 않는다.
 
-## 펌웨어의 unknown 결과
+## 펌웨어의 실행 결과
 
-ESP32만으로는 LED의 실제 켜짐이나 구동부 완료를 증명할 수 없다.
-최소 펌웨어는 시리얼 수신 확인과 선택 GPIO 출력 뒤 `unknown`을 보고한다.
-서버가 기기를 `FAULT`로 격리하는 결과는 예상 동작이다. 로그 확인을 실패한 것으로 보지 않는다.
-다음 명령을 위해 운영 DB의 FAULT를 수동 SQL로 풀지 않는다.
-첫 연결 시험을 새로 시작하려면 새 `--dir`로 별도 시험 DB를 만든다.
-실제 완료 성공을 검증하려면 완료 관측 수단과 복구 절차를 따로 준비한다.
+최소 펌웨어는 시리얼 기록과 선택 GPIO 출력을 마치고 결과를 저장하면 `succeeded`를 보고한다.
+성공은 제어 신호 출력 완료다. LED의 실제 켜짐은 확인하지 않는다.
+출력 직전 재검사에서 걸리면 `failed`와 거부 코드, 재시작으로 결과가 없으면 `unknown`이다.
+`unknown` 뒤 서버가 기기를 `FAULT`로 격리하는 결과는 예상 동작이다. 운영 DB의 FAULT를 수동 SQL로 풀지 않는다.
+v1 시험에서 `unknown`으로 격리된 시험 DB는 새 `--dir`로 별도 시험 DB를 만들어 다시 시작한다.
 반납 검사와 실제 센서는 이 최소 펌웨어의 범위 밖이다.
 
 ## 시험 범위

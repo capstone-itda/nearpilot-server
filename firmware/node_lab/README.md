@@ -1,9 +1,8 @@
 # ESP32 최소 연결 시험 펌웨어
 
-2026-10-26에 센서 기반 물리 완료 검증을 범위에서 제외했다 (`docs/requirements.md` FR-07).
-아래의 `light_on=null`과 실행 결과 `unknown`은 아직 바꾸지 않은 시험 펌웨어의 동작이다.
-새 성공 의미는 제어 신호 출력 완료다. 후속 fix PR에서 시험 펌웨어와 도구도 같은 계약으로 맞춘다.
-과거 시리얼 로그를 새 계약의 성공 결과로 재해석하지 않는다.
+시험 펌웨어는 MQTT v2를 쓴다. 성공은 제어 신호 출력 완료와 결과 저장이다 (`docs/requirements.md` FR-07).
+2026-10-26 결정으로 센서 기반 물리 완료 검증과 반납 검사는 범위 밖이다.
+v1 시절의 시리얼 로그(`physical_completion=unverified`, 결과 `unknown`)를 새 계약의 성공 결과로 재해석하지 않는다.
 
 추가 보드 없이 ESP32 자체를 쓴다.
 BLE iBeacon 수신, MQTT 보고, 서버 명령 도착과 처리 로그를 확인한다.
@@ -81,20 +80,19 @@ ESP32 한 대만 있으면 비콘 송신과 다른 기기의 실제 수신을 �
 | `MQTT_REPORT` | 보고 종류, 발행 순번과 MQTT 발행 결과다 |
 | `COMMAND_RECEIVED` | 명령 ID를 읽었다 |
 | `COMMAND_DUPLICATE` | NVS의 기존 결과를 재보고했다. 다시 출력하지 않는다 |
-| `COMMAND_HANDLED` | 처리한 명령 ID·동작과 시리얼·GPIO 모드다 |
-| `COMMAND_RESULT` | 서버에 보고한 결과다. 이 최소 구현은 물리 성공을 보고하지 않는다 |
+| `COMMAND_HANDLED` | 출력을 마친 명령 ID·동작과 시리얼·GPIO 모드다 (`output_completed=1`) |
+| `COMMAND_RESULT` | 서버에 보고한 결과다. 출력을 마치고 저장하면 `succeeded`, 출력 직전 재검사에서 걸리면 `failed`다 |
 | `STORAGE_BLOCKED` | 기록 손상·한도 때문에 새 출력을 차단했다. 기록은 삭제하지 않는다 |
-| `SAFETY_CHECK_UNSUPPORTED` | 실제 센서가 없어 안전 통과 근거를 만들지 않았다 |
 
 기본 `NP_OUTPUT_PIN=-1`은 시리얼 모드다. GPIO를 제어하지 않는다.
 내장 LED가 있는 보드라면 회로를 확인하고 핀과 active-high 여부를 설정한다.
 임의의 GPIO 번호를 가정하지 않는다. 부팅 핀과 입력 전용 핀은 보드 자료로 확인한다.
-GPIO를 썼더라도 제어 신호만으로 실제 켜짐을 증명하지 못하므로 `light_on=null`, 실행 결과는 `unknown`이다.
-서버의 FAULT 격리는 이 결과를 보수적으로 반영한 것이다.
+시리얼 모드와 GPIO 모드 모두 출력 처리를 마치면 `succeeded`다. 실제 켜짐은 확인하지 않는다.
+`status`는 `observed_at`과 `command_state`(`idle`·`busy`, 명령 기록 저장소를 열지 못하면 `unknown`)만 보낸다.
 
 ## 보존과 범위
 
-- MQTT 3.1.1, QoS·retain과 v1 필드를 기존 계약대로 쓴다.
+- MQTT 3.1.1, QoS·retain과 v2 필드를 계약대로 쓴다. `cmd`만 구독한다.
 - NimBLE에서 Apple iBeacon manufacturer data 25바이트를 읽는다.
 - RSSI는 약 1초 칸으로 평균한다. 비콘 슬롯과 보고 주기는 설정에서 받는다.
 - 연결마다 새 UUID와 토픽별 발행 순번을 쓴다. 연결마다 시각을 신뢰한 뒤 한 번 발표한다.

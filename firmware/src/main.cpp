@@ -1,6 +1,6 @@
-// NearPilot node: iBeacon -> MQTT, CORE command -> serial / optional GPIO.
+// NearPilot node: iBeacon -> MQTT v2, CORE command -> serial / optional GPIO.
 // Board glue only: validation, clock trust, records and readiness live in lib/.
-// A serial line or output write is NOT physical completion evidence.
+// Success means the control signal was emitted and stored, not an observed physical state.
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <MQTT.h>
@@ -10,7 +10,6 @@
 #include <esp_sntp.h>
 #include <esp_system.h>
 #include <esp_task_wdt.h>
-#include <esp_timer.h>
 #include <sys/time.h>
 #include <time.h>
 #include <string>
@@ -24,36 +23,14 @@
 #include "np_ledger.h"
 #include "np_nvs_store.h"
 #include "np_ready.h"
-#include "np_safety.h"
-#include "np_sensor.h"
 #if __has_include("config.local.h")
 #include "config.local.h"
 #else
 #include "config.example.h"
 #endif
 
-// Older local build configurations have no completion settings yet.
-#ifndef NP_MAX_CHECK_RECORDS
-#define NP_MAX_CHECK_RECORDS 256
-#endif
-#ifndef NP_MAX_CHECK_RECORD_BYTES
-#define NP_MAX_CHECK_RECORD_BYTES 1024
-#endif
-#ifndef NP_LOCKER_COMPLETION_TIMEOUT_MS
-#define NP_LOCKER_COMPLETION_TIMEOUT_MS 0ULL
-#endif
-#ifndef NP_LIGHT_COMPLETION_TIMEOUT_MS
-#define NP_LIGHT_COMPLETION_TIMEOUT_MS 0ULL
-#endif
-#ifndef NP_SPEAKER_COMPLETION_TIMEOUT_MS
-#define NP_SPEAKER_COMPLETION_TIMEOUT_MS 0ULL
-#endif
-static_assert(NP_LOCKER_COMPLETION_TIMEOUT_MS >= 0 && NP_LIGHT_COMPLETION_TIMEOUT_MS >= 0 &&
-              NP_SPEAKER_COMPLETION_TIMEOUT_MS >= 0, "completion timeout must be unset or positive");
-
 static_assert(NP_MAX_COMMAND_RECORDS > 0 && NP_MAX_COMMAND_RECORDS < 10000, "NVS slot limit");
 static_assert(NP_LEGACY_COMMAND_RECORDS >= 0 && NP_LEGACY_COMMAND_RECORDS < 10000, "NVS slot limit");
-static_assert(NP_MAX_CHECK_RECORDS > 0 && NP_MAX_CHECK_RECORDS < 10000, "check slot limit");
 static_assert(NP_RSSI_FRAME_MS > 0 && NP_STATUS_MS > 0, "report interval");
 static_assert(NP_BLE_SCAN_WINDOW_MS <= NP_BLE_SCAN_INTERVAL_MS, "BLE scan window");
 #ifndef NP_WATCHDOG_TIMEOUT_SEC
@@ -78,9 +55,6 @@ np::NvsRecordStore recordStore("np_records", "np-records", NP_MAX_COMMAND_RECORD
 np::NvsRecordStore legacyStore("nvs", "np-node-lab", NP_LEGACY_COMMAND_RECORDS);
 np::LayeredRecordStore records(recordStore, legacyStore);
 np::Ledger ledger(records);
-np::NvsRecordStore checkStore("np_checks", "np-checks", NP_MAX_CHECK_RECORDS);
-np::Ledger checkLedger(checkStore, "check_id");
-np::NoSensors sensors;
 String session;
 bool announced = false;
 bool watchdogArmed = false;
@@ -89,7 +63,7 @@ bool watchdogArmed = false;
 void feedWatchdog() {
     if (watchdogArmed) esp_task_wdt_reset();
 }
-unsigned long seq[5] = {};
+unsigned long seq[4] = {};  // announce, status, rssi, result
 volatile bool synchronizedClock = false;
 volatile unsigned long lastSync = 0;
 
@@ -154,7 +128,7 @@ void onSync(timeval*) {
 }
 
 void common(JsonDocument& doc, int channel) {
-    doc["schema_version"] = 1;
+    doc["schema_version"] = np::SCHEMA_VERSION;
     doc["node_id"] = config.nodeId;
     doc["session_id"] = session;
     doc["seq"] = ++seq[channel];
@@ -169,7 +143,7 @@ bool report(const char* kind, JsonDocument& doc, int qos, bool retained = false)
     feedWatchdog();
     Serial.printf("MQTT_REPORT kind=%s seq=%lu published=%d ms=%lu\n", kind,
         doc["seq"].as<unsigned long>(), sent, millis() - started);
-    return sent;  // MQTT confirmation alone is not physical success.
+    return sent;  // PUBACK alone is not command success.
 }
 
 bool announce() {
@@ -179,23 +153,14 @@ bool announce() {
     return report("announce", doc, 1, true);
 }
 
-bool commandBusy();
+const char* commandState();
 
 void status() {
-    np::CommandContext before = liveContext();
-    if (!before.clockTrusted) return;
-    np::Measurement measurement("", uint64_t(esp_timer_get_time()) / 1000);
-    np::SensorSnapshot sample = sensors.read(measurement);
-    uint64_t end = uint64_t(esp_timer_get_time()) / 1000;
-    np::CommandContext after = liveContext();
-    if (!after.clockTrusted || before.session != after.session) return;
+    if (!clockTrusted()) return;
     JsonDocument doc;
     common(doc, 1);
     doc["observed_at"] = utcNow();
-    // Fields without an installed sensor come from this firmware's own output state (spec 6절).
-    np::StatusFallback board(sensors.sensesActuator(), sensors.detectsFaults(), commandBusy());
-    np::physicalState(doc, sample, config.capability, measurement.startedAtMs, end, before.nowSec, after.nowSec,
-                      board);
+    doc["command_state"] = commandState();  // Command handling only; no door, light or sensor values.
     report("status", doc, 1);
 }
 
@@ -260,12 +225,12 @@ bool result(JsonDocument& record) {
 void signalOutput(const np::Actuation& request) {
     bool on = request.action == "on" || request.action == "open";
     if (NP_OUTPUT_PIN >= 0) digitalWrite(NP_OUTPUT_PIN, on == NP_OUTPUT_ACTIVE_HIGH ? HIGH : LOW);
-    Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s physical_completion=unverified\n",
+    Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s output_completed=1\n",
         request.commandId.c_str(), request.action.c_str(), NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only");
 }
 
-np::SignalDevices devices(signalOutput, NP_LOCKER_COMPLETION_TIMEOUT_MS,
-                          NP_LIGHT_COMPLETION_TIMEOUT_MS, NP_SPEAKER_COMPLETION_TIMEOUT_MS);
+// validateCommand rejects actions the configured capability does not support before output.
+np::SignalActuator outputSignal(signalOutput);
 
 class BoardCommandPort : public np::CommandPort {
 public:
@@ -276,46 +241,20 @@ public:
     std::string newEventId() override { return newUuid().c_str(); }
     std::string utcNow() override { return ::utcNow().c_str(); }
     void publish(JsonDocument& record) override { result(record); }
-    np::Device& device() override {
-        if (config.capability == "locker") return devices.locker;
-        if (config.capability == "speaker") return devices.speaker;
-        return devices.light;  // validateCommand rejects unknown capabilities before this call.
-    }
-    uint64_t monotonicMs() override { return uint64_t(esp_timer_get_time()) / 1000; }
+    np::Actuator& actuator() override { return outputSignal; }
     void log(const std::string& line) override { Serial.println(line.c_str()); }
 };
 
 BoardCommandPort commandPort;
 np::Executor executor(ledger, commandPort, NP_MAX_COMMAND_ID_BYTES, NP_MAX_RECORD_BYTES);
 
-bool commandBusy() { return executor.busy(); }
-
-class BoardSafetyPort : public np::SafetyPort {
-public:
-    np::CommandContext context() override { return liveContext(); }
-    uint64_t monotonicMs() override { return uint64_t(esp_timer_get_time()) / 1000; }
-    std::string utcNow() override { return ::utcNow().c_str(); }
-    std::string newEventId() override { return newUuid().c_str(); }
-    np::Sensors& sensors() override { return ::sensors; }
-    void publish(JsonDocument& record) override {
-        if (!clockTrusted() || !mqtt.connected() || !announced) return;
-        JsonDocument doc;
-        common(doc, 4);
-        for (const char* key : {"check_id", "event_id", "criteria_id", "criteria_version", "checked_at", "outcome", "evidence"})
-            doc[key] = record[key];
-        report("safety_check_result", doc, 1);
-    }
-    void log(const std::string& line) override { Serial.println(line.c_str()); }
-};
-BoardSafetyPort safetyPort;
-np::SafetyChecks safetyChecks(checkLedger, safetyPort, NP_MAX_COMMAND_ID_BYTES, NP_MAX_CHECK_RECORD_BYTES);
+const char* commandState() { return executor.commandState(); }
 
 // Re-reports are spread over loop iterations so hundreds of records never stall MQTT, BLE or the watchdog.
 bool replaying = false;
 
 void replayRecords() {
     executor.beginReplay();
-    safetyChecks.beginReplay();
     replaying = true;
 }
 
@@ -325,9 +264,7 @@ void replayStep() {
         replaying = false;  // The next announce or regained clock trust starts again from the first slot.
         return;
     }
-    bool more = ledger.ready() && executor.replayNext();
-    if (!more) more = checkLedger.ready() && safetyChecks.replayNext();
-    replaying = more;
+    replaying = ledger.ready() && executor.replayNext();
 }
 
 // ---- USB provisioning (separate NVS namespace; command records are only read) ----
@@ -372,7 +309,6 @@ void commitConfig(const String& nonce) {
         return;
     }
     const char* conflict = settingsReady ? ledger.ownerConflict(candidate.nodeId) : "storage_unavailable";
-    if (!conflict) conflict = checkLedger.ownerConflict(candidate.nodeId);
     if (conflict) {
         staged.clear();
         return configReject(conflict);
@@ -472,7 +408,7 @@ unsigned long backoff(unsigned long current) { return np::backoff(current, NP_RE
 const char* notReadyReason(bool trusted) {
     np::ReadinessInputs in;
     in.configured = configured;
-    in.storageReady = ledger.ready() && checkLedger.ready();
+    in.storageReady = ledger.ready();
     in.wifiUp = WiFi.status() == WL_CONNECTED;
     in.clockConfigured = clockConfigured();
     in.trusted = trusted;
@@ -488,9 +424,6 @@ void setup() {
     tzset();
     bool storageReady = recordStore.begin() & legacyStore.begin();  // Open both even if one fails.
     if (storageReady) ledger.load();  // One full read now instead of on the first command.
-    bool checksReady = checkStore.begin();
-    if (checksReady) checkLedger.load();
-    storageReady = storageReady && checksReady;
     settingsReady = settings.begin("np-config", false);
     const char* loaded = loadConfig();
     if (NP_OUTPUT_PIN >= 0) {
@@ -504,8 +437,6 @@ void setup() {
     Serial.printf("RECORD_STORE primary=%d legacy=%d slots=%d legacy_slots=%d free_entries=%u\n",
         recordStore.ready(), legacyStore.ready(), NP_MAX_COMMAND_RECORDS, NP_LEGACY_COMMAND_RECORDS,
         unsigned(recordStore.freeEntries()));
-    Serial.printf("CHECK_STORE ready=%d slots=%d record_bytes=%d free_entries=%u\n",
-        checkStore.ready(), NP_MAX_CHECK_RECORDS, NP_MAX_CHECK_RECORD_BYTES, unsigned(checkStore.freeEntries()));
     // Armed after the record indexes are built; a reset keeps every receipt and never re-actuates.
     watchdogArmed = esp_task_wdt_init(NP_WATCHDOG_TIMEOUT_SEC, true) == ESP_OK;
     if (watchdogArmed) enableLoopWDT();
@@ -589,8 +520,6 @@ void loop() {
             String base = String("nearpilot/node/") + config.nodeId.c_str();
             bool subscribed = mqtt.subscribe(base + "/cmd", 1);
             feedWatchdog();
-            subscribed = subscribed && mqtt.subscribe(base + "/safety_check", 1);
-            feedWatchdog();
             if (!subscribed) {
                 mqttDelay = backoff(mqttDelay);
                 Serial.printf("MQTT_SUBSCRIBE_FAILED error=%d next_retry_ms=%lu\n", mqtt.lastError(), mqttDelay);
@@ -598,7 +527,7 @@ void loop() {
             } else {
                 mqttDelay = NP_RECONNECT_MS;
                 wasConnected = true;
-                Serial.printf("MQTT_CONNECTED session_id=%s subscribed=cmd,safety_check\n", session.c_str());
+                Serial.printf("MQTT_CONNECTED session_id=%s subscribed=cmd\n", session.c_str());
             }
         } else {
             mqttDelay = backoff(mqttDelay);
@@ -642,9 +571,7 @@ void loop() {
         Incoming received = inbox.front();
         inbox.erase(inbox.begin());
         if (received.topic.endsWith("/cmd")) executor.handle(received.payload.c_str(), received.receivedBusy);
-        else if (received.topic.endsWith("/safety_check")) safetyChecks.handle(received.payload.c_str());
     }
-    executor.poll();
     replayStep();
     if (current - lastStatus >= NP_STATUS_MS) {
         lastStatus = current;

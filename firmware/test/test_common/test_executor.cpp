@@ -1,6 +1,7 @@
 #include <unity.h>
 
 #include <deque>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -11,7 +12,7 @@
 
 namespace {
 
-class FakePort : public np::CommandPort, public np::Actuator, public np::CompletionObserver {
+class FakePort : public np::CommandPort, public np::Actuator {
 public:
     std::deque<const char*> checks;  // Scripted validate() results; empty means valid.
     std::vector<std::string> published;  // "state" or "state:error_code" per result.
@@ -19,39 +20,19 @@ public:
     std::vector<std::string> logs;
     int actuations = 0;
     int counter = 0;
-    uint64_t now = 100;
-    uint64_t observeDelayMs = 0;
-    bool hasObservation = false;
-    np::StartResult startResult = np::StartResult::Started;
-    np::CompletionObservation observation;
-    np::Device attached{*this, *this, {false, 0}};
+    np::OutputResult outputResult = np::OutputResult::Completed;
+    std::function<void()> duringOutput;  // Runs inside output(), while the command is being handled.
     FakeStore* checkStore = nullptr;
     bool successWasStored = false;
-    int observations = 0;
     bool liveValidation = false;
     np::CommandContext live;
     np::CommandContext retentionContext() override { return live; }
 
-    np::Device& device() override { return attached; }
-    uint64_t monotonicMs() override { return now; }
-    bool available() const override { return hasObservation; }
-    np::CompletionObservation observe(const np::Actuation&) override {
-        ++observations;
-        now += observeDelayMs;
-        return observation;
-    }
-    np::StartResult start(const np::Actuation&) override {
+    np::Actuator& actuator() override { return *this; }
+    np::OutputResult output(const np::Actuation&) override {
         ++actuations;
-        return startResult;
-    }
-    void enableObservation(bool successEnabled = true) {
-        hasObservation = true;
-        attached.policy = {successEnabled, 50};  // Synthetic test duration, not a device default.
-        observation.state = np::ObservationState::Pending;
-    }
-    void evidence(np::ObservationState state, const char* id = "a") {
-        now = 101;
-        observation = {state, id, now, "fake_action_sensor"};
+        if (duringOutput) duringOutput();
+        return outputResult;
     }
 
     const char* validate(JsonDocument& command) override {
@@ -80,8 +61,18 @@ public:
     void log(const std::string& line) override { logs.push_back(line); }
 };
 
+// The receipt write succeeds; every result write fails, or reads back wrong when corrupt.
+struct ResultFails : FakeStore {
+    bool corrupt = false;
+    bool write(int slot, const std::string& body) override {
+        if (body.find("\"accepted\"") != std::string::npos) return FakeStore::write(slot, body);
+        if (corrupt) slots[slot] = body.substr(1);
+        return corrupt;
+    }
+};
+
 std::string command(const char* id, const char* action = "on") {
-    return std::string("{\"schema_version\":1,\"command_id\":\"") + id + "\",\"node_id\":\"light-01\",\"action\":\"" +
+    return std::string("{\"schema_version\":2,\"command_id\":\"") + id + "\",\"node_id\":\"light-01\",\"action\":\"" +
            action + "\",\"target_session_id\":\"s\",\"issued_at\":\"2026-10-23T00:00:00Z\","
            "\"expires_at\":\"2026-10-23T00:00:30Z\"}";
 }
@@ -98,15 +89,15 @@ void assertPublished(const std::vector<std::string>& expected, const FakePort& p
         TEST_ASSERT_EQUAL_STRING(expected[i].c_str(), port.published[i].c_str());
 }
 
-void test_FR06_accepted_then_unknown_without_evidence() {
+void test_FR06_accepted_running_then_succeeded() {
     FakeStore store;
     FakePort port;
     np::Ledger ledger(store);
     np::Executor executor(ledger, port, 128, 512);
     executor.handle(command("a"), false);
-    assertPublished({"accepted", "running", "unknown"}, port);
+    assertPublished({"accepted", "running", "succeeded"}, port);
     TEST_ASSERT_EQUAL_INT(1, port.actuations);
-    TEST_ASSERT_EQUAL_STRING("unknown", stored(store, 0).c_str());
+    TEST_ASSERT_EQUAL_STRING("succeeded", stored(store, 0).c_str());
     TEST_ASSERT_FALSE(executor.busy());
 }
 
@@ -150,7 +141,7 @@ void test_FR06_duplicate_after_restart() {
     np::Executor executor(ledger, port, 128, 512);
     port.checks = {"COMMAND_EXPIRED"};  // Lookup precedes expiry: this is never consulted.
     executor.handle(command("a"), false);
-    assertPublished({"unknown"}, port);
+    assertPublished({"succeeded"}, port);
     TEST_ASSERT_EQUAL_INT(0, port.actuations);
     TEST_ASSERT_EQUAL_UINT32(1, port.checks.size());
 }
@@ -175,13 +166,13 @@ void test_FR22_changed_capability_preserves_duplicate() {
     port.context.capability = "locker";
     TEST_ASSERT_NULL(ledger.ownerConflict("light-01"));
     executor.handle(command("a"), false);
-    TEST_ASSERT_EQUAL_STRING("unknown", port.published.back().c_str());
+    TEST_ASSERT_EQUAL_STRING("succeeded", port.published.back().c_str());
     TEST_ASSERT_EQUAL_STRING(original.c_str(), store.slots[0].c_str());
     TEST_ASSERT_EQUAL_INT(1, port.actuations);
     executor.handle(command("b"), false);
     TEST_ASSERT_EQUAL_STRING("rejected:UNSUPPORTED_ACTION", port.published.back().c_str());
     executor.handle(command("c", "open"), false);
-    TEST_ASSERT_EQUAL_STRING("unknown", port.published.back().c_str());
+    TEST_ASSERT_EQUAL_STRING("succeeded", port.published.back().c_str());
     TEST_ASSERT_EQUAL_INT(2, port.actuations);
 }
 
@@ -202,18 +193,19 @@ void test_FR06_command_id_conflict() {
 void test_FR06_concurrent_commands_busy() {
     FakeStore store;
     FakePort port;
-    port.enableObservation();
     np::Ledger ledger(store);
     np::Executor executor(ledger, port, 128, 512);
+    bool busyDuringOutput = false;
+    port.duringOutput = [&]() {
+        busyDuringOutput = executor.busy();
+        port.duringOutput = nullptr;
+        executor.handle(command("b"), false);  // A second command reaching the executor mid-output.
+    };
     executor.handle(command("a"), false);
-    TEST_ASSERT_TRUE(executor.busy());
-    executor.poll();  // Pending: a second command cannot start in a later loop iteration.
-    executor.handle(command("b"), false);
-    assertPublished({"accepted", "running", "rejected:DEVICE_BUSY"}, port);
+    TEST_ASSERT_TRUE(busyDuringOutput);
+    assertPublished({"accepted", "running", "rejected:DEVICE_BUSY", "succeeded"}, port);
     TEST_ASSERT_EQUAL_INT(1, port.actuations);
     TEST_ASSERT_EQUAL_STRING("rejected", stored(store, 1).c_str());
-    port.evidence(np::ObservationState::Proven);
-    executor.poll();
     TEST_ASSERT_FALSE(executor.busy());
     executor.handle(command("b"), false);  // The busy rejection survives completion.
     TEST_ASSERT_EQUAL_STRING("rejected:DEVICE_BUSY", port.published.back().c_str());
@@ -277,28 +269,43 @@ void test_FR07_power_loss_restores_unknown() {
     TEST_ASSERT_EQUAL_STRING("accepted", stored(store, 1).c_str());
 }
 
-void test_FR07_no_completion_without_evidence() {
+void test_FR07_output_completion_saved_before_success() {
     FakeStore store;
     FakePort port;
+    port.checkStore = &store;
     np::Ledger ledger(store);
     np::Executor executor(ledger, port, 128, 512);
     executor.handle(command("a"), false);
-    TEST_ASSERT_EQUAL_STRING("unknown", port.published.back().c_str());  // Output alone is not success.
-    store.slots.clear();
-    port.published.clear();
-    // The receipt is written, then the result write fails.
-    struct ResultFails : FakeStore {
-        bool write(int slot, const std::string& body) override {
-            return body.find("\"accepted\"") != std::string::npos && FakeStore::write(slot, body);
-        }
-    } failing;
-    np::Ledger failingLedger(failing);
-    np::Executor second(failingLedger, port, 128, 512);
-    second.handle(command("b"), false);
-    assertPublished({"accepted", "running"}, port);
-    TEST_ASSERT_EQUAL_STRING("accepted", stored(failing, 0).c_str());
-    TEST_ASSERT_EQUAL_STRING("RESULT_STORE_FAILED accepted_record_kept_no_retry", port.logs.back().c_str());
-    TEST_ASSERT_FALSE(second.busy());
+    assertPublished({"accepted", "running", "succeeded"}, port);
+    TEST_ASSERT_TRUE(port.successWasStored);
+    std::string resultEvent = port.events.back();
+    executor.handle(command("a"), false);
+    TEST_ASSERT_EQUAL_STRING(resultEvent.c_str(), port.events.back().c_str());
+    TEST_ASSERT_EQUAL_INT(1, port.actuations);
+
+    for (bool readBackFails : {false, true}) {
+        // A missing write and a failed verification must both suppress success.
+        ResultFails failing;
+        failing.corrupt = readBackFails;
+        FakePort next;
+        np::Ledger nextLedger(failing);
+        np::Executor second(nextLedger, next, 128, 512);
+        second.handle(command("b"), false);
+        assertPublished({"accepted", "running"}, next);
+        TEST_ASSERT_FALSE(second.busy());
+        TEST_ASSERT_EQUAL_STRING("RESULT_STORE_FAILED accepted_record_kept_no_retry", next.logs.back().c_str());
+        TEST_ASSERT_EQUAL_INT(1, next.actuations);
+        if (readBackFails) continue;
+        TEST_ASSERT_EQUAL_STRING("accepted", stored(failing, 0).c_str());
+        FakeStore recovered;  // Storage works again after a restart.
+        recovered.slots = failing.slots;
+        FakePort restarted;
+        np::Ledger restartedLedger(recovered);
+        np::Executor third(restartedLedger, restarted, 128, 512);
+        third.replay();
+        assertPublished({"unknown"}, restarted);
+        TEST_ASSERT_EQUAL_INT(0, restarted.actuations);
+    }
 }
 
 void test_FR07_result_event_identity() {
@@ -312,7 +319,7 @@ void test_FR07_result_event_identity() {
     executor.handle(command("a"), false);
     TEST_ASSERT_EQUAL_STRING(first.c_str(), port.events[3].c_str());
     TEST_ASSERT_EQUAL_STRING(first.c_str(), port.events[4].c_str());
-    TEST_ASSERT_EQUAL_STRING("unknown", port.published[4].c_str());
+    TEST_ASSERT_EQUAL_STRING("succeeded", port.published[4].c_str());
 }
 
 void test_FR22_full_ledger_rejects_without_eviction() {
@@ -356,190 +363,80 @@ void test_FR22_legacy_records_block_reexecution() {
 }
 
 
-void test_FR07_proven_completion_saved_before_success() {
-    FakeStore store;
-    FakePort port;
-    port.enableObservation();
-    port.checkStore = &store;
-    np::Ledger ledger(store);
-    np::Executor executor(ledger, port, 128, 512);
-    executor.handle(command("a"), false);
-    TEST_ASSERT_EQUAL_STRING("accepted", stored(store, 0).c_str());
-    port.evidence(np::ObservationState::Proven);
-    executor.poll();
-    assertPublished({"accepted", "running", "succeeded"}, port);
-    TEST_ASSERT_TRUE(port.successWasStored);
-    TEST_ASSERT_FALSE(executor.busy());
-    std::string resultEvent = port.events.back();
-    executor.handle(command("a"), false);
-    TEST_ASSERT_EQUAL_STRING(resultEvent.c_str(), port.events.back().c_str());
-    TEST_ASSERT_EQUAL_INT(1, port.actuations);
-
-    for (bool readBackFails : {false, true}) {
-        FakeStore failing;
-        FakePort next;
-        next.enableObservation();
-        np::Ledger nextLedger(failing);
-        np::Executor second(nextLedger, next, 128, 512);
-        second.handle(command("a"), false);
-        // A missing write and a failed verification must both suppress success.
-        failing.failWrite = !readBackFails;
-        failing.corruptWrite = readBackFails;
-        next.evidence(np::ObservationState::Proven);
-        second.poll();
-        assertPublished({"accepted", "running"}, next);
-        TEST_ASSERT_FALSE(second.busy());
-        TEST_ASSERT_EQUAL_STRING("RESULT_STORE_FAILED accepted_record_kept_no_retry", next.logs.back().c_str());
-        if (!readBackFails) {
-            TEST_ASSERT_EQUAL_STRING("accepted", stored(failing, 0).c_str());
-            failing.failWrite = false;
-            second.replay();
-            TEST_ASSERT_EQUAL_STRING("unknown", next.published.back().c_str());
-        }
-        TEST_ASSERT_EQUAL_INT(1, next.actuations);
-    }
-}
-
 void test_FR07_verified_execution_failure() {
-    for (bool startFails : {false, true}) {
-        FakeStore store;
-        FakePort port;
-        port.enableObservation(false);  // Success gating never hides a verified failure.
-        if (startFails) port.startResult = np::StartResult::Failed;
-        np::Ledger ledger(store);
-        np::Executor executor(ledger, port, 128, 512);
-        executor.handle(command("a"), false);
-        if (!startFails) {
-            port.evidence(np::ObservationState::Failed);
-            executor.poll();
-        }
-        if (startFails) assertPublished({"accepted", "failed"}, port);
-        else assertPublished({"accepted", "running", "failed"}, port);
-        TEST_ASSERT_EQUAL_STRING("failed", stored(store, 0).c_str());
-        TEST_ASSERT_FALSE(executor.busy());
-        executor.handle(command("a"), false);
-        TEST_ASSERT_EQUAL_INT(1, port.actuations);
-    }
-}
-
-void test_FR07_completion_requires_enabled_capability() {
     FakeStore store;
     FakePort port;
-    port.enableObservation(false);
+    port.outputResult = np::OutputResult::Failed;
     np::Ledger ledger(store);
     np::Executor executor(ledger, port, 128, 512);
     executor.handle(command("a"), false);
-    port.evidence(np::ObservationState::Proven);
-    executor.poll();
-    assertPublished({"accepted", "running", "unknown"}, port);
+    assertPublished({"accepted", "running", "failed"}, port);
+    TEST_ASSERT_EQUAL_STRING("failed", stored(store, 0).c_str());
     TEST_ASSERT_FALSE(executor.busy());
+    executor.handle(command("a"), false);
+    TEST_ASSERT_EQUAL_STRING("failed", port.published.back().c_str());
+    TEST_ASSERT_EQUAL_INT(1, port.actuations);
 }
 
-void test_FR07_unavailable_observation_is_unknown() {
-    for (int missing = 0; missing < 5; ++missing) {
-        FakeStore store;
-        FakePort port;
-        port.enableObservation();
-        if (missing == 0) port.hasObservation = false;
-        if (missing == 1) port.attached.policy.timeoutMs = 0;
-        if (missing == 2) port.startResult = np::StartResult::Unknown;
-        np::Ledger ledger(store);
-        np::Executor executor(ledger, port, 128, 512);
-        executor.handle(command("a"), false);
-        if (missing == 3) {
-            port.observation.state = np::ObservationState::Unavailable;  // Read error.
-            executor.poll();
-        }
-        if (missing == 4) {
-            port.hasObservation = false;  // Observer disappears during the wait.
-            executor.poll();
-        }
-        TEST_ASSERT_EQUAL_STRING("unknown", port.published.back().c_str());
-        TEST_ASSERT_EQUAL_STRING("unknown", stored(store, 0).c_str());
-        TEST_ASSERT_FALSE(executor.busy());
-        TEST_ASSERT_EQUAL_INT(missing == 3 ? 1 : 0, port.observations);
-    }
+void test_FR07_unconfirmed_output_is_unknown() {
+    FakeStore store;
+    FakePort port;
+    port.outputResult = np::OutputResult::Unknown;
+    np::Ledger ledger(store);
+    np::Executor executor(ledger, port, 128, 512);
+    executor.handle(command("a"), false);
+    assertPublished({"accepted", "running", "unknown"}, port);
+    TEST_ASSERT_EQUAL_STRING("unknown", stored(store, 0).c_str());
+    TEST_ASSERT_FALSE(executor.busy());
+    executor.handle(command("b"), false);
+    TEST_ASSERT_EQUAL_INT(2, port.actuations);  // Busy was released.
 }
 
-void test_FR07_completion_deadline() {
-    for (bool delayedRead : {false, true}) {
-        FakeStore store;
-        FakePort port;
-        port.enableObservation();
-        np::Ledger ledger(store);
-        np::Executor executor(ledger, port, 128, 512);
-        executor.handle(command("a"), false);
-        port.now = 149;
-        executor.poll();
-        TEST_ASSERT_TRUE(executor.busy());
-        if (delayedRead) {
-            port.evidence(np::ObservationState::Proven);
-            port.now = 149;
-            port.observeDelayMs = 1;  // Read finishes at the deadline: not success.
-        } else port.now = 150;
-        executor.poll();
-        TEST_ASSERT_EQUAL_STRING("unknown", port.published.back().c_str());
-        TEST_ASSERT_FALSE(executor.busy());
-        port.hasObservation = false;
-        executor.handle(command("b"), false);
-        TEST_ASSERT_EQUAL_INT(2, port.actuations);  // Busy was released.
-    }
-}
-
-void test_FR07_completion_evidence_freshness() {
-    for (auto state : {np::ObservationState::Proven, np::ObservationState::Failed}) {
-        for (int invalid = 0; invalid < 6; ++invalid) {
-            FakeStore store;
-            FakePort port;
-            port.enableObservation();
-            np::Ledger ledger(store);
-            np::Executor executor(ledger, port, 128, 512);
-            executor.handle(command("a"), false);
-            port.evidence(state);
-            if (invalid == 0) port.observation.observedAtMs = 99;  // Before start.
-            if (invalid == 1) port.observation.observedAtMs = 100;  // Same tick: cannot prove order.
-            if (invalid == 2) port.observation.commandId = "other";
-            if (invalid == 3) port.observation.source.clear();
-            if (invalid == 4) port.observation.observedAtMs = 102;  // Future.
-            if (invalid == 5) port.now = 99;  // The clock contract was broken.
-            executor.poll();
-            TEST_ASSERT_EQUAL_STRING("unknown", port.published.back().c_str());
-            TEST_ASSERT_FALSE(executor.busy());
-        }
-    }
+void test_FR07_status_reports_command_state() {
+    FakeStore store;
+    FakePort port;
+    np::Ledger ledger(store);
+    np::Executor executor(ledger, port, 128, 512);
+    TEST_ASSERT_EQUAL_STRING("idle", executor.commandState());
+    std::string during;
+    port.duringOutput = [&]() { during = executor.commandState(); };
+    executor.handle(command("a"), false);
+    TEST_ASSERT_EQUAL_STRING("busy", during.c_str());
+    TEST_ASSERT_EQUAL_STRING("idle", executor.commandState());
+    store.available = false;  // The records cannot vouch for what was handled.
+    TEST_ASSERT_EQUAL_STRING("unknown", executor.commandState());
 }
 
 void test_NFR03_at_most_once_actuation() {
     FakeStore store;
     FakePort port;
-    port.enableObservation();
     np::Ledger ledger(store);
     np::Executor executor(ledger, port, 128, 512);
+    std::string duringReconnect;
+    port.duringOutput = [&]() {
+        port.duringOutput = nullptr;
+        executor.replay();  // MQTT reconnect while this command is being handled.
+        duringReconnect = stored(store, 0);
+    };
     executor.handle(command("a"), false);
+    TEST_ASSERT_EQUAL_STRING("accepted", duringReconnect.c_str());  // Not mistaken for a restored receipt.
     executor.handle(command("a"), false);
-    executor.replay();  // MQTT reconnect during this boot.
-    TEST_ASSERT_EQUAL_STRING("accepted", stored(store, 0).c_str());
-    TEST_ASSERT_TRUE(executor.busy());
-    TEST_ASSERT_EQUAL_INT(1, port.actuations);
-    port.evidence(np::ObservationState::Proven);
-    executor.poll();
-    executor.poll();
     executor.replay();
     TEST_ASSERT_EQUAL_STRING("succeeded", port.published.back().c_str());
     TEST_ASSERT_EQUAL_INT(1, port.actuations);
-    TEST_ASSERT_EQUAL_INT(1, port.observations);
 
-    FakeStore rebootStore;
+    ResultFails rebootStore;  // Power loss before the result: only the receipt is persisted.
     {
         FakePort oldPort;
-        oldPort.enableObservation();
         np::Ledger oldLedger(rebootStore);
         np::Executor oldExecutor(oldLedger, oldPort, 128, 512);
         oldExecutor.handle(command("a"), false);
-        TEST_ASSERT_TRUE(oldExecutor.busy());
-    }  // Power loss while pending, with only the receipt persisted.
+        TEST_ASSERT_EQUAL_INT(1, oldPort.actuations);
+    }
+    FakeStore restoredStore;
+    restoredStore.slots = rebootStore.slots;
     FakePort restored;
-    np::Ledger restoredLedger(rebootStore);
+    np::Ledger restoredLedger(restoredStore);
     np::Executor restoredExecutor(restoredLedger, restored, 128, 512);
     restoredExecutor.replay();
     restoredExecutor.handle(command("a"), false);
@@ -550,20 +447,14 @@ void test_NFR03_at_most_once_actuation() {
 int signalCount = 0;
 void countSignal(const np::Actuation&) { ++signalCount; }
 
-void test_NFR10_device_slots_have_no_completion() {
+void test_NFR10_signal_output_completes() {
     signalCount = 0;
-    np::SignalDevices devices(countSignal, 50, 50, 50);
-    for (np::Device* device : {&devices.locker, &devices.light, &devices.speaker}) {
-        TEST_ASSERT_FALSE(device->policy.successEnabled);
-        TEST_ASSERT_FALSE(device->observer.available());
-        auto observation = device->observer.observe({"a", "on", 100});
-        TEST_ASSERT_TRUE(observation.state == np::ObservationState::Unavailable);
-        TEST_ASSERT_TRUE(observation.source.empty());
-        TEST_ASSERT_TRUE(device->actuator.start({"a", "on", 100}) == np::StartResult::Started);
-    }
+    np::SignalActuator signal(countSignal);
+    for (const char* action : {"open", "on", "off"})
+        TEST_ASSERT_TRUE(signal.output({"a", action}) == np::OutputResult::Completed);
     TEST_ASSERT_EQUAL_INT(3, signalCount);
     np::SignalActuator missing(nullptr);
-    TEST_ASSERT_TRUE(missing.start({"a", "on", 100}) == np::StartResult::Unknown);
+    TEST_ASSERT_TRUE(missing.output({"a", "on"}) == np::OutputResult::Unknown);
 }
 
 void test_FR06_evicted_command_does_not_actuate() {
@@ -651,7 +542,7 @@ void test_FR07_replay_spreads_over_loop_iterations() {
 
 void runExecutorTests() {
     RUN_TEST(test_FR07_replay_spreads_over_loop_iterations);
-    RUN_TEST(test_FR06_accepted_then_unknown_without_evidence);
+    RUN_TEST(test_FR06_accepted_running_then_succeeded);
     RUN_TEST(test_FR06_invalid_message_no_actuation);
     RUN_TEST(test_FR06_duplicate_after_restart);
     RUN_TEST(test_FR22_changed_capability_preserves_duplicate);
@@ -660,18 +551,15 @@ void runExecutorTests() {
     RUN_TEST(test_FR06_receipt_storage_failure);
     RUN_TEST(test_FR06_session_and_expiry_rechecked);
     RUN_TEST(test_FR07_power_loss_restores_unknown);
-    RUN_TEST(test_FR07_no_completion_without_evidence);
+    RUN_TEST(test_FR07_output_completion_saved_before_success);
     RUN_TEST(test_FR07_result_event_identity);
     RUN_TEST(test_FR22_full_ledger_rejects_without_eviction);
     RUN_TEST(test_FR22_legacy_records_block_reexecution);
-    RUN_TEST(test_FR07_proven_completion_saved_before_success);
     RUN_TEST(test_FR07_verified_execution_failure);
-    RUN_TEST(test_FR07_completion_requires_enabled_capability);
-    RUN_TEST(test_FR07_unavailable_observation_is_unknown);
-    RUN_TEST(test_FR07_completion_deadline);
-    RUN_TEST(test_FR07_completion_evidence_freshness);
+    RUN_TEST(test_FR07_unconfirmed_output_is_unknown);
+    RUN_TEST(test_FR07_status_reports_command_state);
     RUN_TEST(test_NFR03_at_most_once_actuation);
-    RUN_TEST(test_NFR10_device_slots_have_no_completion);
+    RUN_TEST(test_NFR10_signal_output_completes);
     RUN_TEST(test_FR06_evicted_command_does_not_actuate);
     RUN_TEST(test_FR06_busy_rejection_replaces_expired_record);
 }

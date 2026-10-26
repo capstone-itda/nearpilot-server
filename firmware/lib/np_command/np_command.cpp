@@ -5,7 +5,7 @@
 namespace np {
 
 const char* validateCommand(JsonDocument& doc, const CommandContext& context) {
-    if (!doc["schema_version"].is<int>() || doc["schema_version"].as<int>() != 1 ||
+    if (!doc["schema_version"].is<int>() || doc["schema_version"].as<int>() != SCHEMA_VERSION ||
         !doc["node_id"].is<const char*>() || doc["node_id"].as<std::string>() != context.nodeId ||
         !doc["action"].is<const char*>() || !doc["target_session_id"].is<const char*>() ||
         !doc["issued_at"].is<const char*>() || !doc["expires_at"].is<const char*>()) return "INVALID_MESSAGE";

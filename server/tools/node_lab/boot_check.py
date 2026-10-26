@@ -32,7 +32,6 @@ STAGES = {
     "NODE_NOT_READY": re.compile(r"NODE_NOT_READY reason=(?P<reason>\S+).*"),
     "COMMAND_RESULT": re.compile(r"COMMAND_RESULT .*"),
     "COMMAND_RECEIVED": re.compile(r"COMMAND_RECEIVED .*"),
-    "SAFETY_CHECK_UNSUPPORTED": re.compile(r"SAFETY_CHECK_UNSUPPORTED .*"),
     "COMMAND_QUEUE_REJECTED": re.compile(r"COMMAND_QUEUE_REJECTED .*"),
 }
 
