@@ -37,7 +37,7 @@ describe('RequestPanel 여러 장소', () => {
   it('FR12A 판정이 고른 옆방 기기의 이름으로 실행 결과를 말한다', () => {
     renderRequest(ask({ target: { kind: 'nearest', capability: 'light' }, verdict: 'OK', reason: 'OK', nodeId: 'mood-1', execution: 'succeeded' }));
     expect(screen.getByText('무드등 켜기')).toBeTruthy();
-    expect(screen.getByText('무드등이 켜졌어요')).toBeTruthy();
+    expect(screen.getByText('제어 신호 출력 완료')).toBeTruthy();
   });
 });
 
@@ -51,9 +51,9 @@ describe('RequestPanel 실행 결과', () => {
     expect(document.body.textContent).not.toContain('고장 격리');
   });
   it.each([
-    ['succeeded', '무드등이 켜졌어요'],
+    ['succeeded', '제어 신호 출력 완료'],
     ['failed', '기기가 실패를 알려 고장 격리했어요 (EXEC_FAILED)'],
-    ['unknown', '응답이 없어 결과를 몰라 고장 격리했어요 (EXEC_UNKNOWN)'],
+    ['unknown', '제어 신호 출력 결과를 몰라 고장 격리했어요 (EXEC_UNKNOWN)'],
     ['rejected', '기기가 실행 전에 거절했어요 · 격리하지 않았어요 (rejected)'],
     ['sent', '명령 보냄 · 결과 기다림'],
     [undefined, '허가 · 명령 보낼 차례']

@@ -8,7 +8,7 @@ import {
 import { iso } from './iso';
 import { placeOfPerson, requestPlace } from './places';
 import {
-  ACTION_DID, ACTION_DOING, ACTION_DONE, ACTION_NAME, CAPABILITY_NAME,
+  OUTPUT_COMPLETE, ACTION_NAME, CAPABILITY_NAME,
   DEVICE_STATE_NAME, approvalText, josa, reasonText
 } from './text';
 import { isDecided } from '../model/types';
@@ -209,7 +209,7 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     const f = frontOf(d.spot);
     const v = { ...baseDevice(byId.get(d.nodeId)) };
     if (r && !opt.layoutCheck && keep.length === 1 && keep[0] === d.nodeId) {
-      if (r.verdict === 'OK' && r.execution === 'sent') { v.status = ACTION_DOING[r.action]; v.tone = 'ok'; }
+      if (r.verdict === 'OK' && r.execution === 'sent') { v.status = '결과 대기'; v.tone = 'ok'; }
       else if (r.verdict === 'NEED_APPROVAL') v.tone = 'appr';
       else if (r.verdict === 'BUSY') v.tone = 'busy';
     }
@@ -362,8 +362,8 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
         break;
       case 'flow':
         if (r.execution === 'succeeded') {
-          view.aria = `${who}의 요청으로 ${josa(name, '이', '가')} ${ACTION_DONE[r.action]}`;
-          set('ok', atDevice(target), `${name} ${act} 완료`, '');
+          view.aria = `${who}의 요청 · ${name} ${OUTPUT_COMPLETE}`;
+          set('ok', atDevice(target), `${name} ${act}`, OUTPUT_COMPLETE);
         } else if (!r.execution) {
           view.aria = `${who}의 ${cap} ${act} 요청을 허가함`;
           set('ok', atDevice(target), `${name} ${act} 허가`, '');
@@ -381,7 +381,7 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
           set('deny', atDevice(target), `${name} 격리`, '기기가 실패를 알려 사용을 막음');
         } else {
           view.aria = `${josa(name, '이', '가')} 결과 불명으로 격리됨`;
-          set('deny', atDevice(target), `${name} 격리`, `${ACTION_DID[r.action]} 몰라 사용을 막음`);
+          set('deny', atDevice(target), `${name} 격리`, '제어 신호 출력 결과 불명');
         }
         break;
       case 'ask': {

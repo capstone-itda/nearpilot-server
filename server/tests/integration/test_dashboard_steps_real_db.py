@@ -414,9 +414,9 @@ def test_FR12B_실제_명령_진행에_따라_이벤트가_앞에서부터_늘�
         "mcp_call", *["step"] * 7, "posterior", "verdict", "command", "exec_result", "mcp_result"]
     req, audits, _ = read(w, iid)
     commands = w.reads.commands_of([iid])
-    assert outcome(req, commands) == ("열림", None)
+    assert outcome(req, commands) == ("제어 신호 출력 완료", None)
     row = audits[-1]
-    assert (row.step, audit_text(row, {}), audit_code(row)) == (Step.EXEC, "실행 완료", ReasonCode.OK)
+    assert (row.step, audit_text(row, {}), audit_code(row)) == (Step.EXEC, "제어 신호 출력 완료", ReasonCode.OK)
     rendered = [render_event(e, PersonNames()) for e in stages[-1]]
     assert VISITOR_A not in json.dumps(rendered, ensure_ascii=False)
 

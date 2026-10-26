@@ -1,7 +1,7 @@
 """FR-12A·FR-12B 대시보드 조회를 실제 조립 서버가 만든 DB 로 확인한다 (specs/core-dashboard-queries/spec.md).
 
 판정, 점유, 실행, 감사는 실제 코드가 남긴 행이고 근접 추정만 fake 다. 서버는 `_dashboard_world.py` 가 모듈마다 한 번 띄워
-여섯 가지 흐름 (열림, 점유 중, 다시 질문, 결과 불명 고장, 공용 조명, 접근 신청) 을 만들고 멈춘다. 그 DB 를
+여섯 가지 흐름 (제어 신호 출력 완료, 점유 중, 다시 질문, 결과 불명 고장, 공용 조명, 접근 신청) 을 만들고 멈춘다. 그 DB 를
 `DashboardQueryService` 로 읽고 `api/ws/schema.py` 의 조회 검사에 넣는다.
 """
 
@@ -103,11 +103,11 @@ def test_FR12A_실제_흐름의_이력과_요청_한_건(world):
         name: (row["verdict"], row["outcome"], row.get("code"))
         for name, row in zip(reversed(FLOWS), history, strict=True)
     } == {
-        "ok": (Verdict.OK, "열림", None),
+        "ok": (Verdict.OK, "제어 신호 출력 완료", None),
         "busy": (Verdict.BUSY, "실행 안 함", ReasonCode.DEVICE_BUSY),
         "ask": (Verdict.ASK, "다시 질문", ReasonCode.MOVE_CLOSER),
         "fault": (Verdict.OK, "결과 불명 → 고장 격리", ReasonCode.EXEC_UNKNOWN),  # 판정은 OK 였고 실행이 불명이었다
-        "light": (Verdict.OK, "켜짐", None),
+        "light": (Verdict.OK, "제어 신호 출력 완료", None),
     }
     assert [row["requestId"] for row in service.history("today", Verdict.BUSY, None)] == [ids["busy"]]
     assert [row["requestId"] for row in service.history("today", None, "locker-1")] == [ids["busy"], ids["ok"]]
@@ -200,7 +200,7 @@ def test_FR12A_시간이_지나면_대여_초과_승인_만료_연결_끊김이_
     assert ended["endReason"] is ReasonCode.APPROVAL_REQUEST_EXPIRED and "remainingMinutes" not in ended
 
     rental = service.rental("locker-1")
-    assert [item["text"] for item in rental["timeline"]] == ["예약 · RESERVED", "열림 · ACTIVE", "대여 시간 초과"]
+    assert [item["text"] for item in rental["timeline"]] == ["예약 · RESERVED", "제어 신호 출력 완료 · ACTIVE", "대여 시간 초과"]
     assert [item.get("now") for item in rental["timeline"]] == [None, None, True]
     assert 60 <= rental["overdueMinutes"] < 61
     stuck = service.rental("locker-3")  # 결과 불명으로 멈춘 대여

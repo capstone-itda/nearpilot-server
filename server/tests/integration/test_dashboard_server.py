@@ -314,7 +314,7 @@ def check_rest(flow: Flow) -> None:
     history = flow.body("history")
     assert [row["requestId"] for row in history] == [flow.rid("light"), flow.rid("open")]
     opened = history[1]
-    assert (opened["verdict"], opened["outcome"], opened["nodeId"]) == ("OK", "열림", "locker-1")
+    assert (opened["verdict"], opened["outcome"], opened["nodeId"]) == ("OK", "제어 신호 출력 완료", "locker-1")
     call = next(e for e in of(flow.stream.events, flow.rid("open")) if e["type"] == "mcp_call")
     assert opened["personId"] == call["personId"]
 

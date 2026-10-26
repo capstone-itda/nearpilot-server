@@ -38,7 +38,7 @@ describe('목 조회는 마지막 이벤트 시각까지만 보인다', () => {
     expect((await s.uses()).map((u) => u.nodeId)).toEqual(['locker-3']);
     expect((await s.uses())[0].overdueMinutes).toBeUndefined();
     expect(await s.audit()).toEqual([]);
-    expect((await s.rental('locker-3')).timeline.at(-1)).toMatchObject({ text: '열림 · ACTIVE', now: true });
+    expect((await s.rental('locker-3')).timeline.at(-1)).toMatchObject({ text: '제어 신호 출력 완료 · ACTIVE', now: true });
   });
   it('FR12A 연결 끊김 장면은 마지막 수신 뒤의 기록을 보이지 않는다', async () => {
     const s = createMockSource({ scene: 'offline' });

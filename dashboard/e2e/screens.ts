@@ -3,6 +3,7 @@ export const SCREENS: [string, string][] = [
   ['MON-01 대기', 'scene=idle'],
   ['MON-01·02 판정 중', 'scene=judging'],
   ['MON-01·02·03 요청 진행', 'scene=flow'],
+  ['MON-01·03 제어 신호 출력 완료', 'scene=done'],
   ['MON-01·04 승인 대기', 'scene=approval'],
   ['MON-01·05 고장 격리', 'scene=fault'],
   ['MON-04 ASK', 'scene=ask'],

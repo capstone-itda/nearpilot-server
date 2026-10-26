@@ -383,7 +383,7 @@ def test_FR12A_점유_목록은_대여와_공용_유지_대상자다():
         {"subject": VISITOR2, "nodeId": "locker-2", "occupancy": Occupancy.RENTAL, "session": SessionState.RESERVED,
          "startedAt": ago(120)},  # 예약 시각이 없으면 요청 시각이다. 메모와 초과는 키를 뺀다
         {"subject": VISITOR2, "nodeId": "locker-3", "occupancy": Occupancy.RENTAL, "session": SessionState.CLOSING,
-         "sessionNote": "반납 확인 중", "startedAt": ago(2400), "overdueMinutes": 1.0},
+         "sessionNote": "점유 해제 중", "startedAt": ago(2400), "overdueMinutes": 1.0},
         {"subject": OWNER, "nodeId": "locker-4", "occupancy": Occupancy.RENTAL, "session": SessionState.ACTIVE,
          "sessionNote": "고장으로 보존", "startedAt": ago(300)},
         {"subject": OWNER, "nodeId": "light-1", "occupancy": Occupancy.SHARED, "session": SessionState.ACTIVE,
@@ -530,7 +530,7 @@ def test_FR12A_이력은_방문자_request_use_가운데_판정이_저장된_요
          "action": Action.OPEN, "verdict": Verdict.ASK, "nodeId": "locker-1", "outcome": "다시 질문",
          "code": ReasonCode.LOW_CONFIDENCE},
         {"subject": VISITOR, "requestId": "req-ok", "at": ago(600), "target": LOCKER_TARGET, "action": Action.OPEN,
-         "verdict": Verdict.OK, "nodeId": "locker-1", "outcome": "열림"},
+         "verdict": Verdict.OK, "nodeId": "locker-1", "outcome": "제어 신호 출력 완료"},
     ]
 
 
@@ -888,7 +888,7 @@ def test_FR12A_대여_타임라인은_시각_순이고_마지막에_now가_붙�
         "subject": VISITOR, "nodeId": "locker-1", "startedAt": ago(1800), "overdueMinutes": 5.0,
         "timeline": [
             {"at": ago(1800), "text": "예약 · RESERVED"},
-            {"at": ago(1790), "text": "열림 · ACTIVE"},
+            {"at": ago(1790), "text": "제어 신호 출력 완료 · ACTIVE"},
             {"at": ago(300), "text": "대여 시간 초과"},
             {"at": ago(100), "text": "결과 불명 · 고장 격리", "now": True},
         ],

@@ -109,7 +109,7 @@ export function Timeline({ items }: { items: ['done' | 'now' | 'next', string, s
   );
 }
 
-const STATES: [string, string][] = [['AVAILABLE', '사용 가능'], ['RESERVED', '예약'], ['ACTIVE', '사용 중'], ['CLOSING', '반납 확인'], ['FAULT', '고장 격리']];
+const STATES: [string, string][] = [['AVAILABLE', '사용 가능'], ['RESERVED', '예약'], ['ACTIVE', '사용 중'], ['CLOSING', '점유 해제 중'], ['FAULT', '고장 격리']];
 export function StateStrip({ current, tone }: { current: string; tone: string }) {
   return (
     <div className="np-states" data-component="StateStrip">
