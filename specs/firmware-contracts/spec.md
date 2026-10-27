@@ -569,7 +569,7 @@ MQTT v2 실제 기기 시험 (2026-10-26~27, ESP32-WROOM-32E, COM6, 펌웨어 `5
 - 담당자가 GPIO19의 WS2812B 8개, 비점유 파란색, 점유 빨간색을 골랐다. 서버의 retained `occupancy` 발행과 함께 구현했다.
 - `pio run`으로 `esp32dev`, `esp32dev-light-1`, `esp32dev-locker-1`을 모두 컴파일했다. locker-1은 RAM 57,932바이트, Flash 1,119,241바이트다. 우리 코드의 컴파일 경고는 없다.
 - `pio test -e native`의 공통 테스트 44개가 통과했다.
-- 서버 전체 `pytest`는 3,667개 통과, 19개 생략, 1개 예상 실패다. 실제 Mosquitto로 실행한 `tests/iot/test_broker_acl.py` 11개도 통과했다.
+- 서버 전체 `pytest`는 main 최신 위에서 3,675개 통과, 19개 생략, 1개 예상 실패다. 실제 Mosquitto로 실행한 `tests/iot/test_broker_acl.py` 11개도 통과했다.
 - 실제 기기의 LED 점등은 이번 작업에서 확인하지 않았다.
 
 실제 기기는 다음 절차로 검증한다 (architecture.md §5 MQTT 7절).
