@@ -581,6 +581,21 @@ MQTT v2 실제 기기 시험 (2026-10-26~27, ESP32-WROOM-32E, COM6, 펌웨어 `5
   - LED 색과 서보 각도는 담당자의 관찰이다. 서버의 성공 판단에는 쓰지 않는다 (architecture.md §5 MQTT 7절).
   - 시험 설정은 `threshold_locker = 0.8`이다. 요구사항의 초기값 0.95보다 낮춘 연결 시험이다.
 
+### 2026-10-27 light-1 GPIO18 원형 LED 출력
+
+- 담당자가 GPIO18의 WS2812B 원형 LED 16개와 밝기 64를 골랐다. 색은 정하지 않아 흰색으로 두었다. 위의 GPIO23 출력을 대체한다.
+- `pio run`으로 `esp32dev`, `esp32dev-light-1`, `esp32dev-locker-1`을 모두 컴파일했다. light-1은 RAM 57,804바이트, Flash 1,112,389바이트다.
+- `pio test -e native`의 공통 테스트 44개가 통과했다. `test_NFR10_light_ring_color`를 포함한다.
+- 새 보드(ESP32-D0WD-V3, MAC `1c:8f:57:39:5b:d4`)를 COM9에 연결하고 업로드했다. 해시 검증을 통과했다.
+  - 첫 부팅은 `LIGHT_RING_OUTPUT pin=18 count=16 level=64 initial=off`, `NODE_START node=- config=missing mode=light_ring`이다.
+  - `server/var/node-lab-v2`의 값으로 USB 설정을 넣었다. `NODE_START node=light-1 config=loaded generation=1 mode=light_ring`을 확인했다.
+- node-lab-v2 시험 서버로 실기 시험을 했다. 시험 설정의 조명 임계값은 0.75다.
+  - 11:25 UTC에 `on`(`dc83d6d8-6d82-40f6-8953-b0a25ca7c57b`)과 `off`(`76b55edb-fcd8-435b-8b2c-a0451079a388`)가 허가되어 `succeeded`로 끝났다. 시리얼의 `COMMAND_HANDLED ... output=light_ring`을 같은 명령 ID로 연결했다.
+  - 11:28 UTC에 담당자가 콘솔에서 `on`, `off`, `on`, `off`를 보냈다. 네 명령이 모두 허가되어 `succeeded`로 끝났다. 명령 ID는 `e339f52b-0958-4122-98a2-17c2fe1a2ac7`, `c68fa4b7-8e9d-4038-9001-16cd744ede27`, `73d10a14-2826-4aa3-be8d-0eab7ce08dd9`, `5b0da97c-5cbe-4eda-9e14-cfbb0726a452`다.
+  - 담당자가 `on`에서 링이 켜지고 `off`에서 꺼지는 것을 눈으로 확인했다. 관찰은 서버의 성공 판단에 쓰지 않는다 (architecture.md §5 MQTT 7절).
+- 서버 전체 `pytest`는 4,209개 통과, 23개 생략, 1개 예상 실패, 1개 실패다. 실패한 `tests/tools/test_eval_metric_safety.py::test_NFR04_metric6_runs_on_harness`는 전체 실행에서 두 번 연속 실패했다. 단독 실행과 `tests/tools` 실행에서는 통과했다. 이 작업은 서버 코드를 바꾸지 않았다.
+- 원본은 `server/var/node-lab-v2`의 `evidence.jsonl`, `provision.jsonl`, `ring-serial.log`다. Git에서 제외한다.
+
 실제 기기는 다음 절차로 검증한다 (architecture.md §5 MQTT 7절).
 
 1. 기기별로 재부팅, 재접속과 장시간 동작 때 최대 시각 오차를 측정한다.

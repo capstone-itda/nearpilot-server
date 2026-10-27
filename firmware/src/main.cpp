@@ -53,7 +53,14 @@ static_assert(NP_SERVO_MIN_US < NP_SERVO_MAX_US, "servo pulse range");
 #endif
 static_assert(NP_LED_PIN < 0 || (NP_LED_PIN != NP_SERVO_PIN && NP_LED_PIN != NP_OUTPUT_PIN), "LED stick shares a pin");
 static_assert(NP_LED_COUNT > 0 && NP_LED_LEVEL > 0 && NP_LED_LEVEL <= 255, "LED stick size and level");
-#if NP_LED_PIN >= 0
+#ifndef NP_LIGHT_RING_PIN
+#error "config.local.h needs the NP_LIGHT_RING_* values (see config.example.h)"
+#endif
+static_assert(NP_LIGHT_RING_PIN < 0 || (NP_LIGHT_RING_PIN != NP_SERVO_PIN && NP_LIGHT_RING_PIN != NP_OUTPUT_PIN &&
+    NP_LIGHT_RING_PIN != NP_LED_PIN), "light ring shares a pin");
+static_assert(NP_LIGHT_RING_COUNT > 0 && NP_LIGHT_RING_LEVEL > 0 && NP_LIGHT_RING_LEVEL <= 255,
+    "light ring size and level");
+#if NP_LED_PIN >= 0 || NP_LIGHT_RING_PIN >= 0
 #include <Adafruit_NeoPixel.h>
 #endif
 
@@ -272,8 +279,25 @@ void occupancyInput(const String& payload) {
     Serial.printf("OCCUPANCY_DISPLAY pin=%d state=%s\n", NP_LED_PIN, np::occupancyName(display));
 }
 
+// ---- Light ring: on and off only change the ring; lit LEDs are not observed (FR-07) ----
+
+#if NP_LIGHT_RING_PIN >= 0
+Adafruit_NeoPixel lightRing(NP_LIGHT_RING_COUNT, NP_LIGHT_RING_PIN, NEO_GRB + NEO_KHZ800);
+#endif
+
+void showLight(bool on) {
+#if NP_LIGHT_RING_PIN >= 0
+    uint32_t rgb = np::lightRingRgb(on, NP_LIGHT_RING_LEVEL);
+    for (int i = 0; i < NP_LIGHT_RING_COUNT; ++i) lightRing.setPixelColor(i, rgb);
+    lightRing.show();
+#else
+    (void)on;
+#endif
+}
+
 const char* outputMode() {
-    return NP_SERVO_PIN >= 0 ? "servo" : NP_OUTPUT_PIN >= 0 ? "optional_gpio" : "serial_only";
+    return NP_SERVO_PIN >= 0 ? "servo" : NP_LIGHT_RING_PIN >= 0 ? "light_ring"
+        : NP_OUTPUT_PIN >= 0 ? "optional_gpio" : "serial_only";
 }
 
 void signalOutput(const np::Actuation& request) {
@@ -283,9 +307,11 @@ void signalOutput(const np::Actuation& request) {
         // Only starts the pulse train; the angle reached is not observed (FR-07).
         servoAngle(request.action == "open" ? NP_SERVO_OPEN_DEG : NP_SERVO_LOCKED_DEG);
     }
+    if (NP_LIGHT_RING_PIN >= 0 && (request.action == "on" || request.action == "off")) showLight(on);
     Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s output_completed=1\n",
         request.commandId.c_str(), request.action.c_str(),
-        NP_SERVO_PIN >= 0 ? "servo" : NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only");
+        NP_SERVO_PIN >= 0 ? "servo" : NP_LIGHT_RING_PIN >= 0 ? "light_ring"
+        : NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only");
 }
 
 // validateCommand rejects actions the configured capability does not support before output.
@@ -505,6 +531,13 @@ void setup() {
     ledStick.begin();
     showOccupancy(np::OccupancyDisplay::Invalid);  // Off until the first valid display.
     Serial.printf("LED_OUTPUT pin=%d count=%d level=%d initial=off\n", NP_LED_PIN, NP_LED_COUNT, NP_LED_LEVEL);
+#endif
+#if NP_LIGHT_RING_PIN >= 0
+    // Boot is always dark; an on before a reset is never repeated.
+    lightRing.begin();
+    showLight(false);
+    Serial.printf("LIGHT_RING_OUTPUT pin=%d count=%d level=%d initial=off\n",
+        NP_LIGHT_RING_PIN, NP_LIGHT_RING_COUNT, NP_LIGHT_RING_LEVEL);
 #endif
     Serial.printf("NODE_START node=%s config=%s generation=%lu mode=%s storage=%d reset_reason=%s\n",
         configured ? config.nodeId.c_str() : "-", loaded, config.generation,

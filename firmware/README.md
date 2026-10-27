@@ -16,7 +16,7 @@
 | `lib/np_command/` | MQTT 버전(`SCHEMA_VERSION=2`), `cmd`의 기능별 동작 검사, 검사 순서와 명령 내용 비교 필드 |
 | `lib/np_ledger/` | 명령 기록, ID 해시 색인과 저장소 인터페이스 `RecordStore` |
 | `lib/np_executor/` | 명령 상태 전이, 결과 저장과 재보고, `status`의 명령 처리 상태 |
-| `lib/np_device/` | 제어 신호 출력 인터페이스, 세 기능이 함께 쓰는 시리얼·선택 GPIO 출력, 서보 펄스 계산과 재잠금 타이머 |
+| `lib/np_device/` | 제어 신호 출력 인터페이스, 세 기능이 함께 쓰는 시리얼·선택 GPIO 출력, 서보 펄스 계산과 조명 링 색 계산 |
 | `lib/np_nvs/` | ESP32 NVS로 만든 `RecordStore`. PC 테스트에서는 빌드하지 않는다 |
 | `lib/np_beacon/` | iBeacon 제조사 데이터 해석 |
 | `lib/np_ready/` | 준비 사유 순서와 재시도 간격 |
@@ -42,7 +42,7 @@ pio test -e native
 `native`는 PC에서 실행하며 PATH에 `gcc`·`g++`가 필요하다.
 Windows에서는 `winget install BrechtSanders.WinLibs.POSIX.UCRT`로 설치한 MinGW-w64 GCC로 검증했다.
 
-### light-1의 GPIO23 출력
+### light-1의 GPIO18 원형 LED 출력
 
 `light-1`은 `esp32dev-light-1` 환경으로 빌드하고 업로드한다. 기본 `esp32dev`는 시리얼 모드다.
 아래 명령은 `firmware/`에서 실행한다. PowerShell에서 PlatformIO가 PATH에 없으면 `pio` 대신 `./node_lab/.venv/Scripts/pio.exe`를 쓴다.
@@ -52,15 +52,15 @@ pio run -e esp32dev-light-1
 pio run -e esp32dev-light-1 -t upload --upload-port COM6
 ```
 
-- 출력 핀은 보드의 `IO23` 또는 `23`이다. GPIO 번호이며 헤더의 순서 번호가 아니다.
-- 부팅하면 GPIO23을 LOW로 시작한다. 허가한 새 `on`은 HIGH, `off`는 LOW를 유지한다.
-- 기존 결과 재보고는 핀을 다시 켜지 않는다. 재부팅 뒤 켜려면 서버가 새 명령을 허가해야 한다.
-- 부팅 로그의 `GPIO_OUTPUT pin=23 on_level=1 off_level=0 initial_level=0`으로 적용한 설정을 확인한다.
-- LED 시험 배선은 `IO23 → 330Ω 저항 → LED 양극`, `LED 음극 → GND`다. 연결할 때 전원을 끈다.
-- GPIO는 3.3V 제어 신호다. 전구나 LED 스트립의 전원을 GPIO에서 직접 공급하지 않는다.
-- `config.local.h`를 따로 쓴다면 출력 매크로를 빌드 설정과 충돌하게 다시 정의하지 않는다.
+- WS2812B 원형 LED 16개의 DIN을 보드의 `IO18`(GPIO 번호)에 연결한다. 링의 5V와 GND도 연결하고, GND는 ESP32와 공통으로 둔다.
+- 부팅하면 링을 끈다. 허가한 새 `on`은 16개를 모두 흰색(밝기 64/255)으로 켜고, `off`는 끈다.
+- 기존 결과 재보고는 링을 다시 켜지 않는다. 재부팅 뒤 켜려면 서버가 새 명령을 허가해야 한다.
+- 부팅 로그의 `LIGHT_RING_OUTPUT pin=18 count=16 level=64 initial=off`와 `NODE_START ... mode=light_ring`으로 적용한 설정을 확인한다.
+- 개수와 밝기는 `config.example.h`의 `NP_LIGHT_RING_COUNT`, `NP_LIGHT_RING_LEVEL`이다.
+- 연결할 때 전원을 끈다. 깜빡이거나 색이 틀리면 DIN에 330Ω 저항을 넣고, 그래도 같으면 3.3V→5V 레벨 시프터를 쓴다.
+- `config.local.h`를 따로 쓴다면 `NP_LIGHT_RING_*` 값을 빌드 설정과 충돌하게 다시 정의하지 않는다.
 - 업로드는 USB 연결이 필요하다. 기존 Wi-Fi, MQTT 설정과 명령 기록은 유지한다.
-- 성공 보고는 제어 신호 출력 완료와 결과 저장을 뜻한다. LED 점등이나 핀 전압 측정 결과를 대신하지 않는다.
+- 성공 보고는 제어 신호 출력 완료와 결과 저장을 뜻한다. 실제 점등을 대신하지 않는다.
 
 ### locker-1의 GPIO13 서보 출력
 
@@ -101,7 +101,7 @@ pio run -e esp32dev-locker-1 -t upload --upload-port COM6
 현재 `python -m tools.node_lab provision`은 새 키를 전달하지 못한다. 도구 변경은 별도 범위다.
 부팅 확인 도구와 `CONFIG_STATE` 형식은 유지한다 (`server/tools/node_lab/README.md`).
 `announce`는 설정 값을 발표한다. `locker`는 `open`·`close`, `light`·`speaker`는 `on`·`off`만 받는다.
-모든 구동은 시리얼·선택 GPIO 신호다. `esp32dev-locker-1`은 서보 신호를 더한다. `handle()`은 접수 저장, 재검사, `running` 발행과 출력을 한 번에 처리한다.
+모든 구동은 시리얼·선택 GPIO 신호다. `esp32dev-locker-1`은 서보 신호를, `esp32dev-light-1`은 원형 LED 신호를 더한다. `handle()`은 접수 저장, 재검사, `running` 발행과 출력을 한 번에 처리한다.
 `Actuator::output()`이 출력을 마치면(`Completed`) 결과를 저장하고 확인 조회한 뒤 `succeeded`를 발행한다.
 출력이 일어나지 않았음을 확인하면 `failed`, 출력 여부를 모르면 `unknown`이다. 처리하는 동안 새 명령은 `DEVICE_BUSY`다.
 결과 저장에 실패하면 결과를 발행하지 않는다. 기록은 `accepted`로 남고 다음 복원에서 `unknown`이 된다. `running`은 저장하지 않는다.

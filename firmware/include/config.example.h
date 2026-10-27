@@ -2,7 +2,7 @@
 // Build-time tuning shared by every device. Copy to config.local.h only to change it.
 // Device ID, MQTT account, Wi-Fi, server/time-source address and clock trust are NOT here:
 // they are injected over USB (`python -m tools.node_lab provision`) and kept in NVS.
-// The light-1 build profile overrides these two values for GPIO23 output.
+// Optional plain GPIO output for any device. No build profile sets it.
 // No extra board is required. Leave OUTPUT_PIN=-1 for serial-only verification.
 #ifndef NP_OUTPUT_PIN
 #define NP_OUTPUT_PIN -1
@@ -34,6 +34,13 @@
 #endif
 #define NP_LED_COUNT 8
 #define NP_LED_LEVEL 64
+// WS2812B light ring. The light-1 build profile sets NP_LIGHT_RING_PIN=18; -1 leaves it off.
+// on lights every LED white at the level, off clears it; off at boot.
+#ifndef NP_LIGHT_RING_PIN
+#define NP_LIGHT_RING_PIN -1
+#endif
+#define NP_LIGHT_RING_COUNT 16
+#define NP_LIGHT_RING_LEVEL 64
 #define NP_RSSI_FRAME_MS 1000UL
 #define NP_STATUS_MS 1000UL
 // Retry starts at these minimums, doubles after each failure and stops at NP_RETRY_MAX_MS.

@@ -472,6 +472,12 @@ void test_NFR10_servo_pulse_for_angle() {
     TEST_ASSERT_EQUAL_UINT32(65535, np::servoDuty(20000, 50, 16));
 }
 
+void test_NFR10_light_ring_color() {
+    TEST_ASSERT_EQUAL_HEX32(0x404040, np::lightRingRgb(true, 64));
+    TEST_ASSERT_EQUAL_HEX32(0xFFFFFF, np::lightRingRgb(true, 255));
+    TEST_ASSERT_EQUAL_HEX32(0, np::lightRingRgb(false, 64));
+}
+
 std::string occupancyBody(const char* state, const char* node = "locker-1", int version = 2) {
     return std::string("{\"schema_version\":") + std::to_string(version) + ",\"node_id\":\"" + node
         + "\",\"device_state\":\"" + state + "\",\"sent_at\":\"2026-10-27T07:00:00Z\"}";
@@ -599,6 +605,7 @@ void runExecutorTests() {
     RUN_TEST(test_NFR03_at_most_once_actuation);
     RUN_TEST(test_NFR10_signal_output_completes);
     RUN_TEST(test_NFR10_servo_pulse_for_angle);
+    RUN_TEST(test_NFR10_light_ring_color);
     RUN_TEST(test_FR19_occupancy_display_colors);
     RUN_TEST(test_FR19_occupancy_display_ignores_invalid_messages);
     RUN_TEST(test_FR06_evicted_command_does_not_actuate);

@@ -44,6 +44,11 @@ inline unsigned servoPulseUs(int degrees, unsigned minUs, unsigned maxUs) {
     return minUs + (maxUs - minUs) * unsigned(degrees) / 180;
 }
 
+// 0xRRGGBB for the light ring: on is white at the given level, off is dark.
+inline uint32_t lightRingRgb(bool on, uint8_t level) {
+    return on ? uint32_t(level) << 16 | uint32_t(level) << 8 | level : 0;
+}
+
 // PWM duty for a pulse width at the given frequency and duty resolution.
 inline uint32_t servoDuty(unsigned pulseUs, unsigned frequencyHz, unsigned bits) {
     uint64_t full = (uint64_t(1) << bits) - 1;
