@@ -68,6 +68,14 @@ from nearpilot.shared.models import (
 _EXHAUSTED = object()  # 승인 남은 횟수가 0일 때 _reserve_usage()가 돌려주는 표지값
 
 
+def _use_limit(approval_mode: str, max_uses: int | None) -> int | None:
+    """승인 한 건의 유효 횟수 한도 (FR-14).
+
+    one_time 은 max_uses 와 상관없이 1이다. time_window 는 max_uses 이고 NULL 이면 무제한이다.
+    """
+    return 1 if approval_mode == ApprovalMode.ONE_TIME.value else max_uses
+
+
 class SqliteRepository:
     """`Repository` Protocol과 `AccountLookup` Protocol을 함께 구현한다."""
 
@@ -181,7 +189,7 @@ class SqliteRepository:
     ) -> Approval | None:
         row = self._conn.execute(
             "SELECT a.approval_id, a.node_id, a.requester_user_id, a.action, a.policy_id, "
-            "a.policy_version, a.status, a.valid_until, pr.max_uses "
+            "a.policy_version, a.status, a.valid_until, pr.approval_mode, pr.max_uses "
             "FROM approval a "
             "JOIN policy_revision pr ON pr.policy_id = a.policy_id AND pr.version = a.policy_version "
             "WHERE a.requester_user_id = ? AND a.node_id = ? AND a.action = ? AND a.policy_version = ? "
@@ -200,7 +208,8 @@ class SqliteRepository:
             policy_version=row["policy_version"],
             status=ApprovalStatus(row["status"]),
             valid_until=parse_iso(row["valid_until"]),
-            remaining_uses=self._remaining_uses(row["approval_id"], row["max_uses"]),
+            remaining_uses=self._remaining_uses(
+                row["approval_id"], _use_limit(row["approval_mode"], row["max_uses"])),
         )
 
     def approvals_in_scope(self, user_id: str, node_id: str) -> Sequence[ApprovalRecord]:
@@ -211,7 +220,7 @@ class SqliteRepository:
         """
         rows = self._conn.execute(
             "SELECT a.approval_id, a.action, a.policy_version, a.status, a.created_at, "
-            "a.pending_until, a.valid_until, pr.max_uses "
+            "a.pending_until, a.valid_until, pr.approval_mode, pr.max_uses "
             "FROM approval a "
             "JOIN policy_revision pr ON pr.policy_id = a.policy_id AND pr.version = a.policy_version "
             "WHERE a.requester_user_id = ? AND a.node_id = ? "
@@ -227,13 +236,14 @@ class SqliteRepository:
                 created_at=parse_iso(row["created_at"]),
                 pending_until=parse_iso(row["pending_until"]),
                 valid_until=parse_iso(row["valid_until"]) if row["valid_until"] else None,
-                remaining_uses=self._remaining_uses(row["approval_id"], row["max_uses"]),
+                remaining_uses=self._remaining_uses(
+                    row["approval_id"], _use_limit(row["approval_mode"], row["max_uses"])),
             )
             for row in rows
         ]
 
-    def _remaining_uses(self, approval_id: str, max_uses: int | None) -> int | None:
-        if max_uses is None:
+    def _remaining_uses(self, approval_id: str, use_limit: int | None) -> int | None:
+        if use_limit is None:
             return None
         used = self._conn.execute(
             "SELECT COUNT(*) AS c FROM approval_usage "
@@ -243,7 +253,7 @@ class SqliteRepository:
                 ApprovalUsageState.CONSUMED.value,
             ),
         ).fetchone()["c"]
-        return max(max_uses - used, 0)
+        return max(use_limit - used, 0)
 
     # ── 조회 (FR-21) ────────────────────────────────────────────────
 
@@ -832,13 +842,13 @@ class SqliteRepository:
         if existing is not None:
             return existing["usage_id"]
         policy_row = self._conn.execute(
-            "SELECT pr.max_uses FROM approval a "
+            "SELECT pr.approval_mode, pr.max_uses FROM approval a "
             "JOIN policy_revision pr ON pr.policy_id = a.policy_id AND pr.version = a.policy_version "
             "WHERE a.approval_id = ?",
             (approval_id,),
         ).fetchone()
-        max_uses = policy_row["max_uses"] if policy_row else None
-        if max_uses is not None:
+        use_limit = _use_limit(policy_row["approval_mode"], policy_row["max_uses"]) if policy_row else None
+        if use_limit is not None:
             used = self._conn.execute(
                 "SELECT COUNT(*) AS c FROM approval_usage "
                 "WHERE approval_id = ? AND state IN (?, ?, ?)",
@@ -847,7 +857,7 @@ class SqliteRepository:
                     ApprovalUsageState.CONSUMED.value,
                 ),
             ).fetchone()["c"]
-            if used >= max_uses:
+            if used >= use_limit:
                 return _EXHAUSTED
         usage_id = new_id()
         self._conn.execute(

@@ -193,9 +193,10 @@ def test_FR12A_대시보드_읽기_점유와_승인(reads, repo, conn):
 
     approvals = reads.approvals()
 
+    # one_time 은 max_uses 가 없어도 한도가 1이다 (ap-pending, ap-denied)
     assert approvals == [
         DashboardApproval("ap-pending", "locker-1", "visitor1", "req-ap-pending", Action.OPEN,
-                          ApprovalStatus.PENDING, at(0), at(10), None, ApprovalMode.ONE_TIME, 0, None),
+                          ApprovalStatus.PENDING, at(0), at(10), None, ApprovalMode.ONE_TIME, 0, 1),
         DashboardApproval("ap-exhausted", "locker-2", "visitor3", "req-ap-exhausted", Action.OPEN,
                           ApprovalStatus.APPROVED, at(5), at(15), at(65), ApprovalMode.TIME_WINDOW, 3, 0),
         DashboardApproval("ap-held", "locker-2", "visitor1", "req-ap-held", Action.OPEN,
@@ -205,7 +206,7 @@ def test_FR12A_대시보드_읽기_점유와_승인(reads, repo, conn):
         DashboardApproval("ap-one-time", "locker-2", "visitor1", "req-ap-one-time", Action.OPEN,
                           ApprovalStatus.APPROVED, at(6), at(16), at(66), ApprovalMode.ONE_TIME, 0, 1),
         DashboardApproval("ap-denied", "locker-1", "visitor3", "req-ap-denied", Action.OPEN,
-                          ApprovalStatus.DENIED, at(10), at(20), None, ApprovalMode.ONE_TIME, 0, None),
+                          ApprovalStatus.DENIED, at(10), at(20), None, ApprovalMode.ONE_TIME, 0, 1),
     ]
     # 남은 횟수는 Repository 가 정책 검사에 쓰는 값과 같은 규칙이다
     for approval in approvals:

@@ -302,6 +302,32 @@ def test_FR12A_seed_invalid_file_lists_every_problem(server_dir, run_cli, announ
     assert everything(server_dir) == before
 
 
+# light-1 의 정책(policies[1])은 one_time 이다. 그 정책에 max_uses 를 준다.
+def _light_one_time_with_max_uses(max_uses: int) -> str:
+    return FULL_SEED.replace('mode = "open"\napproval_mode = "one_time"\n',
+                             f'mode = "open"\napproval_mode = "one_time"\nmax_uses = {max_uses}\n', 1)
+
+
+@pytest.mark.parametrize("max_uses", [0, 2, 5])  # 1이 아닌 값은 모두 거부한다
+def test_FR14_seed_rejects_one_time_max_uses_over_one(server_dir, run_cli, max_uses):
+    write_seed(server_dir, _light_one_time_with_max_uses(max_uses))
+
+    for options in ([], ["--dry-run"]):  # 검사는 반영과 dry-run이 같다
+        code, out, err = run_cli(["seed", "demo.toml", *options], cwd=server_dir)
+
+        assert code == EXIT_INVALID and out == ""
+        assert err.strip() == (
+            f"시드 파일 오류: policies[1].max_uses: approval_mode 가 one_time 이면 1 이어야 한다 ({max_uses})")
+        assert not (server_dir / "var").exists()  # DB를 열기 전에 막았다
+
+
+def test_FR14_seed_accepts_one_time_max_uses_one(tmp_path):
+    seed = load_seed_file(write_seed(tmp_path, _light_one_time_with_max_uses(1)))
+
+    assert seed.policies[1] == PolicySettings(
+        "light-1", Visibility.PUBLIC, AccessMode.OPEN, None, ApprovalMode.ONE_TIME, None, 1)
+
+
 def test_FR12A_seed_is_rerunnable(server_dir, run_cli, announce_nodes):
     announce_nodes(server_dir, *NODE_IDS)
     write_seed(server_dir, FULL_SEED)

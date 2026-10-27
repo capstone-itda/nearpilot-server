@@ -79,7 +79,7 @@
 
 - 정책 없음과 정책이 허용하지 않는 경우 모두 `ReasonCode.POLICY_DENIED`를 쓴다 — `AccessMode`는 `open`·`restricted` 둘뿐이고 `restricted`는 항상 `OK`나 `NEED_APPROVAL`로 이어지므로, `DENY`는 정책이 아예 없는 경우뿐이다. 두 경우를 가리키는 별도 사유 코드가 `enums.py`에 없다.
 - `Repository.current_policy()`가 `LookupError`를 던지면 정책 없음으로 본다 — `db-repository`의 `current_policy()` 구현이 정책 없는 기기에 `LookupError`를 던지기로 결정했다.
-- 유효 승인의 소진 여부는 `Approval.remaining_uses == 0`으로 판단한다. `valid_approval()`은 시간상 유효성만 보고 남은 횟수는 보지 않으므로, `core/policy`가 직접 확인한다 — FR-14 "서버는 사용 횟수를 넘은 요청을... 거부한다"를 `core/policy`가 맡는다. `remaining_uses`가 `None`이면 무제한이므로 소진이 아니다.
+- 유효 승인의 소진 여부는 `Approval.remaining_uses == 0`으로 판단한다. `valid_approval()`은 시간상 유효성만 보고 남은 횟수는 보지 않으므로, `core/policy`가 직접 확인한다 — FR-14 "서버는 사용 횟수를 넘은 요청을... 거부한다"를 `core/policy`가 맡는다. `remaining_uses`가 `None`이면 무제한이므로 소진이 아니다. 남은 횟수는 저장소가 `one_time`을 1회로 보고 계산한다 (FR-14).
 - 장소 소유자·승인자 본인의 요청도 특별 취급하지 않는다. 일반 요청자와 같은 절차로 검사한다 — 문서에 근거가 없어 암묵적 권한 상승을 넣지 않는 쪽을 택했다 (4-3, 가정으로 유지).
 - 승인이 여럿이어도 `valid_approval()`이 반환한 승인 하나만 쓴다. 여러 승인 중 어느 것을 "사유" 판단에 쓸지 고르는 규칙은 세분화 작업(이슈 #60)의 몫이다.
 

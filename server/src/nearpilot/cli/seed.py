@@ -12,7 +12,7 @@ SQL을 직접 쓰지 않는다. 모든 쓰기는 `AdminService`를 거쳐 `Admin
   [[nodes]]     node_id, trust(discovered|trusted|revoked, 선택), release_policy(표, 선택), name(선택)
   [[policies]]  node_id, visibility, mode, approval_mode, approver·approval_ttl_sec·max_uses(선택)
 기기 행은 서버가 MQTT 발표로 만든다. `[[nodes]]`와 `[[policies]]`의 기기는 어느 장소의 `nodes`에 있어야 하고,
-그 기기에 쓰는 행위자는 장소의 `owner`다.
+그 기기에 쓰는 행위자는 장소의 `owner`다. `approval_mode`가 one_time 인 정책은 `max_uses`를 주면 1 이어야 한다.
 """
 
 from __future__ import annotations
@@ -144,6 +144,7 @@ def load_seed_file(path: Path) -> SeedFile:
     problems = [f"{key}: 알 수 없는 키" for key in sorted(set(raw) - set(_SECTIONS))]
     rows = {name: _read_rows(raw, name, problems) for name in _SECTIONS}
     _check_links(rows, problems)
+    _check_policies(rows, problems)
     if problems:
         raise SeedFileError("; ".join(problems))
     return _build(rows)
@@ -216,6 +217,13 @@ def _check_links(rows: _Rows, problems: list[str]) -> None:
         for where, values in rows[name]:
             if "node_id" in values and values["node_id"] not in known:
                 problems.append(f"{where}.node_id: 어떤 [[places]] 의 nodes 에도 없다 ({values['node_id']})")
+
+
+def _check_policies(rows: _Rows, problems: list[str]) -> None:
+    """one_time 승인은 한 번만 쓰이므로 max_uses 를 주면 1 이어야 한다 (FR-14)."""
+    for where, values in rows["policies"]:
+        if values.get("approval_mode") is ApprovalMode.ONE_TIME and values.get("max_uses", 1) != 1:
+            problems.append(f"{where}.max_uses: approval_mode 가 one_time 이면 1 이어야 한다 ({values['max_uses']})")
 
 
 def _report_duplicates(items: Iterable[tuple[str, str]], problems: list[str]) -> None:

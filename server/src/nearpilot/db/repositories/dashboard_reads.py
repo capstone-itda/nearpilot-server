@@ -173,20 +173,20 @@ class SqliteDashboardReads:
         ]
 
     def approvals(self) -> Sequence[DashboardApproval]:
-        # 남은 횟수는 `SqliteRepository._remaining_uses`와 같은 규칙이다: max_uses 에서 예약·보류·소비한
-        # 사용분 수를 빼고 0 아래로 내려가지 않는다. max_uses 가 없으면 None 이다.
+        # 남은 횟수는 `SqliteRepository._remaining_uses`와 같은 규칙이다: 유효 한도(one_time 은 1, 기간형은
+        # max_uses)에서 예약·보류·소비한 사용분 수를 빼고 0 아래로 내려가지 않는다. 한도가 없으면 None 이다.
         rows = self._conn.execute(
             "SELECT a.approval_id, a.node_id, a.requester_user_id, a.internal_request_id, a.action, "
             "a.status, a.created_at, a.pending_until, a.valid_until, a.used_count, "
-            "pr.approval_mode, pr.max_uses, "
+            "pr.approval_mode, CASE WHEN pr.approval_mode = ? THEN 1 ELSE pr.max_uses END AS use_limit, "
             "(SELECT COUNT(*) FROM approval_usage u "
             "WHERE u.approval_id = a.approval_id AND u.state IN (?, ?, ?)) AS held_count "
             "FROM approval a "
             "JOIN policy_revision pr ON pr.policy_id = a.policy_id AND pr.version = a.policy_version "
             "ORDER BY a.created_at, a.approval_id",
             (
-                ApprovalUsageState.RESERVED.value, ApprovalUsageState.HELD.value,
-                ApprovalUsageState.CONSUMED.value,
+                ApprovalMode.ONE_TIME.value, ApprovalUsageState.RESERVED.value,
+                ApprovalUsageState.HELD.value, ApprovalUsageState.CONSUMED.value,
             ),
         ).fetchall()
         return [
@@ -203,7 +203,7 @@ class SqliteDashboardReads:
                 mode=ApprovalMode(row["approval_mode"]),
                 used_count=row["used_count"],
                 remaining_uses=(
-                    None if row["max_uses"] is None else max(row["max_uses"] - row["held_count"], 0)
+                    None if row["use_limit"] is None else max(row["use_limit"] - row["held_count"], 0)
                 ),
             )
             for row in rows
