@@ -72,7 +72,7 @@ nearpilot-server/
 │   │   └── fit/                적합 설정 예시 (분할, 후보 값, 통과 기준)
 │   ├── src/nearpilot/
 │   │   ├── shared/             계층 간 계약: 도메인 모델, 열거형, 인터페이스, 설정
-│   │   ├── cli/                운영 명령 `nearpilot`: serve, seed, collect, split, fit, eval (FR-16)
+│   │   ├── cli/                운영 명령 `nearpilot`: serve, seed, recover, collect, split, fit, eval (FR-16)
 │   │   ├── api/
 │   │   │   ├── mcp/            MCP 엔드포인트와 도구 6개 (FR-08~FR-11)
 │   │   │   ├── auth/           토큰으로 계정 식별, 무효 토큰 거부
@@ -121,7 +121,7 @@ nearpilot-server/
 - [#88](https://github.com/capstone-itda/nearpilot-server/issues/88)의 A안을 따른다. 상태 관리는 서버 실행 진입점과 조립 모듈을 만든다. 조립은 설정, DB 저장소, MQTT 게이트웨이와 CORE 서비스를 만들고 연결한다. 판정은 `CoreService`와 MCP 앱을 만드는 연결 함수만 제공한다. 진입점이 이 함수로 MCP 엔드포인트를 붙인다.
 - 조립은 게이트웨이를 구독한 뒤, 요청을 받기 전에 재시작 복원을 한 번 실행한다. 모든 상태 관리 서비스에 같은 복구 서비스와 기기별 잠금을 주입한다. 이탈 판단의 `tick()`을 주기적으로 호출한다. 반납 검사 타이머는 사용하지 않는다.
 - 서버 실행 진입점은 `nearpilot serve`다 (`src/nearpilot/cli/`). 조립 모듈은 `src/nearpilot/runtime/`에 있다.
-- `api/rest/`는 쓰는 쪽으로 나눈다. 대시보드 조회는 대시보드가, 앱용 REST(계정, 승인)는 앱이 맡는다. `FAULT` 복구 두 경로는 상태 관리가 맡는다 (#89).
+- `api/rest/`는 쓰는 쪽으로 나눈다. 대시보드 조회는 대시보드가, 앱용 REST(계정, 승인)는 앱이 맡는다. `FAULT` 복구 두 경로와 복구 스크립트는 근접 추정·대시보드 담당이 맡는다 (2026-10-26 팀 결정. #89의 상태 관리 배정을 바꾼다).
 - 승인 REST가 부르는 `ApprovalService`의 구현(`core/approval/`)은 앱이 맡는다 (#186).
 - 조립은 서버 설정에 선택 섹션 `[dashboard]`가 있을 때만 대시보드 라우터(`create_dashboard_router`)를 붙인다. MCP 앱이 루트(`/`)를 잡으므로 그보다 먼저 붙인다. 섹션의 값은 대기열 크기, 묶음 크기, 인증 기한, 감사 조회 한도다 (2026-10-23 팀 결정). 약한 신호 기준(`weak_rssi_dbm`)과 따라 읽기 간격(`tail_interval_sec`)도 이 섹션에서 받는다 (2026-10-24 대시보드 담당 결정).
 - 대시보드 조회 서비스와 모니터링 따라 읽기는 `core/dashboard/`에 두고 대시보드 담당이 맡는다. 판정·상태 관리의 서비스와 섞지 않는다 (2026-10-24 대시보드 담당 결정).
@@ -844,9 +844,9 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | DB | 원자적 저장, 중복 반영 방지 |
 
 - REST 경로는 §5에 있다.
-- 복구 준비 조회와 복구 승인의 두 REST 경로는 상태 관리가 `api/rest/`에 구현한다 ([#89](https://github.com/capstone-itda/nearpilot-server/issues/89)). 경로는 토큰으로 계정을 식별해 `RecoveryService`에 넘기고 결과를 바꾸지 않는다 (NFR-07).
+- 복구 준비 조회와 복구 승인의 두 REST 경로는 `api/rest/`에 있다. 근접 추정·대시보드 담당이 구현한다 (2026-10-26 팀 결정. #89의 상태 관리 배정을 바꾼다). 경로는 토큰으로 계정을 식별해 `RecoveryService`에 넘기고 결과를 바꾸지 않는다 (NFR-07).
 - 소유자는 스크립트로 두 경로를 호출한다. 대시보드는 복구 화면을 두지 않는다.
-- 미결: 복구 스크립트의 담당
+- 복구 스크립트는 `nearpilot recover`(`src/nearpilot/cli/recover.py`)다. 복구 두 경로만 부르고 DB를 열지 않는다. 복구 경로와 같은 담당이 맡는다.
 
 ### 공동 인터페이스의 후속 반영
 
@@ -1164,7 +1164,10 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 복구 준비 조회: `GET /admin/nodes/{node_id}/recovery`
 - 복구 승인: `POST /admin/nodes/{node_id}/recovery/{recovery_id}/approve`
 - 두 복구 경로에는 인증과 장소 소유권 검사를 적용한다. 약속은 §4 "복구 준비 조회와 복구 승인"에 있다.
-- 두 복구 경로는 상태 관리가 구현한다 (#89).
+- 두 복구 경로는 근접 추정·대시보드 담당이 구현한다 (2026-10-26 팀 결정).
+- 준비 조회 응답은 `node_id`, `recovery_id`, `status`, `blockers`(사유 코드 배열), `evidence`(`observed_at`, `execution_outcome`, `command_idle`), `checked_at`이다. 기기 연결 세션 ID는 넣지 않는다.
+- 승인 응답은 `recovery_id`, `outcome`, `reason_code`, `completed_at`, `readiness`(준비 조회와 같은 형식)다. `completed`는 `200`, `pending`은 `202`다.
+- 승인 거부는 `{"error": "<사유 코드>"}`다. `NOT_OWNER`는 `403`, `RECOVERY_MISMATCH`·`NOT_READY`·`STATE_CONFLICT`는 `409`, `STORE_NOT_APPLIED`는 `503`이다. 준비 조회에서 소유자가 아니면 `403`과 `NOT_OWNER`다. 승인은 요청 본문을 읽지 않는다.
 
 #### 공통 규칙
 

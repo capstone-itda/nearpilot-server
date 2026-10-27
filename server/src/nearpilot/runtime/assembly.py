@@ -42,7 +42,7 @@ from nearpilot.runtime.tasks import CallGate, Late, NodeLocks, NotAccepting, Per
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import Action, ExecutionStatus
 from nearpilot.shared.interfaces import (
-    AdminService, ApprovalService, CoreService, ProximityEstimator, RetentionStore,
+    AdminService, ApprovalService, CoreService, ProximityEstimator, RecoveryService, RetentionStore,
 )
 from nearpilot.shared.models import Decision, ExecutionContext, ExecutionResult, UseRequest
 
@@ -144,6 +144,28 @@ class _GuardedRestService:
         return call
 
 
+class _LateRestService:
+    """시작 뒤에 만들어지는 REST 서비스. 접수 문과 DB 연결 범위 안에서 부른다. 연결 전 호출은 RuntimeError."""
+
+    def __init__(self, name: str, gate: CallGate, db: ThreadDatabase) -> None:
+        self._name, self._gate, self._db = name, gate, db
+        self._inner: Any = None
+
+    def bind(self, inner: Any) -> None:
+        if self._inner is not None:
+            raise RuntimeError(f"REST 서비스를 이미 연결했다: {self._name}")
+        self._inner = inner
+
+    def __getattr__(self, name: str) -> Any:
+        def call(*args: Any, **kwargs: Any) -> Any:
+            with self._gate.enter(), self._db.scope():
+                if self._inner is None:
+                    raise RuntimeError(f"연결하지 않은 REST 서비스다: {self._name}")
+                return getattr(self._inner, name)(*args, **kwargs)
+
+        return call
+
+
 class _ScopedSink:
     """IOT 인계 작업이 부르는 `NodeEventSink`. 보고 하나마다 연결 범위 하나다."""
 
@@ -226,6 +248,9 @@ class Runtime:
             DefaultAdminService(self.db.repository(), self.db.admin_repository()), self.gate, self.db))
         self.approvals = cast(ApprovalService, _GuardedRestService(
             OwnerApprovalService(self.db.repository(), self._clock), self.gate, self.db))
+        # 복구 서비스는 시작할 때 `_build` 가 만든다. 라우터는 그 전에 붙으므로 늦게 연결하는 래퍼를 넘긴다.
+        self._late_recovery = _LateRestService("recovery", self.gate, self.db)
+        self.recovery = cast(RecoveryService, self._late_recovery)
         self.services: Services | None = None
         self.tasks: list[PeriodicTask] = []
         self._started: list[str] = []
@@ -340,6 +365,7 @@ class Runtime:
         # 상태 관리. 모든 서비스가 같은 잠금과 복구 서비스를 쓴다 (NFR-04).
         recovery = FaultRecoveryService(repository=repo, store=store, clock=clock, lock_for=locks,
                                         settings=settings)
+        self._late_recovery.bind(recovery)
         release = ReleaseService(repository=repo, store=store, settings=settings, clock=clock,
                                  lock_for=locks)
         execute_off = Late("shared_light_execute")

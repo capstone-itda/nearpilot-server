@@ -117,3 +117,57 @@ nearpilot serve
 - `server.example.toml`의 `[proximity.models]` 값(`replace-with-model-version`)은 자리값이다. 첫 모델을 만들기 전에는 `serve --collect-only`만 쓴다.
 - `fit` 출력의 `place-a = "v1"` 줄을 `config/server.toml`의 `[proximity.models]`에 쓴다.
   수집 전용 서버를 끈 뒤 `nearpilot serve`를 실행한다. 모델 표가 없으면 일반 `serve`는 시작하지 않는다 (종료 코드 2).
+
+# FAULT 복구
+
+기기가 `FAULT`로 격리되면 그 기기가 있는 장소의 소유자가 `nearpilot recover`로 푼다. `nearpilot serve`가 떠 있어야 한다.
+명령은 DB를 열지 않고 서버의 복구 REST 두 경로(`GET /admin/nodes/{node_id}/recovery`, `POST /admin/nodes/{node_id}/recovery/{recovery_id}/approve`)만 부른다.
+준비 판단과 정산은 서버가 하고 명령은 응답을 옮겨 쓴다. 수집 전용 서버(`serve --collect-only`)도 두 경로를 연다.
+
+소유자 토큰은 `--token-file`로 받는다. 명령줄 인자로 받지 않는다 (셸 기록에 남는다).
+`nearpilot seed`가 소유자 계정을 등록할 때 화면에 한 번 나온 토큰을 파일에 저장한다.
+파일에는 토큰 하나만 쓴다. 앞뒤 공백과 줄바꿈은 지우고, UTF-8 텍스트여야 한다.
+파일 이름을 `.env.owner-token`처럼 `.env.`로 시작하게 지으면 기존 `.env.*` ignore 규칙을 따른다. 권한은 소유자만 읽고 쓰는 `600`을 권장한다.
+
+`status`로 준비 상태를 본 뒤 `approve`로 승인한다.
+
+```
+nearpilot recover status locker-1 --token-file config/.env.owner-token
+nearpilot recover approve locker-1 <복구 ID> --token-file config/.env.owner-token
+```
+
+- `status`는 상태를 바꾸지 않는다. `상태`, `복구 ID`(없으면 `없음`), `부족한 조건`(없으면 `없음`, 있으면 쉼표로 이은 사유 코드)을 줄마다 쓴다.
+  상태가 `ready`이면 마지막 줄에 실행할 `approve` 명령을 쓴다. 복구 ID와 토큰 파일 경로가 채워져 있다.
+- `approve`가 복구를 완료하면 `복구를 완료했다`와 완료 시각을 쓰고 기기는 `AVAILABLE`로 돌아온다.
+  서버가 저장 결과를 확인하는 중이면 완료가 아니다. 표준 오류에 안내와 `reason_code`를 쓰고 종료 코드 1로 끝난다.
+  잠시 뒤 같은 명령을 다시 실행한다. 같은 복구 건의 반복 승인은 기존 완료 결과를 돌려준다.
+- 서버 주소는 `--server URL`(예: `http://192.168.0.10:8000`)로 준다. 주지 않으면 설정 파일의 `[http]`로 `http://{host}:{port}`를 만든다.
+  `host`가 `0.0.0.0`이면 `127.0.0.1`로 부른다. 설정 파일은 `--config`(기본 `config/server.toml`)로 고른다.
+  서버와 다른 컴퓨터에서 쓰면 `--server`를 준다. `status`가 쓴 다음 명령에는 `--server`와 `--config`가 없으니 `status`에 준 값을 `approve`에도 준다.
+- 요청 하나를 10초까지 기다린다.
+
+종료 코드는 아래와 같다. 사유는 표준 오류에 한 줄로 쓴다.
+
+| 종료 코드 | 뜻 |
+|---|---|
+| 0 | `status`는 조회에 성공했다 (`not_ready`여도 0이다). `approve`는 복구를 완료했다. |
+| 1 | 서버가 거부했거나 오류를 돌려줬다. 응답을 해석하지 못했다. `approve`가 아직 완료가 아니다. 서버에 연결하지 못했다 (`--server`의 호스트나 포트가 틀린 경우 포함). |
+| 2 | 입력 오류다. 요청을 보내지 않는다. 토큰 파일이 없거나 비었거나 토큰 하나가 아니다. 설정 파일이 잘못됐다. `--server`가 `http://`·`https://`로 시작하지 않거나 주소로 해석되지 않는다. 인자가 빠졌다. |
+
+서버가 거부하면 표준 오류에 상태 코드와 사유 코드를 쓴다.
+
+| 사유 | 뜻 |
+|---|---|
+| `INVALID_TOKEN` (401) | 토큰이 없거나 틀리다. 토큰 파일을 확인한다. |
+| `NOT_OWNER` (403) | 토큰의 계정이 그 기기 장소의 소유자가 아니다. |
+| `RECOVERY_MISMATCH`, `NOT_READY`, `STATE_CONFLICT` (409) | `status`를 다시 실행해 복구 ID와 상태를 확인한다. |
+| `STORE_NOT_APPLIED` (503) | 저장이 반영되지 않았다. 변경 없이 같은 명령을 다시 실행할 수 있다. |
+| `INTERNAL_ERROR` (500) | 서버 내부 오류다. 서버 로그를 본다. |
+
+상태가 `ready`가 아니면 `approve`를 하지 않고 `부족한 조건`을 확인한다. 조건이 풀리면 `status`를 다시 실행한다.
+
+- `NO_RECOVERY_REQUIRED`: 복구할 건이 없다.
+- `COMMAND_STATE_UNCONFIRMED`: 기기가 현재 연결에서 명령 처리 대기 보고를 하지 않았다. 격리 직후에는 이 조건이고, 기기가 대기 보고를 하면 `ready`가 된다.
+  기기가 서버에 연결돼 있는지 확인하고 기다린다.
+- `OFFLINE`: 기기가 서버에 연결돼 있지 않다. 기기의 전원, Wi-Fi, MQTT 연결을 확인한다.
+- 그 밖의 사유 코드는 서버가 정한 값 그대로다.
