@@ -20,6 +20,7 @@ from nearpilot.shared.enums import (
     Capability,
     DeviceState,
     ExecutionKind,
+    ExecutionStatus,
     Occupancy,
     ReasonCode,
     ReserveOutcome,
@@ -32,6 +33,7 @@ from nearpilot.shared.enums import (
 from nearpilot.shared.interfaces import (
     AuditLog,
     ExecutionReadiness,
+    ExecutionStore,
     PolicyChecker,
     ProximityEstimator,
     Repository,
@@ -100,6 +102,7 @@ class _Applied:
     usage_id: str | None = None
     execution_kind: ExecutionKind | None = None
     reserved_at: datetime | None = None
+    reserve_called: bool = False  # reserve_if_free() 를 부르기 직전에 True 가 된다. 오류 뒤 취소 여부를 정한다 (#80)
 
 
 class _SaveConflict(Exception):
@@ -132,6 +135,7 @@ class DecisionPipeline:
         readiness: ExecutionReadiness,
         new_id: Callable[[], str] = lambda: uuid.uuid4().hex,
         window: BatchAllocator | None = None,
+        store: ExecutionStore | None = None,
     ) -> None:
         self._repo = repo
         self._proximity = proximity
@@ -140,6 +144,7 @@ class DecisionPipeline:
         self._settings = settings
         self._readiness = readiness
         self._window = window
+        self._store = store  # None 이면 예약 뒤 오류에도 취소하지 않는다
         self._new_id = new_id
 
     # ── 진입점 ──────────────────────────────────────────────────────
@@ -161,7 +166,8 @@ class DecisionPipeline:
             if not link.is_new:
                 if link.previous is not None:
                     return link.previous, None
-                d = self._decision(req, internal_id, Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+                # 아직 판정 중이다. 오류가 아니므로 다시 판정하지도, 저장하지도 않는다
+                d = self._decision(req, internal_id, Verdict.BUSY, ReasonCode.REQUEST_IN_PROGRESS)
                 self._audit_step(Step.DEDUP, internal_id, {"result": "IN_PROGRESS"})
                 return d, None
         except Exception as exc:  # noqa: BLE001 - 알 수 없는 오류는 거부한다
@@ -185,8 +191,11 @@ class DecisionPipeline:
             if saved.outcome is StoreOutcome.CONFLICT:
                 raise _SaveConflict("같은 내부 요청에 다른 판정 기록이 있다")
         except Exception as exc:  # noqa: BLE001 - 알 수 없는 오류는 거부한다
-            return self._internal_error(
-                req, internal_id, Step.EXEC, exc, save=not isinstance(exc, _SaveConflict)), None
+            conflict = isinstance(exc, _SaveConflict)
+            # 오류 판정을 저장하기 전에 취소한다. 저장 뒤에 온 같은 키의 재판정(#76)이 아직 취소되지 않은 예약을 받지 않는다
+            if applied.reserve_called and not conflict:
+                self._cancel_reservation(internal_id)
+            return self._internal_error(req, internal_id, Step.EXEC, exc, save=not conflict), None
         return decision, self._context(req, internal_id, decision, applied)
 
     # ── ①~⑥ ───────────────────────────────────────────────────────
@@ -276,6 +285,7 @@ class DecisionPipeline:
             check = self._check_policy(req, iid, applied, node_id, p, now)
 
         # ⑤⑥ — reserve_if_free() 한 번이 검사와 예약을 한다. 점유 방식별 분기는 DB 가 한다 (#27)
+        applied.reserve_called = True  # 호출이 예외로 끝나도 반영됐을 수 있다
         reserved = self._repo.reserve_if_free(ReserveRequest(
             internal_request_id=iid, user_id=req.user_id, node_id=node_id, action=req.action,
             approval_id=check.approval_id, release_policy=node.release_policy))
@@ -425,6 +435,23 @@ class DecisionPipeline:
                 except Exception:  # noqa: BLE001
                     log.exception("거부 판정 저장 실패")
         return d
+
+    def _cancel_reservation(self, iid: str) -> None:
+        """예약을 부른 뒤 오류가 났으면 이번 요청의 예약과 승인 사용분을 바로 취소한다 (#80).
+
+        취소가 실패해도 응답은 바뀌지 않는다. 남은 예약은 재시작 복원이 만료한다.
+        """
+        if self._store is None:
+            return
+        try:
+            result = self._store.cancel_not_sent(
+                iid, ExecutionStatus.PENDING, ReasonCode.INTERNAL_ERROR,
+                {"source": "decision_error", "reason": ReasonCode.INTERNAL_ERROR.value})
+        except Exception:  # noqa: BLE001
+            log.exception("판정 오류 뒤 예약 취소 실패")
+            return
+        if result.outcome is StoreOutcome.CONFLICT:
+            log.warning("판정 오류 뒤 예약 취소 충돌: %s", iid)
 
     def _audit_step(self, step: Step, iid: str, payload: Mapping[str, Any]) -> None:
         self._audit.append(AuditEvent(

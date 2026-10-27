@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from nearpilot.db.repositories._common import immediate_transaction, iso, parse_iso
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import ExecutionStatus, SessionState
+from nearpilot.shared.enums import EndReason, ExecutionStatus, SessionState
 from nearpilot.shared.models import CleanupReport
 
 
@@ -54,10 +54,7 @@ class SqliteRetentionStore:
         ).fetchone()
         if row is None or row["verdict"] is None:
             return False
-        session = self._conn.execute(
-            "SELECT use_id, state FROM use_session WHERE internal_request_id = ?",
-            (internal_request_id,),
-        ).fetchone()
+        session = self._session_of(internal_request_id)
         if session is not None and session["state"] != SessionState.CLOSED.value:
             return False
         pending = self._conn.execute(
@@ -68,6 +65,17 @@ class SqliteRetentionStore:
             return False
         use_id = session["use_id"] if session is not None else None
         return not self._has_unresolved_recovery(internal_request_id, row["node_id"], use_id)
+
+    def _session_of(self, internal_request_id: str) -> sqlite3.Row | None:
+        """요청의 점유 세션이다. 취소한 세션과 재판정의 새 세션이 함께 있으면(#76, #80) 새 세션을 고른다.
+
+        `use_session.internal_request_id`에는 유일 제약이 없다. 살아 있는 세션을 먼저, 없으면 가장 나중 세션이다.
+        """
+        return self._conn.execute(
+            "SELECT use_id, state FROM use_session WHERE internal_request_id = ? "
+            "ORDER BY (state = ? AND end_reason IS ?), rowid DESC LIMIT 1",
+            (internal_request_id, SessionState.CLOSED.value, EndReason.CANCELLED.value),
+        ).fetchone()
 
     def _has_unresolved_recovery(self, internal_request_id: str, node_id: str | None, use_id: str | None) -> bool:
         if use_id is not None:
@@ -92,9 +100,7 @@ class SqliteRetentionStore:
             (internal_request_id,),
         ).fetchone()
         latest = parse_iso(row["latest"]) if row["latest"] else None
-        session = self._conn.execute(
-            "SELECT use_id FROM use_session WHERE internal_request_id = ?", (internal_request_id,)
-        ).fetchone()
+        session = self._session_of(internal_request_id)
         if session is not None:
             recovered = self._conn.execute(
                 "SELECT MAX(completed_at) AS latest FROM recovery WHERE use_id = ? AND completed_at IS NOT NULL",

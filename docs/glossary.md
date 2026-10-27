@@ -103,6 +103,7 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 구동 중 | 펌웨어가 명령의 제어 신호를 출력하는 상태. 기기 상태 `ACTIVE`인 대여 중과 구분한다 | 새 상태 필드 형식은 미결이다 | |
 | 접수·실행 전 거부 | 기기가 새 명령을 접수하기 전에 검증된 `DEVICE_BUSY`로 거부한 결과. 서버의 확실한 미전송(`NOT_SENT`)과 다르다 | `CommandOutcome.REJECTED` | |
 | 처리 중 사유 | 다른 구동 명령이 진행 중이어서 새 조작을 시작하지 못하는 사유. 기기 점유 충돌과 구분한다 | `ReasonCode.COMMAND_IN_PROGRESS` | |
+| 요청 처리 중 사유 | 같은 요청을 아직 판정하거나 인계하는 중이라 결과가 없다는 사유. 재전송에만 쓴다. 오류가 아니다 | `ReasonCode.REQUEST_IN_PROGRESS` | |
 | 실행 중단 사유 | 재검사 밖의 이유로 상태 관리가 전송을 막은 사유. 재검사 판정과 구분한다 | `ExecutionResult.reason` | |
 | 예약 시각 | DB가 예약을 저장한 시각. 예약 대기 제한을 이 시각부터 잰다 | `ReserveResult.reserved_at`, `ExecutionContext.reserved_at` | |
 | 복원 조회 | 재시작한 서버가 끝나지 않은 요청, 명령, 점유 세션, 승인 사용분, 복구 건을 기기별로 읽는 조회 | `restore_pending` | |

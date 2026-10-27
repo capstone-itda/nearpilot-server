@@ -7,11 +7,14 @@ import json
 import threading
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from nearpilot.db.repositories.repository import SqliteRepository
 from nearpilot.db.schema import connect
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, Capability, Occupancy, ReasonCode, ReserveOutcome, StoreOutcome, Verdict,
+    Action, Capability, ExecutionKind, ExecutionStatus, Occupancy, ReasonCode, ReserveOutcome, StoreOutcome,
+    Verdict,
 )
 from nearpilot.shared.models import (
     BeaconKey,
@@ -24,7 +27,9 @@ from nearpilot.shared.models import (
     UseRequest,
 )
 
-from conftest import insert_beacon, insert_node, insert_place, insert_request, insert_user
+from conftest import (
+    insert_approval, insert_beacon, insert_node, insert_place, insert_policy, insert_request, insert_user,
+)
 
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -294,6 +299,141 @@ def test_FR19_link_request_retry_keeps_single_reservation(conn, repo):
     assert retry_reserved.outcome == ReserveOutcome.RESERVED
     assert retry_reserved.use_id == reserved.use_id
     assert conn.execute("SELECT COUNT(*) AS c FROM use_session").fetchone()["c"] == 1
+
+
+def _fail_without_node(repo, link):
+    """파이프라인의 오류 거부처럼 대상 기기를 비우고 저장한다."""
+    decision = Decision(
+        internal_request_id=link.internal_request_id, request_id="ext-1",
+        verdict=Verdict.DENY, reason=ReasonCode.INTERNAL_ERROR,
+    )
+    repo.save_decision(decision, DecisionRecord(settings=Settings()))
+
+
+def _cancel_after_error(store, internal_request_id):
+    store.cancel_not_sent(
+        internal_request_id, ExecutionStatus.PENDING, ReasonCode.INTERNAL_ERROR, {"source": "decision_error"}
+    )
+
+
+@pytest.mark.parametrize(
+    ("occupancy", "node_id", "capability", "action"),
+    [("rental", "node1", "locker", Action.OPEN), ("shared", "light1", "light", Action.ON)],
+)
+def test_FR18_retry_after_cancelled_reservation_links_new_reservation(
+    conn, repo, store, occupancy, node_id, capability, action
+):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id=node_id, capability=capability, occupancy=occupancy)
+    insert_policy(conn, node_id=node_id, approval_mode="one_time", max_uses=1)
+    insert_approval(conn, approval_id="appr1", node_id=node_id, internal_request_id="approval-req")
+    link = repo.link_request(_use_request(capability=capability, action=action), "digest-1")
+    reserve = ReserveRequest(
+        internal_request_id=link.internal_request_id, user_id="u1", node_id=node_id, action=action,
+        approval_id="appr1",
+    )
+    first = repo.reserve_if_free(reserve)
+    _fail_without_node(repo, link)
+    _cancel_after_error(store, link.internal_request_id)
+
+    retry = repo.link_request(_use_request(capability=capability, action=action), "digest-1")
+    again = repo.reserve_if_free(reserve)
+    linked = store.link_command(retry.internal_request_id, node_id, action)
+
+    assert retry.is_new is True
+    assert retry.internal_request_id == link.internal_request_id
+    assert again.outcome == ReserveOutcome.RESERVED
+    assert again.usage_id not in (None, first.usage_id)
+    if occupancy == "rental":
+        assert again.use_id not in (None, first.use_id)
+    assert linked.outcome == StoreOutcome.APPLIED
+    assert linked.command.execution_kind == (
+        ExecutionKind.RENTAL_INITIAL if occupancy == "rental" else ExecutionKind.SHARED
+    )
+    assert linked.command.use_id == again.use_id
+    assert linked.command.usage_id == again.usage_id
+    # 취소 전 행은 그대로 두고, 같은 요청의 살아 있는 예약은 하나다.
+    usages = {r["usage_id"]: r["state"] for r in conn.execute("SELECT usage_id, state FROM approval_usage")}
+    assert usages == {first.usage_id: "released", again.usage_id: "reserved"}
+    if occupancy == "rental":
+        sessions = {r["use_id"]: (r["state"], r["end_reason"]) for r in conn.execute("SELECT * FROM use_session")}
+        assert sessions == {first.use_id: ("CLOSED", "cancelled"), again.use_id: ("RESERVED", None)}
+
+
+def test_FR22_link_request_previous_prefers_live_session_after_retry(conn, repo, store):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="node1", occupancy="rental")
+    link = repo.link_request(_use_request(), "digest-1")
+    reserve = ReserveRequest(
+        internal_request_id=link.internal_request_id, user_id="u1", node_id="node1", action=Action.OPEN,
+        approval_id=None,
+    )
+    repo.reserve_if_free(reserve)
+    _fail_without_node(repo, link)
+    _cancel_after_error(store, link.internal_request_id)
+    repo.link_request(_use_request(), "digest-1")
+    again = repo.reserve_if_free(reserve)
+    decision = Decision(
+        internal_request_id=link.internal_request_id, request_id="ext-1", verdict=Verdict.OK,
+        reason=ReasonCode.OK, node_id="node1", use_id=again.use_id,
+    )
+    repo.save_decision(decision, DecisionRecord(settings=Settings()))
+
+    resent = repo.link_request(_use_request(), "digest-1")
+
+    assert resent.is_new is False
+    assert resent.previous is not None
+    assert resent.previous.use_id == again.use_id
+
+
+def test_FR22_link_request_previous_of_rejected_retry_has_no_use_id(conn, repo, store):
+    """재판정이 OK 가 아닌 판정으로 끝나면 취소된 옛 세션의 use_id 를 담지 않는다."""
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="node1", occupancy="rental")
+    link = repo.link_request(_use_request(), "digest-1")
+    repo.reserve_if_free(ReserveRequest(
+        internal_request_id=link.internal_request_id, user_id="u1", node_id="node1", action=Action.OPEN,
+        approval_id=None,
+    ))
+    _fail_without_node(repo, link)
+    _cancel_after_error(store, link.internal_request_id)
+    repo.link_request(_use_request(), "digest-1")
+    busy = Decision(
+        internal_request_id=link.internal_request_id, request_id="ext-1", verdict=Verdict.BUSY,
+        reason=ReasonCode.DEVICE_BUSY, node_id="node1",
+    )
+    repo.save_decision(busy, DecisionRecord(settings=Settings()))
+
+    resent = repo.link_request(_use_request(), "digest-1")
+
+    assert resent.previous is not None
+    assert (resent.previous.verdict, resent.previous.use_id) == (Verdict.BUSY, None)
+
+
+def test_FR22_link_request_previous_keeps_cancelled_only_session(conn, repo, store):
+    """세션이 하나뿐이면 취소됐어도 지금처럼 그 use_id를 담는다. 살아 있는 세션이 있을 때만 그쪽을 고른다."""
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="node1", occupancy="rental")
+    link = repo.link_request(_use_request(), "digest-1")
+    reserved = repo.reserve_if_free(ReserveRequest(
+        internal_request_id=link.internal_request_id, user_id="u1", node_id="node1", action=Action.OPEN,
+        approval_id=None,
+    ))
+    decision = Decision(
+        internal_request_id=link.internal_request_id, request_id="ext-1", verdict=Verdict.OK,
+        reason=ReasonCode.OK, node_id="node1", use_id=reserved.use_id,
+    )
+    repo.save_decision(decision, DecisionRecord(settings=Settings()))
+    _cancel_after_error(store, link.internal_request_id)
+
+    resent = repo.link_request(_use_request(), "digest-1")
+
+    assert resent.previous is not None
+    assert resent.previous.use_id == reserved.use_id
 
 
 def test_FR22_save_decision_already_applied(conn, repo):

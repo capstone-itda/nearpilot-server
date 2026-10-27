@@ -24,6 +24,7 @@
   - `reserve_if_free()`는 같은 `internal_request_id`의 기존 예약이 없고 본인 기기가 `ACTIVE`이면 `REOPERATING`과 기존 `use_id`를 반환한다. 그 외에는 ⑤⑥ 검사, `RESERVED` 생성, 승인 사용분 예약을 `BEGIN IMMEDIATE` 트랜잭션 하나에서 처리한다.
   - 동시 요청이 같은 기기를 예약하면 한 요청만 `RESERVED`를 받는다.
   - 같은 `internal_request_id`로 다시 예약하면 기존 예약을 반환한다. 새 행을 만들지 않는다.
+  - 기존 예약이 취소(`CLOSED`·`cancelled` 세션, `released` 사용분)됐으면 기존 예약으로 보지 않는다. ⑤⑥을 다시 검사하고 새 세션·사용분 행을 만든다. 오류 뒤 바로 취소한 요청의 재판정(#76, #80)이 다시 예약할 수 있게 한다 (2026-10-27 팀 결정).
   - `create_approval_request()`는 같은 요청자·기기·동작·정책 버전에 유효한 `pending` 신청이 있으면 기존 신청을 반환한다. `decide_approval()`은 `pending`·정책 버전·대기 만료를 조건부로 검사하고 결정을 한 번만 반영한다.
   - 스키마는 후속 작업이 쓸 테이블과 필드를 미리 포함한다. 후속 작업은 함수만 추가한다.
 
@@ -112,6 +113,7 @@
 | 같은 `internal_request_id`에 같은 판정을 다시 저장한다 | `StoreResult(ALREADY_APPLIED)`를 반환한다. | `test_FR22_save_decision_already_applied` |
 | 두 요청이 같은 대여형 기기를 동시에 예약한다 | 한 요청만 `RESERVED`다. 나머지는 `DEVICE_BUSY`다. | `test_FR19_reserve_concurrent` |
 | 같은 `internal_request_id`로 예약을 다시 호출한다 | 기존 `use_id`와 `usage_id`로 `RESERVED`를 반환한다. 행을 새로 만들지 않는다. | `test_FR19_reserve_idempotent` |
+| 같은 `internal_request_id`의 예약이 취소된 뒤 다시 예약한다 | 취소된 행을 쓰지 않는다. ⑤⑥을 다시 검사하고 새 세션(새 `use_id`)과 새 사용분을 만든다. 취소된 사용분은 횟수에 세지 않는다 | `test_FR19_reserve_after_cancel_reserves_again` |
 | 최초 대여 요청이 `ACTIVE`가 된 뒤 같은 `internal_request_id`로 다시 호출한다 | 재조작 검사보다 기존 예약 조회를 먼저 한다. `REOPERATING`이 아니라 기존 `use_id`로 `RESERVED`를 반환한다. | `test_FR19_reserve_resend_after_active` |
 | 본인 `ACTIVE` 세션이 있는 기기에 재조작을 요청한다 | `REOPERATING`과 기존 `use_id`를 반환한다. 새 세션을 만들지 않는다. 승인이 있으면 이번 요청의 사용분만 예약한다. | `test_FR19_reserve_reoperating` |
 | 본인 `ACTIVE` 세션이 있지만 기기가 `FAULT`로 격리됐다 | `REOPERATING`이 아니라 `DEVICE_BUSY`를 반환한다. 사용분을 예약하지 않는다. | `test_FR19_reserve_reoperating_fault` |

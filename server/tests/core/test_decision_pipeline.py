@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from nearpilot.core.decision.core_service import build_core_service
 from nearpilot.core.decision.digest import input_digest
 from nearpilot.core.decision.pipeline import DecisionPipeline
 from nearpilot.shared.config import Settings
@@ -15,6 +16,7 @@ from nearpilot.shared.enums import (
     DeviceState,
     Occupancy,
     ExecutionKind,
+    ExecutionStatus,
     ReasonCode,
     ReserveOutcome,
     Step,
@@ -180,7 +182,22 @@ class FakeAudit:
         self.events.append(event)
 
 
-def build(posteriors=None, policy=None, settings=None, readiness=None, window=None):
+class FakeStore:
+    """ExecutionStore 중 판정이 부르는 cancel_not_sent 만 기록한다."""
+
+    def __init__(self):
+        self.cancels = []
+        self.outcome = StoreOutcome.APPLIED
+        self.error: Exception | None = None
+
+    def cancel_not_sent(self, internal_request_id, expected, reason, evidence):
+        self.cancels.append((internal_request_id, expected, reason, dict(evidence)))
+        if self.error:
+            raise self.error
+        return StoreResult(self.outcome)
+
+
+def build(posteriors=None, policy=None, settings=None, readiness=None, window=None, store=None):
     repo = FakeRepo()
     prox = FakeProximity({"locker-1": 0.99} if posteriors is None else posteriors)
     pol = policy or FakePolicy()
@@ -188,7 +205,8 @@ def build(posteriors=None, policy=None, settings=None, readiness=None, window=No
     n = iter(range(10_000))
     pipe = DecisionPipeline(repo, prox, pol, audit, settings or Settings(
         version="v1", threshold_explicit_locker=0.5, threshold_explicit_light=0.5),
-                            readiness or FakeReadiness(), new_id=lambda: f"e{next(n)}", window=window)
+                            readiness or FakeReadiness(), new_id=lambda: f"e{next(n)}", window=window,
+                            store=store)
     return pipe, repo, prox, pol, audit
 
 
@@ -418,11 +436,16 @@ def test_FR18_같은_키_같은_입력이면_기존_판정을_반환한다():
     assert repo.reserved == [] and repo.saved == []
 
 
-def test_FR18_진행_중인_같은_키는_다시_판정하지_않고_거부한다():
-    pipe, repo, *_ = build()
-    repo.link = RequestLink("i1", False, False)
+def test_FR18_진행_중인_같은_키는_REQUEST_IN_PROGRESS를_반환한다():
+    store = FakeStore()
+    pipe, repo, prox, pol, audit = build(store=store)
+    repo.link = RequestLink("i1", False, False)  # 같은 키가 있는데 판정이 아직 없다
     d = pipe.decide(request())
-    assert d.verdict is Verdict.DENY and repo.reserved == []
+    assert (d.verdict, d.reason, d.message, d.use_id) == (
+        Verdict.BUSY, ReasonCode.REQUEST_IN_PROGRESS, None, None)
+    assert repo.calls == ["link_request"] and repo.saved == []  # 다시 판정하지도 저장하지도 않는다
+    assert store.cancels == []
+    assert [(e.step, e.payload) for e in audit.events] == [(Step.DEDUP, {"result": "IN_PROGRESS"})]
 
 
 def test_FR18_다른_계정의_같은_request_id는_서로_다른_요청으로_판정한다():
@@ -726,6 +749,134 @@ def test_FR19_예약_시각이_없으면_None이다():
     assert ctx.reserved_at is None
 
 
+# ── 예약 뒤 오류의 취소 (#80) ─────────────────────────────────────────
+
+
+def _boom(*args, **kwargs):
+    raise RuntimeError("boom")
+
+
+def _fail_audit_at(audit, step):
+    """감사 기록이 이 단계에서만 실패하게 한다."""
+    append = audit.append
+
+    def failing(event):
+        if event.step is step:
+            raise OSError("disk")
+        append(event)
+
+    audit.append = failing
+
+
+CANCEL_EVIDENCE = {"source": "decision_error", "reason": "INTERNAL_ERROR"}
+
+
+@pytest.mark.parametrize("fail", ["판정 저장", "예약 뒤 감사"])
+def test_FR19_예약_뒤_오류면_예약을_바로_취소한다(fail):
+    store = FakeStore()
+    pipe, repo, prox, pol, audit = build(store=store)
+    if fail == "판정 저장":
+        repo.raise_on = "save_decision"
+    else:
+        _fail_audit_at(audit, Step.DEVICE_OCCUPANCY)
+    d = pipe.decide(request())
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    assert len(repo.reserved) == 1
+    assert store.cancels == [("i1", ExecutionStatus.PENDING, ReasonCode.INTERNAL_ERROR, CANCEL_EVIDENCE)]
+
+
+def test_FR19_예약_호출이_예외면_취소를_부른다():
+    store = FakeStore()
+    pipe, repo, *_ = build(store=store)
+    repo.raise_on = "reserve_if_free"  # 호출이 예외로 끝나도 예약이 반영됐을 수 있다
+    d = pipe.decide(request())
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    assert store.cancels == [("i1", ExecutionStatus.PENDING, ReasonCode.INTERNAL_ERROR, CANCEL_EVIDENCE)]
+
+
+@pytest.mark.parametrize("where", [
+    "link_request", "beacons_of", "rssi_since", "nodes", "posterior", "policy"])
+def test_FR19_예약_전_오류는_취소하지_않는다(where):
+    store = FakeStore()
+    pipe, repo, prox, pol, audit = build(store=store)
+    if where == "posterior":
+        prox.posterior = _boom
+    elif where == "policy":
+        pol.check = _boom
+    else:
+        repo.raise_on = where
+    d = pipe.decide(request())
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    assert repo.reserved == [] and store.cancels == []
+
+
+@pytest.mark.parametrize("failure", ["예외", "CONFLICT"])
+def test_FR19_예약_취소가_실패해도_INTERNAL_ERROR를_반환한다(failure, caplog):
+    store = FakeStore()
+    if failure == "예외":
+        store.error = RuntimeError("secret internal detail")
+    else:
+        store.outcome = StoreOutcome.CONFLICT
+    pipe, repo, *_ = build(store=store)
+    repo.raise_on = "save_decision"
+    d = pipe.decide(request())  # 취소의 예외가 밖으로 나오지 않는다
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    assert "secret" not in repr(d)
+    assert len(store.cancels) == 1
+    assert any("예약 취소" in r.getMessage() for r in caplog.records)  # 실패는 로그로 남는다
+
+
+def test_FR19_오류_판정은_예약을_취소한_뒤에_저장한다():
+    """오류 판정이 먼저 저장되면 그 사이에 온 같은 키의 재판정(#76)이 아직 취소되지 않은 예약을 받는다."""
+    saved_at_cancel = []
+
+    class OrderStore(FakeStore):
+        def cancel_not_sent(self, *args):
+            saved_at_cancel.append([d.reason for d in repo.saved])
+            return super().cancel_not_sent(*args)
+
+    pipe, repo, prox, pol, audit = build(store=OrderStore())
+    _fail_audit_at(audit, Step.DEVICE_OCCUPANCY)
+    d = pipe.decide(request())
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    assert saved_at_cancel == [[]]
+    assert [s.reason for s in repo.saved] == [ReasonCode.INTERNAL_ERROR]
+
+
+def test_FR19_판정_저장_충돌은_예약을_취소하지_않는다():
+    store = FakeStore()
+    pipe, repo, *_ = build(store=store)
+    repo.save_outcome = StoreOutcome.CONFLICT  # 같은 내부 요청에 다른 판정 기록이 있다
+    d = pipe.decide(request())
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    assert len(repo.reserved) == 1 and store.cancels == []
+
+
+@pytest.mark.parametrize("setup", [
+    lambda repo: None,  # OK
+    lambda repo: setattr(repo, "frames", []),  # ① 정상 거부
+    lambda repo: setattr(repo, "reserve_outcome", ReserveOutcome.DEVICE_BUSY),  # 예약을 부른 뒤의 정상 거부
+])
+def test_FR19_정상_거부와_OK는_취소하지_않는다(setup):
+    store = FakeStore()
+    pipe, repo, *_ = build(store=store)
+    setup(repo)
+    pipe.decide(request())
+    assert store.cancels == []
+
+
+def test_FR19_조립한_서비스도_오류_뒤_예약을_취소한다():
+    store = FakeStore()
+    _, repo, prox, pol, audit = build()
+    repo.raise_on = "save_decision"
+    svc = build_core_service(
+        repo=repo, proximity=prox, policy=pol, audit=audit, settings=Settings(version="v1"),
+        clock=lambda: NOW, readiness=FakeReadiness(), execution=None, store=store, release=None)
+    d = svc.request_use(request())  # 판정이 OK 가 아니라서 execution 과 release 는 부르지 않는다
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    assert [c[:3] for c in store.cancels] == [("i1", ExecutionStatus.PENDING, ReasonCode.INTERNAL_ERROR)]
+
+
 # ── 전역 할당: any:locker (FR-23) ─────────────────────────────────────
 
 
@@ -996,7 +1147,7 @@ def test_FR18_확정한_판정은_재전송해도_다시_판정하지_않는다(
     assert len(repo.reserved) == 1
 
 
-def test_FR18_재판정이_진행_중이면_같은_키는_다시_판정하지_않고_거부한다():
+def test_FR18_재판정이_진행_중이면_같은_키는_다시_판정하지_않고_REQUEST_IN_PROGRESS로_답한다():
     pipe, repo, *_ = build()
     state = _retrying_link(repo)
     repo.raise_on = "rssi_since"
@@ -1005,7 +1156,8 @@ def test_FR18_재판정이_진행_중이면_같은_키는_다시_판정하지_�
     repo.link_request(request(), "d")  # 첫 번째 재전송이 시도를 가져갔다
     assert state["in_progress"]
     d = pipe.decide(request())  # 동시에 온 두 번째 재전송
-    assert d.verdict is Verdict.DENY and len(repo.reserved) == 0
+    assert (d.verdict, d.reason) == (Verdict.BUSY, ReasonCode.REQUEST_IN_PROGRESS)
+    assert len(repo.reserved) == 0
 
 def test_FR22_capacity_stops_before_beacon_and_saves_record():
     pipe, repo, prox, policy, audit = build()

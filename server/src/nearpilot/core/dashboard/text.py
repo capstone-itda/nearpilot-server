@@ -30,6 +30,7 @@ _REASON_TEXT: dict[ReasonCode, str] = {
     ReasonCode.INVALID_TOKEN: "토큰 확인 실패",
     ReasonCode.INVALID_INPUT: "요청 형식이 맞지 않음",
     ReasonCode.REQUEST_ID_CONFLICT: "같은 요청 번호에 다른 내용",
+    ReasonCode.REQUEST_IN_PROGRESS: "같은 요청을 처리하는 중",
     ReasonCode.CAPACITY_EXCEEDED: "서버가 바쁨",
     ReasonCode.BEACON_NOT_SEEN: "비콘 수신 없음",
     ReasonCode.NO_CANDIDATE: "쓸 수 있는 기기 없음",

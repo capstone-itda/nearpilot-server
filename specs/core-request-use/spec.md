@@ -25,11 +25,17 @@
 |---|---|
 | `SUCCEEDED` | `OK` / `OK`. 대여형이면 `use_id`를 담는다 |
 | `NOT_SENT`이고 재검사 판정이 있다 | 재검사 판정과 사유를 그대로 반환한다 |
-| `NOT_SENT`이고 재검사 판정이 없다 | `DENY` / `INTERNAL_ERROR` |
+| `NOT_SENT`이고 재검사 판정이 없다 | 중단 사유를 아래 중단 사유 표로 바꾼다. 사유가 없거나 표에 없으면 `DENY` / `INTERNAL_ERROR` |
 | `REJECTED` | `BUSY` / `DEVICE_BUSY` |
 | `FAILED` | `DENY` / `EXEC_FAILED` |
 | `UNKNOWN` | `DENY` / `EXEC_UNKNOWN` |
 | `PENDING`, `IN_PROGRESS` | `BUSY` / `COMMAND_IN_PROGRESS` |
+
+| 중단 사유 | 반환하는 판정 / 사유 코드 |
+|---|---|
+| `COMMAND_IN_PROGRESS` | `BUSY` / `COMMAND_IN_PROGRESS` |
+| `DEVICE_BUSY` | `BUSY` / `DEVICE_BUSY` |
+| `TARGET_UNAVAILABLE`, `NODE_NOT_CONNECTED`, `RESERVATION_EXPIRED`, `COMMAND_NOT_SENT` | `DENY` / `TARGET_UNAVAILABLE` |
 
 ## 3. 제약
 
@@ -63,7 +69,6 @@
 - MCP 도구, 헤더 인증 연결, 응답 직렬화 (`api-mcp` spec)
 - `CoreService`의 나머지 함수 5개 (`find_available_devices`, `get_device_state`, `request_access`, `release_use`, `get_use_status`)
 - 서버 진입점과 서비스 조립 (#88)
-- 재검사 밖의 중단 사유 전달 (#79). `ExecutionResult`에 사유 필드가 생기면 그때 반영한다.
 
 ## 5. 예외 상황
 
@@ -77,7 +82,9 @@
 | 인계가 `NOT_SENT`인데 재검사 판정이 없다 | `DENY` / `INTERNAL_ERROR` | `test_FR09_사유를_모르는_NOT_SENT는_INTERNAL_ERROR` |
 | `execute()`가 예외를 낸다 | `DENY` / `INTERNAL_ERROR`. 예외 내용을 넣지 않는다 | `test_FR09_인계가_예외를_내면_INTERNAL_ERROR` |
 | 같은 요청이 재전송된다 (기존 `OK`) | 저장된 실행 상태로 2절 표대로 반환한다. `execute()`를 부르지 않는다 | `test_FR09_재전송은_저장된_실행_상태로_반환한다` |
-| 재전송인데 실행 기록이 없다 | `DENY` / `INTERNAL_ERROR` | `test_FR09_재전송인데_실행_기록이_없으면_INTERNAL_ERROR` |
+| 재전송인데 실행 기록이 없다 | `BUSY` / `REQUEST_IN_PROGRESS`. 인계가 아직 끝나지 않은 요청이다 | `test_FR18_재전송인데_실행_기록이_없으면_REQUEST_IN_PROGRESS` |
+| 재전송인데 실행 기록이 `NOT_SENT`다 | 첫 응답과 같은 판정을 준다. 근거(`evidence`)의 `source`가 `recheck`이면 근거의 판정과 사유, 아니면 근거의 중단 사유를 2절의 중단 사유 표로 바꾼다. 근거로 알 수 없으면 `DENY` / `INTERNAL_ERROR` | `test_FR18_재전송된_NOT_SENT는_첫_응답과_같은_판정을_준다` |
+| `NOT_SENT` 재전송의 응답을 첫 호출과 비교한다 | 중단 사유마다 판정·사유·기기·`use_id`가 첫 호출과 같다 | `test_FR18_재전송은_첫_호출과_같은_판정을_준다` |
 | 재전송인데 기존 판정이 `OK`가 아니다 | 기존 판정을 그대로 반환한다 | `test_FR09_재전송된_거부_판정은_그대로_반환한다` |
 | 실행 기록 조회가 예외를 낸다 | `DENY` / `INTERNAL_ERROR` | `test_FR09_실행_기록_조회가_실패하면_INTERNAL_ERROR` |
 
@@ -90,12 +97,11 @@
 
 ## 7. 가정
 
-- `NOT_SENT`의 사유를 알 수 없으면(재검사 판정이 없다) `DENY` / `INTERNAL_ERROR`로 거부한다. 재검사 밖의 중단 사유를 전달하는 방법이 미결이다 (#79).
-- 재전송인데 `ExecutionStore.execution()`이 `None`이면 실행 기록이 없다. 인계가 끝나지 않은 요청이다. context를 다시 만들 수 없으므로 `DENY` / `INTERNAL_ERROR`로 거부한다. 남은 예약은 상태 관리의 예약 대기 제한이 정리한다.
-- 재전송의 `NOT_SENT`는 재검사 판정을 알 수 없으므로 `DENY` / `INTERNAL_ERROR`다 (#79).
+- `NOT_SENT`에 재검사 판정이 없으면 `ExecutionResult.reason`(재전송은 근거의 `reason`)의 중단 사유를 2절의 중단 사유 표로 바꾼다. 사유를 알 수 없으면 `DENY` / `INTERNAL_ERROR`로 거부한다.
+- 재전송인데 `ExecutionStore.execution()`이 `None`이면 실행 기록이 없다. 인계가 끝나지 않은 요청이다. context를 다시 만들지 않고 `BUSY` / `REQUEST_IN_PROGRESS`로 응답한다 (FR-18 ⓪ "진행 상태를 반환", 2026-10-27 팀 결정). 남은 예약은 상태 관리의 예약 대기 제한이 정리한다.
+- 재전송의 `NOT_SENT`는 명령 기록의 근거로 첫 응답을 다시 만든다. 상태 관리가 미전송 취소 근거에 재검사의 `verdict`·`reason` 또는 중단 사유 `reason`을 남긴다 (`core/lifecycle/execution.py`). 근거로 알 수 없을 때만 `DENY` / `INTERNAL_ERROR`다 (2026-10-27 팀 결정).
 - 인계 대기 중에 같은 요청이 동시에 재전송되면 상태 관리가 한 번만 실행하고 진행 상태를 반환한다 (`execute()`의 약속). 이 서비스는 잠금을 두지 않는다.
-- 미결: 재검사 밖의 중단 사유 전달. 사유 필드가 `ExecutionResult`에 생기면 `NOT_SENT` 표를 고친다 (#79).
-- 미결: 오류로 거부한 요청의 재전송 (#76). 이 서비스는 ⓪의 결과를 따른다.
+- 오류로 거부한 요청의 재전송은 판정이 다시 판정한다 (#76, `core-internal-error-retry`). 이 서비스는 ⓪의 결과를 따른다.
 
 ## 8. 테스트
 
