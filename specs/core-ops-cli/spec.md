@@ -220,7 +220,7 @@
 ## 7. 가정
 
 - 지표 8의 세부 측정 정의는 미결이다 (architecture.md §4 "RSSI 수집 회차"). 정면 오선택률과 ECE를 6절 "eval"의 정의로 계산한다. 정의가 정해지면 `tools/evaluation`의 계산 함수만 고친다.
-- 수집 회차의 조회 접점은 미결이다 (architecture.md §4 "RSSI 수집 회차"). 이 작업은 `tools/evaluation/runs.py`(`list_runs`, `load_labeled_runs`)를 조회 접점으로 가정하고, 회차의 장소 규칙을 6절 "collect"로 정한다. 정해진 접점이 다르면 `runs.py`와 그 호출만 바꾼다.
+- 수집 회차의 조회 접점은 `tools/evaluation/runs.py`(`list_runs`, `load_labeled_runs`)다 (architecture.md §4 "RSSI 수집 회차", 2026-10-27 담당자 위임 결정). 회차의 장소 규칙은 6절 "collect"다.
 - 중단된 회차(Ctrl+C, `collect close`로 닫은 회차)를 빼는 규칙은 `specs/core-proximity-data-collection` 4절의 후속 작업이다. 이 작업은 닫힌 회차를 모두 분할 대상으로 본다.
 - 무드등 장소의 수집 라벨은 미결이다 (#61). 기기가 하나인 장소도 같은 규칙으로 분할·적합한다.
 

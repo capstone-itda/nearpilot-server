@@ -33,7 +33,7 @@
 
 - 학습·검증 분할을 하지 않는다. 호출자가 회차 단위로 나눠서 넘긴다. 분할과 평가는 `tools/evaluation`이 맡는다 (`architecture.md` §4 RSSI 수집 회차, #41).
 - 같은 회차를 학습과 검증에 함께 쓰지 않는다 (지표 8).
-- DB를 읽지 않는다. 수집 회차의 조회 접점이 미결이다 (`architecture.md` §4).
+- DB를 읽지 않는다. 수집 회차는 `tools/evaluation/runs.py`가 조회한다 (`architecture.md` §4).
 - 사후확률은 근접 추정기의 `compute_posteriors`로 계산한다. 적합용으로 다른 계산을 두지 않는다 (FR-22).
 - 모델 파일은 `{모델 루트}/{place_id}/{model_version}.json`이다. 같은 버전의 파일을 덮어쓰지 않는다 (#40).
 - 후보 값과 버전을 코드 상수로 쓰지 않는다. 적합 설정으로 받는다 (AGENTS.md 코딩 규칙).
@@ -141,7 +141,7 @@
 
 - 보정 방법은 우도 온도 τ 하나다 — 미결 (FR-16 보정 방법). 다른 방법이 정해져도 `core/proximity/`와 모델 파일만 바뀐다.
 - 관측 모델(경로손실 정규분포), 결측 처리, HMM 전이는 근접 추정기 spec 7절의 가정을 그대로 쓴다 — 미결 (FR-16).
-- 회차 입력은 회차 ID, 라벨, 비콘, `started_at`, `ended_at`, 프레임 목록이다 — 미결 (수집 회차의 조회 접점, `architecture.md` §4). 조회 접점이 다른 모양으로 정해지면 부르는 쪽이 이 입력으로 바꾼다.
+- 회차 입력은 회차 ID, 라벨, 비콘, `started_at`, `ended_at`, 프레임 목록이다 — `tools/evaluation/runs.py`의 조회 결과를 부르는 쪽이 이 입력으로 바꾼다 (`architecture.md` §4).
 
 ## 8. 테스트
 
