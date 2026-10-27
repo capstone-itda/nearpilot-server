@@ -23,6 +23,7 @@ from _runtime import (
 from nearpilot.core.lifecycle.node_events import NodeEventService
 from nearpilot.core.lifecycle.restore import RestoreService
 from nearpilot.core.proximity.estimator import HmmProximityEstimator
+from nearpilot.db.repositories.execution_store import SqliteExecutionStore
 from nearpilot.db.repositories.retention import SqliteRetentionStore
 from nearpilot.iot.mqtt import ConnectionFailure, ReportDelivery
 from nearpilot.runtime import Runtime, ShutdownError, create_app
@@ -527,3 +528,41 @@ def test_FR19_runtime_open_rental_reoperation_reaches_device(world):
         again = w.use(VISITOR_A, "locker-1", "r-reopen")
         assert (again.verdict, again.use_id) == (Verdict.OK, first.use_id)
         wait_until(lambda: [c["status"] for c in w.commands("locker-1")] == ["succeeded", "succeeded"])
+
+
+def test_FR19_runtime_reoperation_after_release_is_use_not_found(world, monkeypatch):
+    w = world()
+    with running(w.runtime):
+        w.ready("locker-1")
+        first = w.use(VISITOR_A, "locker-1", "r-open")
+        assert first.verdict is Verdict.OK
+        wait_until(lambda: query(w.db, "SELECT state FROM use_session WHERE use_id = ?",
+                                 first.use_id)[0]["state"] == "ACTIVE")
+        released = []
+        link_command = SqliteExecutionStore.link_command
+
+        def link_after_release(self, internal_request_id, node_id, action):
+            # 재조작 판정은 끝났고 명령을 연결하기 전이다. 같은 사용자의 반납이 대여를 닫는다.
+            if not released:
+                released.append(w.runtime.core.release_use(VISITOR_A, first.use_id))
+            return link_command(self, internal_request_id, node_id, action)
+
+        monkeypatch.setattr(SqliteExecutionStore, "link_command", link_after_release)
+        again = w.use(VISITOR_A, "locker-1", "r-reopen")
+        # 반납은 정상이다. 재조작은 서버 오류가 아니라 붙을 대여가 없다는 응답이다.
+        assert released[0].verdict is Verdict.OK
+        assert (again.verdict, again.reason, again.use_id) == (
+            Verdict.DENY, ReasonCode.USE_NOT_FOUND, None)
+        assert query(w.db, "SELECT state FROM use_session WHERE use_id = ?",
+                     first.use_id)[0]["state"] == "CLOSED"
+        # 연결을 거부한 재조작은 미전송 명령 한 행으로 남는다. 첫 대여의 명령은 그대로다.
+        assert [c["status"] for c in w.commands("locker-1")] == ["succeeded", "not_sent"]
+        refused = query(w.db, "SELECT status, use_id, json_extract(evidence, '$.reason') AS reason "
+                              "FROM node_command WHERE internal_request_id = ?", again.internal_request_id)
+        assert [tuple(row) for row in refused] == [("not_sent", None, "USE_NOT_FOUND")]
+        # 명령에 연결된 요청이라 재시작 복원의 대상이 아니다.
+        with w.runtime.db.scope() as bound:
+            pending = {request.internal_request_id for bundle in bound.store.restore_pending()
+                       for request in bundle.requests}
+        assert again.internal_request_id not in pending
+        assert [c["action"] for c in w.broker.commands() if c["node_id"] == "locker-1"] == ["open"]

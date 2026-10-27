@@ -45,6 +45,8 @@ class StoreFake:
         self.contexts, self.commands, self.recoveries = {}, {}, {}
         self.calls, self.failures = [], {}
         self.read_error = None
+        self.link_conflict = None
+        self.closed_rental = False
         self.begin_conflict = None
         self.recovery_error = None
         self.reserved_at = clock()
@@ -75,8 +77,20 @@ class StoreFake:
     def link_command(self, internal_request_id, node_id, action):
         self.calls.append(("link", internal_request_id))
         failure = self._before("link")
+        if self.link_conflict:
+            return StoreResult(StoreOutcome.CONFLICT, conflict_reason=self.link_conflict)
         ctx = self.contexts[internal_request_id]
         current = self.commands.get(internal_request_id)
+        if current is None and self.closed_rental:
+            # 반납이 재조작할 대여를 먼저 닫았다. 연결을 거부하고 미전송 명령을 남긴다.
+            refused = CommandRecord("command:" + internal_request_id, internal_request_id, node_id,
+                action, ExecutionStatus.NOT_SENT, ctx.execution_kind, None, ctx.usage_id,
+                self.reserved_at, outcome=CommandOutcome.NOT_SENT, occurred_at=self.clock(),
+                evidence={"source": "link_command", "reason": ReasonCode.USE_NOT_FOUND.value})
+            self.commands[internal_request_id] = refused
+            self.usages[internal_request_id] = "released"
+            return self._after(failure, StoreResult(StoreOutcome.CONFLICT, command=refused,
+                conflict_reason=StoreConflictReason.STATE_CONFLICT))
         outcome = StoreOutcome.ALREADY_APPLIED if current else StoreOutcome.APPLIED
         if current is None:
             current = CommandRecord("command:" + internal_request_id, internal_request_id, node_id,
@@ -369,6 +383,48 @@ def test_FR19_begin_conflict_blocks_send(env, reason, expected):
     result = env.service.execute(env.ctx)
     assert (result.status, result.reason, result.recheck) == (ExecutionStatus.PENDING, expected, None)
     assert env.gateway.calls == calls(env, "cancel") == []
+
+
+@pytest.mark.parametrize("stored", [True, False], ids=["command_stored", "conflict_only"])
+def test_FR19_reoperation_link_after_close_is_use_not_found(env, stored):
+    env.ctx = replace(env.ctx, execution_kind=ExecutionKind.RENTAL_REOPERATION)
+    env.store.contexts[env.ctx.internal_request_id] = env.ctx
+    # 저장소는 연결을 거부하며 미전송 명령을 남긴다. 명령 없이 STATE_CONFLICT만 주는 충돌도 같은 결과다.
+    env.store.closed_rental = stored
+    env.store.link_conflict = None if stored else StoreConflictReason.STATE_CONFLICT
+    result = env.service.execute(env.ctx)
+    refused = env.store.commands.get(env.ctx.internal_request_id)
+    assert (refused is not None) == stored
+    assert (result.status, result.reason, result.command_id, result.use_id, result.recheck) == (
+        ExecutionStatus.NOT_SENT, ReasonCode.USE_NOT_FOUND, refused.command_id if stored else None, None, None)
+    assert env.gateway.calls == env.rechecker.calls == calls(env, "begin") == calls(env, "cancel") == []
+    # 같은 서비스는 다시 연결하지 않는다. 새 서비스는 저장된 명령을 읽거나 저장소가 같은 충돌을 알려 같은 결과를 낸다.
+    assert env.service.execute(env.ctx) == result
+    assert len(calls(env, "link")) == 1
+    assert env.create().execute(env.ctx) == result
+    if stored:
+        # 읽을 때는 보이지 않다가 연결할 때 이미 있다고 답하는 재인계(ALREADY_APPLIED)도 같다.
+        env.store.execution = lambda internal_request_id: None
+        assert env.create().execute(env.ctx) == result
+        assert env.store.commands[env.ctx.internal_request_id] == refused
+        assert len(calls(env, "link")) == 2
+    assert env.gateway.calls == env.rechecker.calls == calls(env, "begin") == calls(env, "cancel") == []
+
+
+@pytest.mark.parametrize("kind,reason", [
+    (ExecutionKind.RENTAL_INITIAL, StoreConflictReason.STATE_CONFLICT),
+    (ExecutionKind.SHARED, StoreConflictReason.STATE_CONFLICT),
+    (ExecutionKind.RENTAL_REOPERATION, StoreConflictReason.CONTENT_CONFLICT),
+])
+def test_FR19_other_link_conflicts_stay_link_conflict(env, kind, reason):
+    env.ctx = replace(env.ctx, execution_kind=kind,
+                      use_id=None if kind == ExecutionKind.SHARED else "use-1")
+    env.store.contexts[env.ctx.internal_request_id] = env.ctx
+    env.store.link_conflict = reason
+    result = env.service.execute(env.ctx)
+    assert (result.status, result.reason, result.command_id) == (ExecutionStatus.PENDING, None, None)
+    assert env.service.blockers(env.ctx.internal_request_id) == ("link_conflict",)
+    assert env.gateway.calls == calls(env, "begin") == calls(env, "cancel") == []
 
 
 def test_FR06_begin_already_applied_does_not_send(env):

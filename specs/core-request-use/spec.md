@@ -2,7 +2,7 @@
 
 - 담당: eunji719 (판정)
 - 요구사항: FR-09, FR-18, FR-19
-- 따르는 결정: #16, #35
+- 따르는 결정: #16, #35, 2026-10-27 결정 3 (재조작과 반납의 경합)
 
 ## 1. 왜
 
@@ -87,6 +87,8 @@
 | `NOT_SENT` 재전송의 응답을 첫 호출과 비교한다 | 중단 사유마다 판정·사유·기기·`use_id`가 첫 호출과 같다 | `test_FR18_재전송은_첫_호출과_같은_판정을_준다` |
 | 재전송인데 기존 판정이 `OK`가 아니다 | 기존 판정을 그대로 반환한다 | `test_FR09_재전송된_거부_판정은_그대로_반환한다` |
 | 실행 기록 조회가 예외를 낸다 | `DENY` / `INTERNAL_ERROR` | `test_FR09_실행_기록_조회가_실패하면_INTERNAL_ERROR` |
+| 재조작 인계의 중단 사유가 `USE_NOT_FOUND`다 (대여가 이미 반납됐다) | `DENY` / `USE_NOT_FOUND` | `test_FR19_반납과_겹친_재조작은_USE_NOT_FOUND` |
+| 실제 서버에서 재조작 인계 직전에 같은 사용자가 반납한다 | 반납은 `OK`, 재조작은 `DENY` / `USE_NOT_FOUND`. `INTERNAL_ERROR`가 아니다 | `test_FR19_runtime_reoperation_after_release_is_use_not_found` (`tests/integration/`) |
 
 ## 6. 결정
 

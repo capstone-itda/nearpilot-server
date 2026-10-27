@@ -34,6 +34,7 @@ _BY_STATUS: dict[ExecutionStatus, tuple[Verdict, ReasonCode]] = {
 _BY_REASON: dict[ReasonCode, tuple[Verdict, ReasonCode]] = {
     ReasonCode.COMMAND_IN_PROGRESS: (Verdict.BUSY, ReasonCode.COMMAND_IN_PROGRESS),
     ReasonCode.DEVICE_BUSY: (Verdict.BUSY, ReasonCode.DEVICE_BUSY),
+    ReasonCode.USE_NOT_FOUND: (Verdict.DENY, ReasonCode.USE_NOT_FOUND),
     ReasonCode.TARGET_UNAVAILABLE: (Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE),
     ReasonCode.NODE_NOT_CONNECTED: (Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE),
     ReasonCode.RESERVATION_EXPIRED: (Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE),

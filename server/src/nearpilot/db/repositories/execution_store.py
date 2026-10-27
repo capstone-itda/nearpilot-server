@@ -72,6 +72,13 @@ def _evidence_matches(stored_json: str | None, evidence: Mapping[str, Any]) -> b
     return from_json(to_json(evidence)) == from_json(stored_json)
 
 
+class _RentalClosed(LookupError):
+    """재조작을 붙일 대여가 닫혔다. 기기에 `ACTIVE` 세션이 없다.
+
+    `link_command`만 이것을 연결 거부로 바꾼다. 복원 조회는 `LookupError`로 그대로 둔다.
+    """
+
+
 class SqliteExecutionStore:
     """`ExecutionStore` Protocol 구현."""
 
@@ -108,9 +115,14 @@ class SqliteExecutionStore:
                 # 서버 내부 요청은 세션·사용분이 없다 (#86). occupancy로 판단하지 않는다.
                 execution_kind, use_id, usage_id = ExecutionKind.SERVER_INTERNAL, None, None
             else:
-                execution_kind, use_id = self._resolve_execution_kind(
-                    internal_request_id, node_id, node_row["occupancy"]
-                )
+                try:
+                    execution_kind, use_id = self._resolve_execution_kind(
+                        internal_request_id, node_id, node_row["occupancy"]
+                    )
+                except _RentalClosed:
+                    return self._refuse_closed_rental(
+                        internal_request_id, node_id, action, request_row["received_at"]
+                    )
                 usage_row = self._live_usage(internal_request_id)
                 usage_id = usage_row["usage_id"] if usage_row else None
 
@@ -182,6 +194,8 @@ class SqliteExecutionStore:
         1. `SHARED`면 공용형이다. 점유 세션이 없다.
         2. 대여형이고 이 `internal_request_id`로 만든 살아 있는 세션이 있으면 최초 대여다.
         3. 대여형이고 그 세션이 없는데 기기에 `ACTIVE` 세션이 있으면 재조작이다 (FR-19, #35).
+        4. `ACTIVE` 세션도 없으면 `_RentalClosed`를 던진다. 재조작 판정 뒤 반납이 대여를 닫은 경우다.
+           반납을 시작한 `CLOSING` 세션만 남은 경우도 같다.
         """
         if occupancy == Occupancy.SHARED.value:
             return ExecutionKind.SHARED, None
@@ -193,7 +207,7 @@ class SqliteExecutionStore:
             (node_id, SessionState.ACTIVE.value),
         ).fetchone()
         if active_session is None:
-            raise LookupError(f"기기 {node_id} 에 연결할 점유 세션이 없다")
+            raise _RentalClosed(f"기기 {node_id} 에 연결할 점유 세션이 없다")
         return ExecutionKind.RENTAL_REOPERATION, active_session["use_id"]
 
     def _live_session(self, internal_request_id: str) -> sqlite3.Row | None:
@@ -214,6 +228,44 @@ class SqliteExecutionStore:
             "SELECT usage_id, state FROM approval_usage WHERE internal_request_id = ? AND state != ?",
             (internal_request_id, ApprovalUsageState.RELEASED.value),
         ).fetchone()
+
+    def _refuse_closed_rental(
+        self, internal_request_id: str, node_id: str, action: Action, reserved_at: str
+    ) -> StoreResult:
+        """재조작 판정 뒤 연결 전에 반납이 대여를 닫았다. 연결을 거부하고 `NOT_SENT` 명령을 남긴다 (FR-19).
+
+        사용자의 정상 반납이 겹친 경우라 예외를 내지 않는다. 명령 행이 있어야 같은 요청의 재호출,
+        복원, 대시보드가 같은 결과를 본다. 붙일 점유 세션이 없으므로 `use_id`는 비운다. 이번 요청의
+        `reserved` 사용분은 같은 트랜잭션에서 반환한다. 남기면 승인 횟수가 묶인다. 승인이 없던
+        재조작은 반환할 사용분도 감사도 없다. 같은 요청의 재호출은 `link_command`의 기존 명령 경로가 받는다.
+        """
+        command_id = new_id()
+        usage_row = self._live_usage(internal_request_id)
+        self._conn.execute(
+            "INSERT INTO node_command (command_id, internal_request_id, node_id, action, status, "
+            "execution_kind, use_id, usage_id, reserved_at, send_started_at, send_attempted, "
+            "outcome, occurred_at, evidence) "
+            "VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, 0, ?, ?, ?)",
+            (
+                command_id, internal_request_id, node_id, action.value, ExecutionStatus.NOT_SENT.value,
+                ExecutionKind.RENTAL_REOPERATION.value, usage_row["usage_id"] if usage_row else None,
+                reserved_at, CommandOutcome.NOT_SENT.value, iso(datetime.now(timezone.utc)),
+                to_json({"source": "link_command", "reason": ReasonCode.USE_NOT_FOUND.value}),
+            ),
+        )
+        if usage_row is not None and usage_row["state"] == ApprovalUsageState.RESERVED.value:
+            self._release_reservation(internal_request_id)
+            self._append_audit(
+                internal_request_id, command_id,
+                {
+                    "event": "cancel_not_sent", "reason": ReasonCode.USE_NOT_FOUND.value,
+                    "evidence": {"source": "link_command", "cause": "rental_closed"},
+                },
+            )
+        return StoreResult(
+            outcome=StoreOutcome.CONFLICT, command=self._reload_command(command_id),
+            conflict_reason=StoreConflictReason.STATE_CONFLICT,
+        )
 
     def _already_cancelled(self, internal_request_id: str) -> bool:
         """`cancel_not_sent`가 명령 연결 전에 이 요청을 이미 취소했는지 본다 (spec §6 결정).
