@@ -117,6 +117,8 @@
 | 같은 `internal_request_id`의 예약이 취소된 뒤 다시 예약한다 | 취소된 행을 쓰지 않는다. ⑤⑥을 다시 검사하고 새 세션(새 `use_id`)과 새 사용분을 만든다. 취소된 사용분은 횟수에 세지 않는다 | `test_FR19_reserve_after_cancel_reserves_again` |
 | 최초 대여 요청이 `ACTIVE`가 된 뒤 같은 `internal_request_id`로 다시 호출한다 | 재조작 검사보다 기존 예약 조회를 먼저 한다. `REOPERATING`이 아니라 기존 `use_id`로 `RESERVED`를 반환한다. | `test_FR19_reserve_resend_after_active` |
 | 본인 `ACTIVE` 세션이 있는 기기에 재조작을 요청한다 | `REOPERATING`과 기존 `use_id`를 반환한다. 새 세션을 만들지 않는다. 승인이 있으면 이번 요청의 사용분만 예약한다. | `test_FR19_reserve_reoperating` |
+| 본인 `ACTIVE` 세션이 있는 사물함에 `close`를 요청한다 | `REOPERATING`과 기존 `use_id`를 반환한다. 승인 사용분이 없고 세션은 `ACTIVE`로 남는다. | `test_FR19_close_reoperates_own_active_rental` |
+| 본인 `ACTIVE` 세션이 없는 기기에 `close`를 요청한다 (빈 기기, 타인 점유, 공용형) | 쓰기 없이 `USE_NOT_FOUND`를 반환한다. 새 세션을 만들지 않고 기기 상태를 바꾸지 않는다. | `test_FR19_close_without_own_rental_is_use_not_found` |
 | 본인 `ACTIVE` 세션이 있지만 기기가 `FAULT`로 격리됐다 | `REOPERATING`이 아니라 `DEVICE_BUSY`를 반환한다. 사용분을 예약하지 않는다. | `test_FR19_reserve_reoperating_fault` |
 | 승인 사용분을 예약한다 (`approval_id`가 있다) | 사용분 행이 새 요청을 승인과 잇고, 승인 행이 승인 신청 요청과 잇는다. 요청 행의 `parent_internal_request_id`는 바꾸지 않는다 | `test_FR09_reserve_links_new_request_to_approval_request` |
 | 계정이 기기에 열린 세션이 있는지 묻는다 (`has_open_session`) | `RESERVED`·`ACTIVE`·`CLOSING` 세션이 있으면 `True`, `CLOSED`뿐이거나 없으면 `False` | `test_FR09_has_open_session` |

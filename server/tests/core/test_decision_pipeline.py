@@ -617,6 +617,24 @@ def test_FR18_FR19_본인_재조작은_기존_use_id로_OK이고_재조작으로
     assert ctx.execution_kind is ExecutionKind.RENTAL_REOPERATION and ctx.use_id == "use-old"
 
 
+def test_FR19_close는_본인_대여의_재조작으로_인계하고_세션을_유지한다():
+    pipe, repo, prox, *_ = build()
+    repo.reserve_outcome = ReserveOutcome.REOPERATING
+    repo.reserve_use_id = "use-old"
+    d, ctx = pipe.decide_for_execution(request(action=Action.CLOSE))
+    assert (d.verdict, d.use_id) == (Verdict.OK, "use-old")
+    assert ctx.execution_kind is ExecutionKind.RENTAL_REOPERATION
+    assert repo.reserved[0].action is Action.CLOSE and prox.calls  # 근접 검사를 open 과 같이 한다
+
+
+def test_FR19_FR21_본인_대여가_없는_close는_USE_NOT_FOUND이고_인계하지_않는다():
+    pipe, repo, *_ = build()
+    repo.reserve_outcome = ReserveOutcome.USE_NOT_FOUND
+    d, ctx = pipe.decide_for_execution(request(action=Action.CLOSE))
+    assert (d.verdict, d.reason, d.use_id) == (Verdict.DENY, ReasonCode.USE_NOT_FOUND, None)
+    assert ctx is None
+
+
 def test_FR18_최초_대여_인계_context에_확정한_값이_담긴다():
     pipe, repo, *_ = build()
     repo.reserve_usage_id = "usage-1"

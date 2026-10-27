@@ -414,6 +414,8 @@ class DecisionPipeline:
         if outcome is ReserveOutcome.APPROVAL_EXHAUSTED:
             return make_decision(
                 req.request_id, iid, Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED, node_id=node_id, p_max=p)
+        if outcome is ReserveOutcome.USE_NOT_FOUND:
+            return make_decision(req.request_id, iid, Verdict.DENY, ReasonCode.USE_NOT_FOUND, node_id=node_id, p_max=p)
         raise ValueError(f"알 수 없는 점유 결과: {outcome!r}")
 
     @staticmethod

@@ -94,6 +94,7 @@ class ReasonCode(StrEnum):
 
 class Action(StrEnum):
     OPEN = "open"
+    CLOSE = "close"  # 사물함 닫기. 본인 대여의 재조작으로만 실행하고 반납이 아니다
     ON = "on"
     OFF = "off"
 
@@ -270,6 +271,7 @@ class ReserveOutcome(StrEnum):
     DEVICE_BUSY = "device_busy"
     USER_BUSY = "user_busy"
     APPROVAL_EXHAUSTED = "approval_exhausted"
+    USE_NOT_FOUND = "use_not_found"  # close 인데 본인 ACTIVE 대여가 없다. 새 세션을 만들지 않는다.
 
 
 class ExecutionKind(StrEnum):

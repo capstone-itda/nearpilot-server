@@ -57,7 +57,7 @@ def test_FR09_인자가_비면_INVALID_INPUT이고_서비스를_부르지_않는
     assert c.core.accesses == []
 
 
-@pytest.mark.parametrize("action", ["", "close", "OPEN", "drop table"])
+@pytest.mark.parametrize("action", ["", "lock", "CLOSE", "drop table"])
 def test_FR09_action이_잘못되면_INVALID_INPUT(action):
     c = Client()
     resp = access(c, {**ARGS, "action": action})

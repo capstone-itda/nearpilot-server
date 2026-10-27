@@ -803,6 +803,11 @@ class SqliteRepository:
                     reserved_at=parse_iso(reserved_at_iso),
                 )
 
+            # close 는 본인 대여의 재조작으로만 실행한다. 빈 기기·타인 점유·공용형에 세션을 만들지 않고,
+            # 타인 점유와 대여 없음을 구분하지 않는다 (FR-19, FR-21).
+            if req.action is Action.CLOSE:
+                return ReserveResult(outcome=ReserveOutcome.USE_NOT_FOUND)
+
             if node["occupancy"] == Occupancy.SHARED.value:
                 if req.approval_id is None:
                     return ReserveResult(outcome=ReserveOutcome.RESERVED)

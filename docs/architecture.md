@@ -241,6 +241,10 @@ api  ──▶  core  ──▶  db
 | 대여형 | ⑤⑥을 검사하고 `RESERVED` 점유 세션을 만든다. 승인이 있으면 승인 사용분을 예약한다. | `use_id`는 점유 세션 ID다. `usage_id`는 사용분 ID 또는 `None`이다. |
 | 공용형이고 `approval_id`가 있다 | ⑤⑥과 점유 세션 생성을 건너뛴다. 승인 사용분만 예약한다. | `use_id`는 `None`이다. `usage_id`는 사용분 ID다. |
 | 공용형이고 정책이 `open`이며 `approval_id`가 `None`이다 | 아무것도 쓰지 않는다. | 결과는 `RESERVED`다. `use_id`와 `usage_id`는 `None`이다. |
+| `close`이고 본인 `ACTIVE` 대여가 있다 | 기존 대여에 재조작을 연결한다. 승인 사용분을 예약하지 않는다. | 결과는 `REOPERATING`이다. `use_id`는 기존 대여, `usage_id`는 `None`이다. |
+| `close`이고 본인 `ACTIVE` 대여가 없다 | 아무것도 쓰지 않는다. 빈 기기, 타인 점유, 공용형이 모두 해당한다. | 결과는 `USE_NOT_FOUND`다. 판정은 `DENY`와 `USE_NOT_FOUND`를 반환한다. |
+
+- 사물함의 `close`는 반납이 아니다. 점유 세션과 `rental_due_at`을 바꾸지 않는다. ④ 정책 검사는 정책이 있으면 승인 없이 `OK`를 반환하고, 정책이 없으면 `DENY`다. ①~③은 `open`과 같다.
 
 - 판정은 기기의 점유 방식에 따라 호출을 나누지 않는다. DB가 기기의 `occupancy`를 보고 건너뛸 검사를 정한다.
 - 승인이 필요한 공용형 요청도 ④가 반환한 `approval_id`로 `reserve_if_free()`를 호출해서 사용분을 확보한다. 점유 세션은 만들지 않는다. 사용분 확보 전용 DB 호출은 두지 않는다.
@@ -1038,7 +1042,7 @@ MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_sess
 | `rssi` | `frame_ts`: UTC 시각, `observations`: 배열 | `frame_ts`는 스캔 관측 시각이다. 각 관측은 `uuid`, `major`, `minor`, `rssi`를 담는다. 빈 배열을 허용한다. |
 | `status` | `observed_at`: UTC 시각, 펌웨어의 명령 처리 상태: 필드와 타입은 미결이다 | 처리 대기, 처리 중, 확인 불가를 구분한다. 실제 상태와 센서 고장 값은 담지 않는다. |
 | `result` | `command_id`: 문자열, `event_id`: UUID 문자열, `state`: 아래 상태 값, `occurred_at`: UTC 시각, `error_code?`: 문자열 | 제어 신호 출력 결과다. 재보고 시 사건 ID, 결과와 발생 시각을 유지한다. |
-| `cmd` | `command_id`: 문자열, `action`: `open`·`on`·`off`, `target_session_id`: 문자열, `issued_at`: UTC 시각, `expires_at`: UTC 시각 | 현재 연결을 지정한다. 사물함은 `open`, 조명·스피커는 `on`·`off`를 받는다. |
+| `cmd` | `command_id`: 문자열, `action`: `open`·`close`·`on`·`off`, `target_session_id`: 문자열, `issued_at`: UTC 시각, `expires_at`: UTC 시각 | 현재 연결을 지정한다. 사물함은 `open`·`close`, 조명·스피커는 `on`·`off`를 받는다. 사물함은 자동으로 닫지 않는다. |
 | `occupancy` | `device_state`: `AVAILABLE`·`RESERVED`·`ACTIVE`·`CLOSING`·`FAULT` 중 하나, `sent_at`: UTC 시각 | 대여형 기기의 저장된 기기 상태다. 표시에만 쓴다. 구동과 실행 판정의 근거가 아니다. |
 
 - `on`과 `off`는 조명 제어와 스피커 재생·정지의 제어 신호 출력이다. 실제 상태를 증명하지 않는다.

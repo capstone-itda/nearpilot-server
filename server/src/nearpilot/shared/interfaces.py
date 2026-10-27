@@ -254,6 +254,7 @@ class Repository(Protocol):
         무제한 기간형 승인도 요청별 사용분을 만든다. 횟수 검사만 생략한다.
         이번 요청의 사용분만 예약한다. 새 세션을 만들거나 rental_due_at 을 바꾸지 않는다.
         타인 점유 또는 RESERVED·CLOSING·FAULT 는 DEVICE_BUSY 다. 같은 요청의 중복은 기존 연결을 반환한다.
+        close 는 본인 ACTIVE 점유의 재조작만 허용한다. 그 밖에는 쓰기 없이 USE_NOT_FOUND 다.
         """
         ...
 

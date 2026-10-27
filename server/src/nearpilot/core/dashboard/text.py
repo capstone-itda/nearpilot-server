@@ -308,6 +308,8 @@ def _user(payload: Mapping[str, Any], names: Mapping[str, str]) -> str | None:
         return _reason_text(ReasonCode.USER_BUSY)
     if result == ReserveOutcome.APPROVAL_EXHAUSTED.value:
         return _reason_text(ReasonCode.APPROVAL_EXHAUSTED)
+    if result == ReserveOutcome.USE_NOT_FOUND.value:
+        return "닫을 본인 대여 없음"
     return None
 
 

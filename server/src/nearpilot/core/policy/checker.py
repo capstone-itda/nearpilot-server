@@ -30,7 +30,8 @@ class RepositoryPolicyChecker:
         except LookupError:
             return PolicyCheckResult(verdict=Verdict.DENY, reason=ReasonCode.POLICY_DENIED, policy_version=None)
 
-        if policy.mode == AccessMode.OPEN:
+        # close 는 승인 없이 허용한다. 본인 대여의 재조작만 실행되는 것은 ⑤⑥ 이 확인한다 (FR-14).
+        if policy.mode == AccessMode.OPEN or action is Action.CLOSE:
             return PolicyCheckResult(verdict=Verdict.OK, reason=ReasonCode.OK, policy_version=policy.version)
 
         approval = self._repository.valid_approval(

@@ -65,6 +65,8 @@
 |---|---|---|
 | 정책이 없다 | `DENY`, `policy_version=None` (기존과 같음) | `test_FR14_policy_missing_deny` |
 | `open` 정책이다 | `OK` (기존과 같음) | `test_FR14_policy_open_ok` |
+| `restricted` 정책에서 `close`를 검사한다 | 승인 조회 없이 `OK`, `approval_id=None`이다. 본인 대여 확인은 ⑤⑥이 한다 (2026-10-27 담당자 결정) | `test_FR14_close_needs_no_approval_on_restricted_policy` |
+| 정책이 없는 기기에서 `close`를 검사한다 | `DENY` / `POLICY_DENIED` | `test_FR14_close_without_policy_denied` |
 | 유효하고 남은 횟수가 있는 승인이 있다 | `OK`와 `approval_id` (기존과 같음) | `test_FR14_policy_valid_approval_ok` |
 | 승인 이력이 전혀 없다 | `APPROVAL_REQUIRED` | `test_FR14_reason_required_no_history` |
 | 이전 정책 버전의 승인만 있다 | `APPROVAL_REQUIRED` | `test_FR14_reason_required_old_version` |

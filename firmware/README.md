@@ -72,10 +72,11 @@ pio run -e esp32dev-locker-1 -t upload --upload-port COM6
 ```
 
 - 서보 신호선은 보드의 `IO13`에 연결한다. 50Hz, 500~2,400µs 펄스로 0~180°를 낸다.
-- 부팅하면 잠금 각도(0°)를 낸다. 허가한 새 `open`은 열림 각도(90°)를 내고, 3초 뒤 잠금 각도로 되돌린다.
-- 각도와 유지 시간은 `config.example.h`의 `NP_SERVO_LOCKED_DEG`, `NP_SERVO_OPEN_DEG`, `NP_SERVO_OPEN_HOLD_MS`다.
-- 기존 결과 재보고와 재부팅은 다시 열지 않는다. 되돌리기는 명령 결과를 보고하지 않는다.
-- 부팅 로그 `SERVO_OUTPUT pin=13 locked_deg=0 open_deg=90 hold_ms=3000 ...`으로 적용한 설정을 확인한다. 되돌릴 때 `SERVO_RELOCKED`가 나온다.
+- 부팅하면 잠금 각도(0°)를 낸다. 허가한 새 `open`은 열림 각도(90°)를, 허가한 새 `close`는 잠금 각도를 낸다.
+- 자동으로 닫지 않는다. `close`가 오거나 재부팅할 때까지 열림 각도를 유지한다.
+- 각도는 `config.example.h`의 `NP_SERVO_LOCKED_DEG`, `NP_SERVO_OPEN_DEG`다.
+- 기존 결과 재보고와 재부팅은 다시 열지 않는다.
+- 부팅 로그 `SERVO_OUTPUT pin=13 locked_deg=0 open_deg=90 ...`으로 적용한 설정을 확인한다.
 - 서보 전원(5V)은 외부 전원으로 공급하고 ESP32와 GND를 묶는다. GPIO와 보드의 3.3V 핀으로 서보 전원을 공급하지 않는다.
 
 ### locker-1의 GPIO19 점유 표시 LED
@@ -88,7 +89,7 @@ pio run -e esp32dev-locker-1 -t upload --upload-port COM6
 - 부팅 로그 `LED_OUTPUT pin=19 count=8 level=64 initial=off`로 설정을, `OCCUPANCY_DISPLAY pin=19 state=free|occupied`로 색 변경을 확인한다.
 - 표시는 서버의 저장 상태를 보여 줄 뿐이다. 명령 접수와 구동에 쓰지 않는다. 서버가 멈춰도 마지막 표시가 남는다.
 - 브로커 ACL은 서버 계정에 `topic write nearpilot/node/+/occupancy`, 기기 계정에 자기 `occupancy` 읽기를 둔다.
-- 성공 보고는 열림 각도 신호 출력과 결과 저장을 뜻한다. 문이 실제로 열렸다는 근거가 아니다.
+- 성공 보고는 열림·잠금 각도 신호 출력과 결과 저장을 뜻한다. 문이 실제로 열리거나 닫혔다는 근거가 아니다.
 
 ## 설정과 확인
 
@@ -99,7 +100,7 @@ pio run -e esp32dev-locker-1 -t upload --upload-port COM6
 기존 generation 1 설정은 재주입 전 부팅 시 `config=invalid`, `configured=0`이다. 저장된 설정과 기록은 지우지 않는다.
 현재 `python -m tools.node_lab provision`은 새 키를 전달하지 못한다. 도구 변경은 별도 범위다.
 부팅 확인 도구와 `CONFIG_STATE` 형식은 유지한다 (`server/tools/node_lab/README.md`).
-`announce`는 설정 값을 발표한다. `locker`는 `open`, `light`·`speaker`는 `on`·`off`만 받는다.
+`announce`는 설정 값을 발표한다. `locker`는 `open`·`close`, `light`·`speaker`는 `on`·`off`만 받는다.
 모든 구동은 시리얼·선택 GPIO 신호다. `esp32dev-locker-1`은 서보 신호를 더한다. `handle()`은 접수 저장, 재검사, `running` 발행과 출력을 한 번에 처리한다.
 `Actuator::output()`이 출력을 마치면(`Completed`) 결과를 저장하고 확인 조회한 뒤 `succeeded`를 발행한다.
 출력이 일어나지 않았음을 확인하면 `failed`, 출력 여부를 모르면 `unknown`이다. 처리하는 동안 새 명령은 `DEVICE_BUSY`다.
