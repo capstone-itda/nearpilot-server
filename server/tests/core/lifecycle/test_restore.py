@@ -20,7 +20,7 @@ from nearpilot.shared.enums import (
 )
 from nearpilot.shared.errors import StoreError, StoreNotApplied, StoreOutcomeUnknown
 from nearpilot.shared.models import (
-    ApprovalUsageRecord, CommandRecord, NodeInfo, NodeStatus, PendingRequestRecord,
+    ApprovalUsageRecord, CommandRecord, Decision, NodeInfo, NodeStatus, PendingRequestRecord,
     PolicyCheckResult, RecoveryCompletion, RecoveryEvidence, RecoveryRecord,
     RecoverySettlement, RestoredSession, RestoreBundle, StoreResult, TargetSpec, UseRequest, UseSession,
 )
@@ -253,14 +253,17 @@ def light(env):
                                              capability=Capability.LIGHT, occupancy=Occupancy.SHARED)
 
 
-def pending_request(env, *, shared=False, age=20):
+def pending_request(env, *, shared=False, age=20, verdict=Verdict.OK):
+    """명령에 연결되기 전의 예약 요청. verdict가 None이면 판정이 비었다."""
     node_id = "light-1" if shared else "locker-1"
     request = UseRequest("visitor-1", "external-1", TargetSpec.parse(node_id),
                          Action.ON if shared else Action.OPEN, "test", env.clock())
+    decision = None if verdict is None else Decision(
+        "request-1", "external-1", verdict, ReasonCode.OK if verdict == Verdict.OK else ReasonCode.INTERNAL_ERROR)
     record = PendingRequestRecord("request-1", request, "digest",
                                   ExecutionKind.SHARED if shared else ExecutionKind.RENTAL_INITIAL,
                                   None if shared else "use-1", "usage-1",
-                                  env.clock() - timedelta(seconds=age))
+                                  env.clock() - timedelta(seconds=age), decision)
     env.store.requests[record.internal_request_id] = (node_id, record)
     env.store.usages["usage-1"] = node_id, ApprovalUsageRecord(
         "usage-1", "approval-1", "request-1", None, ApprovalUsageState.RESERVED,
@@ -457,6 +460,35 @@ def test_FR19_restore_request_without_command_cancelled(env, shared):
     assert env.store.usages["usage-1"][1].state == ApprovalUsageState.RELEASED
     assert env.store.commands == {}
     assert env.service.can_execute(node_id)
+
+
+@pytest.mark.parametrize("verdict", [Verdict.DENY, None, Verdict.OK])
+def test_FR19_restore_cancels_stale_reservation_of_failed_request(env, verdict):
+    """판정이 OK가 아니거나 빈 요청은 예약 시각이 방금이어도 바로 취소한다. OK 요청은 대기한다."""
+    rental(env, SessionState.RESERVED)
+    pending_request(env, age=1, verdict=verdict)
+    env.service.restore()
+    if verdict == Verdict.OK:
+        assert env.store.cancel_calls == []
+        assert env.repository.sessions["use-1"].state == SessionState.RESERVED
+        assert env.service.blockers("locker-1") == ("reservation_pending",)
+        advance(env, env.settings[0].reservation_wait_sec)
+        status(env)
+        assert [c[:3] for c in env.store.cancel_calls] == [
+            ("request-1", ExecutionStatus.PENDING, ReasonCode.RESERVATION_EXPIRED)]
+        assert env.store.cancel_calls[0][3]["source"] == "restore_reservation_expired"
+    else:
+        assert [c[:3] for c in env.store.cancel_calls] == [
+            ("request-1", ExecutionStatus.PENDING, ReasonCode.INTERNAL_ERROR)]
+        assert env.store.cancel_calls[0][3]["source"] == "restore_failed_request"
+        assert env.store.cancel_calls[0][3]["reason"] == ReasonCode.INTERNAL_ERROR.value
+        assert env.repository.sessions["use-1"].state == SessionState.CLOSED
+        assert env.store.usages["usage-1"][1].state == ApprovalUsageState.RELEASED
+        assert env.store.commands == {}
+        assert not env.service.can_execute("locker-1")
+        status(env)
+        assert env.service.can_execute("locker-1")
+        assert len(env.store.cancel_calls) == 1
 
 
 @pytest.mark.parametrize("commit", [False, True])

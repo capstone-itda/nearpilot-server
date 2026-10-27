@@ -111,9 +111,7 @@ class SqliteExecutionStore:
                 execution_kind, use_id = self._resolve_execution_kind(
                     internal_request_id, node_id, node_row["occupancy"]
                 )
-                usage_row = self._conn.execute(
-                    "SELECT usage_id FROM approval_usage WHERE internal_request_id = ?", (internal_request_id,)
-                ).fetchone()
+                usage_row = self._live_usage(internal_request_id)
                 usage_id = usage_row["usage_id"] if usage_row else None
 
             command_id = new_id()
@@ -182,14 +180,12 @@ class SqliteExecutionStore:
         정책의 재조작은 사용분을 예약하지 않아 행이 없기 때문이다 (#27).
 
         1. `SHARED`면 공용형이다. 점유 세션이 없다.
-        2. 대여형이고 이 `internal_request_id`로 만든 세션이 있으면 최초 대여다.
+        2. 대여형이고 이 `internal_request_id`로 만든 살아 있는 세션이 있으면 최초 대여다.
         3. 대여형이고 그 세션이 없는데 기기에 `ACTIVE` 세션이 있으면 재조작이다 (FR-19, #35).
         """
         if occupancy == Occupancy.SHARED.value:
             return ExecutionKind.SHARED, None
-        own_session = self._conn.execute(
-            "SELECT use_id FROM use_session WHERE internal_request_id = ?", (internal_request_id,)
-        ).fetchone()
+        own_session = self._live_session(internal_request_id)
         if own_session is not None:
             return ExecutionKind.RENTAL_INITIAL, own_session["use_id"]
         active_session = self._conn.execute(
@@ -200,14 +196,38 @@ class SqliteExecutionStore:
             raise LookupError(f"기기 {node_id} 에 연결할 점유 세션이 없다")
         return ExecutionKind.RENTAL_REOPERATION, active_session["use_id"]
 
+    def _live_session(self, internal_request_id: str) -> sqlite3.Row | None:
+        """이 요청의 살아 있는 점유 세션이다. 취소한(`CLOSED`·`cancelled`) 세션은 뺀다.
+
+        `use_session.internal_request_id`에는 유일 제약이 없다. 오류 뒤 취소한 요청을 재판정하면(#76)
+        취소한 세션과 새 세션이 함께 남는다. 요청 ID로 세션을 찾는 곳은 새 세션을 골라야 한다.
+        """
+        return self._conn.execute(
+            "SELECT use_id, state FROM use_session WHERE internal_request_id = ? "
+            "AND (state != ? OR end_reason IS NOT ?)",
+            (internal_request_id, SessionState.CLOSED.value, EndReason.CANCELLED.value),
+        ).fetchone()
+
+    def _live_usage(self, internal_request_id: str) -> sqlite3.Row | None:
+        """이 요청의 살아 있는 승인 사용분이다. 취소해서 반환한(`released`) 사용분은 뺀다."""
+        return self._conn.execute(
+            "SELECT usage_id, state FROM approval_usage WHERE internal_request_id = ? AND state != ?",
+            (internal_request_id, ApprovalUsageState.RELEASED.value),
+        ).fetchone()
+
     def _already_cancelled(self, internal_request_id: str) -> bool:
         """`cancel_not_sent`가 명령 연결 전에 이 요청을 이미 취소했는지 본다 (spec §6 결정).
+
+        살아 있는 세션이나 살아 있는 사용분이 있으면 취소된 요청이 아니다. 오류 뒤 취소한 요청을
+        재판정하면(#76) 취소한 행과 새 예약이 함께 있기 때문이다. 살아 있는 행이 없을 때만 아래를 본다.
 
         최초 대여는 점유 세션이 `CLOSED`·`cancelled`로 남는다. 재조작·공용형은 점유 세션이
         없으므로 승인 사용분이 `released`인지로 본다. 승인이 없던 요청(`open`+공용형)은
         취소해도 아무 행도 남지 않아 판단할 근거가 없다 — 그 경우는 보호할 상태도 없었으므로
         뒤늦은 연결을 막지 않아도 안전하다.
         """
+        if self._live_session(internal_request_id) is not None or self._live_usage(internal_request_id) is not None:
+            return False
         session_row = self._conn.execute(
             "SELECT state, end_reason FROM use_session WHERE internal_request_id = ?", (internal_request_id,)
         ).fetchone()
@@ -330,20 +350,15 @@ class SqliteExecutionStore:
 
         명령 행이 없으므로 `StoreResult.command`는 `None`이다. 예약(점유 세션)·승인 사용분
         정리만 반영한다. 이후 `link_command`가 같은 요청으로 오면 `CONFLICT`다 (6절 결정).
+        같은 요청에 취소한 행과 새 예약이 함께 있으면(#76 재판정) 살아 있는 행만 본다.
         """
         if expected != ExecutionStatus.PENDING:
             return StoreResult(outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.STATE_CONFLICT)
-        own_session = self._conn.execute(
-            "SELECT use_id, state FROM use_session WHERE internal_request_id = ?", (internal_request_id,)
-        ).fetchone()
-        usage_row = self._conn.execute(
-            "SELECT usage_id, state FROM approval_usage WHERE internal_request_id = ?", (internal_request_id,)
-        ).fetchone()
+        own_session = self._live_session(internal_request_id)
         already_cancelled = (
             own_session is not None and own_session["state"] == SessionState.CLOSED.value
         ) or (
-            own_session is None and usage_row is not None
-            and usage_row["state"] == ApprovalUsageState.RELEASED.value
+            own_session is None and self._already_cancelled(internal_request_id)
         )
         if already_cancelled:
             return StoreResult(outcome=StoreOutcome.ALREADY_APPLIED, command=None)
@@ -865,39 +880,56 @@ class SqliteExecutionStore:
     def _pending_requests_by_node(self, linked_ids: set[str]) -> dict[str, list[PendingRequestRecord]]:
         """`link_command` 전에 멈춘, **예약이 실제로 남아있는** 요청이다 (6절 결정).
 
-        `verdict = OK`만으로는 부족하다. `DENY` 등 다른 판정은 처음부터 걸러지지만, `open`
+        판정 값으로 거르지 않는다. 판정이 `OK`가 아니거나(오류로 끝난 `INTERNAL_ERROR` 등) 비어
+        있어도(`NULL`) 예약이 남았으면 넣는다 — 오류 뒤 바로 취소(#80)가 실패한 요청이다. `open`
         정책의 공용형 성공은 아무것도 쓰지 않는다(#27) — 그런 요청은 세션도 사용분도 없어
         복원할 예약이 없다. 점유 세션이 `RESERVED`이거나 승인 사용분이 `reserved`인 경우만
         넣는다. 이미 `cancel_not_sent`로 취소된 요청도 이 조건에서 자연히 빠진다(세션은
         `CLOSED`, 사용분은 `released`로 바뀌어 있다) — `_already_cancelled`를 또 부르지
         않아도 된다.
+
+        오류 판정은 `request.node_id`를 비운 채 저장된다. 대상 기기는 `request.node_id`, 남은
+        세션의 `node_id`, 남은 사용분의 승인 `node_id` 순서로 찾는다. 기기 행이 없으면 넣지 않는다.
+        `decision`은 저장된 판정이고, 판정이 비었으면 `None`이다.
         """
         by_node: dict[str, list[PendingRequestRecord]] = defaultdict(list)
         for row in self._conn.execute(
-            "SELECT * FROM request WHERE verdict = ? AND node_id IS NOT NULL", (Verdict.OK.value,)
+            "SELECT * FROM request WHERE internal_request_id IN ("
+            "SELECT internal_request_id FROM use_session WHERE state = ? "
+            "UNION SELECT internal_request_id FROM approval_usage WHERE state = ?)",
+            (SessionState.RESERVED.value, ApprovalUsageState.RESERVED.value),
         ):
             internal_request_id = row["internal_request_id"]
             if internal_request_id in linked_ids:
                 continue
-            node_id = row["node_id"]
+            session_row = self._conn.execute(
+                "SELECT node_id FROM use_session WHERE internal_request_id = ? AND state = ?",
+                (internal_request_id, SessionState.RESERVED.value),
+            ).fetchone()
+            usage_row = self._conn.execute(
+                "SELECT au.usage_id, a.node_id FROM approval_usage au "
+                "JOIN approval a ON a.approval_id = au.approval_id "
+                "WHERE au.internal_request_id = ? AND au.state = ?",
+                (internal_request_id, ApprovalUsageState.RESERVED.value),
+            ).fetchone()
+            node_id = (
+                row["node_id"]
+                or (session_row["node_id"] if session_row else None)
+                or (usage_row["node_id"] if usage_row else None)
+            )
             node_row = self._conn.execute(
                 "SELECT occupancy FROM node WHERE node_id = ?", (node_id,)
             ).fetchone()
             if node_row is None:
                 continue
-            session_row = self._conn.execute(
-                "SELECT 1 FROM use_session WHERE internal_request_id = ? AND state = ?",
-                (internal_request_id, SessionState.RESERVED.value),
-            ).fetchone()
-            usage_row = self._conn.execute(
-                "SELECT usage_id FROM approval_usage WHERE internal_request_id = ? AND state = ?",
-                (internal_request_id, ApprovalUsageState.RESERVED.value),
-            ).fetchone()
-            if session_row is None and usage_row is None:
+            try:
+                execution_kind, use_id = self._resolve_execution_kind(
+                    internal_request_id, node_id, node_row["occupancy"]
+                )
+            except LookupError:
+                # 재조작 사용분만 남았는데 대여가 이미 닫혔다. 이 요청만 뺀다. 남은 사용분이 그 기기만
+                # 막는다(`unlinked_approval_usage`). 다른 기기의 복원까지 막지 않는다.
                 continue
-            execution_kind, use_id = self._resolve_execution_kind(
-                internal_request_id, node_id, node_row["occupancy"]
-            )
             by_node[node_id].append(PendingRequestRecord(
                 internal_request_id=internal_request_id,
                 request=self._use_request_from_row(row),

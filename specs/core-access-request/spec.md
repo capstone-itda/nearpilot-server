@@ -78,7 +78,7 @@
 | `node_id` 형식이 틀렸거나 `nearest:`·`any:` 처럼 기기를 지정하지 않았다 | `DENY` / `INVALID_INPUT`. 요청 행을 만들지 않는다 | `test_FR09_node_id_형식_오류는_거부한다` |
 | 같은 `request_id`와 같은 입력으로 재전송한다 | 기존 판정을 반환한다. 신청을 다시 만들지 않는다 | `test_FR10_재전송은_기존_판정을_반환한다` |
 | 같은 `request_id`에 다른 입력이 온다 | `DENY` / `REQUEST_ID_CONFLICT` | `test_FR10_같은_키_다른_입력은_충돌이다` |
-| 같은 키의 첫 요청이 아직 판정 중이다 | `DENY` / `INTERNAL_ERROR` | `test_FR10_판정_중인_같은_키는_거부한다` |
+| 같은 키의 첫 요청이 아직 판정 중이다 | `BUSY` / `REQUEST_IN_PROGRESS`. 저장하지 않는다 (`request_use`와 같다, 2026-10-27 팀 결정) | `test_FR10_판정_중인_같은_키는_REQUEST_IN_PROGRESS로_답한다` |
 | `create_approval_request`가 예외를 낸다 | `DENY` / `INTERNAL_ERROR`. 예외 내용은 감사 기록에만 남긴다 | `test_FR18_저장_예외는_내부_오류로_거부한다` |
 | 신청 결과의 상태가 `pending`이 아니다 | `DENY` / `INTERNAL_ERROR` (기본값은 거부) | `test_FR18_알_수_없는_신청_상태는_거부한다` |
 | 정책 검사가 예외를 낸다 | `DENY` / `INTERNAL_ERROR` | `test_FR18_정책_검사_예외는_내부_오류로_거부한다` |
@@ -114,7 +114,7 @@
 | FR-09 | `test_FR09_node_id_형식_오류는_거부한다` | `INVALID_INPUT` |
 | FR-10 | `test_FR10_재전송은_기존_판정을_반환한다` | 신청 한 번 |
 | FR-10 | `test_FR10_같은_키_다른_입력은_충돌이다` | `REQUEST_ID_CONFLICT` |
-| FR-10 | `test_FR10_판정_중인_같은_키는_거부한다` | `INTERNAL_ERROR` |
+| FR-10 | `test_FR10_판정_중인_같은_키는_REQUEST_IN_PROGRESS로_답한다` | `BUSY` / `REQUEST_IN_PROGRESS` |
 | FR-11 | `test_FR11_응답에_내부_값이_없다` | 응답 필드 |
 | FR-14 | `test_FR14_정책이_거부하면_신청하지_않는다` | 신청 호출 없음 |
 | FR-14 | `test_FR14_없는_기기와_비공개_기기는_같다` | 같은 응답 |

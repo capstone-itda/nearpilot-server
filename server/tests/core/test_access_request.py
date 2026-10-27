@@ -187,12 +187,13 @@ def test_FR10_같은_키_다른_입력은_충돌이다():
     assert repo.approval_calls == [] and repo.saved == []
 
 
-def test_FR10_판정_중인_같은_키는_거부한다():
-    svc, repo, *_ = build()
+def test_FR10_판정_중인_같은_키는_REQUEST_IN_PROGRESS로_답한다():
+    svc, repo, _, audit = build()
     repo.link = RequestLink("i1", False, False, None)
     d = ask(svc)
-    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
-    assert repo.approval_calls == []
+    assert (d.verdict, d.reason) == (Verdict.BUSY, ReasonCode.REQUEST_IN_PROGRESS)
+    assert repo.approval_calls == [] and repo.saved == []  # 다시 판정하지도 저장하지도 않는다
+    assert [(e.step, e.payload) for e in audit.events] == [(Step.POLICY, {"result": "IN_PROGRESS"})]
 
 
 def test_FR11_응답에_내부_값이_없다():

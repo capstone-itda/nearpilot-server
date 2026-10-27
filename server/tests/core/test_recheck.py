@@ -369,3 +369,53 @@ def test_FR18_재검사_명시_지정은_별도_임계값을_쓰고_없으면_RE
     assert rc.recheck(ctx(target="locker-1", settings=settings)).verdict is Verdict.OK
     assert rc.recheck(ctx()).reason is ReasonCode.MOVE_CLOSER  # 일반 임계값 0.95
     assert rc.recheck(ctx(target="locker-1")).reason is ReasonCode.RECHECK_FAILED
+
+
+# ── ③ 이후에 막히면 확률을 감사에 남긴다 (NFR-13) ──────────────────────────
+
+
+def _low_probability(repo, prox, pol):
+    prox.posteriors = {"locker-1": 0.4}
+
+
+def _policy_denies(repo, prox, pol):
+    pol.result = PolicyCheckResult(Verdict.DENY, ReasonCode.POLICY_DENIED, 2)
+
+
+def _reservation_invalid(repo, prox, pol):
+    repo.owner_ok = False
+
+
+def _beacon_gone(repo, prox, pol):
+    repo.frames = []
+
+
+def _target_gone(repo, prox, pol):
+    repo.nodes_list = [node(device_state=DeviceState.FAULT), anchor()]
+    repo.frames = [frame("anchor-1")]
+
+
+def _check_fails(repo, prox, pol):
+    repo.raise_on = "nodes"
+
+
+@pytest.mark.parametrize("mutate,reason,p", [
+    pytest.param(_low_probability, ReasonCode.MOVE_CLOSER, 0.4, id="③ 확률 부족"),
+    pytest.param(_policy_denies, ReasonCode.POLICY_DENIED, 0.99, id="④ 정책 거부"),
+    pytest.param(_reservation_invalid, ReasonCode.RECHECK_FAILED, 0.99, id="자기 예약이 유효하지 않음"),
+    pytest.param(_beacon_gone, ReasonCode.BEACON_NOT_SEEN, None, id="① 비콘 없음"),
+    pytest.param(_target_gone, ReasonCode.TARGET_UNAVAILABLE, None, id="② 대상이 후보 밖"),
+    pytest.param(_check_fails, ReasonCode.RECHECK_FAILED, None, id="검사 오류"),
+])
+def test_NFR13_재검사가_막으면_확률을_감사에_남긴다(mutate, reason, p):
+    rc, repo, prox, pol, audit = build()
+    mutate(repo, prox, pol)
+    c = ctx()
+    d = rc.recheck(c)
+    assert d.reason is reason
+    payload = audit.events[-1].payload
+    if p is None:  # 확률을 계산하지 않았다
+        assert "p" not in payload and "threshold" not in payload
+    else:
+        assert (payload["p"], payload["threshold"]) == (p, c.settings.threshold_locker)
+        assert d.p_max == p  # 판정 값은 그대로다

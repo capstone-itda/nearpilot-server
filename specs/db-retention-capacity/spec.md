@@ -74,6 +74,7 @@
 | `use_session`이 `CLOSED`이고 보존기간이 지났고 미해결 복구가 없다 | 지운다. 참조하던 `node_command.use_id`·완료된 `recovery.use_id`는 `NULL`로 바뀐 채 남는다 | `test_FR21_cleanup_deletes_eligible_session_and_detaches_commands` |
 | 요청에 연결된 `use_session`이 아직 `CLOSED`가 아니다(또는 `node_command`가 `pending`/`in_progress`다, 또는 미해결 복구가 있다) | 완료로 보지 않는다. `request_id`를 비우지 않고 `audit_log` 행도 지우지 않는다 | `test_FR22_cleanup_skips_unfinished_request` |
 | 요청이 완료됐고 완료 시점부터 `request_dedup_ttl_sec`가 지났다 | `request_id`를 `NULL`로 비운다. `internal_request_id`와 연결 기록은 그대로다 | `test_FR22_cleanup_clears_request_id_after_dedup_ttl` |
+| 한 요청에 취소된 세션과 재판정의 `ACTIVE` 세션이 함께 있다 | 완료로 보지 않는다. `request_id`를 비우지 않는다 | `test_FR22_cleanup_keeps_request_id_of_retried_request_with_active_session` |
 | 완료되지 않았거나 `request_dedup_ttl_sec`가 안 지난 요청 | `request_id`를 비우지 않는다 | `test_FR22_cleanup_keeps_request_id_within_ttl` |
 | `audit_log` 행이 보존기간을 넘었지만 JSONL 내보내기가 아직 그 행까지 못 미쳤다 | 지우지 않는다 | `test_FR22_cleanup_skips_unexported_audit_rows` |
 | JSONL 경로가 설정되지 않았다(내보내기 비활성) | `audit_log` 보존기간 정리를 하지 않는다 | `test_FR22_cleanup_skips_audit_retention_without_jsonl` |
@@ -100,7 +101,7 @@
 
 - `request`에는 완료 시각 컬럼이 없다. 아래 조건을 모두 만족하면 "완료"로 본다.
   1. `verdict IS NOT NULL`
-  2. 이 요청에 연결된 `use_session`이 있다면 `state = 'CLOSED'`다(대여형이 아니면 조건을 건너뜀, `use_session`이 없는 요청은 즉시 조건 2를 만족한 것으로 본다).
+  2. 이 요청에 연결된 `use_session`이 있다면 `state = 'CLOSED'`다(대여형이 아니면 조건을 건너뜀, `use_session`이 없는 요청은 즉시 조건 2를 만족한 것으로 본다). 한 요청에 세션이 여럿이면(취소된 세션과 재판정의 새 세션, #76·#80) 살아 있는 세션을, 없으면 가장 나중 세션을 본다.
   3. 이 요청에 연결된 `node_command` 중 `status`가 `pending` 또는 `in_progress`인 행이 없다.
   4. `recovery.internal_request_ids`(JSON 배열)에 이 요청 ID가 들어있는 복구 건 중 `completed_at IS NULL`인 행이 없다.
 - 완료 시점은 그 요청의 `audit_log` 행 중 `created_at`이 가장 늦은 값으로 근사한다. 관련 `recovery.completed_at`이 더 늦으면 그 값을 쓴다 — 담당자 확인(수락). 매 단계(`Step`)가 감사 행을 남기므로 마지막 감사 행이 그 요청이 실제로 "끝난" 시점과 가장 가깝다. 새 컬럼을 추가하면 `shared`나 스키마 마이그레이션이 필요해 범위를 넘는다. 근사가 틀리는 방향은 항상 "완료 시점을 실제보다 늦게 잡는" 쪽뿐이다(마지막 감사 행은 완료 시점 이전이나 그 순간에 쓰이지, 그 뒤에 쓰이지 않는다) — 중복 방지 보장기간이 실제보다 조금 더 길게 유지되는 안전한 쪽으로만 오차가 생긴다.
@@ -140,6 +141,7 @@
 | FR-21 | 5절 표의 세션 관련 `test_FR21_*`, `test_FR22_*` | 진행 중·미해결 보호 |
 | FR-22 | `test_FR22_cleanup_clears_request_id_after_dedup_ttl` | 완료 뒤 중복 방지 보장기간이 지나면 `request_id`만 비운다 |
 | FR-22 | `test_FR22_cleanup_keeps_request_id_within_ttl` | 보장기간 안에는 비우지 않는다 |
+| FR-22 | `test_FR22_cleanup_keeps_request_id_of_retried_request_with_active_session` | 세션이 여럿인 요청은 살아 있는 세션으로 완료를 본다 |
 | FR-22 | `test_FR22_cleanup_deletes_exported_audit_rows_past_retention` | JSONL에 반영된 보존기간 지난 감사 행을 지운다 |
 | FR-22 | `test_FR22_cleanup_skips_unexported_audit_rows`, `test_FR22_cleanup_skips_audit_retention_without_jsonl` | 내보내지 않은 행은 지우지 않는다 |
 | FR-22 | `test_FR22_cleanup_keeps_max_rowid_so_jsonl_resumes` | 가장 큰 `rowid` 행을 남겨서 새 감사 행이 JSONL에 빠짐없이 이어 붙는다 |

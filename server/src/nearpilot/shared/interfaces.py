@@ -320,6 +320,7 @@ class ExecutionStore(Protocol):
         명령을 연결하지 않은 요청도 expected=PENDING 으로 취소한다 (#81). 예약과 사용분만 정리하고 명령을 만들지 않는다.
         reason: 재검사 거부는 재검사의 사유, 검사 오류는 RECHECK_FAILED, 예약 대기 제한은 RESERVATION_EXPIRED,
         현재 연결 없음은 NODE_NOT_CONNECTED, IOT 미전송 증명은 COMMAND_NOT_SENT 다 (#78).
+        예약 뒤 판정 오류는 INTERNAL_ERROR 다 (#80).
         """
         ...
 

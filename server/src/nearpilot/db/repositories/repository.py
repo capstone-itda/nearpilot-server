@@ -376,9 +376,13 @@ class SqliteRepository:
 
         previous = None
         if row["verdict"] is not None:
-            use_row = self._conn.execute(
-                "SELECT use_id FROM use_session WHERE internal_request_id = ?",
-                (internal_request_id,),
+            # OK 가 아닌 판정에는 use_id 를 담지 않는다. 재판정이 거부로 끝나면 취소된 옛 세션만 남는다.
+            # 오류 뒤 취소한 요청을 재판정하면 취소된 세션과 새 세션이 함께 있다. 살아 있는 세션을 먼저,
+            # 없으면 가장 나중 세션을 고른다. 세션이 하나뿐이면 어느 쪽이든 그 세션이다.
+            use_row = None if row["verdict"] != Verdict.OK.value else self._conn.execute(
+                "SELECT use_id FROM use_session WHERE internal_request_id = ? "
+                "ORDER BY (state = ? AND end_reason IS ?), rowid DESC",
+                (internal_request_id, SessionState.CLOSED.value, EndReason.CANCELLED.value),
             ).fetchone()
             previous = Decision(
                 internal_request_id=internal_request_id,
@@ -747,9 +751,11 @@ class SqliteRepository:
 
             # 같은 internal_request_id의 기존 예약은 재조작 검사보다 먼저 본다. 최초 대여 요청이
             # 이미 ACTIVE가 된 뒤 재전송되어도 REOPERATING이 아니라 기존 예약을 그대로 반환한다.
+            # 오류 뒤 취소한(CLOSED·cancelled) 세션은 기존 예약이 아니다. 재판정(#76)이 새로 예약한다.
             existing_session = self._conn.execute(
-                "SELECT use_id, reserved_at FROM use_session WHERE internal_request_id = ?",
-                (req.internal_request_id,),
+                "SELECT use_id, reserved_at FROM use_session WHERE internal_request_id = ? "
+                "AND (state != ? OR end_reason IS NOT ?)",
+                (req.internal_request_id, SessionState.CLOSED.value, EndReason.CANCELLED.value),
             ).fetchone()
             if existing_session is not None:
                 usage_id = self._lookup_usage(req.approval_id, req.internal_request_id)
@@ -828,8 +834,9 @@ class SqliteRepository:
         if approval_id is None:
             return None
         row = self._conn.execute(
-            "SELECT usage_id FROM approval_usage WHERE approval_id = ? AND internal_request_id = ?",
-            (approval_id, internal_request_id),
+            "SELECT usage_id FROM approval_usage WHERE approval_id = ? AND internal_request_id = ? "
+            "AND state != ?",
+            (approval_id, internal_request_id, ApprovalUsageState.RELEASED.value),
         ).fetchone()
         return row["usage_id"] if row else None
 
@@ -838,13 +845,15 @@ class SqliteRepository:
     ) -> str | None:
         """승인 사용분을 예약한다. 이미 예약했으면 기존 사용분을 그대로 반환한다(멱등).
 
+        취소해서 반환한(`released`) 사용분은 기존 사용분이 아니다. 새로 예약한다.
         남은 횟수가 0이면 `_EXHAUSTED`를 반환한다. `approval_id` 가 `None` 이면 예약하지 않는다.
         """
         if approval_id is None:
             return None
         existing = self._conn.execute(
-            "SELECT usage_id FROM approval_usage WHERE approval_id = ? AND internal_request_id = ?",
-            (approval_id, internal_request_id),
+            "SELECT usage_id FROM approval_usage WHERE approval_id = ? AND internal_request_id = ? "
+            "AND state != ?",
+            (approval_id, internal_request_id, ApprovalUsageState.RELEASED.value),
         ).fetchone()
         if existing is not None:
             return existing["usage_id"]

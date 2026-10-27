@@ -14,6 +14,7 @@ from nearpilot.shared.enums import (
     StoreConflictReason,
     StoreOutcome,
 )
+from nearpilot.shared.models import ReserveRequest
 
 from conftest import (
     insert_approval,
@@ -175,6 +176,50 @@ def test_FR19_link_command_after_cancel_conflict(store, conn):
     assert result.outcome == StoreOutcome.CONFLICT
     count = conn.execute("SELECT COUNT(*) AS n FROM node_command WHERE internal_request_id = 'req1'").fetchone()
     assert count["n"] == 0
+
+
+def test_FR19_cancel_not_sent_cancels_reservation_made_after_cancel(store, repo, conn):
+    """취소한 요청을 다시 예약하면(#76 재판정) 새 예약이 취소 대상이다. 옛 취소 기록이 가리지 않는다."""
+    _seed_initial(conn)
+    store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.INTERNAL_ERROR, {"source": "test"})
+    again = repo.reserve_if_free(ReserveRequest(
+        internal_request_id="req1", user_id="u1", node_id="node1", action=Action.OPEN, approval_id=None,
+    ))
+    assert again.use_id not in (None, "use1")
+
+    result = store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.INTERNAL_ERROR, {"source": "test"})
+
+    assert result.outcome == StoreOutcome.APPLIED
+    session = conn.execute("SELECT state, end_reason FROM use_session WHERE use_id = ?", (again.use_id,)).fetchone()
+    assert (session["state"], session["end_reason"]) == ("CLOSED", "cancelled")
+    node = conn.execute("SELECT device_state FROM node WHERE node_id = 'node1'").fetchone()
+    assert node["device_state"] == "AVAILABLE"
+    assert store.cancel_not_sent(
+        "req1", ExecutionStatus.PENDING, ReasonCode.INTERNAL_ERROR, {"source": "test"}
+    ).outcome == StoreOutcome.ALREADY_APPLIED
+
+
+def test_FR19_cancel_not_sent_releases_usage_reserved_after_cancel(store, repo, conn):
+    """점유 세션이 없는 요청도 취소한 뒤 다시 예약한 새 사용분을 반환한다."""
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="light1", capability="light", occupancy="shared")
+    insert_policy(conn, node_id="light1", approval_mode="one_time", max_uses=1)
+    insert_approval(conn, approval_id="appr1", node_id="light1", internal_request_id="approval-req")
+    insert_request(conn, internal_request_id="req1", node_id="light1", action="on")
+    reserve = ReserveRequest(
+        internal_request_id="req1", user_id="u1", node_id="light1", action=Action.ON, approval_id="appr1",
+    )
+    first = repo.reserve_if_free(reserve)
+    store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.INTERNAL_ERROR, {"source": "test"})
+    again = repo.reserve_if_free(reserve)
+    assert again.usage_id not in (None, first.usage_id)
+
+    result = store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.INTERNAL_ERROR, {"source": "test"})
+
+    assert result.outcome == StoreOutcome.APPLIED
+    states = {r["usage_id"]: r["state"] for r in conn.execute("SELECT usage_id, state FROM approval_usage")}
+    assert states == {first.usage_id: "released", again.usage_id: "released"}
 
 
 def test_FR19_cancel_not_sent_idempotent(store, conn):

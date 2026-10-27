@@ -79,7 +79,8 @@ class AccessRequestService:
             if not link.is_new:
                 if link.previous is not None:
                     return link.previous
-                d = make_decision(request_id, iid, Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+                # 아직 판정 중이다. 오류가 아니므로 다시 판정하지도, 저장하지도 않는다
+                d = make_decision(request_id, iid, Verdict.BUSY, ReasonCode.REQUEST_IN_PROGRESS)
                 self._audit_step(iid, {"result": "IN_PROGRESS"})
                 return d
         except Exception as exc:  # noqa: BLE001 - 알 수 없는 오류는 거부한다

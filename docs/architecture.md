@@ -212,7 +212,9 @@ api  ──▶  core  ──▶  db
 - 판정 단계에서 예상하지 못한 예외가 나면 `DENY`와 `INTERNAL_ERROR`로 반환한다. 호스트 응답에는 일반 안내만 넣는다. 예외 내용과 오류 단계는 감사 기록에만 남긴다.
 - `INTERNAL_ERROR`로 거부한 요청을 같은 `(계정, request_id)`와 같은 정규화 입력으로 재전송하면 판정은 다시 판정한다 ([#76](https://github.com/capstone-itda/nearpilot-server/issues/76)). 일시 장애로 거부한 요청이 영구 거부로 남지 않는다.
 - `Repository.link_request`는 `INTERNAL_ERROR`로 끝난 키의 같은 입력 재전송에서 판정 칸을 비우고 새 시도로 인정한다. 동시 재전송은 한쪽만 새 시도가 된다. 재판정이 ⑤⑥에 닿으면 이전 시도가 남긴 예약을 `reserve_if_free`가 같은 `internal_request_id`로 다시 돌려줘서 예약이 둘이 되지 않는다 (`specs/db-internal-error-retry`).
-  - 미결: 예약 뒤 감사 기록이나 판정 저장이 실패해 오류로 끝난 요청의 예약은 남는다. 재판정이 ⑤⑥ 전에 거부로 끝나도 남는다. 상태 관리는 `ExecutionContext.reserved_at`을 받지 못해 예약 대기 제한으로 만료 취소할 수 없고, 재시작 복원도 이 예약을 정리하지 않는다 ([#80](https://github.com/capstone-itda/nearpilot-server/issues/80)).
+- 예약 뒤에 판정이 오류로 끝나면 판정은 이번 요청의 예약과 승인 사용분을 `ExecutionStore.cancel_not_sent(expected=PENDING, INTERNAL_ERROR)`로 바로 취소한다. 취소도 실패해서 남은 예약은 재시작 복원이 판정이 `OK`가 아니거나 빈 요청이면 대기 없이 바로 취소한다. 취소한 예약은 같은 요청의 재판정(#76)이 기존 예약으로 쓰지 않고 새로 예약한다 ([#80](https://github.com/capstone-itda/nearpilot-server/issues/80), 2026-10-27 팀 결정).
+- 같은 요청이 아직 판정 중이거나 실행 인계 기록이 아직 없을 때 온 재전송에는 `BUSY`와 `REQUEST_IN_PROGRESS`를 반환한다. 오류가 아니므로 `INTERNAL_ERROR`를 쓰지 않는다 (2026-10-27 팀 결정).
+- 재전송된 요청의 실행 기록이 미전송(`NOT_SENT`)이면 판정은 취소 근거로 첫 응답과 같은 판정을 다시 만든다. 상태 관리는 미전송 취소 근거에 재검사의 판정과 사유, 또는 중단 사유를 남긴다.
 - `recheck()`가 예외를 던지면 상태 관리는 검사 오류와 같게 처리한다.
 - `ExecutionResult`는 재검사가 전송을 막았을 때 그 `Decision`을 함께 담는다. 호스트 응답 변환은 판정이 맡는다 (FR-09).
 - 재검사 밖의 이유로 실행을 막으면 `ExecutionResult.reason`에 중단 사유를 담는다. `reason`은 `recheck`가 없을 때만 쓴다. 판정은 `recheck`가 있으면 그 판정을, 없으면 `reason`으로 `DENY` 사유를 정한다.
@@ -1294,7 +1296,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `rssi_observation` | PK `obs_id`, FK `node_id`, `beacon_id`, `rssi` (dBm), `frame_ts` (약 1초 프레임), 서버 수신 시각 `received_at`, 발행 시각 `sent_at`, 기기 연결 ID `session_id`, 순번 `seq`, `(node_id, session_id, seq, beacon_id)` UNIQUE, nullable FK `collection_id`. 등록된 활성 비콘의 관측만 저장한다. 라벨은 연결한 수집 회차에서 읽는다. |
 | `request` | TEXT PK `internal_request_id`, FK `user_id`, 외부 `request_id`, UNIQUE `(user_id, request_id)`, 정규화 입력 요약 `input_digest`, nullable FK `parent_internal_request_id`, nullable FK `node_id`, `target_spec`, `action`, `verdict`, `reason_code`, `p_max`, 버전 `model`, `calib`, `policy_ver`, `config_ver`, 실제 설정을 포함한 JSON `decision_context`, `host_kind` |
 | `node_command` | TEXT PK `command_id`, FK `internal_request_id`, `node_id`, 대상 동작과 입력 요약, 전송 시도, 실행 상태, 결과, 시각. 승인 사용분과 연결한다. 결과 불명은 실패, 미전송과 구분한다. 접수·실행 전 거부는 미전송, 실패와 구분한다. 기록은 재시작 뒤에도 보존한다. |
-| `use_session` | TEXT PK `use_id`, FK `internal_request_id`, `user_id`, `node_id`, `state` (`RESERVED`, `ACTIVE`, `CLOSING`, `CLOSED`), `end_reason` (`release`, `leave`, `timeout`, `fault`, `cancelled`), nullable `rental_due_at` (실행 성공 때 정한다), nullable `closed_at`, 생성 당시 종료 정책. 대여형 요청과 점유 세션은 1:0..1 관계다. |
+| `use_session` | TEXT PK `use_id`, FK `internal_request_id`, `user_id`, `node_id`, `state` (`RESERVED`, `ACTIVE`, `CLOSING`, `CLOSED`), `end_reason` (`release`, `leave`, `timeout`, `fault`, `cancelled`), nullable `rental_due_at` (실행 성공 때 정한다), nullable `closed_at`, 생성 당시 종료 정책. 대여형 요청과 살아 있는(취소되지 않은) 점유 세션은 1:0..1 관계다. 오류 뒤 취소한 요청을 재판정하면(#76, #80) 취소된 세션 옆에 새 세션이 생긴다. |
 | 복구 건 | TEXT PK `recovery_id`, FK `node_id`, 관련 요청·명령·점유 세션 연결, 명령 결과·현재 연결의 명령 처리 상태의 참조와 시각, 복구 승인 계정과 승인 시각, 정산 내용의 요약값, 완료 결과. 같은 복구 건의 대상 연결은 바꾸지 않는다. 엔터티의 코드 이름은 `recovery`다. |
 | `audit_log` | PK `log_id`, UNIQUE `event_id`, nullable FK `internal_request_id`, nullable 명령 참조, `step` (`auth`, ⓪~⑥, `exec`, `close`, `fault`, `announce`, `admin`), JSON `payload_json`. 인증 실패는 요청 참조 없이 기록한다. 같은 `event_id`는 한 번만 저장한다. |
 

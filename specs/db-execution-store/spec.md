@@ -93,6 +93,7 @@
 | 최초 대여의 예약을 취소한다 | 기기 `AVAILABLE`, 세션 `CLOSED`·`cancelled`다 | `test_FR19_cancel_not_sent_initial_rental` |
 | 재조작의 명령을 취소한다 | 기존 점유와 `rental_due_at`, 기존 대여의 사용분을 보존한다. 이번 요청의 사용분만 반환한다 | `test_FR19_cancel_not_sent_reoperation_scope` |
 | 이미 결과가 있는 명령을 취소한다 | `CONFLICT`다 | `test_FR19_cancel_not_sent_result_exists_conflict` |
+| 취소한 요청을 다시 예약한 뒤(#76 재판정) 미연결 취소를 한다 | 옛 취소 기록이 가리지 않는다. 새 세션·사용분을 취소한다 | `test_FR19_cancel_not_sent_cancels_reservation_made_after_cancel`, `test_FR19_cancel_not_sent_releases_usage_reserved_after_cancel` |
 | 최초 대여가 성공해서 `SUCCEEDED`가 된다 | 기기·세션 `ACTIVE`, `rental_due_at`, 사용분 `consumed`다 | `test_FR19_record_result_succeeded_initial` |
 | 재조작이 성공한다 | 기존 점유와 `rental_due_at`을 보존한다. 이번 사용분만 `consumed`다 | `test_FR19_record_result_succeeded_reoperation` |
 | 기기가 `FAILED`를 보고한다 | 기기 `FAULT`, 사용분 `held`, 세션 보존이다 | `test_FR07_record_result_failed_isolates` |
@@ -121,6 +122,9 @@
 | 복원 묶음을 조회한다 | 미완료 요청·명령·세션·사용분·`FAULT` 기기·복구 건을 기기별로 일관된 시점에 반환한다 | `test_FR19_restore_pending_bundle` |
 | 명령에 연결되기 전에 멈춘 예약이 있다 | 복원 묶음의 `requests`에 포함한다. 명령 부재를 완료로 보지 않는다 | `test_FR19_restore_pending_includes_unlinked_request` |
 | 점유 세션이 없는 공용형 사용분이 있다 | 복원 묶음에 포함한다 | `test_FR19_restore_pending_includes_shared_usage` |
+| 판정이 `OK`가 아니거나 비었는데 예약이 남은 요청이 있다 | 복원 묶음의 `requests`에 포함한다. 대상 기기는 남은 세션이나 사용분의 기기다. `decision`은 저장된 판정이거나 `None`이다 | `test_FR19_restore_pending_includes_stale_reservation_of_failed_request` |
+| 재조작 사용분만 남은 요청인데 그 대여가 이미 닫혔다 | 그 요청만 묶음에서 뺀다. 조회 전체를 실패시키지 않는다. 남은 사용분은 그 기기만 막는다 | `test_FR19_restore_pending_skips_reoperation_usage_of_closed_rental` |
+| 취소한 요청을 다시 예약했다 | 복원 묶음은 취소된 세션이 아니라 새 예약을 돌려준다 | `test_FR19_restore_pending_uses_new_reservation_after_cancel` |
 | 새 복구 건을 저장한다 | `APPLIED`다 | `test_NFR04_save_recovery_applied` |
 | 같은 내용을 다시 저장한다 | `ALREADY_APPLIED`다 | `test_NFR04_save_recovery_idempotent` |
 | 같은 `recovery_id`에 다른 대상 연결로 저장한다 | `CONFLICT`다. 기존 연결을 바꾸지 않는다 | `test_NFR04_save_recovery_conflict` |
@@ -150,7 +154,9 @@
 - `CommandRecord.reserved_at`은 `request.received_at`을 그대로 쓴다. 새 컬럼을 두지 않는다 — ⓪~⑥ 판정과 `reserve_if_free()`는 같은 호출 안에서 동기적으로 끝나므로 "예약 시각"과 "요청 수신 시각"은 실질적으로 같다. `use_session`과 `request`에는 애초에 별도의 예약 시각 컬럼이 없다(`0001_initial.sql`). `link_command`는 `now`를 인자로 받지 않으므로(`interfaces.py`) 호출 시각을 대신 쓸 수도 없다. #80으로 DB가 실제 예약 시각을 `ReserveResult.reserved_at`에 저장해 돌려주기로 했다. 이번 작업은 임시로 수신 시각을 쓰고, 반영은 `db-contract-followups`에서 한다.
 - `link_command`의 실행 종류 판단은 `node.occupancy`를 가장 먼저 보고, 대여형이면 이번 요청의 점유 세션 유무 → 기기의 `ACTIVE` 세션 유무 순서로만 본다. `approval_usage` 행의 존재는 보지 않는다 — `open` 정책의 재조작은 승인 사용분을 예약하지 않아 행이 없으므로(#27), 사용분로 판단하면 공용형과 구분하지 못한다.
 - `restore_pending`은 `BEGIN IMMEDIATE`가 아니라 새로 만든 `BEGIN DEFERRED`(`deferred_transaction`)로 여러 조회를 하나의 스냅숏으로 묶는다 — 읽기만 하므로 쓰기 잠금을 잡아 다른 트랜잭션을 기다리게 할 필요가 없다.
-- "명령 연결 전의 예약 요청"은 `request.verdict = 'OK'`이고 `node_command`에 연결이 없으며, **세션이 `RESERVED`이거나 승인 사용분이 `reserved`인, 예약이 남은 요청**으로 찾는다 — 판정(`core/decision/pipeline.py`)이 실행 인계보다 먼저 `save_decision()`으로 `request.node_id`를 저장하므로, 명령이 생기기 전에도 대상 기기를 알 수 있다. `verdict = 'OK'`만으로는 `open` 정책의 공용형 성공(#27, 쓰기 없음)까지 포함돼 복원할 예약이 없는 요청이 섞인다. 이미 `cancel_not_sent`로 취소된 요청도 세션·사용분 상태가 `RESERVED`·`reserved`가 아니게 되므로 이 조건에서 자연히 빠진다.
+- "명령 연결 전의 예약 요청"은 `node_command`에 연결이 없고 **세션이 `RESERVED`이거나 승인 사용분이 `reserved`인, 예약이 남은 요청**으로 찾는다. 판정 값으로 거르지 않는다 (`OK`, 다른 판정, `NULL`) — 오류 뒤 취소마저 실패한 예약도 재시작 복원이 정리해야 한다 (#80). 예약 조건으로 찾으므로 `open` 정책의 공용형 성공(#27, 쓰기 없음)처럼 복원할 예약이 없는 요청은 섞이지 않는다. 대상 기기는 `request.node_id` → `RESERVED` 세션의 `node_id` → `reserved` 사용분의 `approval.node_id` 순서로 찾는다 — 오류 판정은 `request.node_id` 없이 저장될 수 있다. 이미 `cancel_not_sent`로 취소된 요청은 세션·사용분 상태가 `RESERVED`·`reserved`가 아니게 되므로 이 조건에서 자연히 빠진다.
+- 한 요청에 취소된 세션·사용분과 재판정(#76)이 새로 만든 행이 함께 있을 수 있다 (`internal_request_id`에 유일 제약이 없다). `link_command`의 실행 종류 판단·사용분 조회와 `cancel_not_sent`의 미연결 취소는 살아 있는 행(세션은 `CLOSED`·`cancelled`가 아닌 것, 사용분은 `released`가 아닌 것)만 본다. 살아 있는 행이 없을 때만 지금처럼 이미 취소된 요청으로 본다.
+  - 알려진 한계: 최초 대여로 예약했다가 취소한 요청의 재판정이 승인 사용분 없는 재조작(`open` 정책)이 되면 살아 있는 행이 없어서 `link_command`가 `CONFLICT`다. 시도를 구분할 근거가 행에 없다. 오류 뒤 재전송 사이에 같은 사용자가 같은 기기를 따로 빌린 경우에만 생긴다.
 - `RestoredSession.created_at`은 세션을 만든 `internal_request_id`의 `request.received_at`을 쓴다. `use_session`에는 생성 시각 컬럼이 없다 — `CommandRecord.reserved_at`과 같은 근거다.
 - `RestoredSession.evidence`는 채우지 않는다(기본값 `{}`) — "종료 사유와 관련 근거"는 `CLOSED`된 세션에만 의미가 있는데, `restore_pending`은 `RESERVED`·`ACTIVE`·`CLOSING`만 돌려준다.
 - `recovery.evidence` 컬럼은 `RecoveryEvidence`의 필드(`evidence_id`, `session_id`, `observed_at`, `execution_outcome`, `command_idle`)를 그대로 담은 JSON 배열로 저장한다 — `save_recovery`(7단계)가 쓸 형식을 `restore_pending`의 읽기 쪽에서 먼저 정했다. `restore_pending`은 `completed_at IS NULL`인 행만 돌려주므로 그 호출에서는 `RecoveryRecord.completion`이 항상 `None`이다. `recovery()`는 `completed_at`이 있으면 `completion`을 채운다.
