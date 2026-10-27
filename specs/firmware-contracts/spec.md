@@ -189,6 +189,7 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
 | 처리 중 같은 명령이 다시 오거나 재접속한다 | 현재 처리를 유지하고 접수 기록을 불명으로 바꾸지 않는다 | `test_NFR03_at_most_once_actuation` |
 | 세 기능이 시리얼·선택 GPIO 출력을 쓴다 | 출력 함수가 끝나면 출력 완료다. 출력 함수가 없으면 불명이다 | `test_NFR10_signal_output_completes` |
 | 사물함 서보 각도를 출력한다 | 각도를 0~180°로 자르고 펄스 폭과 PWM duty로 바꾼다 | `test_NFR10_servo_pulse_for_angle` |
+| 조명 원형 LED에 `on`·`off`가 온다 | `on`은 밝기만큼의 흰색, `off`는 꺼짐이다 | `test_NFR10_light_ring_color` |
 | 사물함에 `close`가 온다 | `open`과 같은 검사를 거쳐 허용한다. 조명·스피커의 `close`는 `UNSUPPORTED_ACTION`이다 | `test_FR06_capability_action_matrix` |
 | 점유 표시가 온다 | `AVAILABLE`은 파란색, `RESERVED`·`ACTIVE`·`CLOSING`·`FAULT`는 빨간색이다 | `test_FR19_occupancy_display_colors` |
 | 다른 기기, 다른 버전이나 모르는 상태의 점유 표시가 온다 | 무시하고 마지막 색을 유지한다 | `test_FR19_occupancy_display_ignores_invalid_messages` |
@@ -260,11 +261,13 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
 - `status.command_state`는 명령을 처리하는 중이면 `busy`, 아니면 `idle`이다. 명령 기록 저장소를 열지 못하면 `unknown`이다 — 담당자가 2026-10-26에 골랐다. 2026-10-24의 "센서 없는 항목을 펌웨어 상태로 채운다" 결정을 대체한다.
   - 출력은 `handle()` 안에서 끝나므로 주기 `status`는 대부분 `idle`이다. `busy`는 처리 중 발행한 보고에만 나온다.
 - node_lab 시험 펌웨어도 같은 계약으로 바꾼다 — 출력 직전 재검사에서 걸리면 `failed`와 거부 코드, 출력을 마치고 저장하면 `succeeded`다. `status`는 같은 `command_state`를 보낸다.
-- `light-1`의 실제 출력은 GPIO23을 쓴다 — 담당자가 2026-10-27에 골랐다. `on`은 HIGH, `off`는 LOW를 유지한다.
-  - 제품 펌웨어의 `esp32dev-light-1` 빌드 환경에서 출력 핀과 극성을 지정한다. 기본 `esp32dev`는 시리얼 모드다.
-  - 부팅할 때 출력 래치를 LOW로 지정한 뒤 출력 모드로 바꾼다. 부팅과 기존 결과 재보고는 이전 `on`을 다시 출력하지 않는다.
-  - 서버가 허가한 새 명령의 기존 검사와 저장 경로를 통과한 뒤에만 GPIO 출력을 바꾼다. 출력 함수와 명령 결과 계약은 유지한다.
-  - 핀 번호와 켜기·끄기 레벨은 부팅 로그에 남긴다. 실제 전압과 LED 점등은 연결한 기기에서 별도로 확인한다.
+- `light-1`의 실제 출력은 GPIO18의 WS2812B 원형 LED 16개다 — 담당자가 2026-10-27에 골랐다. 같은 날 고른 GPIO23 HIGH/LOW 출력을 대체한다.
+  - `esp32dev-light-1` 빌드에서 `NP_LIGHT_RING_PIN=18`을 지정하고 `adafruit/Adafruit NeoPixel@1.12.3`을 쓴다. 개수와 밝기는 `NP_LIGHT_RING_COUNT`(16), `NP_LIGHT_RING_LEVEL`(64)이다. 밝기는 locker 점유 표시와 같다. 기본 `esp32dev`는 시리얼 모드다.
+  - 허가한 새 `on`은 16개를 모두 흰색으로 켜고, `off`는 모두 끈다. 색은 담당자가 정하지 않아 흰색으로 둔다. 색 계산은 `np_device`의 `lightRingRgb()`다.
+  - 부팅하면 링을 끈다. 부팅과 기존 결과 재보고는 이전 `on`을 다시 출력하지 않는다.
+  - 서버가 허가한 새 명령의 기존 검사와 저장 경로를 통과한 뒤에만 링 출력을 바꾼다. 출력 함수와 명령 결과 계약은 유지한다. 실제 점등은 관측하지 않는다 (FR-07).
+  - 부팅 로그 `LIGHT_RING_OUTPUT pin=18 count=16 level=64 initial=off`로 설정을 남긴다. `NODE_START`의 출력 방식은 `light_ring`이다.
+  - 링 전원은 5V, GND는 ESP32와 공통이다. DIN은 3.3V 신호로 구동한다.
 - `locker-1`의 실제 출력은 GPIO13의 서보다 — 담당자가 2026-10-27에 골랐다. 잠금 0°, 열림 90°다.
   - 제품 펌웨어의 `esp32dev-locker-1` 빌드 환경에서 `NP_SERVO_PIN=13`을 지정한다. 각도와 펄스 범위는 `config.example.h`의 `NP_SERVO_*` 값이다.
   - 서보 신호는 LEDC 50Hz, 16비트 duty로 낸다. 0~180°를 500~2,400µs로 바꾼다. 추가 라이브러리는 쓰지 않는다.
