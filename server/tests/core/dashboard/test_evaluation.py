@@ -43,6 +43,11 @@ def write_report(path: Path, generated_at: str = "2026-10-20T01:02:03.456789+00:
     return path
 
 
+def rows_of(*trials_by_metric: tuple[str, int]) -> list[dict]:
+    """지표 이름과 시행 수만 다른 통과 행들. 어느 리포트의 행인지는 시행 수로 알아본다."""
+    return [{"metric": metric, "passed": True, "trials": trials, "note": ""} for metric, trials in trials_by_metric]
+
+
 def test_FR12A_평가_리포트가_없으면_evaluation을_뺀다(tmp_path):
     assert evaluation_of(tmp_path / "missing") is None  # 폴더가 없다
 
@@ -91,6 +96,61 @@ def test_FR12A_평가는_가장_늦은_리포트를_읽는다(tmp_path):
 
     assert result["date"] == "2026-10-20"
     assert [metric["sample"] for metric in result["metrics"]] == ["50"]
+
+
+@pytest.mark.parametrize(
+    ("chain", "expected"),
+    [
+        # 늦은 리포트는 ece 하나만 다시 쟀다: ece 는 늦은 값이 앞에 오고, 나머지는 이른 리포트의 값과 순서다
+        (
+            [rows_of(("ece", 3000)), ROWS],
+            [(1, "보정 오차", "3,000"), (2, "앞 기기 오선택률", "2,100"), (3, "전환 시간", "—"), (4, "흔들림", "—")],
+        ),
+        # 한 리포트에 같은 지표 행이 여러 개면 그 리포트의 행 순서대로 모두 나온다. 이른 리포트의 같은 지표 행은 나오지 않는다
+        (
+            [rows_of(("ece", 100), ("front_misselection_rate", 50), ("ece", 200)), ROWS],
+            [
+                (1, "보정 오차", "100"),
+                (2, "앞 기기 오선택률", "50"),
+                (3, "보정 오차", "200"),
+                (4, "전환 시간", "—"),
+                (5, "흔들림", "—"),
+            ],
+        ),
+        # 이른 리포트에 같은 지표 행이 여럿이어도 더 늦은 리포트가 고른 지표면 모두 나오지 않는다
+        (
+            [rows_of(("ece", 3000)), rows_of(("ece", 10), ("flicker", 20), ("ece", 30))],
+            [(1, "보정 오차", "3,000"), (2, "흔들림", "20")],
+        ),
+        # 다음으로 늦은 리포트에도 없는 지표는 그다음 리포트에서 가져온다
+        (
+            [
+                rows_of(("ece", 3000)),
+                rows_of(("flicker", 20), ("switch_time", 30)),
+                rows_of(("front_misselection_rate", 40), ("ece", 41), ("flicker", 42)),
+            ],
+            [(1, "보정 오차", "3,000"), (2, "흔들림", "20"), (3, "전환 시간", "30"), (4, "앞 기기 오선택률", "40")],
+        ),
+    ],
+)
+def test_FR12A_평가는_지표마다_가장_늦은_리포트를_쓴다(tmp_path, chain, expected):
+    # chain 은 늦은 리포트가 앞이다. 파일 이름 순서가 생성 시각 순서와 반대다
+    for number, rows in enumerate(chain):
+        write_report(tmp_path / f"report-{len(chain) - number}.csv", f"2026-10-{20 - number}T01:00:00+00:00", rows)
+
+    result = evaluation_of(tmp_path)
+
+    assert result["date"] == "2026-10-20"  # 가장 늦은 리포트의 날짜
+    assert [(metric["id"], metric["name"], metric["sample"]) for metric in result["metrics"]] == expected
+
+
+def test_FR12A_평가는_생성_시각이_같으면_파일_경로_순서로_정한다(tmp_path):
+    stamp = "2026-10-20T01:00:00+00:00"
+    # 파일을 만든 순서(b → a)가 아니라 경로 순서(a < b)에서 앞서는 쪽이 이긴다
+    write_report(tmp_path / "b.csv", stamp, rows_of(("ece", 20)))
+    write_report(tmp_path / "a.csv", stamp, rows_of(("ece", 10)))
+
+    assert [metric["sample"] for metric in evaluation_of(tmp_path)["metrics"]] == ["10"]
 
 
 @pytest.mark.parametrize(
