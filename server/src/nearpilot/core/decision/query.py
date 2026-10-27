@@ -127,7 +127,8 @@ class DeviceQueryService:
             return _unavailable()
         policy = self._repo.current_policy(node_id)
         if policy.visibility is not Visibility.PUBLIC and policy.approver_user_id != user_id:
-            return _unavailable()  # 없는 기기와 구분하지 않는다
+            if not self._repo.has_open_session(user_id, node_id):  # 소유자가 아니어도 점유 중인 본인은 본다
+                return _unavailable()  # 없는 기기와 구분하지 않는다
         return {
             "node_id": node.node_id,
             "capability": node.capability.value,

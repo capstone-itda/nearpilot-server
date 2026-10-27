@@ -2,7 +2,7 @@
 
 - 담당: eunji719 (판정)
 - 요구사항: FR-09, FR-11, FR-14
-- 따르는 결정: #23, #42
+- 따르는 결정: #23, #42, 2026-10-27 팀 결정 (비공개 기기를 점유 중인 본인의 조회 허용, fix/core-small-gaps)
 
 ## 1. 왜
 
@@ -42,7 +42,7 @@
 ### get_device_state
 
 - 근접 검사 없이 기기 상태를 조회한다.
-- 공개 기기는 유효한 토큰의 계정이 모두 조회한다. 비공개 기기는 소유자만 조회한다.
+- 공개 기기는 유효한 토큰의 계정이 모두 조회한다. 비공개 기기는 소유자와 그 기기에 열린 점유 세션(`RESERVED`·`ACTIVE`·`CLOSING`)이 있는 본인만 조회한다 (FR-09).
 - 없는 기기, 비공개 기기, 권한이 없는 조회는 구분하지 않고 같은 응답(`reason_code`가 `TARGET_UNAVAILABLE`)이다.
 
 | 응답 항목 | 값 |
@@ -70,15 +70,17 @@
 ### 고치는 곳
 - `server/src/nearpilot/core/decision/`
 - `server/tests/core/`
+- fix/core-small-gaps: `shared/interfaces.py`의 `Repository.has_open_session`, 그 DB 구현(`db/repositories/repository.py`)과 `tests/db/`, `docs/architecture.md`의 Repository 접점 표 (2026-10-27 팀 결정)
 
 ### 고치지 않는 곳
 - 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
 - 이 작업: `core/proximity/`, `core/policy/`, `core/lifecycle/`, `db/`, `api/`, `iot/`
+- 예외: fix/core-small-gaps는 위 "고치는 곳"에 적은 `shared/interfaces.py`, `db/repositories/repository.py`, `tests/db/`, `docs/architecture.md`의 접점 표를 고친다 (2026-10-27 팀 결정)
 
 ### 다른 영역과 닿는 곳
 | 계약 | 사용 또는 제공 | 상대 영역 |
 |---|---|---|
-| `Repository.beacons_of`, `rssi_since`, `nodes`, `current_policy` | 사용 | DB |
+| `Repository.beacons_of`, `rssi_since`, `nodes`, `current_policy`, `has_open_session` | 사용 | DB |
 | `ProximityEstimator.posterior` | 사용 | 근접 |
 | `PolicyChecker.check` | 사용 | 정책 |
 | `find_available_devices(user_id)`, `get_device_state(user_id, node_id)` (`CoreService`) | 제공 | API (`api/mcp`) |
@@ -109,24 +111,28 @@
 | 공개 기기를 조회한다 | 상태 값을 반환한다 | `test_FR09_공개_기기_상태를_반환한다` |
 | 비공개 기기를 소유자가 조회한다 | 상태 값을 반환한다 | `test_FR14_비공개_기기는_소유자만_조회한다` |
 | 비공개 기기를 다른 계정이 조회한다 | `TARGET_UNAVAILABLE` | `test_FR14_비공개_기기는_타인에게_없는_기기와_같다` |
+| 비공개 기기에 열린 점유 세션이 있는 본인이 조회한다 | 상태 값을 반환한다. 점유 주체는 넣지 않는다 | `test_FR09_비공개_기기를_점유_중인_본인은_조회한다` |
+| 비공개 기기의 본인 세션이 `CLOSED`다 | `TARGET_UNAVAILABLE` | `test_FR09_비공개_기기를_점유_중인_본인은_조회한다` |
+| 본인 세션 조회(`has_open_session`)가 예외를 올린다 | 예외를 올린다 (다른 조회 오류와 같다) | `test_FR09_본인_세션_조회_예외는_올린다` |
+| 공개 기기나 소유자가 조회한다 | 본인 세션을 읽지 않는다 | `test_FR09_공개_기기와_소유자_조회는_본인_세션을_읽지_않는다` |
+| 복원 중인 기기다 (#115) | 후보 목록에서 뺀다. 응답에 복원 사실을 드러내지 않는다 | `test_FR09_복원_중인_기기는_목록에서_뺀다` |
 | 없는 기기를 조회한다 | `TARGET_UNAVAILABLE` | `test_FR14_비공개_기기는_타인에게_없는_기기와_같다` |
 | 점유·FAULT·오프라인 기기를 조회한다 | `state`·`online`에 반영한다. 점유 주체는 없다 | `test_FR09_점유_상태는_주체_없이_반환한다` |
 | 정책 조회가 예외를 낸다 | 예외를 올린다 | `test_FR09_상태_조회_예외는_올린다` |
 
 ## 6. 결정
 
-- 서비스는 `core/decision/query.py`의 `DeviceQueryService` 하나다. 생성자로 `Repository`, `ProximityEstimator`, `PolicyChecker`, `Settings`, `clock`을 받는다. `request_use` 판정 파이프라인과 분리한다 — 조회는 `link_request`와 `save_decision`을 쓰지 않고 감사 기록도 남기지 않기 때문이다.
+- 서비스는 `core/decision/query.py`의 `DeviceQueryService` 하나다. 생성자로 `Repository`, `ProximityEstimator`, `PolicyChecker`, `Settings`, `clock`, `readiness`(`ExecutionReadiness`, #115)를 받는다. 복원 중인 기기는 후보 목록에서 빼고 그 사실을 응답에 드러내지 않는다 (#115에서 추가, 이 fix에서 spec에 적음). `request_use` 판정 파이프라인과 분리한다 — 조회는 `link_request`와 `save_decision`을 쓰지 않고 감사 기록도 남기지 않기 때문이다.
 - 후보 조건은 `pipeline.select_candidates`와 `threshold_for`를 그대로 쓴다. 담당자가 정했다 — 목록에 나온 기기가 `request_use` ②③을 통과하도록 같은 조건을 쓴다.
 - '조작 가능'과 '승인 필요'는 기능별 기본 동작으로 `PolicyChecker.check`를 불러 나눈다. 담당자가 정했다. 정책 모드만 보면 이미 승인받은 기기도 '승인 필요'로 보인다.
 - `get_device_state`는 최소 필드만 반환하고 비공개·권한 없음·없는 기기를 같은 응답으로 돌려준다. 담당자가 정했다.
+- 비공개 기기를 점유 중인 본인의 조회는 `Repository.has_open_session(user_id, node_id)`로 확인한다. 소유자가 아니면 이 값이 참일 때만 조회를 허용한다. 공개 기기와 소유자 조회는 이 값을 읽지 않는다 (2026-10-27 팀 결정).
 
 ## 7. 가정
 
 - 소유자는 현재 정책 리비전의 `approver_user_id`로 판단한다. 소유자 필드가 따로 없다.
-- 비공개 기기를 현재 점유 중인 본인도 조회할 수 있다는 요구(requirements FR-09)는 구현하지 않는다. 기기 기준으로 본인의 현재 점유 세션을 조회하는 접점이 `Repository`에 없다. 이 경우도 `TARGET_UNAVAILABLE`로 거부한다.
 - 호스트용 사유 코드에 '없는 기기'가 없어서 `TARGET_UNAVAILABLE`을 쓴다.
-- `get_device_state`의 `state`에 본인 점유 여부를 넣지 않는다. 같은 접점이 없다.
-- 미결: 위 두 가정을 풀려면 `Repository`에 본인 점유 세션 조회가 필요하다. 이슈 초안은 PR 본문에 쓴다.
+- `get_device_state`의 `state`에 본인 점유 여부를 넣지 않는다. 점유 주체를 드러내지 않는 최소 응답을 유지한다 (FR-11).
 
 ## 8. 테스트
 

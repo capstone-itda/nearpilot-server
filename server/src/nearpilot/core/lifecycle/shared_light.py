@@ -1,5 +1,6 @@
-"""공용 조명의 유지 대상자와 이탈 꺼짐 (FR-20, NFR-12).
+"""공용형 기기(조명·스피커)의 유지 대상자와 이탈 꺼짐 (FR-20, NFR-12).
 
+대상은 점유 방식이 shared인 모든 기기다. 스피커의 on은 재생, off는 정지다. 이름의 "조명"은 이를 뜻한다 (2026-10-27 팀 결정).
 유지 대상자가 모두 이탈하면 서버 내부 요청으로 꺼짐을 실행 서비스에 넘긴다 (#86).
 호출자는 검증된 관측과 저장을 확인한 실행 결과만 인계한다.
 켜짐 여부는 저장한 마지막 성공 명령의 on·off로 판단한다. 실제 켜짐의 관측이 아니다 (2026-10-26 결정).
@@ -17,7 +18,7 @@ from uuid import uuid4
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, Capability, CommandState, DeviceState, ExecutionKind, ExecutionStatus, InternalRequestCause,
+    Action, CommandState, DeviceState, ExecutionKind, ExecutionStatus, InternalRequestCause,
     Occupancy, ReasonCode, TrustState, Verdict,
 )
 from nearpilot.shared.interfaces import ExecutionStore, PolicyChecker, Repository
@@ -96,7 +97,7 @@ class SharedLightService:
         if action not in (Action.ON, Action.OFF) or (
             context.request is None and action != Action.OFF
         ):
-            raise ValueError("공용 조명의 동작이 아니다")
+            raise ValueError("공용형 기기의 동작이 아니다")
         if not result.command_id:
             raise ValueError("성공한 실행의 명령 ID가 필요하다")
         with self._lock_for(context.node_id):
@@ -124,7 +125,7 @@ class SharedLightService:
         with self._lock_for(node_id):
             node = self._node(node_id)
             if node is None or not self._is_light(node) or not node.session_id:
-                raise ValueError("현재 연결을 확인한 공용 조명이 필요하다")
+                raise ValueError("현재 연결을 확인한 공용형 기기가 필요하다")
             light = self._light(node_id)
             if light.resumed_at is not None and light.resumed_session_id == node.session_id:
                 return
@@ -313,4 +314,5 @@ class SharedLightService:
 
     @staticmethod
     def _is_light(node: NodeInfo) -> bool:
-        return node.capability == Capability.LIGHT and node.occupancy == Occupancy.SHARED
+        """공용형 기기(조명·스피커)다. 기능과 무관하게 점유 방식으로만 가른다 (FR-20)."""
+        return node.occupancy == Occupancy.SHARED

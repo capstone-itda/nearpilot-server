@@ -287,6 +287,17 @@ class SqliteRepository:
         ).fetchone()
         return row is not None
 
+    def has_open_session(self, user_id: str, node_id: str) -> bool:
+        """계정이 기기에 열린 세션(`RESERVED`·`ACTIVE`·`CLOSING`)을 가졌는지만 본다 (FR-09).
+
+        `CLOSED`뿐이거나 세션이 없으면 `False`다. 세션 ID는 반환하지 않는다.
+        """
+        row = self._conn.execute(
+            "SELECT 1 FROM use_session WHERE user_id = ? AND node_id = ? AND state != ?",
+            (user_id, node_id, SessionState.CLOSED.value),
+        ).fetchone()
+        return row is not None
+
     def is_place_owner(self, user_id: str, node_id: str) -> bool:
         """기기가 속한 장소의 소유 계정인지만 본다. 소유 계정 ID는 반환하지 않는다 (#84, FR-11).
 

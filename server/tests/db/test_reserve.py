@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-
 import pytest
 
 from nearpilot.db.repositories.repository import SqliteRepository
@@ -438,3 +437,34 @@ def test_NFR03_threads(tmp_path):
     row = check_conn.execute("SELECT last_seen_at FROM node WHERE node_id = 'node1'").fetchone()
     assert row["last_seen_at"] == "2026-05-01T00:00:00+00:00"
     check_conn.close()
+
+
+
+# ── 승인 뒤 재요청과 원 요청의 연결 (FR-09) ─────────────────────────────
+
+
+def test_FR09_reserve_links_new_request_to_approval_request(conn, repo):
+    """승인 사용분이 새 요청을 승인과, 승인이 승인 신청 요청과 잇는다. 요청 행의 원 요청 ID는 바꾸지 않는다.
+
+    원 요청 ID를 채우면 `execution_context()`가 판정이 인계한 문맥과 달라져 실행 결과 인계가 실패한다 (#83).
+    """
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="node1")
+    insert_policy(conn)
+    _seed_request(conn, internal_request_id="approval-req")
+    insert_approval(conn, approval_id="appr1", internal_request_id="approval-req")
+    _seed_request(conn, internal_request_id="new-req")
+
+    result = repo.reserve_if_free(_request(internal_request_id="new-req", approval_id="appr1"))
+
+    assert result.outcome is ReserveOutcome.RESERVED
+    row = conn.execute(
+        "SELECT a.internal_request_id AS origin FROM approval_usage u JOIN approval a USING (approval_id) "
+        "WHERE u.internal_request_id = ?", ("new-req",),
+    ).fetchone()
+    assert row["origin"] == "approval-req"
+    parent = conn.execute(
+        "SELECT parent_internal_request_id FROM request WHERE internal_request_id = ?", ("new-req",),
+    ).fetchone()["parent_internal_request_id"]
+    assert parent is None

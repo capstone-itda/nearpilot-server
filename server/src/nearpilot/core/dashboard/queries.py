@@ -136,7 +136,7 @@ class DashboardQueryService:
         return {"weakRssiDbm": self._weak_rssi_dbm, "places": rows}
 
     def uses(self) -> Sequence[Mapping[str, Any]]:
-        """대여형은 끝나지 않은 점유 세션, 공용형은 공용 조명의 유지 대상자. 대여형이 먼저다."""
+        """대여형은 끝나지 않은 점유 세션, 공용형은 공용형 기기(조명·스피커)의 유지 대상자. 대여형이 먼저다."""
         now, holders = self._clock(), self._holders()
         with self._open_reads() as reads:
             nodes = {node.node_id: node for node in reads.nodes()}

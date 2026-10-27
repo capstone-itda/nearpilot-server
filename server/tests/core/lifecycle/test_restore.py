@@ -162,8 +162,8 @@ class StoreFake:
         return None
 
     def last_succeeded(self, node_id):
-        """재시작 전 마지막 성공 명령. 조명은 켜기에 성공했다고 둔다."""
-        if not node_id.startswith("light"):
+        """재시작 전 마지막 성공 명령. 조명과 스피커는 켜기에 성공했다고 둔다."""
+        if not node_id.startswith(("light", "speaker")):
             return None
         return CommandRecord("last-on", "request-last-on", node_id, Action.ON, ExecutionStatus.SUCCEEDED,
                              ExecutionKind.SHARED)
@@ -251,6 +251,11 @@ def rental(env, state=SessionState.ACTIVE):
 def light(env):
     env.repository.items["light-1"] = replace(env.repository.items["locker-1"], node_id="light-1",
                                              capability=Capability.LIGHT, occupancy=Occupancy.SHARED)
+
+
+def speaker(env, node_id="speaker-1", occupancy=Occupancy.SHARED):
+    env.repository.items[node_id] = replace(env.repository.items["locker-1"], node_id=node_id,
+                                            capability=Capability.SPEAKER, occupancy=occupancy)
 
 
 def pending_request(env, *, shared=False, age=20, verdict=Verdict.OK):
@@ -678,6 +683,34 @@ def test_FR20_restore_does_not_restore_light_holders(env):
     advance(env, 1)
     status(env, "light-1")
     assert env.light.tick() == ("light-1",)
+
+
+def test_FR20_restore_resumes_shared_speaker(env):
+    speaker(env)
+    speaker(env, "speaker-2", Occupancy.RENTAL)
+    env.service.restore()
+    advance(env, 100)
+    assert env.light.tick() == ()
+    status(env, "speaker-1")
+    status(env, "speaker-2")
+    assert env.service.can_execute("speaker-1")
+    assert env.service.can_execute("speaker-2")
+    # 복원을 마친 시각부터 초기 참여 대기를 잰다. 대기 중에는 꺼짐을 요청하지 않는다.
+    assert env.light.tick() == ()
+    advance(env, 14)
+    status(env, "speaker-1")
+    status(env, "speaker-2")
+    assert env.light.tick() == ()
+    advance(env, 1)
+    status(env, "speaker-1")
+    status(env, "speaker-2")
+    # 대여형 스피커는 관측 재개 대상이 아니다.
+    assert env.light.tick() == ("speaker-1",)
+    # 복원을 마친 뒤의 보고도 계속 넘겨야 첫 보고가 낡은 뒤에도 후보가 남는다.
+    advance(env, 5)
+    status(env, "speaker-1")
+    status(env, "speaker-2")
+    assert env.light.tick() == ("speaker-1",)
 
 
 def test_FR20_duplicate_restore_does_not_extend_initial_wait(env):

@@ -60,6 +60,8 @@ class FakeRepo:
         self.beacons = [BEACON]
         self.policies: dict[str, PolicyRevision] = {}
         self.policy_error: Exception | None = None
+        self.open_sessions: set[tuple[str, str]] = set()  # (user_id, node_id) 열린 점유 세션
+        self.session_error: Exception | None = None
         self.calls: list[str] = []
 
     def beacons_of(self, user_id):
@@ -76,6 +78,12 @@ class FakeRepo:
         if self.policy_error:
             raise self.policy_error
         return self.policies.get(node_id) or policy(node_id)
+
+    def has_open_session(self, user_id, node_id):
+        self.calls.append("has_open_session")
+        if self.session_error:
+            raise self.session_error
+        return (user_id, node_id) in self.open_sessions
 
 
 class FakeProximity:
@@ -308,11 +316,39 @@ def test_FR14_비공개_기기는_타인에게_없는_기기와_같다():
     assert private == missing == {"reason_code": "TARGET_UNAVAILABLE"}
 
 
+def test_FR09_비공개_기기를_점유_중인_본인은_조회한다():
+    svc, repo, *_ = build()
+    repo.nodes_list = [node(device_state=DeviceState.ACTIVE)]
+    repo.policies["locker-1"] = policy(visibility=Visibility.PRIVATE, mode=AccessMode.RESTRICTED)
+    repo.open_sessions = {("someone", "locker-1")}
+    assert svc.get_device_state("someone", "locker-1") == {  # 점유 주체 키가 없다
+        "node_id": "locker-1", "capability": "locker", "occupancy": "rental", "state": "occupied",
+        "online": True, "trusted": True, "access_mode": "restricted"}
+    repo.open_sessions = set()  # 세션이 닫혔다
+    assert svc.get_device_state("someone", "locker-1") == {"reason_code": "TARGET_UNAVAILABLE"}
+
+
+def test_FR09_공개_기기와_소유자_조회는_본인_세션을_읽지_않는다():
+    svc, repo, *_ = build()
+    assert svc.get_device_state("someone", "locker-1")["node_id"] == "locker-1"  # 공개 기기
+    repo.policies["locker-1"] = policy(visibility=Visibility.PRIVATE)
+    assert svc.get_device_state(OWNER, "locker-1")["node_id"] == "locker-1"  # 비공개 기기의 소유자
+    assert "has_open_session" not in repo.calls
+
+
 def test_FR09_상태_조회_예외는_올린다():
     svc, repo, *_ = build()
     repo.policy_error = RuntimeError("boom")
     with pytest.raises(RuntimeError):
         svc.get_device_state("anyone", "locker-1")
+
+
+def test_FR09_본인_세션_조회_예외는_올린다():
+    svc, repo, *_ = build()
+    repo.policies["locker-1"] = policy(visibility=Visibility.PRIVATE)
+    repo.session_error = RuntimeError("boom")
+    with pytest.raises(RuntimeError):
+        svc.get_device_state("someone", "locker-1")
 
 
 def test_FR09_복원_중인_기기는_목록에서_뺀다():

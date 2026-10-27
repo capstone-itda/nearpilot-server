@@ -2,7 +2,7 @@
 
 - 담당: JM-220 (상태 관리)
 - 요구사항: FR-19, FR-20, NFR-04
-- 따르는 결정: #15, #17, #78, #81, #82, #83, #88, 2026-10-26 센서 기반 물리 검증 제외 (#196)
+- 따르는 결정: #15, #17, #78, #81, #82, #83, #88, 2026-10-26 센서 기반 물리 검증 제외 (#196), 2026-10-27 팀 결정 (스피커도 공용형 규칙, fix/core-small-gaps)
 
 ## 1. 왜
 
@@ -49,7 +49,7 @@
 - 서버는 과거 명령 결과를 복원한다. 현재 연결과 명령 처리 상태는 신선한 보고로 다시 확인한다 (FR-19).
 - 기기의 현재 상태 확인은 재시작 뒤 현재 연결의 신선한 `status` 수신이다. 확인 전에는 복원 상태를 끝내지 않는다 (architecture.md §5 MQTT 6절).
 - 오프라인, `FAULT`, 현재 상태를 확인하지 못한 기기에는 공용 조명 규칙만으로 새 명령을 보내지 않는다 (FR-20).
-- 공용 조명의 유지 대상자를 복원하지 않는다. 기기별 복원을 마친 뒤 `core-shared-light`에 관측 재개를 알린다 (FR-20).
+- 공용 조명의 유지 대상자를 복원하지 않는다. 기기별 복원을 마친 뒤 `core-shared-light`에 관측 재개를 알린다 (FR-20). 이 문서의 "공용 조명"은 점유 방식이 `shared`인 모든 기기(조명·스피커)를 뜻한다 (2026-10-27 팀 결정).
 - 공용 조명의 규칙은 대여형 점유 세션의 복원을 생략하지 않는다 (FR-19).
 - 만료 취소의 근거는 처음 만든 내용을 보존한다. `StoreOutcomeUnknown`이면 명령은 `execution()`으로 확인하고, 확인하지 못하면 같은 근거로 재시도한다. `CONFLICT`이면 실행 차단을 유지하고 예외로 알린다.
 - `can_execute()`는 `ExecutionReadiness` 계약을 따른다. 최초 복원 조회가 실패했거나 현재 연결의 정상 보고를 확인하지 못한 기기는 `False`다 (architecture.md §4 "재시작 복원 조회").
@@ -136,6 +136,7 @@
 |---|---|---|
 | FR-19 | `test_FR19_restore_blocks_new_execution_until_confirmed` | 복원과 확인 전에는 그 기기의 전송을 시작하지 않는다 |
 | FR-20 | `test_FR20_restore_does_not_restore_light_holders` | 공용 조명의 유지 대상자를 복원하지 않는다 |
+| FR-20 | `test_FR20_restore_resumes_shared_speaker` | 공용형 스피커도 조명처럼 관측 재개를 알리고 초기 참여 대기를 둔다 (2026-10-27 팀 결정) |
 | NFR-04 | `test_NFR04_restore_keeps_recovery_id_and_evidence_without_trusting_it` | 기존 복구 건과 근거를 보존한다. 과거 근거로 실행을 열지 않는다 |
 | FR-19 | `test_FR19_unknown_store_without_commit_retries_same_event` | 저장 불명 재시도에 같은 시각과 근거를 쓴다 |
 | FR-19 | `test_FR19_restore_request_without_command_cancelled` | 명령 미연결 예약을 명령 없이 만료 취소한다 |
