@@ -318,7 +318,7 @@
 - 범위: 서버
 - 요구:
   - Claude, ChatGPT, Gemini는 같은 URL과 같은 도구로 같은 판정과 결과를 얻는다.
-  - 3종 호스트는 AP 안 노트북의 CLI 호스트(Claude Code CLI, Codex CLI, Gemini CLI)로 확인한다. 웹·앱 호스트(claude.ai, ChatGPT, Gemini)는 클라우드에서 서버에 접속하므로 독립 AP 안의 서버에 붙지 못해 대상에서 뺀다 (2026-10-27 팀 결정).
+  - 3종 호스트(Claude, ChatGPT, Gemini)는 AP 안 노트북의 CLI 클라이언트(Claude Code CLI, Codex CLI, Gemini CLI)로 확인한다. 각 서비스의 웹과 앱(claude.ai, ChatGPT, Gemini)은 클라우드에서 서버에 접속하므로 독립 AP 안의 서버에 붙지 못해 대상에서 뺀다 (2026-10-27 팀 결정).
 - 인수 기준: 지표 7
 - 관련: NFR-09
 

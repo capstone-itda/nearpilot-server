@@ -2,7 +2,7 @@
 
 - 담당: eunji719 (판정)
 - 요구사항: FR-08, FR-09, FR-10, FR-11
-- 따르는 결정: #29, 2026-10-26 팀 결정 (독립 AP 안 HTTP 허용)
+- 따르는 결정: #29, 2026-10-26 팀 결정 (독립 AP 안 HTTP 허용), 2026-10-27 팀 결정 (3종 호스트는 CLI 3종으로 확인)
 
 ## 1. 왜
 
@@ -45,6 +45,7 @@
 - `server/src/nearpilot/api/mcp/`
 - `server/tests/api/`
 - `server/src/nearpilot/runtime/` (`public_hosts` 연결, `specs/core-server-assembly`)
+- `server/config/README.md` "AI 호스트 연결" 절, `server/tests/integration/` (`public_hosts` 조립 확인; fix/api-host-connection)
 
 ### 고치지 않는 곳
 - 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
@@ -106,7 +107,8 @@
 |---|---|---|
 | FR-08 | `test_FR08_*` | 토큰이 없거나 무효하면 MCP를 처리하지 않는다 |
 | FR-09 | `test_FR09_*` | `request_use`가 토큰 계정과 인자로 서비스를 부르고 판정 응답을 반환한다 |
-| FR-10 | `test_FR10_호스트_이름과_상관없이_같은_응답`  | 호스트 종류와 상관없이 같은 응답이다 |
+| FR-10 | `test_FR10_호스트_이름과_상관없이_같은_응답`  | CLI 3종(Claude Code, Codex, Gemini CLI)의 이름과 `User-Agent`가 달라도 같은 응답이고 서비스가 받은 요청도 같다 |
+| FR-08 | `test_FR08_runtime_public_hosts_reach_mcp` (`tests/integration/`) | 설정의 `[http] public_hosts`가 조립 서버의 `/mcp` Host 검사까지 닿는다 |
 | FR-11 | `test_FR11_응답에_내부_값이_없다` | 사용자 ID, 내부 요청 ID, `p_max`가 없다 |
 
 - 구현은 `server/tests/api/test_mcp.py`다.

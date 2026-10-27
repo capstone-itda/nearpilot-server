@@ -164,14 +164,17 @@ def test_FR09_거부_판정도_그대로_응답한다():
 # ── FR-10·FR-11 ─────────────────────────────────────────────────────
 
 
-def test_FR10_호스트_이름과_상관없이_같은_응답():
-    responses = []
-    for name in ("claude", "chatgpt", "gemini"):
-        c = Client()
-        init = {**INIT, "clientInfo": {"name": name, "version": "1"}}
-        assert run(c.post("initialize", init)).status_code == 200
-        responses.append(c.call(ARGS))
-    assert responses[0] == responses[1] == responses[2]
+@pytest.mark.parametrize("host", ["claude-code", "codex", "gemini-cli"])
+def test_FR10_호스트_이름과_상관없이_같은_응답(host):
+    # 3종 호스트는 CLI 3종으로 확인한다 (FR-10, 2026-10-27 팀 결정). 서버는 stateless 라 호스트 차이는
+    # 도구 호출 요청 자체(User-Agent)에 실린다. 응답과 서비스가 받은 요청이 호스트와 상관없이 같다.
+    baseline, c = Client(), Client()
+    expected = baseline.call(ARGS)
+    init = {**INIT, "clientInfo": {"name": host, "version": "1"}}
+    assert run(c.post("initialize", init, headers={"user-agent": f"{host}/1.0"})).status_code == 200
+    r = run(c.post("tools/call", {"name": "request_use", "arguments": ARGS}, headers={"user-agent": f"{host}/1.0"}))
+    assert json.loads(r.json()["result"]["content"][0]["text"]) == expected
+    assert c.core.requests == baseline.core.requests
 
 
 def test_FR11_응답에_내부_값이_없다():
