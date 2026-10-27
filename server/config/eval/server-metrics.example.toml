@@ -1,0 +1,145 @@
+# 서버 지표 평가 설정 예시. 평가 도구가 읽는다 (docs/requirements.md §4, specs/db-evaluation-server-metrics/spec.md).
+# 임시 폴더에 Mosquitto, 서버, 시뮬레이터 기기를 띄우고 지표를 잰다. 운영 DB와 실제 기기에는 접속하지 않는다.
+# 상대 경로는 이 파일이 있는 폴더 기준이다. 알 수 없는 키와 빠진 필수 키는 오류다.
+# 예시 값은 시연용 초기값이다. 부하 클라이언트 수와 통과 기준 수치는 D8에 따라 측정 뒤 다시 정한다.
+
+seed = 42                  # 시나리오 순서와 무작위 입력의 시드. 같은 시드와 설정이면 같다 (NFR-13)
+actuation_sec = 0.1        # 시뮬레이터가 제어 신호 출력을 마치는 데 걸리는 시간
+startup_timeout_sec = 30.0 # 브로커, 서버, 기기가 뜨기를 기다리는 시간. HTTP 요청의 제한 시간도 이 값이다
+
+# 근접 모델: <model_root>/place-a/<model_version>.json. 예시는 테스트용 합성 모델을 가리킨다.
+# 장소의 trusted 기기는 모두 이 모델의 nodes에 있어야 한다. 모델 syn-a-1은 locker-1~3, light-1~2, speaker-1만 안다.
+# 실제 평가는 `fit`이 만든 모델(var/models)과 그 버전, 그 모델의 기기 ID를 쓴다.
+model_root = "../../tests/core/proximity/fixtures/models"
+model_version = "syn-a-1"
+
+# 모든 사용자의 비콘 공통 값이다. minor는 사용자마다 [[users]]에서 정한다.
+[beacon]
+uuid = "11111111-2222-3333-4444-555555555555"
+major = 1
+
+# 서버 설정 server.example.toml의 [settings] 위에 덮어쓸 값이다. 키는 nearpilot.shared.config.Settings의 필드다.
+# 시뮬레이터 기기의 상태·RSSI 보고 주기도 이 값을 따른다. 서버가 기대하는 주기와 같아야 한다.
+[server_settings]
+version = "eval-1"
+status_report_sec = 0.5
+rssi_frame_sec = 0.5
+threshold_locker = 0.95    # 사물함 근접 임계값. 지표 9가 허용쌍을 거르는 기준이다. 서버 초기값과 같다
+# 지표 6은 시간이 지나야 보이는 사건(결과 불명, 이탈, 대여시간 초과)을 시나리오마다 기다린다. 운영 기본값(3초, 10+5초, 1시간)이면
+# 한 시나리오 30회에 수십 분이 걸려서 짧게 둔다. 서버 판단은 같고 기다리는 시간만 줄어든다.
+exec_timeout_sec = 2.0     # 명령 결과가 오지 않으면 기기를 FAULT로 보는 시간
+leave_absent_sec = 1.0     # 이탈 판단: 비콘을 연속으로 못 받은 시간
+leave_grace_sec = 0.5      # 이탈 판단: 유예
+rental_duration_sec = 3.0  # 대여 시간. 넘겨도 자동 반납하지 않는다. 이탈 판단(1.5초 + 여유)보다 길어서 이탈 시나리오가 초과와 겹치지 않는다
+
+# 사용자. 첫 owner가 장소의 소유자이자 restricted 기기의 승인자다. owner는 한 명 이상 있어야 한다.
+[[users]]
+user_id = "owner"
+role = "owner"  # owner | visitor
+minor = 1
+
+[[users]]
+user_id = "visitor-1"
+role = "visitor"
+minor = 2
+
+[[users]]
+user_id = "visitor-2"
+role = "visitor"
+minor = 3
+
+[[users]]
+user_id = "visitor-3"
+role = "visitor"
+minor = 4
+
+# 시뮬레이터 기기. 모두 장소 place-a에 놓인다.
+# capability: locker | light | speaker, occupancy: rental | shared, mode: open | restricted(승인 필요),
+# trusted: false면 신뢰하지 않은 기기(discovered)로 둔다.
+# restricted 기기의 승인 정책(선택): approval_mode(one_time | time_window, 기본 one_time),
+# approval_ttl_sec(승인 유효시간, 초), max_uses(승인 한 건으로 쓸 수 있는 횟수, 없으면 무제한).
+# 지표 5는 approval_mode가 one_time인 trusted restricted 기기에서 1회 승인을, time_window이고 approval_ttl_sec가 있는 기기에서
+# 기간 승인을 잰다. 설정에 그 기기가 없으면 그 시나리오는 건너뛰고 보고서 행의 note에 쓴다.
+[[nodes]]
+node_id = "locker-1"
+capability = "locker"
+occupancy = "rental"
+mode = "open"
+
+[[nodes]]
+node_id = "locker-2"
+capability = "locker"
+occupancy = "rental"
+mode = "open"
+
+[[nodes]]
+node_id = "locker-3"
+capability = "locker"
+occupancy = "rental"
+mode = "open"
+
+[[nodes]]
+node_id = "light-1"
+capability = "light"
+occupancy = "shared"
+mode = "open"
+
+# 승인이 필요한 기기. 모델 syn-a-1에 사물함이 3대뿐이라서 제한 기기는 조명이다. 조명은 기간 승인이 기본이다 (FR-14).
+# 지표 5가 시도마다 유효시간이 끝나기를 기다려서 짧게 둔다. 1회 승인(approval_mode = "one_time")을 재려면 제한 기기를 하나 더한다.
+[[nodes]]
+node_id = "light-2"
+capability = "light"
+occupancy = "shared"
+mode = "restricted"
+approval_mode = "time_window"
+approval_ttl_sec = 5
+
+# 신뢰하지 않은 기기. 모델에 없어도 된다. 후보로 나오면 안 된다.
+[[nodes]]
+node_id = "locker-4"
+capability = "locker"
+occupancy = "rental"
+trusted = false
+
+# 지표별 횟수. 값은 1 이상의 정수다. 횟수는 docs/requirements.md §4 표를 따른다.
+[counts]
+m1_utterances = 100      # 지표 1: 같은 발화 100건
+m3_requests = 2000       # 지표 3: 동시 클라이언트 요청
+m3_retransmits = 100     # 지표 3: 같은 request_id 재전송
+m3_clients = 10          # 지표 3: 동시 클라이언트 수. D8: 측정 뒤 정한다
+m4_each = 50             # 지표 4: 방문자 3명이 동시에 각 50회
+m5_each = 30             # 지표 5: 미등록, 비콘 없음, 무권한, 1회 승인, 기간 승인, 타인 핸들, 미신뢰를 각 30회
+m6_each = 30             # 지표 6: 시나리오마다 30회 (미완료 명령 중 반납 포함)
+m7_server_requests = 100 # 지표 7: 서버 판정
+m9_sets = 50             # 지표 9: 무작위 점유 조합
+
+# 통과 기준. 값은 0 이상의 수다. 이름이 _rate로 끝나면 0~1의 비율이고 _sec로 끝나면 0보다 큰 초다.
+# 이름의 max는 그 값 이하, min은 그 값 이상이 통과라는 뜻이다. D8: 수치는 측정 뒤 다시 정한다.
+[acceptance]
+m1_max_wrong_rate = 0.025                # 다른 기기 동작 ≤ 2.5%
+m3_max_double_occupancy = 0              # 이중 점유 0건
+m3_max_duplicate_execution = 1           # 같은 요청의 물리 실행 ≤ 1회
+m4_max_cross_user_malfunction = 0        # 다른 방문자의 기기 오동작 0건
+m4_min_success_rate = 0.95               # 요청한 기기의 제어 신호 출력 완료 ≥ 95%
+m5_max_out_of_scope = 0                  # 범위 밖 조작 0건
+m5_max_untrusted_candidates = 0          # 미신뢰 후보 0건
+m5_min_valid_approval_success_rate = 0.95 # 유효 승인 성공 ≥ 95%
+m6_max_auto_release = 0                  # 이탈·시간 초과 자동 반납 0건
+m6_max_foreign_release = 0               # 타인 반납 0건
+m6_max_release_during_fault = 0          # 미완료 명령·장애 중 일반 반납 0건
+m6_max_unapproved_recovery = 0           # 소유자 승인 없는 복구 0건
+m6_min_recovery_success_rate = 0.95      # 복구 성공 ≥ 95%
+m7_max_median_sec = 1.0                  # 서버 판정 median ≤ 1초
+m7_max_p95_sec = 2.0                     # 서버 판정 p95 ≤ 2초
+m7_host_max_median_sec = 3.0             # 발화부터 안내까지 median ≤ 3초. 호스트 측정 때 쓴다. 지금은 읽지 않는다
+m7_host_max_p95_sec = 6.0                # 발화부터 안내까지 p95 ≤ 6초. 호스트 측정 때 쓴다. 지금은 읽지 않는다
+m7_host_min_agreement_rate = 0.98        # 3종 호스트의 판정과 결과 일치 ≥ 98%. 호스트 측정 때 쓴다. 지금은 읽지 않는다
+m9_min_match_rate = 1.0                  # 기준 최대 배정 수와 그 안의 최적 비용 100% 일치
+
+# 시뮬레이터 RSSI(dBm). 실제 전파를 흉내 내지 않고 절차와 서버 경로만 확인한다. 실기기 수집 뒤 실측 값으로 바꾼다.
+[rssi]
+near = -53.0    # 기기 앞에 선 방문자를 그 기기가 듣는 값. 모델 syn-a-1의 기기 앞 평균과 같다
+# 다른 기기 앞에 선 방문자를 이웃 사물함이 듣는 값. 지표 1·4가 쓴다. 모델 syn-a-1이 이웃에서 기대하는 값(옆 -60.0, 둘 건넌 -65.3)에 가까워야
+# 한다. -68 이하로 약하면 모델이 방문자를 사물함 앞이 아니라 다른 자리(조명 앞 등)로 봐서 정면 기기의 확률이 임계값 0.95 아래로 내려간다
+# (-75에서 0.01 이하). -66~-58에서는 사물함 세 대 앞 모두 0.97 이상이다.
+far = -62.0
