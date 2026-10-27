@@ -21,7 +21,7 @@ DEFAULT_CONFIG = "config/server.toml"  # 실행 폴더 기준
 def build_parser() -> argparse.ArgumentParser:
     """`--config`를 하위 명령 앞뒤 어디에 써도 되는 파서. 하위 명령은 필수다."""
     # 하위 명령 모듈이 위의 종료 코드를 가져다 쓰므로 상수를 정한 뒤에 가져온다.
-    from nearpilot.cli import collect, fit, seed, serve, split
+    from nearpilot.cli import collect, evaluate, fit, recover, seed, serve, split
     from nearpilot.cli import eval as eval_cmd  # 모듈 이름이 내장 함수 eval을 가리지 않게 다른 이름으로 가져온다
 
     parser = argparse.ArgumentParser(prog="nearpilot", description="NearPilot 서버를 실행하고 운영한다.")
@@ -38,6 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
     split.register(subparsers, parent)
     fit.register(subparsers, parent)
     eval_cmd.register(subparsers, parent)
+    evaluate.register(subparsers, parent)
+    recover.register(subparsers, parent)
     return parser
 
 

@@ -75,6 +75,21 @@ def test_FR08_설정하지_않은_Origin은_403():
 # ── FR-09 request_use ───────────────────────────────────────────────
 
 
+@pytest.mark.parametrize("host", ["192.168.0.10:8000", "10.42.0.1:8000", "nearpilot.local:8000"])
+def test_FR08_AP_주소로_붙어도_처리한다(host):
+    c = Client(public_hosts=(host,))  # 서버의 AP 주소를 `[http] public_hosts`에 넣는다
+    r = run(c.post("tools/list", headers={"host": host}))
+    assert r.status_code == 200, r.text
+    assert any(tool["name"] == "request_use" for tool in r.json()["result"]["tools"])
+
+
+@pytest.mark.parametrize("host", ["192.168.0.10:8000", "10.42.0.1:8000"])
+def test_FR08_AP_주소여도_토큰이_없으면_401(host):
+    c = Client(public_hosts=(host,))
+    r = run(c.post("tools/list", token=None, headers={"host": host}))
+    assert r.status_code == 401
+
+
 def test_FR09_도구_목록에_request_use가_있다():
     r = run(Client().post("tools/list"))
     assert r.status_code == 200
@@ -149,14 +164,17 @@ def test_FR09_거부_판정도_그대로_응답한다():
 # ── FR-10·FR-11 ─────────────────────────────────────────────────────
 
 
-def test_FR10_호스트_이름과_상관없이_같은_응답():
-    responses = []
-    for name in ("claude", "chatgpt", "gemini"):
-        c = Client()
-        init = {**INIT, "clientInfo": {"name": name, "version": "1"}}
-        assert run(c.post("initialize", init)).status_code == 200
-        responses.append(c.call(ARGS))
-    assert responses[0] == responses[1] == responses[2]
+@pytest.mark.parametrize("host", ["claude-code", "codex", "gemini-cli"])
+def test_FR10_호스트_이름과_상관없이_같은_응답(host):
+    # 3종 호스트는 CLI 3종으로 확인한다 (FR-10, 2026-10-27 팀 결정). 서버는 stateless 라 호스트 차이는
+    # 도구 호출 요청 자체(User-Agent)에 실린다. 응답과 서비스가 받은 요청이 호스트와 상관없이 같다.
+    baseline, c = Client(), Client()
+    expected = baseline.call(ARGS)
+    init = {**INIT, "clientInfo": {"name": host, "version": "1"}}
+    assert run(c.post("initialize", init, headers={"user-agent": f"{host}/1.0"})).status_code == 200
+    r = run(c.post("tools/call", {"name": "request_use", "arguments": ARGS}, headers={"user-agent": f"{host}/1.0"}))
+    assert json.loads(r.json()["result"]["content"][0]["text"]) == expected
+    assert c.core.requests == baseline.core.requests
 
 
 def test_FR11_응답에_내부_값이_없다():

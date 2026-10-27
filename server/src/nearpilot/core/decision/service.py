@@ -8,7 +8,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import replace
+from enum import Enum
+from typing import Any, TypeVar
 
 from nearpilot.core.decision.pipeline import DecisionPipeline, make_decision
 from nearpilot.shared.enums import ExecutionStatus, ReasonCode, Verdict
@@ -31,11 +34,22 @@ _BY_STATUS: dict[ExecutionStatus, tuple[Verdict, ReasonCode]] = {
 _BY_REASON: dict[ReasonCode, tuple[Verdict, ReasonCode]] = {
     ReasonCode.COMMAND_IN_PROGRESS: (Verdict.BUSY, ReasonCode.COMMAND_IN_PROGRESS),
     ReasonCode.DEVICE_BUSY: (Verdict.BUSY, ReasonCode.DEVICE_BUSY),
+    ReasonCode.USE_NOT_FOUND: (Verdict.DENY, ReasonCode.USE_NOT_FOUND),
     ReasonCode.TARGET_UNAVAILABLE: (Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE),
     ReasonCode.NODE_NOT_CONNECTED: (Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE),
     ReasonCode.RESERVATION_EXPIRED: (Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE),
     ReasonCode.COMMAND_NOT_SENT: (Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE),
 }
+
+_E = TypeVar("_E", bound=Enum)
+
+
+def _member(kind: type[_E], value: object) -> _E | None:
+    """저장된 근거의 값으로 열거형 항목을 찾는다. 열거형에 없으면 None 이다."""
+    try:
+        return kind(value)
+    except ValueError:
+        return None
 
 
 class RequestUseService:
@@ -63,8 +77,24 @@ class RequestUseService:
     def _replay(self, decision: Decision) -> Decision:
         record = self._store.execution(decision.internal_request_id)
         if record is None:  # 인계가 끝나지 않았다. context 를 다시 만들 수 없다
-            return self._failure(decision, ReasonCode.INTERNAL_ERROR)
+            return self._failure(decision, ReasonCode.REQUEST_IN_PROGRESS, Verdict.BUSY)
+        if record.status is ExecutionStatus.NOT_SENT:
+            return self._from_evidence(decision, record.evidence)
         return self._map(decision, record.status, record.use_id, None, None)
+
+    def _from_evidence(self, decision: Decision, evidence: Mapping[str, Any]) -> Decision:
+        """미전송 취소 근거로 첫 응답과 같은 판정을 다시 만든다. 근거로 알 수 없으면 거부한다."""
+        reason = _member(ReasonCode, evidence.get("reason"))
+        if evidence.get("source") == "recheck":  # 재검사 판정과 사유를 그대로 전한다
+            verdict = _member(Verdict, evidence.get("verdict"))
+            if verdict is None or verdict is Verdict.OK or reason is None:  # 알 수 없는 근거는 OK 가 되지 않는다
+                return self._failure(decision, ReasonCode.INTERNAL_ERROR)
+            return make_decision(decision.request_id, decision.internal_request_id, verdict, reason,
+                                 node_id=decision.node_id, p_max=decision.p_max)
+        by_reason = _BY_REASON.get(reason) if reason is not None else None
+        if by_reason is None:
+            return self._failure(decision, ReasonCode.INTERNAL_ERROR)
+        return self._failure(decision, by_reason[1], by_reason[0])
 
     def _from_result(self, decision: Decision, result: ExecutionResult) -> Decision:
         return self._map(decision, result.status, result.use_id, result.recheck, result.reason)

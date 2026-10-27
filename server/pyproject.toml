@@ -16,6 +16,9 @@ dependencies = [
 dev = [
     "pytest",
 ]
+eval = [
+    "matplotlib",
+]
 
 [project.scripts]
 nearpilot = "nearpilot.cli:main"

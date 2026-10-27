@@ -48,6 +48,14 @@ def test_fr11_policy_check_result_has_no_user_fields():
     assert not names & {"user_id", "requester_user_id", "approver_user_id"}
 
 
+def test_FR14_policy_contracts_take_optional_internal_request_id():
+    """④가 넘기는 내부 요청 ID는 키워드 전용이고 기본값이 없음(None)이다."""
+    for method in (PolicyChecker.check, Repository.valid_approval):
+        param = inspect.signature(method).parameters["internal_request_id"]
+        assert param.kind is inspect.Parameter.KEYWORD_ONLY
+        assert param.default is None
+
+
 def test_fr18_fake_policy_checker_satisfies_protocol():
     class FakePolicyChecker:
         def check(self, user_id, node_id, action, now):

@@ -3,7 +3,7 @@
 - 상태: 구현 중. 실제 Mosquitto·SQLite·시뮬레이터 연결 검증을 통과했다. 전체 `pytest`를 통과한 뒤에만 같은 feat PR을 머지한다.
 - 담당: JM-220 (상태 관리, 판정)
 - 요구사항: FR-01, FR-03, FR-05, FR-06, FR-07, FR-08, FR-09, FR-11, FR-19, FR-20, FR-21, FR-22, FR-23, NFR-03, NFR-04, NFR-08, NFR-12, NFR-13
-- 따르는 결정: #34, #40, #82, #83, #88, #140, #164, #165
+- 따르는 결정: #34, #40, #82, #83, #88, #140, #164, #165, 2026-10-26 담당자 결정(전권 위임, 인증 실패 감사 기록)
 - 내부 선택: 담당자가 2026-10-16 대화에서 경로, 실행 방식, 설정, 주기와 실패 정책, 근접 복원의 관측 조회를 선택했다.
 
 ## 1. 왜
@@ -16,7 +16,7 @@
 
 - 입력: TOML 설정 경로, DB 파일, 장소별 모델 파일, 비밀 파일과 MQTT 보고다.
 - 출력: 같은 프로세스의 FastAPI와 MCP 엔드포인트, 주기 작업과 종료 결과다.
-- 바뀌는 상태: 기존 서비스가 각 계약에 따라 바꾸는 DB·기기·감사 상태다.
+- 바뀌는 상태: 기존 서비스가 각 계약에 따라 바꾸는 DB·기기·감사 상태와, 조립이 직접 남기는 인증 실패 감사 사건이다.
 - 약속:
   - `server/`에서 `python -m nearpilot --config config/server.toml`로 실행한다.
   - 단일 프로세스와 단일 worker를 쓴다.
@@ -70,7 +70,7 @@
 - 요청 한도 집계와 거부는 기존 DB·판정 spec의 fix가 맡는다.
 - REST와 WebSocket의 내부 구현, 관리 서비스의 내부 동작과 시드 스크립트는 별도 작업이다.
 - 계정·승인 REST의 기존 서비스 생성과 라우터 연결은 이 조립에 포함한다.
-- 인증 실패 감사 접점과 원래 요청 연결의 새 계약은 만들지 않는다.
+- 인증 실패를 원래 요청과 연결하는 새 계약은 만들지 않는다. 인증 실패는 요청 참조 없이 기록한다 (`docs/architecture.md` `audit_log`).
 
 ## 5. 예외 상황
 
@@ -92,6 +92,9 @@
 | 초기화 중간에 실패했다 | 이미 시작한 작업과 연결만 종료한다 | `test_NFR04_runtime_partial_startup_cleanup` |
 | 종료 대기 제한을 넘겼다 | 오류를 알린다. 미완료 기록을 다음 복원 대상으로 유지한다 | `test_FR07_runtime_shutdown_timeout_keeps_unknown` |
 | 다른 계정의 사용을 MCP로 조회한다 | 기존 본인 조회 제한을 유지한다 | `test_FR21_runtime_mcp_ownership` |
+| MCP, REST, 대시보드에서 `authenticate`가 인증을 거부한다 | 요청 참조 없는 `auth` 감사 사건을 하나 남기고 기존 거부 응답을 그대로 보낸다 | `test_FR22_runtime_auth_failure_audited` |
+| 인증 실패의 감사 저장이 실패한다 | 경고를 남기고 기존 거부 응답을 그대로 보낸다 | `test_FR22_runtime_auth_audit_failure_is_nonblocking` |
+| 인증이 성공한다 | `auth` 감사 사건을 남기지 않는다 | `test_FR22_runtime_auth_success_not_audited` |
 
 ## 6. 결정
 
@@ -111,7 +114,7 @@
 - 담당자가 2026-10-26 대화에서 기존 계정·승인 REST의 서버 연결을 지시했다.
 - `DefaultAdminService`에 일반 저장소와 스레드별 `AdminRepository` 접점을 넘긴다.
 - `OwnerApprovalService`에 일반 저장소와 서버의 `clock`을 넘긴다.
-- `build_account_router`와 `build_approval_router`에 기존 `Authenticator`를 넘긴다.
+- `build_account_router`와 `build_approval_router`에 `Runtime.authenticator`(`AuditedAuthenticator`, 아래 "인증 실패 감사 기록")를 넘긴다.
 - 두 라우터를 대시보드처럼 MCP 루트 마운트보다 먼저 등록한다.
 - 두 라우터는 대시보드 설정과 관계없이 등록한다. 수집 전용에서도 등록한다.
 - 수집 전용은 MCP 판정 요청만 막는다. 계정 등록과 승인 결정은 기기에 실행 명령을 보내지 않는다.
@@ -120,6 +123,16 @@
 - DB 연결은 REST 작업 스레드에서 열고 닫는다. 여러 저장소 호출은 서비스 호출 하나의 연결 범위를 쓴다.
 - `AdminRepository`의 저장 규칙, CORE의 승인 판정과 API의 응답 계약을 바꾸지 않는다.
 - 계정·승인 REST의 기존 spec이 제공하는 라우터와 서비스 계약을 사용한다.
+
+### 인증 실패 감사 기록
+
+- 2026-10-26 담당자 결정. api는 db를 직접 호출하지 않으므로(의존 규칙 1) 조립이 기록한다.
+- `runtime/auth_audit.py`의 `AuditedAuthenticator`는 `Authenticator`를 상속한다. 생성자에서 `AccountLookup`, `AuditLog`, 시계를 받는다. `Runtime.authenticator`가 이 객체이므로 MCP, 계정·승인 REST, 대시보드 REST·스트림이 모두 같은 기록을 쓴다. 복구 REST도 이 객체를 받으면 같은 기록을 쓴다.
+- `authenticate`가 `AuthenticationError`를 내면 `AuditEvent(event_id=UUID, step=Step.AUTH, payload={"reason", "credential", "at"})`를 `AuditLog.append`로 저장하고 같은 예외를 다시 낸다. `credential`은 헤더가 없거나 비었으면 `missing`, 있으면 `presented`다. `internal_request_id`와 `command_id`는 `None`이다.
+- payload에 토큰 원문, 토큰 해시, 헤더 값, 계정 정보를 넣지 않는다 (NFR-08).
+- `authenticate`를 부르기 전에 끝나는 거부(대시보드 스트림의 첫 메시지 형식 오류, 인증 제한 시간 초과)는 기록하지 않는다. api를 고치지 않는다.
+- 저장 실패는 `log.warning`만 남기고 거부 응답을 바꾸지 않는다. 기록이 인증 결과를 바꾸지 않는다.
+- 기록 횟수 제한은 두지 않는다. 독립 AP 안에서만 접근하는 전제(NFR-14)라 반복 실패의 양이 작다. 감사 보존 기간 정리(FR-22)가 오래된 기록을 지운다.
 
 ### 설정과 모델
 
@@ -230,7 +243,7 @@
 | FR-19 | `test_FR19_runtime_startup_restore_cleanup_failure` | 복원·정리 전에는 접수하지 않는다 |
 | FR-20 | `test_FR20_runtime_release_and_leave_off` | 반납 검사 없는 논리적 반납과 내부 꺼짐의 주기 호출 연결이다 |
 | FR-21 | `test_FR21_runtime_mcp_ownership` | 본인 사용 조회 제한이다 |
-| FR-22 | `test_FR22_runtime_*` | 설정 검증, 진입점 종료, 정리 재시도, JSONL 내보내기와 실패 격리다 |
+| FR-22 | `test_FR22_runtime_*` | 설정 검증, 진입점 종료, 정리 재시도, JSONL 내보내기와 실패 격리, 인증 실패 감사 기록이다 |
 | FR-23 | `test_FR23_runtime_shares_allocation_window` | 동시 할당 요청을 함께 배정한다 |
 | NFR-03, NFR-04 | `test_NFR03_runtime_*`, `test_NFR04_runtime_*` | 연결 소유권, 기기 차단과 자원 정리다 |
 | NFR-08 | `test_NFR08_runtime_config_keeps_secret_out` | 설정 오류와 설정 객체에 비밀이 없다 |

@@ -164,11 +164,11 @@ def test_FR09_재전송은_저장된_실행_상태로_반환한다(status, verdi
     assert ex.contexts == [] and store.calls == ["i1"]  # 새 명령을 만들지 않는다
 
 
-def test_FR09_재전송인데_실행_기록이_없으면_INTERNAL_ERROR():
+def test_FR18_재전송인데_실행_기록이_없으면_REQUEST_IN_PROGRESS():
     svc, pipe, ex, store = build(OK, None, rec=None)
     d = svc.request_use(REQ)
-    assert (d.verdict, d.reason, d.use_id) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR, None)
-    assert ex.contexts == []
+    assert (d.verdict, d.reason, d.use_id) == (Verdict.BUSY, ReasonCode.REQUEST_IN_PROGRESS, None)
+    assert ex.contexts == []  # 인계가 끝나지 않은 요청이라 다시 인계하지 않는다
 
 
 def test_FR09_재전송된_거부_판정은_그대로_반환한다():
@@ -215,6 +215,13 @@ def test_FR19_중단_사유별_호스트_판정(reason, verdict, host_reason):
     assert (d.verdict, d.reason, d.use_id, d.node_id) == (verdict, host_reason, None, "locker-1")
 
 
+def test_FR19_반납과_겹친_재조작은_USE_NOT_FOUND():
+    svc, *_ = build(result=stopped(ReasonCode.USE_NOT_FOUND))
+    d = svc.request_use(REQ)
+    assert (d.verdict, d.reason, d.use_id, d.node_id) == (
+        Verdict.DENY, ReasonCode.USE_NOT_FOUND, None, "locker-1")
+
+
 def test_FR18_재검사_판정이_있으면_먼저_쓴다():
     blocked = Decision("i1", "r1", Verdict.ASK, ReasonCode.MOVE_CLOSER, node_id="locker-1", p_max=0.4)
     svc, *_ = build(result=stopped(None, recheck=blocked))
@@ -239,3 +246,63 @@ def test_FR11_중단_사유의_내부_원인을_공개하지_않는다(reason):
     svc, *_ = build(result=stopped(reason))
     d = svc.request_use(REQ)
     assert reason.value not in repr(d) and d.reason is ReasonCode.TARGET_UNAVAILABLE
+
+
+# ── 재전송된 NOT_SENT 는 취소 근거로 첫 응답을 다시 만든다 ──────────────────
+
+
+def not_sent(evidence) -> CommandRecord:
+    return CommandRecord("c1", "i1", "locker-1", Action.OPEN, ExecutionStatus.NOT_SENT,
+                         use_id="use-1", evidence=evidence)
+
+
+RECHECK_ASK = {"source": "recheck", "verdict": "ASK", "reason": "MOVE_CLOSER",
+               "confirmed_at": "2026-01-01T12:00:05+00:00"}
+RECHECK_APPROVAL = {"source": "recheck", "verdict": "NEED_APPROVAL", "reason": "APPROVAL_REQUIRED",
+                    "confirmed_at": "2026-01-01T12:00:05+00:00"}
+
+
+@pytest.mark.parametrize("evidence,verdict,reason", [
+    pytest.param(RECHECK_ASK, Verdict.ASK, ReasonCode.MOVE_CLOSER, id="재검사 ASK"),
+    pytest.param(RECHECK_APPROVAL, Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, id="재검사 승인 필요"),
+    pytest.param({"source": "no_connection", "reason": "NODE_NOT_CONNECTED"},
+                 Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE, id="중단 사유 연결 없음"),
+    pytest.param({"source": "reservation_expired", "reason": "RESERVATION_EXPIRED"},
+                 Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE, id="중단 사유 예약 만료"),
+    pytest.param({"source": "begin_send_conflict", "reason": "COMMAND_IN_PROGRESS"},
+                 Verdict.BUSY, ReasonCode.COMMAND_IN_PROGRESS, id="중단 사유 다른 명령 진행 중"),
+    pytest.param({}, Verdict.DENY, ReasonCode.INTERNAL_ERROR, id="근거 없음"),
+    pytest.param({**RECHECK_ASK, "verdict": "NOPE"}, Verdict.DENY, ReasonCode.INTERNAL_ERROR,
+                 id="재검사 verdict 가 열거형 밖"),
+    pytest.param({**RECHECK_ASK, "reason": "NOPE"}, Verdict.DENY, ReasonCode.INTERNAL_ERROR,
+                 id="재검사 reason 이 열거형 밖"),
+    pytest.param({**RECHECK_ASK, "verdict": "OK", "reason": "OK"}, Verdict.DENY, ReasonCode.INTERNAL_ERROR,
+                 id="재검사 근거가 OK 여도 OK 가 되지 않는다"),
+    pytest.param({"source": "no_connection", "reason": "BEACON_NOT_SEEN"},
+                 Verdict.DENY, ReasonCode.INTERNAL_ERROR, id="중단 사유 표에 없는 사유"),
+    pytest.param({"source": "no_connection", "reason": ["NODE_NOT_CONNECTED"]},
+                 Verdict.DENY, ReasonCode.INTERNAL_ERROR, id="사유 값이 문자열이 아님"),
+])
+def test_FR18_재전송된_NOT_SENT는_첫_응답과_같은_판정을_준다(evidence, verdict, reason):
+    svc, pipe, ex, store = build(OK, None, rec=not_sent(evidence))
+    d = svc.request_use(REQ)
+    assert (d.verdict, d.reason, d.use_id, d.node_id) == (verdict, reason, None, "locker-1")
+    assert (d.internal_request_id, d.request_id, d.p_max) == ("i1", "r1", 0.97)  # 최초 판정의 p_max 를 유지한다
+    assert ex.contexts == [] and store.calls == ["i1"]  # 새 명령을 만들지 않는다
+
+
+@pytest.mark.parametrize("result,evidence", [
+    pytest.param(
+        stopped(None, recheck=Decision("i1", "r1", Verdict.ASK, ReasonCode.MOVE_CLOSER,
+                                       node_id="locker-1", p_max=0.4)),
+        RECHECK_ASK, id="재검사 거부"),
+    pytest.param(stopped(ReasonCode.NODE_NOT_CONNECTED),
+                 {"source": "no_connection", "reason": "NODE_NOT_CONNECTED"}, id="연결 없음"),
+    pytest.param(stopped(ReasonCode.COMMAND_IN_PROGRESS),
+                 {"source": "begin_send_conflict", "reason": "COMMAND_IN_PROGRESS"}, id="다른 명령 진행 중"),
+])
+def test_FR18_재전송은_첫_호출과_같은_판정을_준다(result, evidence):
+    first = build(result=result)[0].request_use(REQ)
+    again = build(OK, None, rec=not_sent(evidence))[0].request_use(REQ)
+    assert (again.verdict, again.reason, again.node_id, again.use_id) == \
+        (first.verdict, first.reason, first.node_id, first.use_id)

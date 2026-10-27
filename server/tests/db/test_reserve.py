@@ -8,7 +8,7 @@ import pytest
 
 from nearpilot.db.repositories.repository import SqliteRepository
 from nearpilot.db.schema import connect
-from nearpilot.shared.enums import Action, ReserveOutcome
+from nearpilot.shared.enums import Action, ExecutionStatus, ReasonCode, ReserveOutcome
 from nearpilot.shared.models import ReserveRequest
 
 from conftest import insert_approval, insert_node, insert_place, insert_policy, insert_request, insert_use_session, insert_user
@@ -56,6 +56,40 @@ def test_FR19_reserve_idempotent(conn, repo):
     assert conn.execute("SELECT COUNT(*) AS c FROM use_session").fetchone()["c"] == 1
 
 
+@pytest.mark.parametrize("approval_id", [None, "appr1"], ids=["no_approval", "one_time_approval"])
+def test_FR19_reserve_after_cancel_reserves_again(conn, repo, store, approval_id):
+    _setup_rental(conn)
+    if approval_id is not None:
+        insert_policy(conn, approval_mode="one_time", max_uses=1)
+        insert_approval(conn, approval_id=approval_id, internal_request_id="prior-req")
+    _seed_request(conn, internal_request_id="req1")
+    first = repo.reserve_if_free(_request(approval_id=approval_id))
+    store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.INTERNAL_ERROR, {"source": "decision_error"})
+
+    again = repo.reserve_if_free(_request(approval_id=approval_id))
+
+    assert again.outcome == ReserveOutcome.RESERVED
+    assert again.use_id is not None
+    assert again.use_id != first.use_id
+    node = conn.execute("SELECT device_state FROM node WHERE node_id = 'node1'").fetchone()
+    assert node["device_state"] == "RESERVED"
+    sessions = {r["use_id"]: (r["state"], r["end_reason"]) for r in conn.execute("SELECT * FROM use_session")}
+    assert sessions == {first.use_id: ("CLOSED", "cancelled"), again.use_id: ("RESERVED", None)}
+    if approval_id is None:
+        assert again.usage_id is None
+    else:
+        # 취소해서 반환한 사용분은 한도 1에 세지 않는다. 새 사용분을 받는다.
+        assert again.usage_id is not None
+        assert again.usage_id != first.usage_id
+        usages = {r["usage_id"]: r["state"] for r in conn.execute("SELECT usage_id, state FROM approval_usage")}
+        assert usages == {first.usage_id: "released", again.usage_id: "reserved"}
+
+    third = repo.reserve_if_free(_request(approval_id=approval_id))
+
+    assert (third.outcome, third.use_id, third.usage_id) == (ReserveOutcome.RESERVED, again.use_id, again.usage_id)
+    assert conn.execute("SELECT COUNT(*) AS c FROM use_session").fetchone()["c"] == 2
+
+
 def test_FR19_reserve_not_available(conn, repo):
     _setup_rental(conn, device_state="FAULT")
     _seed_request(conn, internal_request_id="req1")
@@ -94,6 +128,20 @@ def test_FR19_reserve_reoperating(conn, repo):
     assert result.outcome == ReserveOutcome.REOPERATING
     assert result.use_id == "use1"
     assert conn.execute("SELECT COUNT(*) AS c FROM use_session").fetchone()["c"] == 1
+
+
+def test_FR19_reserve_reoperating_without_approval_has_reserved_at(conn, repo):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="node1", occupancy="rental", device_state="ACTIVE")
+    _seed_request(conn, internal_request_id="rental-req")
+    insert_use_session(conn, use_id="use1", internal_request_id="rental-req", state="ACTIVE")
+    _seed_request(conn, internal_request_id="reop-req", received_at="2026-01-01T00:00:05+00:00")
+
+    result = repo.reserve_if_free(_request(internal_request_id="reop-req"))
+
+    assert (result.outcome, result.usage_id) == (ReserveOutcome.REOPERATING, None)
+    assert result.reserved_at.isoformat() == "2026-01-01T00:00:05+00:00"
 
 
 def test_FR19_reserve_reoperating_fault(conn, repo):

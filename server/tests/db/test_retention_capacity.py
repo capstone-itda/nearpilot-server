@@ -128,6 +128,28 @@ def test_FR22_cleanup_skips_unfinished_request(conn):
     assert row["request_id"] == "ext-1"
 
 
+def test_FR22_cleanup_keeps_request_id_of_retried_request_with_active_session(conn):
+    """취소한 세션과 재판정의 새 ACTIVE 세션이 함께 있으면 완료가 아니다 (#76, #80)."""
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="node1", occupancy="rental")
+    insert_request(
+        conn, internal_request_id="req1", request_id="ext-1", verdict="OK", reason_code="OK",
+        node_id="node1", received_at="2020-01-01T00:00:00+00:00",
+    )
+    insert_use_session(conn, use_id="use-old", internal_request_id="req1", state="CLOSED",
+                       end_reason="cancelled", closed_at="2020-01-01T00:00:01+00:00")
+    insert_use_session(conn, use_id="use-new", internal_request_id="req1", state="ACTIVE", closed_at=None)
+    insert_audit_log(conn, internal_request_id="req1", step="exec", created_at="2020-01-01T00:00:00+00:00")
+
+    retention = SqliteRetentionStore(conn, settings=Settings(request_dedup_ttl_sec=1))
+    report = retention.cleanup(datetime(2026, 2, 1, tzinfo=timezone.utc))
+
+    assert report.cleared_requests == 0
+    row = conn.execute("SELECT request_id FROM request WHERE internal_request_id = 'req1'").fetchone()
+    assert row["request_id"] == "ext-1"
+
+
 def test_FR22_cleanup_clears_request_id_after_dedup_ttl(conn):
     insert_user(conn)
     insert_request(

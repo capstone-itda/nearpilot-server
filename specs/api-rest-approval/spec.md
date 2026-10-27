@@ -49,7 +49,7 @@
 ### 만들지 않는 것
 - 서버 조립(`runtime/`)에 라우터를 붙이는 일과 조립의 `OwnerApprovalService` 생성. 상태 관리가 맡는다.
 - 앱의 목록 응답 읽기 정리 (`app-owner-approval` spec 7절 가정). 앱 fix에서 한다.
-- 승인 알림 전달 (FR-03 미결)
+- 승인 알림 전달. 앱이 `GET /approvals`를 주기 조회한다 (FR-03, 2026-10-26 결정)
 
 ## 5. 예외 상황
 

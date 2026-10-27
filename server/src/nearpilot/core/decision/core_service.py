@@ -103,7 +103,8 @@ def build_core_service(
     판정 모듈은 다른 계층의 구현을 불러오지 않는다 (AGENTS.md 의존 규칙 4).
     """
     pipeline = DecisionPipeline(
-        repo, proximity, policy, audit, settings, readiness, new_id=new_id, window=window)
+        repo, proximity, policy, audit, settings, readiness, new_id=new_id, window=window,
+        store=store)
     return DelegatingCoreService(
         use=RequestUseService(pipeline, execution, store),
         access=AccessRequestService(repo, policy, audit, settings, clock, new_id=new_id),

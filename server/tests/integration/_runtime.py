@@ -66,7 +66,7 @@ def wait_until(predicate: Callable[[], Any], timeout: float = 5.0, interval: flo
 def make_config(tmp: Path, *, settings: Mapping[str, Any] | None = None,
                 runtime: Mapping[str, Any] | None = None, delivery: Mapping[str, Any] | None = None,
                 database: Mapping[str, Any] | None = None, models: Mapping[str, str] | None = None,
-                mqtt: Mapping[str, Any] | None = None) -> ServerConfig:
+                mqtt: Mapping[str, Any] | None = None, http: Mapping[str, Any] | None = None) -> ServerConfig:
     secret = tmp / ".env.mqtt-password"
     secret.write_text("test-only-password\n", encoding="utf-8")
     raw = {
@@ -74,7 +74,7 @@ def make_config(tmp: Path, *, settings: Mapping[str, Any] | None = None,
         "runtime": {"execution_tick_sec": 0.05, "release_tick_sec": 0.05, "restore_tick_sec": 0.05,
                     "recovery_tick_sec": 0.05, "shared_light_tick_sec": 0.1,
                     "shutdown_timeout_sec": 5.0, **(runtime or {})},
-        "http": {"host": "127.0.0.1", "port": 8000},
+        "http": {"host": "127.0.0.1", "port": 8000, **(http or {})},
         "database": {"path": "np.db", "audit_jsonl": "audit.jsonl", **(database or {})},
         "proximity": {"model_root": str(MODEL_ROOT), "models": dict(models or {"place-a": "syn-a-1"})},
         "mqtt": {"host": "127.0.0.1", "port": 1883, "client_id": "test-server",

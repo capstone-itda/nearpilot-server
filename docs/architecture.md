@@ -34,7 +34,7 @@ flowchart TB
         SHARED["shared<br/>계층 간 계약 (공동 소유)"]
     end
 
-    Host -- "MCP / HTTPS + 토큰" --> API
+    Host -- "MCP / HTTP + 토큰" --> API
     App -- "REST · WebSocket" --> API
     API --> CORE
     CORE --> DB
@@ -45,7 +45,7 @@ flowchart TB
 
 | 계층 | 책임 | 관련 요구사항 |
 |---|---|---|
-| **API** | MCP Streamable HTTP 엔드포인트와 도구 6개, 토큰으로 계정 식별, 앱과 대시보드용 REST, 실시간 모니터링 WebSocket, 소유자 앱 승인 알림 전달, 응답에서 사용자 ID 제거 | FR-08, FR-09, FR-10, FR-11. 서버 측: FR-01, FR-03, FR-12A, FR-12B. NFR-01, NFR-07, NFR-08, NFR-09, NFR-11 |
+| **API** | MCP Streamable HTTP 엔드포인트와 도구 6개, 토큰으로 계정 식별, 앱과 대시보드용 REST, 실시간 모니터링 WebSocket, 응답에서 사용자 ID 제거 | FR-08, FR-09, FR-10, FR-11. 서버 측: FR-01, FR-03, FR-12A, FR-12B. NFR-01, NFR-07, NFR-08, NFR-09, NFR-11 |
 | **CORE** | ⓪~⑥ 결정론적 판정, 실행 직전 재검사, 근접 추정 (관측 모델과 HMM), 재질문, 접근 정책과 승인, 전역 할당, 상태 머신, 해제, `FAULT` 복구 | FR-13~FR-21, FR-23, NFR-02, NFR-04, NFR-05, NFR-06 |
 | **DB** | SQLite 스키마, 단일 쓰기 경로와 `BEGIN IMMEDIATE` 원자적 점유, 저장소 조회, 감사 로그 (테이블과 JSONL), 공개용 데이터셋 추출 | FR-19 (원자성), FR-22, NFR-03, NFR-13 |
 | **IOT** | MQTT 브로커 연결, 기기 발견, RSSI, 명령 처리 상태와 실행 결과의 수신과 검증, 실행 명령 전송과 결과 대기 (타임아웃), 기기별 자격정보, 기기 시뮬레이터 | 서버 측: FR-04~FR-07. NFR-08, NFR-10, NFR-12, 지표 8 수집 데이터의 수신과 검증 |
@@ -69,10 +69,11 @@ nearpilot-server/
 │   │   ├── seed/               시드 파일 예시 (계정, 비콘, 장소, 정책)
 │   │   ├── plans/              수집 계획 예시
 │   │   ├── layouts/            기기 배치 예시
-│   │   └── fit/                적합 설정 예시 (분할, 후보 값, 통과 기준)
+│   │   ├── fit/                적합 설정 예시 (분할, 후보 값, 통과 기준)
+│   │   └── eval/               서버 지표 평가 설정 예시 (횟수, 통과 기준, 시뮬레이터 장면)
 │   ├── src/nearpilot/
 │   │   ├── shared/             계층 간 계약: 도메인 모델, 열거형, 인터페이스, 설정
-│   │   ├── cli/                운영 명령 `nearpilot`: serve, seed, collect, split, fit, eval (FR-16)
+│   │   ├── cli/                운영 명령 `nearpilot`: serve, seed, recover, collect, split, fit, eval, evaluate-server, evaluate-reask (FR-16, NFR-13)
 │   │   ├── api/
 │   │   │   ├── mcp/            MCP 엔드포인트와 도구 6개 (FR-08~FR-11)
 │   │   │   ├── auth/           토큰으로 계정 식별, 무효 토큰 거부
@@ -114,6 +115,7 @@ nearpilot-server/
 | **근접 추정** | `src/nearpilot/core/proximity/`, `core/admin/`, `tools/data_collection/` | 관측 모델과 HMM, 사후확률 계산, 근접 추정 인터페이스, 수집 회차와 라벨 기록, `AdminService` (`AdminRepository` 위의 관리 쓰기) |
 | **상태 관리** | `src/nearpilot/core/lifecycle/`, `iot/`, `tools/node_sim/` | 예약 뒤의 상태 전이, 대여 점유 유지와 초과시간 계산, 명시적 해제, `FAULT` 복구, MQTT 게이트웨이, 기기 시뮬레이터, CORE 쪽 `NodeEventSink`, 서버 실행 진입점과 CORE 서비스 조립 |
 | **DB** | `src/nearpilot/db/`, `core/policy/`, `tools/evaluation/` | 스키마, 저장소, 원자적 점유와 승인 사용분, 감사 로그, 평가 스크립트, 접근 정책과 승인 검사, 토큰 해시로 계정 조회 (`AccountLookup`), 관리 쓰기 접점 (`AdminRepository`) |
+| **앱** | 저장소 루트의 `app/`, `api/rest/`의 계정·승인, `core/approval/` | 소유자·방문자 앱, 계정과 승인 REST, 승인 조회·결정 서비스 |
 | **대시보드** | `src/nearpilot/api/ws/`, `api/rest/`의 대시보드 조회, `core/dashboard/`, 저장소 루트의 `dashboard/` | 운영 대시보드 화면, 모니터링 WebSocket과 메시지 형식 (FR-12B), 대시보드 조회 REST (FR-12A), 대시보드 조회 서비스와 모니터링 따라 읽기 |
 | **공동** | `src/nearpilot/shared/`, `tests/integration/` | 계층 간 계약, 계층을 합친 시나리오 테스트 |
 
@@ -121,11 +123,11 @@ nearpilot-server/
 - [#88](https://github.com/capstone-itda/nearpilot-server/issues/88)의 A안을 따른다. 상태 관리는 서버 실행 진입점과 조립 모듈을 만든다. 조립은 설정, DB 저장소, MQTT 게이트웨이와 CORE 서비스를 만들고 연결한다. 판정은 `CoreService`와 MCP 앱을 만드는 연결 함수만 제공한다. 진입점이 이 함수로 MCP 엔드포인트를 붙인다.
 - 조립은 게이트웨이를 구독한 뒤, 요청을 받기 전에 재시작 복원을 한 번 실행한다. 모든 상태 관리 서비스에 같은 복구 서비스와 기기별 잠금을 주입한다. 이탈 판단의 `tick()`을 주기적으로 호출한다. 반납 검사 타이머는 사용하지 않는다.
 - 서버 실행 진입점은 `nearpilot serve`다 (`src/nearpilot/cli/`). 조립 모듈은 `src/nearpilot/runtime/`에 있다.
-- `api/rest/`는 쓰는 쪽으로 나눈다. 대시보드 조회는 대시보드가, 앱용 REST(계정, 승인)는 앱이 맡는다. `FAULT` 복구 두 경로는 상태 관리가 맡는다 (#89).
+- `api/rest/`는 쓰는 쪽으로 나눈다. 대시보드 조회는 대시보드가, 앱용 REST(계정, 승인)는 앱이 맡는다. `FAULT` 복구 두 경로와 복구 스크립트는 근접 추정·대시보드 담당이 맡는다 (2026-10-26 팀 결정. #89의 상태 관리 배정을 바꾼다).
 - 승인 REST가 부르는 `ApprovalService`의 구현(`core/approval/`)은 앱이 맡는다 (#186).
 - 조립은 서버 설정에 선택 섹션 `[dashboard]`가 있을 때만 대시보드 라우터(`create_dashboard_router`)를 붙인다. MCP 앱이 루트(`/`)를 잡으므로 그보다 먼저 붙인다. 섹션의 값은 대기열 크기, 묶음 크기, 인증 기한, 감사 조회 한도다 (2026-10-23 팀 결정). 약한 신호 기준(`weak_rssi_dbm`)과 따라 읽기 간격(`tail_interval_sec`)도 이 섹션에서 받는다 (2026-10-24 대시보드 담당 결정).
 - 대시보드 조회 서비스와 모니터링 따라 읽기는 `core/dashboard/`에 두고 대시보드 담당이 맡는다. 판정·상태 관리의 서비스와 섞지 않는다 (2026-10-24 대시보드 담당 결정).
-- 미결: 앱(`app/`)과 앱용 REST의 담당. 서버 담당 업무를 먼저 마친 사람이 맡는다.
+- 앱(`app/`)과 앱용 REST(계정, 승인)는 앱 담당이 맡는다 (`specs/app-*`, `specs/api-rest-account`, `specs/api-rest-approval`).
 - 미결: 펌웨어(`firmware/`)의 담당과 IOT 구현의 담당 배정. 팀이 펌웨어 담당을 배정할 때 함께 정한다.
 
 ## 3. 의존 관계
@@ -151,13 +153,12 @@ api  ──▶  core  ──▶  db
 | 사건별 저장 인터페이스 | DB | CORE | 예약 이후의 명령 연결, 전송 시작, 미전송 취소, 실행 결과, 이상 격리, 종료를 사건마다 원자적으로 반영한다 (`ExecutionStore`). |
 | 복원·복구 저장 인터페이스 | DB | CORE (상태 관리) | 재시작 복원 조회, 복구 건 저장과 조회, 복구 정산을 제공한다 (`restore_pending`, `save_recovery`, `recovery`, `settle_recovery`). |
 | 복구 인터페이스 | CORE (상태 관리) | API | 복구 준비 조회와 복구 승인 요청을 따로 제공한다. 준비 판단, 재검사, 불명 결과 확인은 상태 관리가 맡는다. |
-| 정책 검사 인터페이스 | DB (`core/policy`) | CORE (판정) | ④에서 계정, 확정한 기기, 동작, 현재 시각으로 정책과 승인을 검사한다 (`PolicyChecker.check`). 허용, 승인 필요, 거부와 사유, 적용한 정책 버전(정책이 없으면 없음), 승인 ID를 `PolicyCheckResult`로 반환한다. 정책 모드, 승인 범위, 정책 버전 비교 규칙은 이 접점 안에 둔다. 승인 필요 사유는 승인 이력으로 고른다. 상세는 아래 "승인 이력과 승인 필요 사유"에 있다. 승인 사용분 예약은 하지 않는다 (`reserve_if_free`). |
+| 정책 검사 인터페이스 | DB (`core/policy`) | CORE (판정) | ④에서 계정, 확정한 기기, 동작, 현재 시각과 내부 요청 ID(남은 횟수에서 뺄 같은 요청의 사용분)로 정책과 승인을 검사한다 (`PolicyChecker.check`). 허용, 승인 필요, 거부와 사유, 적용한 정책 버전(정책이 없으면 없음), 승인 ID를 `PolicyCheckResult`로 반환한다. 정책 모드, 승인 범위, 정책 버전 비교 규칙은 이 접점 안에 둔다. 승인 필요 사유는 승인 이력으로 고른다. 상세는 아래 "승인 이력과 승인 필요 사유"에 있다. 승인 사용분 예약은 하지 않는다 (`reserve_if_free`). |
 | 근접 추정 인터페이스 | 근접 추정 (`core/proximity`) | CORE (판정) | ③에서 비콘, 후보 기기, 시각으로 후보별 사후확률을 계산한다 (`ProximityEstimator.posterior`). 근접 추정은 장소의 전체 상태로 계산한 후보의 확률을 다시 정규화하지 않고 반환한다. `ProximityResult.posteriors`의 합은 1 이하다. 판정은 명시 지정 요청에도 ②의 전체 후보를 넘기고, 지정 대상을 인자로 넘기지 않는다. 판정이 `posteriors[지정 대상]`을 읽어 임계값과 비교한다. 임계값은 판정이 요청 종류에 따라 설정에서 고른다. 상세는 아래 "근접 사후확률의 범위"에 있다. |
 | 감사 로그 인터페이스 | DB | CORE | 단계별 입력, 결과, 버전, 임계값, 후보 확률의 기록 (`AuditLog.append`). 감사 테이블이 원본이다. JSONL은 커밋한 행을 내보낸 사본이다. |
 | 기기 명령 인터페이스 | IOT | CORE | `command_id`별로 전송과 결과를 추적한다. 확실한 미전송, 전송 뒤 성공, 전송 뒤 실패, 결과 불명을 구분한다. 시간 초과와 연결 끊김을 미실행으로 보지 않는다. 기기가 구동 전에 `DEVICE_BUSY`로 거부한 결과는 거부 상태와 사유를 그대로 전달한다 (§5 MQTT 5절). 접점은 `NodeCommandGateway.send`다. |
 | 기기 이벤트 인터페이스 | CORE | IOT | CORE는 기능 발표, RSSI 프레임, 명령 처리 상태와 실행 결과를 받는다 (`NodeEventSink`). 논리적 점유 해제는 CORE가 결정한다. |
 | 기능 인터페이스 | CORE | API | MCP 도구 6개와 관리 기능 (계정 등록, 기기 신뢰, 정책, 승인, `FAULT` 복구) |
-| 승인 알림 인터페이스 | API | CORE | 승인 대기가 생기면 CORE가 소유자 앱 알림을 요청한다. 요청에는 승인 요청 식별자를 담는다. 전달 실패는 승인 상태와 판정을 바꾸지 않는다. 전달 수단은 미결이다 (FR-03). |
 | 모니터링 발행 인터페이스 | API (`api/ws`) | 대시보드 따라 읽기 (`core/dashboard/`) | 따라 읽기가 커밋된 DB 행을 주기마다 읽어 이벤트로 바꿔 넘긴다 (`MonitorFeed.publish`). 되돌려진 쓰기는 발행하지 않고, 같은 테이블의 행은 커밋 순서대로 낸다. 판정, 상태 관리, IOT, MCP 도구는 발행을 부르지 않는다 (2026-10-24 대시보드 담당 결정. 2026-10-23 팀 결정의 "사건이 난 영역이 그 자리에서 넘긴다"를 바꾼다). 어느 스레드에서 불러도 막지 않고 예외를 올리지 않는다. 모니터링의 실패는 판정과 실행을 바꾸지 않는다 (NFR-07). 사람은 사용자 ID와 역할(`Subject`)로 넘기고, API가 이름으로 바꾸며 형식 밖의 키를 버린다 (FR-11). 형식은 §5 WebSocket이다. 자유 문자열(`detail`, 감사 `text`)과 맵 키에 사용자 ID를 넣지 않는 것은 따라 읽기가 지킨다 (2026-10-23 팀 결정). |
 | 대시보드 조회 인터페이스 | CORE (`core/dashboard/` 대시보드 조회 서비스) | API (`api/ws`, `api/rest`) | 스트림 연결 직후의 지금 상태(`MonitorSnapshot.current_events`)와 조회 REST 9개의 결과(`DashboardQueries`)를 준다. 조회 서비스는 저장소의 읽기 접점(`DashboardReadStore`) 위에서 만들고, 조회 하나를 읽기 트랜잭션 하나에서 읽는다. 결과는 §5 REST "대시보드 조회" 형식의 키로 담고, 사람은 `Subject`, 시각은 시간대가 있는 `datetime`, 수는 `int`·`float`로 넘긴다. null 허용 키는 값이 없어도 키를 빼지 않고 `None`을 넣는다. API는 형식 밖의 키를 버리지만 허용 키의 값은 그대로 보낸다. 자유 문자열(감사 `text`, 단계 `detail`, 이력 `outcome`, 점유 `sessionNote`, 점검 `note`, 대여 타임라인 `text`, 지표 문구)과 맵 키에 사용자 ID를 넣지 않는 것은 값을 만드는 쪽이 지킨다 (2026-10-23 팀 결정). |
 | 도메인 모델·열거형 | 공동 | 전체 | 상태 값, 판정 결과 (`OK`, `BUSY`, `ASK`, `DENY`, `NEED_APPROVAL`), 사유 코드, 요청과 판정과 점유 세션의 값 객체 |
@@ -210,8 +211,10 @@ api  ──▶  core  ──▶  db
 - ⓪의 `input_digest`는 판정이 정규화 입력(대상 지정, 동작, 원 요청 연결 ID)으로 계산해서 `Repository.link_request`에 넘긴다. DB는 값을 저장하고 비교만 한다. 정규화 필드가 바뀌어도 DB 스키마는 바뀌지 않는다.
 - 판정 단계에서 예상하지 못한 예외가 나면 `DENY`와 `INTERNAL_ERROR`로 반환한다. 호스트 응답에는 일반 안내만 넣는다. 예외 내용과 오류 단계는 감사 기록에만 남긴다.
 - `INTERNAL_ERROR`로 거부한 요청을 같은 `(계정, request_id)`와 같은 정규화 입력으로 재전송하면 판정은 다시 판정한다 ([#76](https://github.com/capstone-itda/nearpilot-server/issues/76)). 일시 장애로 거부한 요청이 영구 거부로 남지 않는다.
-- 미결: `Repository.link_request`가 오류로 끝난 키를 새 시도로 인정하는 방법과 이중 예약을 막는 조건. 판정과 DB 담당이 spec에서 정한다.
-  - 이 미결은 이전 시도가 남긴 예약의 처리도 포함한다. 실행 인계 전에 오류로 끝난 예약은 상태 관리가 `ExecutionContext.reserved_at`을 받지 못해 예약 대기 제한으로 만료 취소할 수 없다 ([#80](https://github.com/capstone-itda/nearpilot-server/issues/80)).
+- `Repository.link_request`는 `INTERNAL_ERROR`로 끝난 키의 같은 입력 재전송에서 판정 칸을 비우고 새 시도로 인정한다. 동시 재전송은 한쪽만 새 시도가 된다. 재판정이 ⑤⑥에 닿으면 이전 시도가 남긴 예약을 `reserve_if_free`가 같은 `internal_request_id`로 다시 돌려줘서 예약이 둘이 되지 않는다 (`specs/db-internal-error-retry`).
+- 예약 뒤에 판정이 오류로 끝나면 판정은 이번 요청의 예약과 승인 사용분을 `ExecutionStore.cancel_not_sent(expected=PENDING, INTERNAL_ERROR)`로 바로 취소한다. 취소도 실패해서 남은 예약은 재시작 복원이 판정이 `OK`가 아니거나 빈 요청이면 대기 없이 바로 취소한다. 취소한 예약은 같은 요청의 재판정(#76)이 기존 예약으로 쓰지 않고 새로 예약한다 ([#80](https://github.com/capstone-itda/nearpilot-server/issues/80), 2026-10-27 팀 결정).
+- 같은 요청이 아직 판정 중이거나 실행 인계 기록이 아직 없을 때 온 재전송에는 `BUSY`와 `REQUEST_IN_PROGRESS`를 반환한다. 오류가 아니므로 `INTERNAL_ERROR`를 쓰지 않는다 (2026-10-27 팀 결정).
+- 재전송된 요청의 실행 기록이 미전송(`NOT_SENT`)이면 판정은 취소 근거로 첫 응답과 같은 판정을 다시 만든다. 상태 관리는 미전송 취소 근거에 재검사의 판정과 사유, 또는 중단 사유를 남긴다.
 - `recheck()`가 예외를 던지면 상태 관리는 검사 오류와 같게 처리한다.
 - `ExecutionResult`는 재검사가 전송을 막았을 때 그 `Decision`을 함께 담는다. 호스트 응답 변환은 판정이 맡는다 (FR-09).
 - 재검사 밖의 이유로 실행을 막으면 `ExecutionResult.reason`에 중단 사유를 담는다. `reason`은 `recheck`가 없을 때만 쓴다. 판정은 `recheck`가 있으면 그 판정을, 없으면 `reason`으로 `DENY` 사유를 정한다.
@@ -220,6 +223,7 @@ api  ──▶  core  ──▶  db
 |---|---|
 | 같은 기기의 다른 구동 명령 | `COMMAND_IN_PROGRESS` |
 | `CLOSING`·`FAULT` 같은 상태 충돌 | `DEVICE_BUSY` |
+| 재조작할 대여가 반납으로 이미 닫힘 | `USE_NOT_FOUND` |
 | 재시작 복원 미완료 | `TARGET_UNAVAILABLE` |
 | 기기의 현재 연결 없음 | `NODE_NOT_CONNECTED` |
 | 예약 대기 제한 만료 | `RESERVATION_EXPIRED` |
@@ -243,8 +247,10 @@ api  ──▶  core  ──▶  db
 - 호출 하나는 `BEGIN IMMEDIATE` 트랜잭션 하나다. 대여형의 ⑤⑥ 검사, `RESERVED` 생성, 승인 사용분 예약과 공용형의 승인 사용분 예약은 같은 쓰기 경로다.
 - 공용형 예약은 `approval_usage`의 `reserved` 행만 만든다. DB는 기기 상태와 점유 세션을 바꾸지 않는다.
 - 승인 방식이 `time_window`이고 `max_uses`가 NULL이어도 DB는 요청별 사용분 행을 만든다. 사용분 행은 명령과 감사 기록을 연결한다. DB는 횟수 검사만 생략한다.
+- ④ 정책 검사의 남은 횟수는 같은 요청의 사용분을 세지 않는다. 판정과 재검사는 `PolicyChecker.check`와 `Repository.valid_approval`에 내부 요청 ID를 넘긴다. 같은 요청의 재판정(#76)과 실행 직전 재검사가 자기 사용분 때문에 소진으로 막히지 않는다 (2026-10-27 팀 결정).
+- 승인의 횟수 한도는 `one_time`이면 1, `time_window`면 `max_uses`(NULL이면 무제한)다. 남은 횟수, 사용분 예약의 한도 검사, 대시보드의 남은 횟수가 같은 규칙을 쓴다 (2026-10-27 담당자 위임 결정).
 - 예약한 사용분의 소진, 보류, 반환은 `ExecutionStore`가 반영한다.
-- DB는 예약을 쓴 결과에 저장한 예약 시각 `reserved_at`을 담는다. 승인이 필요한 공용형 요청도 사용분 행을 쓰므로 `reserved_at`이 있다. 쓰기가 없는 결과는 `None`이다. 판정은 이 값을 `ExecutionContext.reserved_at`으로 그대로 넘긴다 ([#80](https://github.com/capstone-itda/nearpilot-server/issues/80)).
+- DB는 예약을 쓴 결과에 저장한 예약 시각 `reserved_at`을 담는다. 승인이 필요한 공용형 요청도 사용분 행을 쓰므로 `reserved_at`이 있다. 승인 없는 대여의 재조작(`REOPERATING`)은 쓰기가 없어도 대여형 실행이라 요청 접수 시각을 `reserved_at`으로 담는다. 그 밖의 쓰기가 없는 결과는 `None`이다. 판정은 이 값을 `ExecutionContext.reserved_at`으로 그대로 넘긴다 ([#80](https://github.com/capstone-itda/nearpilot-server/issues/80)).
 
 ### 승인 요청과 소유자 결정
 
@@ -282,7 +288,7 @@ api  ──▶  core  ──▶  db
 - 결정은 `Repository.decide_approval`이 반영한다. 승인 권한, 대기 상태, 정책 버전은 CORE가 검증한다 (FR-03).
 - 서버 조립이 `ApprovalService`를 만들어 승인 라우터에 넘긴다.
 - 반환에 요청자 정보를 넣지 않는다 (NFR-08).
-- 미결: 세 함수의 반환 모델 (REST 응답의 `node_id`를 담는다), 승인 한 건 조회의 저장소 접점, 소유자별 대기 승인 조회의 함수 이름과 시그니처
+- 저장소 조회는 `pending_approvals_for(user_id, now)`, `approval(approval_id)`, `is_approver(user_id, approval_id)`다. 반환 모델은 `specs/core-approval-service`를 따른다 (#186).
 
 ### 승인 이력과 승인 필요 사유
 
@@ -342,7 +348,7 @@ DB는 승인 이력을 거르지 않고 반환한다. `core/policy`가 승인 �
 - 거부하거나 저장에 실패하면 DB는 기존 활성 비콘을 유지한다. 비활성 등록은 다른 비콘을 비활성화하지 않는다.
 - `FAULT` 복구의 쓰기는 `AdminRepository`의 범위 밖이다. `FAULT` 복구의 쓰기는 #17과 #20을 따른다.
 - 기기 발표를 반영하는 쓰기는 `AdminRepository`와 다른 경로다 (#32).
-- 미결: 점유 중인 기기의 장소·정책 설정 변경 제한. 관리 기능 담당 배정 뒤 경합 규칙을 정한다.
+- 점유 중인 기기의 장소 이동과 접근 정책 변경은 `AdminRepository`가 쓰기 트랜잭션 안에서 검사해 `CONFLICT`와 `NODE_OCCUPIED`로 거부한다. 점유 중은 기기 상태가 `RESERVED`·`ACTIVE`·`CLOSING`이거나 닫지 않은 점유 세션이 있는 경우다. 종료 정책, 이름, 신뢰 상태의 변경은 허용한다 (2026-10-26 담당자 결정).
 
 ### 판정 기록
 
@@ -381,7 +387,7 @@ CORE는 명령 결과와 논리적 종료를 판단한다. DB는 현재 상태�
 
 | 사건 또는 조회 | 입력 | 함께 반환하거나 반영할 내용 |
 |---|---|---|
-| 기존 실행 조회와 명령 연결 | 내부 요청 ID, 확정 기기와 동작 | 기존 명령과 진행 상태를 반환한다. 중복 인계로 새 명령을 만들지 않는다. |
+| 기존 실행 조회와 명령 연결 | 내부 요청 ID, 확정 기기와 동작 | 기존 명령과 진행 상태를 반환한다. 중복 인계로 새 명령을 만들지 않는다. 재조작할 대여가 반납으로 이미 닫혔으면 연결을 거부하고 `USE_NOT_FOUND` 근거의 미전송 명령을 남기며 이번 요청의 사용분을 반환한다 (2026-10-27 결정). |
 | 전송 시작 | 요청·명령 참조와 실행 전 준비 상태 | 취소 여부와 현재 상태를 검사한다. 같은 기기의 다른 미완료 구동 명령, 기기 상태, 점유 세션 상태도 같은 트랜잭션에서 검사한다. 시작 기록과 이번 호출의 시작 허용 여부를 반환한다. |
 | 확실한 미전송 취소 | 요청·예약·명령·사용분 참조, 사유와 근거 | 예약 정리, 사용분 반환, 명령 상태와 감사 테이블 기록을 함께 반영한다. |
 | 실행 성공 | 명령 ID와 제어 신호 출력 완료 결과 | 명령 성공, 대여형 기기와 세션 `ACTIVE`, 사용분 소진과 감사 기록을 함께 반영한다. |
@@ -427,7 +433,7 @@ CORE는 명령 결과와 논리적 종료를 판단한다. DB는 현재 상태�
 - 실행 결과는 명령 하나에 하나만 확정한다. 이미 다른 결과가 있으면 `conflict`다. 상충한 결과는 감사 기록에 남긴다.
 - 미전송 취소는 기대 상태를 함께 받는다. 재검사 실패와 예약 대기 제한은 `pending`에서만 취소한다. IOT가 미전송을 증명하면 `in_progress`에서도 취소한다.
 - 명령을 연결하지 않은 요청도 `cancel_not_sent(expected=pending)`로 취소한다. DB는 예약과 사용분만 정리하고 명령을 만들지 않는다 ([#81](https://github.com/capstone-itda/nearpilot-server/issues/81)).
-- 미전송 취소의 사유는 원인별로 구분한다. 재검사 거부는 재검사의 사유, 검사 오류는 `RECHECK_FAILED`, 예약 대기 제한은 `RESERVATION_EXPIRED`, 현재 연결 없음은 `NODE_NOT_CONNECTED`, IOT의 미전송 증명은 `COMMAND_NOT_SENT`다 ([#78](https://github.com/capstone-itda/nearpilot-server/issues/78)). 검사 오류용 사유를 정상 만료에 쓰지 않는다.
+- 미전송 취소의 사유는 원인별로 구분한다. 재검사 거부는 재검사의 사유, 검사 오류는 `RECHECK_FAILED`, 예약 대기 제한은 `RESERVATION_EXPIRED`, 현재 연결 없음은 `NODE_NOT_CONNECTED`, IOT의 미전송 증명은 `COMMAND_NOT_SENT`, 재조작할 대여가 반납으로 이미 닫힘은 `USE_NOT_FOUND`다 ([#78](https://github.com/capstone-itda/nearpilot-server/issues/78), 2026-10-27 결정). 검사 오류용 사유를 정상 만료에 쓰지 않는다.
 - 최초 대여의 확실한 미전송 취소는 대여형 기기를 `AVAILABLE`로, 점유 세션을 `cancelled` 사유의 `CLOSED`로 둔다.
 - 저장 오류는 `StoreNotApplied`와 `StoreOutcomeUnknown` 예외로 구분한다. `StoreOutcomeUnknown`이면 `execution`으로 다시 조회한다.
 - 최초 대여의 실행 성공 때 CORE는 인계받은 `Settings`로 `rental_due_at`을 계산해서 전달한다. 재조작의 성공은 `rental_due_at`을 갱신하지 않는다.
@@ -466,6 +472,7 @@ DB는 기기별 복원 묶음을 반환한다. 복원 묶음 하나는 현재 �
 - 과거 명령 결과는 복원 자료다. 현재 연결과 명령 처리 상태는 신선한 `status`로 확인한다.
 - 상태 관리는 기기의 복원과 확인을 끝내기 전에 그 기기의 새 실행과 재사용을 허가하지 않는다.
 - 상태 관리는 기기별 새 실행 가능 여부를 `ExecutionReadiness.can_execute(node_id)`로 판정에 제공한다 ([#82](https://github.com/capstone-itda/nearpilot-server/issues/82)). 최초 복원 조회가 실패했거나 현재 연결의 신선한 명령 처리 대기 보고를 확인하지 못한 기기는 `False`다. 센서값은 요구하지 않는다.
+- 최초 복원은 시작할 때의 기기 목록만 읽는다. 실행 중 처음 발표한 기기는 서버를 재시작할 때까지 `False`다. 알려진 한계로 둔다 (2026-10-26 결정, FR-04).
 - 판정은 ②에서 `False`인 기기를 미신뢰·오프라인·`FAULT` 기기처럼 후보에서 뺀다. ③에는 ②에서 걸러낸 후보만 넘긴다. 복원 중인 기기만 남아 명시 지정이 막히면 `TARGET_UNAVAILABLE`로 거부한다. 호스트에 복원 중이라는 사실을 따로 공개하지 않는다.
 - 상태 관리는 전송 직전에도 실행 가능 여부를 다시 검사한다. 막히면 `ExecutionResult.reason`으로 알린다.
 - 공용형 기기의 과거 참여자 목록은 복원 묶음에 넣지 않는다. 공용형 기기의 현재 기기 상태, 미완료 명령, 승인 사용분, 장애와 복구 기록은 복원 대상이다.
@@ -658,7 +665,7 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - DB는 판정에 적용한 버전을 기록한다. 파라미터와 기기 배치를 `node`에 저장하지 않는다.
 - `NodeInfo.anchor_params`와 논리 데이터 계약의 `node.anchor_params`를 제거한다. 관리 쓰기 접점은 추가하지 않는다.
 - 배포한 DB 스키마가 없어서 데이터 이전은 필요 없다. 후속 DB 구현은 제거한 필드를 만들지 않는다.
-- 미결: 모델 파일의 경로와 형식. 근접 추정 구현 담당이 spec의 "결정" 절에 쓴다.
+- 모델 파일은 `{모델 루트}/{place_id}/{model_version}.json`의 JSON이다 (`specs/core-proximity-estimator`, `specs/core-proximity-model-fit`).
 
 ### 기기 보고의 인계
 
@@ -773,7 +780,8 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
   - DB는 등록되지 않은 비콘을 `BEACON_NOT_FOUND`로, 없는 회차를 `COLLECTION_NOT_FOUND`로 거부한다.
   - 비활성 비콘으로 회차를 시작하면 `BEACON_NOT_FOUND`로 거부한다 ([#138](https://github.com/capstone-itda/nearpilot-server/issues/138)). `save_rssi`는 비활성 비콘의 프레임을 저장하지 않아 관측이 연결될 수 없는 회차를 만들지 않는다.
   - 회차 쓰기는 다른 관리 쓰기처럼 감사와 한 트랜잭션으로 반영한다.
-- 미결: 수집 회차의 조회 접점과 구간 변경의 처리. 평가 도구 spec에서 맞춘다.
+- 수집 회차의 조회 접점은 `tools/evaluation/runs.py`의 `list_runs`, `load_labeled_runs`다. 구간은 바꾸지 않는다 (`specs/core-ops-cli`).
+- 미결: 잘못 수집한 회차와 중단한 회차를 분할에서 빼는 방법. 지금 분할은 진행 중, 관측 없음, 장소를 정할 수 없는 회차만 뺀다.
 - 미결: 지표 8의 세부 측정 정의. 별도 이슈에서 정한다.
 
 ### 복구 준비 조회와 복구 승인
@@ -844,9 +852,9 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | DB | 원자적 저장, 중복 반영 방지 |
 
 - REST 경로는 §5에 있다.
-- 복구 준비 조회와 복구 승인의 두 REST 경로는 상태 관리가 `api/rest/`에 구현한다 ([#89](https://github.com/capstone-itda/nearpilot-server/issues/89)). 경로는 토큰으로 계정을 식별해 `RecoveryService`에 넘기고 결과를 바꾸지 않는다 (NFR-07).
+- 복구 준비 조회와 복구 승인의 두 REST 경로는 `api/rest/`에 있다. 근접 추정·대시보드 담당이 구현한다 (2026-10-26 팀 결정. #89의 상태 관리 배정을 바꾼다). 경로는 토큰으로 계정을 식별해 `RecoveryService`에 넘기고 결과를 바꾸지 않는다 (NFR-07).
 - 소유자는 스크립트로 두 경로를 호출한다. 대시보드는 복구 화면을 두지 않는다.
-- 미결: 복구 스크립트의 담당
+- 복구 스크립트는 `nearpilot recover`(`src/nearpilot/cli/recover.py`)다. 복구 두 경로만 부르고 DB를 열지 않는다. 복구 경로와 같은 담당이 맡는다.
 
 ### 공동 인터페이스의 후속 반영
 
@@ -1174,7 +1182,10 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 복구 준비 조회: `GET /admin/nodes/{node_id}/recovery`
 - 복구 승인: `POST /admin/nodes/{node_id}/recovery/{recovery_id}/approve`
 - 두 복구 경로에는 인증과 장소 소유권 검사를 적용한다. 약속은 §4 "복구 준비 조회와 복구 승인"에 있다.
-- 두 복구 경로는 상태 관리가 구현한다 (#89).
+- 두 복구 경로는 근접 추정·대시보드 담당이 구현한다 (2026-10-26 팀 결정).
+- 준비 조회 응답은 `node_id`, `recovery_id`, `status`, `blockers`(사유 코드 배열), `evidence`(`observed_at`, `execution_outcome`, `command_idle`), `checked_at`이다. 기기 연결 세션 ID는 넣지 않는다.
+- 승인 응답은 `recovery_id`, `outcome`, `reason_code`, `completed_at`, `readiness`(준비 조회와 같은 형식)다. `completed`는 `200`, `pending`은 `202`다.
+- 승인 거부는 `{"error": "<사유 코드>"}`다. `NOT_OWNER`는 `403`, `RECOVERY_MISMATCH`·`NOT_READY`·`STATE_CONFLICT`는 `409`, `STORE_NOT_APPLIED`는 `503`이다. 준비 조회에서 소유자가 아니면 `403`과 `NOT_OWNER`다. 승인은 요청 본문을 읽지 않는다.
 
 #### 공통 규칙
 
@@ -1210,7 +1221,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 세 경로는 토큰으로 계정을 식별해 `ApprovalService`의 `pending_for`, `get`, `decide`에 하나씩 넘긴다 (#186). 접점은 §4 "승인 요청과 소유자 결정"에 있다.
 - 같은 결정의 재전송(`ALREADY_APPLIED`)은 `200`과 기존 결과를 반환한다.
 - 승인 결과는 실행 허가가 아니다. 방문자는 AI 호스트로 `request_use`를 다시 호출한다 (FR-03).
-- 대기 승인의 알림 수단은 미결이다 (FR-03). 앱은 알림 수단이 정해지기 전까지 `GET /approvals`를 주기적으로 호출할 수 있다.
+- 대기 승인의 알림 수단은 앱의 주기 조회다 (FR-03). 서버는 앱에 알림을 보내지 않는다. 조회 주기는 FR-03을 따른다.
 
 #### 대시보드 조회
 
@@ -1289,14 +1300,14 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `place` | PK `place_id`, FK `owner_user_id`, `name` |
 | `node` | TEXT PK `node_id`, FK `place_id`, 대시보드에 보일 이름 `name`(없을 수 있다), `capability`, `occupancy`, `trust_state`, `device_state`, `exclusive_group`, JSON `release_policy`, `last_seen_at`, 현재 기기 연결 ID `session_id`, 그 연결의 첫 수신 시각 `session_first_seen_at` |
 | `access_policy` | PK `policy_id`, UNIQUE FK `node_id` (기기당 하나), `current_version`. 현재 접근 정책 리비전을 참조한다. 정책 변경은 새 리비전 추가와 `current_version` 갱신을 한 트랜잭션에서 한다. |
-| `policy_revision` | 복합 PK `(policy_id, version)`, `visibility` (`public`, `private`), `mode` (`open`, `restricted`), FK `approver_user_id`, `approval_ttl_sec`, `approval_mode` (`one_time`, `time_window`), `max_uses` (기간형이 무제한이면 NULL). 과거 리비전은 바꾸지 않는다. |
+| `policy_revision` | 복합 PK `(policy_id, version)`, `visibility` (`public`, `private`), `mode` (`open`, `restricted`), FK `approver_user_id`, `approval_ttl_sec`, `approval_mode` (`one_time`, `time_window`), `max_uses` (기간형의 횟수 한도. 무제한이면 NULL. `one_time`은 이 값과 상관없이 1회). 과거 리비전은 바꾸지 않는다. |
 | `approval` | PK `approval_id`, FK `node_id`, `requester_user_id`, `internal_request_id`, `approved_by_user_id`, `action`, 정책 리비전 참조, `status` (`pending`, `approved`, `denied`), `created_at`, `pending_until`, `valid_until`, `used_count`. 요청 참조는 승인 신청의 출처다. 허용 범위는 요청자, 기기, 동작, 정책 버전으로 검사한다. |
 | `approval_usage` | PK `usage_id`, FK `approval_id`, `internal_request_id`, 명령 연결, `state` (`reserved`, `held`, `consumed`, `released`). 요청별로 중복 예약을 막는다. 허용 횟수는 예약, 보류, 소진을 합쳐서 검사한다. `used_count`는 소진 집계값이며 중복으로 계산하지 않는다. 미전송이 확정되면 자동으로 반환한다. 결과가 실패하거나 불명이면 보류하고 복구 뒤 정산한다. 검증된 `DEVICE_BUSY`의 접수·실행 전 거부이면 이번 요청의 사용분을 반환한다. 공용형 제한 기기의 요청에도 행을 만든다. 무제한이면 횟수 검사만 생략한다. |
 | `collection_run` | PK `collection_id`, FK `beacon_id`, `label` (기기 1~7 앞 또는 none), `started_at`, nullable `ended_at`. 같은 비콘의 수집 구간은 겹치지 않는다. |
 | `rssi_observation` | PK `obs_id`, FK `node_id`, `beacon_id`, `rssi` (dBm), `frame_ts` (약 1초 프레임), 서버 수신 시각 `received_at`, 발행 시각 `sent_at`, 기기 연결 ID `session_id`, 순번 `seq`, `(node_id, session_id, seq, beacon_id)` UNIQUE, nullable FK `collection_id`. 등록된 활성 비콘의 관측만 저장한다. 라벨은 연결한 수집 회차에서 읽는다. |
 | `request` | TEXT PK `internal_request_id`, FK `user_id`, 외부 `request_id`, UNIQUE `(user_id, request_id)`, 정규화 입력 요약 `input_digest`, nullable FK `parent_internal_request_id`, nullable FK `node_id`, `target_spec`, `action`, `verdict`, `reason_code`, `p_max`, 버전 `model`, `calib`, `policy_ver`, `config_ver`, 실제 설정을 포함한 JSON `decision_context`, `host_kind` |
 | `node_command` | TEXT PK `command_id`, FK `internal_request_id`, `node_id`, 대상 동작과 입력 요약, 전송 시도, 실행 상태, 결과, 시각. 승인 사용분과 연결한다. 결과 불명은 실패, 미전송과 구분한다. 접수·실행 전 거부는 미전송, 실패와 구분한다. 기록은 재시작 뒤에도 보존한다. |
-| `use_session` | TEXT PK `use_id`, FK `internal_request_id`, `user_id`, `node_id`, `state` (`RESERVED`, `ACTIVE`, `CLOSING`, `CLOSED`), `end_reason` (`release`, `leave`, `timeout`, `fault`, `cancelled`), nullable `rental_due_at` (실행 성공 때 정한다), nullable `closed_at`, 생성 당시 종료 정책. 대여형 요청과 점유 세션은 1:0..1 관계다. |
+| `use_session` | TEXT PK `use_id`, FK `internal_request_id`, `user_id`, `node_id`, `state` (`RESERVED`, `ACTIVE`, `CLOSING`, `CLOSED`), `end_reason` (`release`, `leave`, `timeout`, `fault`, `cancelled`), nullable `rental_due_at` (실행 성공 때 정한다), nullable `closed_at`, 생성 당시 종료 정책. 대여형 요청과 살아 있는(취소되지 않은) 점유 세션은 1:0..1 관계다. 오류 뒤 취소한 요청을 재판정하면(#76, #80) 취소된 세션 옆에 새 세션이 생긴다. |
 | 복구 건 | TEXT PK `recovery_id`, FK `node_id`, 관련 요청·명령·점유 세션 연결, 명령 결과·현재 연결의 명령 처리 상태의 참조와 시각, 복구 승인 계정과 승인 시각, 정산 내용의 요약값, 완료 결과. 같은 복구 건의 대상 연결은 바꾸지 않는다. 엔터티의 코드 이름은 `recovery`다. |
 | `audit_log` | PK `log_id`, UNIQUE `event_id`, nullable FK `internal_request_id`, nullable 명령 참조, `step` (`auth`, ⓪~⑥, `exec`, `close`, `fault`, `announce`, `admin`), JSON `payload_json`. 인증 실패는 요청 참조 없이 기록한다. 같은 `event_id`는 한 번만 저장한다. |
 
@@ -1375,7 +1386,7 @@ sequenceDiagram
 
 ### 접근 승인과 사용 재요청
 
-그림에서 토큰으로 계정을 식별하는 단계는 생략했다. 알림 전달 수단은 미결이다 (FR-03).
+그림에서 토큰으로 계정을 식별하는 단계는 생략했다. 소유자 앱은 대기 승인을 주기 조회로 알아낸다 (FR-03).
 그림의 승인은 접근 승인이다. `FAULT` 복구의 소유자 승인은 이 흐름을 쓰지 않는다.
 
 ```mermaid
@@ -1392,8 +1403,10 @@ sequenceDiagram
     D-->>C: 승인 ID·상태 (만료되지 않은 pending이 있으면 기존 승인 ID)
     C-->>A: 승인 대기
     A-->>H: 승인 대기 (실행 허가 아님)
-    C-)A: 승인 알림 인터페이스 (승인 요청 식별자)
-    A-)O: 알림
+    O->>A: 대기 승인 주기 조회 (GET /approvals)
+    A->>C: 조회
+    C-->>A: 대기 승인 목록
+    A-->>O: 대기 승인 → 앱 알림
     O->>A: 알림 탭 → 승인 요청 조회
     A->>C: 조회
     C-->>A: 서버의 현재 상태
@@ -1419,6 +1432,7 @@ sequenceDiagram
 | 수치 계산 | numpy, scipy (HMM과 할당) | `server/pyproject.toml` |
 | DB | SQLite (WAL) | FR-19 |
 | 테스트 | pytest | NFR-13 |
+| 평가 그래프 | matplotlib. 선택 의존성 `eval`로 설치한다 (`pip install -e ".[eval]"`). 없으면 그래프만 건너뛴다. | NFR-13, `server/pyproject.toml` |
 | MQTT 브로커 | Mosquitto. 독립 AP 안에서 실행한다. 설정 파일은 `server/config/mosquitto.conf`다. | #19 |
 | 대시보드 | React 18, TypeScript, Vite | `dashboard/package.json` |
 | 대시보드 테스트 | Vitest (단위), Playwright (화면) | `dashboard/package.json` |

@@ -23,6 +23,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Android 17부터 사설 IP의 서버에 접속하려면 필요하다 -->
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+    <!-- 재부팅 뒤 승인 알림 조회를 다시 시작하려면 필요하다 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:allowBackup="true"
@@ -60,6 +62,15 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="독립 AP 안의 서버에 소유자 승인 요청을 주기적으로 묻고 알린다" />
         </service>
+
+        <receiver
+            android:name=".approval.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

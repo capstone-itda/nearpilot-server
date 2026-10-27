@@ -68,6 +68,14 @@ from nearpilot.shared.models import (
 _EXHAUSTED = object()  # 승인 남은 횟수가 0일 때 _reserve_usage()가 돌려주는 표지값
 
 
+def _use_limit(approval_mode: str, max_uses: int | None) -> int | None:
+    """승인 한 건의 유효 횟수 한도 (FR-14).
+
+    one_time 은 max_uses 와 상관없이 1이다. time_window 는 max_uses 이고 NULL 이면 무제한이다.
+    """
+    return 1 if approval_mode == ApprovalMode.ONE_TIME.value else max_uses
+
+
 class SqliteRepository:
     """`Repository` Protocol과 `AccountLookup` Protocol을 함께 구현한다."""
 
@@ -177,11 +185,12 @@ class SqliteRepository:
         )
 
     def valid_approval(
-        self, user_id: str, node_id: str, action: Action, policy_version: int, now: datetime
+        self, user_id: str, node_id: str, action: Action, policy_version: int, now: datetime,
+        *, internal_request_id: str | None = None,
     ) -> Approval | None:
         row = self._conn.execute(
             "SELECT a.approval_id, a.node_id, a.requester_user_id, a.action, a.policy_id, "
-            "a.policy_version, a.status, a.valid_until, pr.max_uses "
+            "a.policy_version, a.status, a.valid_until, pr.approval_mode, pr.max_uses "
             "FROM approval a "
             "JOIN policy_revision pr ON pr.policy_id = a.policy_id AND pr.version = a.policy_version "
             "WHERE a.requester_user_id = ? AND a.node_id = ? AND a.action = ? AND a.policy_version = ? "
@@ -200,7 +209,9 @@ class SqliteRepository:
             policy_version=row["policy_version"],
             status=ApprovalStatus(row["status"]),
             valid_until=parse_iso(row["valid_until"]),
-            remaining_uses=self._remaining_uses(row["approval_id"], row["max_uses"]),
+            remaining_uses=self._remaining_uses(
+                row["approval_id"], _use_limit(row["approval_mode"], row["max_uses"]),
+                exclude_request_id=internal_request_id),
         )
 
     def approvals_in_scope(self, user_id: str, node_id: str) -> Sequence[ApprovalRecord]:
@@ -211,7 +222,7 @@ class SqliteRepository:
         """
         rows = self._conn.execute(
             "SELECT a.approval_id, a.action, a.policy_version, a.status, a.created_at, "
-            "a.pending_until, a.valid_until, pr.max_uses "
+            "a.pending_until, a.valid_until, pr.approval_mode, pr.max_uses "
             "FROM approval a "
             "JOIN policy_revision pr ON pr.policy_id = a.policy_id AND pr.version = a.policy_version "
             "WHERE a.requester_user_id = ? AND a.node_id = ? "
@@ -227,23 +238,28 @@ class SqliteRepository:
                 created_at=parse_iso(row["created_at"]),
                 pending_until=parse_iso(row["pending_until"]),
                 valid_until=parse_iso(row["valid_until"]) if row["valid_until"] else None,
-                remaining_uses=self._remaining_uses(row["approval_id"], row["max_uses"]),
+                remaining_uses=self._remaining_uses(
+                    row["approval_id"], _use_limit(row["approval_mode"], row["max_uses"])),
             )
             for row in rows
         ]
 
-    def _remaining_uses(self, approval_id: str, max_uses: int | None) -> int | None:
-        if max_uses is None:
+    def _remaining_uses(
+        self, approval_id: str, use_limit: int | None, exclude_request_id: str | None = None
+    ) -> int | None:
+        """`exclude_request_id` 가 있으면 그 요청의 사용분은 세지 않는다 (#76)."""
+        if use_limit is None:
             return None
         used = self._conn.execute(
             "SELECT COUNT(*) AS c FROM approval_usage "
-            "WHERE approval_id = ? AND state IN (?, ?, ?)",
+            "WHERE approval_id = ? AND state IN (?, ?, ?) "
+            "AND (? IS NULL OR internal_request_id <> ?)",
             (
                 approval_id, ApprovalUsageState.RESERVED.value, ApprovalUsageState.HELD.value,
-                ApprovalUsageState.CONSUMED.value,
+                ApprovalUsageState.CONSUMED.value, exclude_request_id, exclude_request_id,
             ),
         ).fetchone()["c"]
-        return max(max_uses - used, 0)
+        return max(use_limit - used, 0)
 
     # ── 조회 (FR-21) ────────────────────────────────────────────────
 
@@ -360,9 +376,13 @@ class SqliteRepository:
 
         previous = None
         if row["verdict"] is not None:
-            use_row = self._conn.execute(
-                "SELECT use_id FROM use_session WHERE internal_request_id = ?",
-                (internal_request_id,),
+            # OK 가 아닌 판정에는 use_id 를 담지 않는다. 재판정이 거부로 끝나면 취소된 옛 세션만 남는다.
+            # 오류 뒤 취소한 요청을 재판정하면 취소된 세션과 새 세션이 함께 있다. 살아 있는 세션을 먼저,
+            # 없으면 가장 나중 세션을 고른다. 세션이 하나뿐이면 어느 쪽이든 그 세션이다.
+            use_row = None if row["verdict"] != Verdict.OK.value else self._conn.execute(
+                "SELECT use_id FROM use_session WHERE internal_request_id = ? "
+                "ORDER BY (state = ? AND end_reason IS ?), rowid DESC",
+                (internal_request_id, SessionState.CLOSED.value, EndReason.CANCELLED.value),
             ).fetchone()
             previous = Decision(
                 internal_request_id=internal_request_id,
@@ -731,9 +751,11 @@ class SqliteRepository:
 
             # 같은 internal_request_id의 기존 예약은 재조작 검사보다 먼저 본다. 최초 대여 요청이
             # 이미 ACTIVE가 된 뒤 재전송되어도 REOPERATING이 아니라 기존 예약을 그대로 반환한다.
+            # 오류 뒤 취소한(CLOSED·cancelled) 세션은 기존 예약이 아니다. 재판정(#76)이 새로 예약한다.
             existing_session = self._conn.execute(
-                "SELECT use_id, reserved_at FROM use_session WHERE internal_request_id = ?",
-                (req.internal_request_id,),
+                "SELECT use_id, reserved_at FROM use_session WHERE internal_request_id = ? "
+                "AND (state != ? OR end_reason IS NOT ?)",
+                (req.internal_request_id, SessionState.CLOSED.value, EndReason.CANCELLED.value),
             ).fetchone()
             if existing_session is not None:
                 usage_id = self._lookup_usage(req.approval_id, req.internal_request_id)
@@ -754,9 +776,10 @@ class SqliteRepository:
                 usage_id = self._reserve_usage(req.approval_id, req.internal_request_id, reserved_at_iso)
                 if usage_id is _EXHAUSTED:
                     return ReserveResult(outcome=ReserveOutcome.APPROVAL_EXHAUSTED)
+                # 승인 없는 재조작도 대여형 실행이라 예약 시각이 있어야 전송된다. 명령 행의 예약 시각과 같은 요청 접수 시각이다.
                 return ReserveResult(
                     outcome=ReserveOutcome.REOPERATING, use_id=own_active["use_id"], usage_id=usage_id,
-                    reserved_at=parse_iso(reserved_at_iso) if usage_id is not None else None,
+                    reserved_at=parse_iso(reserved_at_iso),
                 )
 
             if node["occupancy"] == Occupancy.SHARED.value:
@@ -811,8 +834,9 @@ class SqliteRepository:
         if approval_id is None:
             return None
         row = self._conn.execute(
-            "SELECT usage_id FROM approval_usage WHERE approval_id = ? AND internal_request_id = ?",
-            (approval_id, internal_request_id),
+            "SELECT usage_id FROM approval_usage WHERE approval_id = ? AND internal_request_id = ? "
+            "AND state != ?",
+            (approval_id, internal_request_id, ApprovalUsageState.RELEASED.value),
         ).fetchone()
         return row["usage_id"] if row else None
 
@@ -821,24 +845,26 @@ class SqliteRepository:
     ) -> str | None:
         """승인 사용분을 예약한다. 이미 예약했으면 기존 사용분을 그대로 반환한다(멱등).
 
+        취소해서 반환한(`released`) 사용분은 기존 사용분이 아니다. 새로 예약한다.
         남은 횟수가 0이면 `_EXHAUSTED`를 반환한다. `approval_id` 가 `None` 이면 예약하지 않는다.
         """
         if approval_id is None:
             return None
         existing = self._conn.execute(
-            "SELECT usage_id FROM approval_usage WHERE approval_id = ? AND internal_request_id = ?",
-            (approval_id, internal_request_id),
+            "SELECT usage_id FROM approval_usage WHERE approval_id = ? AND internal_request_id = ? "
+            "AND state != ?",
+            (approval_id, internal_request_id, ApprovalUsageState.RELEASED.value),
         ).fetchone()
         if existing is not None:
             return existing["usage_id"]
         policy_row = self._conn.execute(
-            "SELECT pr.max_uses FROM approval a "
+            "SELECT pr.approval_mode, pr.max_uses FROM approval a "
             "JOIN policy_revision pr ON pr.policy_id = a.policy_id AND pr.version = a.policy_version "
             "WHERE a.approval_id = ?",
             (approval_id,),
         ).fetchone()
-        max_uses = policy_row["max_uses"] if policy_row else None
-        if max_uses is not None:
+        use_limit = _use_limit(policy_row["approval_mode"], policy_row["max_uses"]) if policy_row else None
+        if use_limit is not None:
             used = self._conn.execute(
                 "SELECT COUNT(*) AS c FROM approval_usage "
                 "WHERE approval_id = ? AND state IN (?, ?, ?)",
@@ -847,7 +873,7 @@ class SqliteRepository:
                     ApprovalUsageState.CONSUMED.value,
                 ),
             ).fetchone()["c"]
-            if used >= max_uses:
+            if used >= use_limit:
                 return _EXHAUSTED
         usage_id = new_id()
         self._conn.execute(

@@ -56,10 +56,10 @@ def frame(node_id="locker-1") -> RssiFrame:
 
 
 def ctx(use_id="use-1", node_id="locker-1", target="nearest:locker",
-        kind=ExecutionKind.RENTAL_INITIAL, settings=None) -> ExecutionContext:
+        kind=ExecutionKind.RENTAL_INITIAL, settings=None, usage_id=None) -> ExecutionContext:
     req = UseRequest(user_id="u1", request_id="r1", target=TargetSpec.parse(target),
                      action=Action.OPEN, host_kind="claude", received_at=NOW - timedelta(seconds=4))
-    return ExecutionContext("i1", req, node_id, use_id, None, settings or Settings(version="v1"),
+    return ExecutionContext("i1", req, node_id, use_id, usage_id, settings or Settings(version="v1"),
                             execution_kind=kind)
 
 
@@ -121,10 +121,26 @@ class FakePolicy:
     def __init__(self, result=None):
         self.result = result or PolicyCheckResult(Verdict.OK, ReasonCode.OK, 1)
         self.calls = []
+        self.request_ids = []
 
-    def check(self, user_id, node_id, action, now):
+    def check(self, user_id, node_id, action, now, *, internal_request_id=None):
         self.calls.append(node_id)
+        self.request_ids.append(internal_request_id)
         return self.result
+
+
+class OwnUsagePolicy(FakePolicy):
+    """`own` 요청이 승인의 마지막 한 번을 확보해 뒀다. 그 요청의 ID를 받으면 사용분을 빼서 통과하고, 아니면 소진이다."""
+
+    def __init__(self, own):
+        super().__init__(PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED, 2))
+        self.own = own
+
+    def check(self, user_id, node_id, action, now, *, internal_request_id=None):
+        exhausted = super().check(user_id, node_id, action, now, internal_request_id=internal_request_id)
+        if internal_request_id == self.own:
+            return PolicyCheckResult(Verdict.OK, ReasonCode.OK, 2, approval_id="a1")
+        return exhausted
 
 
 class FakeAudit:
@@ -200,6 +216,32 @@ def test_FR18_재검사_정책_결과를_그대로_반영한다(verdict, reason)
     assert (d.verdict, d.reason) == (verdict, reason)
 
 
+def test_FR19_recheck_ignores_own_reserved_usage():
+    # ④는 이 요청의 ID 를 넘겨 ⑤가 예약한 자기 사용분을 남은 횟수에서 뺀다. 다른 요청의 사용분으로 소진됐으면 거부한다
+    rc, repo, prox, pol, audit = build(policy=OwnUsagePolicy(own="i1"))
+    d = rc.recheck(ctx(usage_id="usage-1"))
+    assert (d.verdict, d.reason) == (Verdict.OK, ReasonCode.OK)
+    assert pol.request_ids == ["i1"]
+    rc, *_ = build(policy=OwnUsagePolicy(own="other"))
+    d = rc.recheck(ctx(usage_id="usage-1"))
+    assert (d.verdict, d.reason) == (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED)
+
+
+@pytest.mark.parametrize("verdict,reason", [
+    (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED),
+    (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_PENDING),
+    (Verdict.NEED_APPROVAL, ReasonCode.ACTION_NOT_ALLOWED),
+    (Verdict.DENY, ReasonCode.POLICY_DENIED),
+    (Verdict.DENY, ReasonCode.APPROVAL_EXHAUSTED),
+])
+def test_FR19_재검사_자기_사용분은_승인_소진만_통과시킨다(verdict, reason):
+    # 자기 사용분을 뺀 뒤에도 정책이 막으면 usage_id 가 있어도 그 판정으로 멈춘다
+    rc, repo, prox, pol, audit = build(policy=FakePolicy(PolicyCheckResult(verdict, reason, 2)))
+    d = rc.recheck(ctx(usage_id="usage-1"))
+    assert (d.verdict, d.reason) == (verdict, reason)
+    assert pol.request_ids == ["i1"]
+
+
 def test_FR18_재검사는_자기_예약을_타인_점유로_보지_않는다():
     rc, repo, *_ = build()
     assert repo.nodes_list[0].device_state is DeviceState.RESERVED
@@ -222,6 +264,18 @@ def test_FR18_재검사_예약이_유효하지_않으면_RECHECK_FAILED(mutate):
     rc, repo, *_ = build()
     mutate(repo)
     d = rc.recheck(ctx())
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.RECHECK_FAILED)
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda r: setattr(r, "session_obj", None),
+    lambda r: setattr(r, "session_obj", UseSession("use-1", "i1", "locker-1", SessionState.CLOSED)),
+    lambda r: setattr(r, "owner_ok", False),
+])
+def test_FR19_자기_사용분으로_정책을_통과해도_예약을_검사한다(mutate):
+    rc, repo, *_ = build(policy=OwnUsagePolicy(own="i1"))
+    mutate(repo)
+    d = rc.recheck(ctx(usage_id="usage-1"))
     assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.RECHECK_FAILED)
 
 
@@ -315,3 +369,53 @@ def test_FR18_재검사_명시_지정은_별도_임계값을_쓰고_없으면_RE
     assert rc.recheck(ctx(target="locker-1", settings=settings)).verdict is Verdict.OK
     assert rc.recheck(ctx()).reason is ReasonCode.MOVE_CLOSER  # 일반 임계값 0.95
     assert rc.recheck(ctx(target="locker-1")).reason is ReasonCode.RECHECK_FAILED
+
+
+# ── ③ 이후에 막히면 확률을 감사에 남긴다 (NFR-13) ──────────────────────────
+
+
+def _low_probability(repo, prox, pol):
+    prox.posteriors = {"locker-1": 0.4}
+
+
+def _policy_denies(repo, prox, pol):
+    pol.result = PolicyCheckResult(Verdict.DENY, ReasonCode.POLICY_DENIED, 2)
+
+
+def _reservation_invalid(repo, prox, pol):
+    repo.owner_ok = False
+
+
+def _beacon_gone(repo, prox, pol):
+    repo.frames = []
+
+
+def _target_gone(repo, prox, pol):
+    repo.nodes_list = [node(device_state=DeviceState.FAULT), anchor()]
+    repo.frames = [frame("anchor-1")]
+
+
+def _check_fails(repo, prox, pol):
+    repo.raise_on = "nodes"
+
+
+@pytest.mark.parametrize("mutate,reason,p", [
+    pytest.param(_low_probability, ReasonCode.MOVE_CLOSER, 0.4, id="③ 확률 부족"),
+    pytest.param(_policy_denies, ReasonCode.POLICY_DENIED, 0.99, id="④ 정책 거부"),
+    pytest.param(_reservation_invalid, ReasonCode.RECHECK_FAILED, 0.99, id="자기 예약이 유효하지 않음"),
+    pytest.param(_beacon_gone, ReasonCode.BEACON_NOT_SEEN, None, id="① 비콘 없음"),
+    pytest.param(_target_gone, ReasonCode.TARGET_UNAVAILABLE, None, id="② 대상이 후보 밖"),
+    pytest.param(_check_fails, ReasonCode.RECHECK_FAILED, None, id="검사 오류"),
+])
+def test_NFR13_재검사가_막으면_확률을_감사에_남긴다(mutate, reason, p):
+    rc, repo, prox, pol, audit = build()
+    mutate(repo, prox, pol)
+    c = ctx()
+    d = rc.recheck(c)
+    assert d.reason is reason
+    payload = audit.events[-1].payload
+    if p is None:  # 확률을 계산하지 않았다
+        assert "p" not in payload and "threshold" not in payload
+    else:
+        assert (payload["p"], payload["threshold"]) == (p, c.settings.threshold_locker)
+        assert d.p_max == p  # 판정 값은 그대로다

@@ -44,6 +44,8 @@ class ReasonCode(StrEnum):
     INVALID_INPUT = "INVALID_INPUT"
     # ⓪
     REQUEST_ID_CONFLICT = "REQUEST_ID_CONFLICT"  # 같은 request_id, 다른 입력
+    # 같은 요청을 아직 판정하거나 인계하는 중이다. 재전송에만 쓴다. 판정은 BUSY 와 함께 반환한다 (FR-18 ⓪).
+    REQUEST_IN_PROGRESS = "REQUEST_IN_PROGRESS"
     # 신규 조작 접수 제한에만 쓴다. 판정은 DENY 와 함께 반환한다 (FR-22).
     # 새 물리 조작 요청에만 쓴다. 재전송·조회·반납·복구는 이 사유로 거부하지 않는다.
     CAPACITY_EXCEEDED = "CAPACITY_EXCEEDED"
@@ -353,3 +355,4 @@ class AdminWriteReason(StrEnum):
     COLLECTION_OVERLAP = "COLLECTION_OVERLAP"
     INVALID_INTERVAL = "INVALID_INTERVAL"
     NOT_PLACE_OWNER = "NOT_PLACE_OWNER"  # 행위자가 장소 소유자가 아니다. outcome 은 REJECTED
+    NODE_OCCUPIED = "NODE_OCCUPIED"  # 점유 중인 기기의 장소 이동·정책 변경. outcome 은 CONFLICT

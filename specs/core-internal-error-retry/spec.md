@@ -16,9 +16,9 @@
 - 바뀌는 상태: 같은 내부 요청 ID의 판정 기록 (거부를 새 판정으로 바꾼다). 예약은 같은 내부 요청 ID의 기존 예약을 쓴다.
 - 약속:
   - `link_request`는 이전 판정이 `INTERNAL_ERROR`이고 입력이 같으면 같은 `internal_request_id`로 `is_new=True`, `previous=None`을 반환한다.
-  - 이 반환은 거부 기록을 "시도 중"으로 되돌리는 것과 한 번에 일어난다 (조건부 갱신). 동시에 온 두 재전송 중 하나만 새 시도가 된다. 나머지는 `IN_PROGRESS`로 거부한다.
+  - 이 반환은 거부 기록을 "시도 중"으로 되돌리는 것과 한 번에 일어난다 (조건부 갱신). 동시에 온 두 재전송 중 하나만 새 시도가 된다. 나머지는 `BUSY` / `REQUEST_IN_PROGRESS`로 응답한다 (2026-10-27 팀 결정).
   - 판정은 `is_new=True`이면 지금처럼 ①~⑥을 진행한다. 판정 코드는 재시도인지 알 필요가 없다.
-  - ⑤⑥의 `reserve_if_free`는 같은 `internal_request_id`의 기존 예약을 그대로 반환하므로 이중 예약이 생기지 않는다.
+  - ⑤⑥의 `reserve_if_free`는 같은 `internal_request_id`의 기존 예약을 그대로 반환하므로 이중 예약이 생기지 않는다. 오류 뒤 취소한 예약은 기존 예약으로 보지 않고 새로 예약한다 (2026-10-27 팀 결정).
   - 다른 판정(`OK`, `BUSY`, `ASK`, `DENY` 중 `INTERNAL_ERROR`가 아닌 것)은 확정 판정이다. 재판정하지 않는다.
   - 입력이 다르면 지금처럼 `REQUEST_ID_CONFLICT`다.
 
@@ -37,7 +37,7 @@
 
 ### 고치지 않는 곳
 - 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
-- 이 작업: `core/decision/` (판정 코드는 바뀌지 않아야 한다. 바꿔야 하면 이 spec을 고친다)
+- 이 작업: `core/decision/` (판정 코드는 바뀌지 않아야 한다. 바꿔야 하면 이 spec을 고친다). 2026-10-27 결정으로 ⓪의 처리 중 응답(`BUSY` / `REQUEST_IN_PROGRESS`)과 오류 뒤 예약 취소(`core-decision-pipeline`)가 바뀌었다
 
 ### 다른 영역과 닿는 곳
 | 계약 | 사용 또는 제공 | 상대 영역 |
@@ -51,9 +51,9 @@
 - 이 변경은 스키마를 바꾸지 않는다. `save_decision`은 변경하지 않는다 (판정 기록이 NULL로 돌아간 행에 처음 저장하는 경우가 된다).
 
 ### 만들지 않는 것
-- 저장 실패로 `verdict`가 NULL인 채 남은 요청의 재판정. 동시에 처리 중인 요청과 구분할 수 없어서 `IN_PROGRESS`로 거부하는 지금 동작을 유지한다.
+- 저장 실패로 `verdict`가 NULL인 채 남은 요청의 재판정. 동시에 처리 중인 요청과 구분할 수 없어서 진행 중(`BUSY` / `REQUEST_IN_PROGRESS`)으로 응답한다.
 - 재전송 횟수 제한, 지연 규칙.
-- 예약 뒤 재판정이 ⑤⑥ 전에 거부로 끝나면 이전 시도의 예약이 남는 문제. `architecture.md` §4 "실행 인계와 재검사"의 미결(#80)이라 팀 결정을 기다린다.
+- 예약 뒤 재판정이 ⑤⑥ 전에 거부로 끝나면 이전 시도의 예약이 남는 문제의 별도 처리. 이전 시도는 오류 때 예약을 바로 취소한다 (`core-decision-pipeline` 7절, #80). 그 취소마저 실패해 남은 예약은 재시작 복원이 만료한다 (2026-10-27 팀 결정).
 - `shared` 모델 변경 (`RequestLink`에 재시도 표시 추가 등).
 
 ## 5. 예외 상황
@@ -62,21 +62,24 @@
 |---|---|---|
 | `INTERNAL_ERROR`로 거부한 요청을 같은 입력으로 재전송한다 | 다시 판정한다. 새 판정을 저장한다 | `test_FR18_오류로_거부한_요청을_같은_입력으로_다시_보내면_다시_판정한다` |
 | 재전송이 `OK`를 받는다 | 같은 내부 요청 ID로 `OK`가 저장된다 | `test_FR18_오류_거부_뒤_같은_입력_재전송은_같은_내부_요청으로_다시_판정한다` |
-| 첫 시도가 예약 뒤에 실패했다 | 재판정이 기존 예약을 쓴다. 예약이 둘이 되지 않는다 | `test_FR19_오류_거부_뒤_재판정은_예약을_하나만_둔다` |
-| 같은 키, 다른 입력으로 재전송한다 | `REQUEST_ID_CONFLICT`. 거부 기록을 바꾸지 않는다 | `test_FR18_retry_with_different_input_conflicts` |
+| 첫 시도가 예약 뒤에 실패했고 취소도 실패해 예약이 남았다 | 재판정이 남은 예약을 쓴다. 예약이 둘이 되지 않는다 | `test_FR19_오류_거부_뒤_재판정은_예약을_하나만_둔다` |
+| 첫 시도가 예약 뒤에 실패해서 예약을 바로 취소했다 | 재판정이 새로 예약하고 실행까지 간다 | `test_FR18_runtime_retry_after_cancelled_reservation_executes` (`tests/integration/`) |
+| 같은 키, 다른 입력으로 재전송한다 | `REQUEST_ID_CONFLICT`. 거부 기록을 바꾸지 않는다 | `test_FR18_link_request_retry_different_input_conflicts` |
 | `OK`나 `BUSY` 같은 확정 판정을 재전송한다 | 저장된 판정을 그대로 반환한다 | `test_FR18_확정한_판정은_재전송해도_다시_판정하지_않는다` |
-| 같은 거부에 대한 재전송이 동시에 둘 온다 | 하나만 판정한다. 나머지는 `INTERNAL_ERROR` (`IN_PROGRESS`) | `test_FR18_재판정이_진행_중이면_같은_키는_다시_판정하지_않고_거부한다` |
+| 같은 거부에 대한 재전송이 동시에 둘 온다 | 하나만 판정한다. 나머지는 `BUSY` / `REQUEST_IN_PROGRESS` | `test_FR18_재판정이_진행_중이면_같은_키는_다시_판정하지_않고_REQUEST_IN_PROGRESS로_답한다` |
 | 재판정도 예외로 끝난다 | 다시 `INTERNAL_ERROR`. 다음 재전송이 또 재판정한다 | `test_FR18_재판정도_실패하면_다음_재전송이_다시_판정한다` |
-| 저장 실패로 `verdict`가 NULL이다 | `IN_PROGRESS`로 거부한다 (바뀌지 않음) | `test_FR18_null_verdict_stays_in_progress` |
+| 저장 실패로 `verdict`가 NULL이다 | `BUSY` / `REQUEST_IN_PROGRESS`로 응답한다 | `test_FR18_진행_중인_같은_키는_REQUEST_IN_PROGRESS를_반환한다` |
 
 ## 6. 결정
 
 - 같은 내부 요청 ID로 재시도한다 (선택지 A) — 예약의 멱등성(`reserve_if_free`)을 그대로 쓰고 스키마를 바꾸지 않는다.
 - 판정 코드는 바꾸지 않는다 — 재시도 여부를 ⓪의 `is_new`가 이미 알려준다.
+- ④는 재시도와 관계없이 내부 요청 ID를 정책 검사에 넘겨, 이전 시도가 확보한 자기 사용분을 남은 횟수에서 세지 않는다 (2026-10-27 결정 4, `core-policy-check`).
 
 ## 7. 가정
 
-없음. DB 변경은 `specs/db-internal-error-retry/spec.md`(PR #144)로 main에 들어왔다.
+- DB 변경은 `specs/db-internal-error-retry/spec.md`(PR #144)로 main에 들어왔다.
+- 재판정이 새로 만든 예약도 `reserved_at`이 첫 시도의 수신 시각이다 (`db-execution-store` 6절). 첫 시도 뒤 `reservation_wait_sec`가 지나서 온 재전송은 판정이 `OK`여도 실행 단계에서 `RESERVATION_EXPIRED`로 취소된다. 오류 뒤 취소를 넣기 전에도 같은 한계였다.
 
 ## 8. 테스트
 
@@ -85,8 +88,8 @@
 | FR-18 | `test_FR18_오류로_거부한_요청을_같은_입력으로_다시_보내면_다시_판정한다` | `is_new=True`인 재전송이 ①~⑥을 다시 진행한다 |
 | FR-18 | `test_FR18_오류_거부_뒤_같은_입력_재전송은_같은_내부_요청으로_다시_판정한다` | 재판정 결과가 같은 내부 요청 ID로 저장된다 |
 | FR-19 | `test_FR19_오류_거부_뒤_재판정은_예약을_하나만_둔다` | 예약이 하나다 |
-| FR-18 | `test_FR18_retry_with_different_input_conflicts` | 입력이 다르면 충돌이다 |
+| FR-18 | `test_FR18_link_request_retry_different_input_conflicts` | 입력이 다르면 충돌이다 |
 | FR-18 | `test_FR18_확정한_판정은_재전송해도_다시_판정하지_않는다` | 확정 판정은 재판정하지 않는다 |
-| FR-18 | `test_FR18_재판정이_진행_중이면_같은_키는_다시_판정하지_않고_거부한다` | 동시 재전송 중 하나만 판정한다 |
+| FR-18 | `test_FR18_재판정이_진행_중이면_같은_키는_다시_판정하지_않고_REQUEST_IN_PROGRESS로_답한다` | 동시 재전송 중 하나만 판정한다 |
 | FR-18 | `test_FR18_재판정도_실패하면_다음_재전송이_다시_판정한다` | 다시 실패해도 재시도할 수 있다 |
-| FR-18 | `test_FR18_null_verdict_stays_in_progress` | 저장 실패 행은 지금 동작을 유지한다 |
+| FR-18 | `test_FR18_진행_중인_같은_키는_REQUEST_IN_PROGRESS를_반환한다` | 판정이 빈 행의 재전송은 처리 중으로 답한다 |

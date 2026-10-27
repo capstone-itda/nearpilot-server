@@ -13,8 +13,8 @@ spec 규칙
 # FR-18 결정론적 판정 파이프라인 (⓪~⑥)
 
 - 담당: eunji719 (판정)
-- 요구사항: FR-18, FR-22
-- 따르는 결정: #15, #23, #24, #25, #26, #27, #33, #34, #35, #39, #42, #165
+- 요구사항: FR-14, FR-15, FR-18, FR-22
+- 따르는 결정: #15, #23, #24, #25, #26, #27, #33, #34, #35, #39, #42, #165, 2026-10-27 결정 4 (재판정은 자기 사용분을 세지 않는다)
 
 ## 1. 왜
 
@@ -34,6 +34,7 @@ spec 규칙
   - 공용형 제한 기기의 요청은 승인 사용분의 `reserved` 행만 생긴다. 기기 상태와 점유 세션은 바뀌지 않는다.
   - 단계마다 입력과 결과가 감사 기록에 남는다.
   - 판정 한 건마다 판정 기록이 한 번 남는다.
+  - 예약을 부른 뒤 오류로 끝나면 이번 요청의 예약과 승인 사용분이 오류 판정을 저장하기 전에 취소된다 (#80).
 - 약속:
   - core는 항상 ⓪부터 ⑥까지 같은 순서로 검사한다.
   - 한 단계가 실패하면 core는 그 단계의 판정과 사유 코드를 반환한다. 뒤 단계는 실행하지 않는다.
@@ -111,9 +112,20 @@ spec 규칙
 | 보장기간이 지나 DB가 비운 `request_id`가 다시 온다 | 새 요청으로 판정한다 | `test_FR18_통과한_대여형은_OK이고_RESERVED를_만든다` (DB가 `is_new`로 알리는 새 요청의 정상 경로) |
 | 새 요청인데 중복 방지 항목이 한도 이상이다 (`RequestLink.capacity_exceeded`) | ⓪에서 `DENY` / `CAPACITY_EXCEEDED`를 저장·감사하고 ①~⑥과 실행 인계를 하지 않는다. 재전송에는 기존 결과를 반환한다 | `test_FR22_capacity_stops_before_beacon_and_saves_record` |
 | 단계 실행 중 예상하지 못한 예외가 난다 | `DENY` / `INTERNAL_ERROR`를 반환한다. 호스트 응답에 예외 내용을 넣지 않는다 | `test_FR18_단계에서_예외가_나면_INTERNAL_ERROR로_거부한다` |
+| 예약 뒤 감사나 판정 저장이 예외로 끝난다 | `INTERNAL_ERROR`로 거부하고 이번 요청의 예약과 승인 사용분을 `cancel_not_sent`로 바로 취소한다 | `test_FR19_예약_뒤_오류면_예약을_바로_취소한다` |
+| `reserve_if_free()`가 예외를 낸다 | `INTERNAL_ERROR`로 거부하고 같은 취소를 부른다 | `test_FR19_예약_호출이_예외면_취소를_부른다` |
+| 예약 전 단계에서 예외가 난다 | `INTERNAL_ERROR`로 거부한다. 취소를 부르지 않는다 | `test_FR19_예약_전_오류는_취소하지_않는다` |
+| 오류 뒤 취소도 실패한다 | 응답은 그대로 `INTERNAL_ERROR`다. 예외를 밖으로 내지 않는다. 예외나 `CONFLICT`는 로그로 남긴다 | `test_FR19_예약_취소가_실패해도_INTERNAL_ERROR를_반환한다` |
+| 오류 판정을 저장하는 사이에 같은 키가 재전송된다 | 취소를 오류 판정 저장보다 먼저 한다. 재전송은 판정이 빈 동안 `REQUEST_IN_PROGRESS`를 받고, 저장 뒤의 재판정은 취소된 예약을 쓰지 않는다 | `test_FR19_오류_판정은_예약을_취소한_뒤에_저장한다` |
+| 판정 저장이 충돌(`CONFLICT`)한다 | 취소를 부르지 않는다 | `test_FR19_판정_저장_충돌은_예약을_취소하지_않는다` |
+| 정상 거부나 `OK`로 끝난다 (예약 뒤 `DEVICE_BUSY` 포함) | 취소를 부르지 않는다 | `test_FR19_정상_거부와_OK는_취소하지_않는다` |
+| 조립한 서비스(`build_core_service`)로 판정한다 | 판정이 같은 `ExecutionStore`를 받아 오류 뒤 취소가 동작한다 | `test_FR19_조립한_서비스도_오류_뒤_예약을_취소한다` |
+| 같은 키가 있는데 판정이 아직 없다 (진행 중) | `BUSY` / `REQUEST_IN_PROGRESS`. 다시 판정하지 않는다 | `test_FR18_진행_중인_같은_키는_REQUEST_IN_PROGRESS를_반환한다` |
 | 두 요청이 같은 기기를 동시에 요청한다 | `reserve_if_free()` 결과를 따른다. 실패한 요청은 `BUSY`다 | `test_FR18_FR19_점유_실패는_reserve_if_free_결과를_따른다` |
 | 공용형 제한 기기를 요청한다 | `reserve_if_free()`를 호출한다. `use_id`는 `None`이고 `usage_id`는 사용분 ID다 | `test_FR18_공용형_승인_사용분_ID를_점유_요청에_넘기고_인계에_담는다` |
 | 공용형 `open` 기기를 승인 없이 요청한다 | `reserve_if_free()`를 호출한다. DB는 아무것도 쓰지 않고 `RESERVED`를 반환한다 | `test_FR18_FR19_공용형도_reserve_if_free를_호출하고_세션은_없다` |
+| 오류로 거부한 요청을 재판정하는데 이전 시도가 그 승인의 마지막 사용분을 확보해 두었다 | ④는 자기 사용분을 세지 않아 통과한다. ⑤는 같은 사용분을 쓴다. `APPROVAL_EXHAUSTED`가 아니다 | `test_FR14_재판정은_자기_사용분으로_소진되지_않는다` |
+| 실제 DB에서 `one_time` 승인 요청이 예약 뒤 오류로 끝나고 같은 요청으로 재전송된다 | `OK`로 판정한다. 사용분은 하나다 | `test_FR14_runtime_one_time_retry_after_internal_error_is_ok` (`tests/integration/`) |
 | 같은 `internal_request_id`에 다른 판정을 다시 저장한다 | DB가 충돌로 거부한다. decision은 기존 판정 기록을 덮어쓰지 않는다 | `test_FR22_판정_저장이_충돌하면_OK가_아니고_다시_저장하지_않는다` |
 | 실행 직전 재검사에서 자기 요청의 예약을 만난다 | 타인 점유로 보지 않는다 | `specs/core-recheck/spec.md` |
 | 실행 직전 재검사가 실패한다 | 상태 관리가 전송을 막고 `cancel_not_sent`로 이번 요청의 예약과 승인 사용분을 정리한다 | `specs/core-recheck/spec.md` (판정은 `recheck()`만 제공한다) |
@@ -164,6 +176,7 @@ spec 규칙
 - `input_digest`는 정규화 입력을 JSON으로 직렬화한 문자열의 SHA-256 16진 문자열이다 (#24). 담당자가 정했다.
   - 직렬화: 키를 정렬하고 공백 없이(`separators=(",", ":")`), `ensure_ascii=False`로 쓴다.
   - 내용: `{"action", "parent_internal_request_id", "target": {"capability", "kind", "node_id"}}`. 값은 enum의 문자열 값이다.
+- 오류 뒤 예약 취소를 위해 `DecisionPipeline`은 `ExecutionStore`를 생성자 키워드 인자 `store`로 받는다. `None`이면 취소하지 않는다. 예약을 부른 곳이 판정이라 취소가 필요한지 아는 곳도 판정이다 (#80, 2026-10-27 팀 결정).
 - 구조: `core/decision/pipeline.py`의 `DecisionPipeline` 클래스 하나가 ⓪~⑥을 순서대로 실행한다. 의존하는 계층과 `Settings`는 생성자로 받는다. `input_digest` 계산은 `digest.py`에 둔다. 후보 조건과 임계값 선택, 판정 생성은 모듈 함수(`select_candidates`, `threshold_for`, `make_decision`)로 둔다. 실행 직전 재검사가 같은 조건을 쓰게 하려는 것이다.
 - 판정 시각은 `UseRequest.received_at`이다. 시계를 따로 읽지 않으므로 같은 입력에는 같은 판정이 나온다 (NFR-09).
 - 장소는 ①에서 비콘을 본 기기의 장소로 정한다 — requirements ①이 "장소의 앵커가 비콘을 수신했는지" 검사하므로 같은 장소를 ②③에 이어 쓴다. 담당자가 정했다.
@@ -176,6 +189,7 @@ spec 규칙
   - `ExecutionContext`는 이번 호출에서 새로 `OK`가 난 요청에만 만든다. 재전송에는 만들지 않는다. 같은 요청의 재인계는 상태 관리가 `internal_request_id`로 처리한다 (#16).
   - 실행 종류는 기기의 점유 방식과 `reserve_if_free()` 결과로 정한다. 공용형은 `SHARED`, 대여형은 `RESERVED`이면 `RENTAL_INITIAL`, `REOPERATING`이면 `RENTAL_REOPERATION`이다. 둘이 맞지 않으면(공용형에 세션이 돌아오는 등) 불변 조건 위반이다. `INTERNAL_ERROR`로 거부한다.
   - `execute()`는 이 작업이 부르지 않는다.
+- ④ 정책 검사는 `PolicyChecker.check(..., internal_request_id=내부 요청 ID)`로 부른다. 오류로 거부한 요청의 재판정(#76)이 이전 시도가 확보한 자기 사용분 때문에 `APPROVAL_EXHAUSTED`로 멈추지 않는다. ⑤의 `reserve_if_free()`는 같은 요청의 기존 사용분을 그대로 쓴다 (2026-10-27 팀 결정).
 - `save_decision()`이 충돌(`CONFLICT`)을 반환하면 `OK`가 아니라 `INTERNAL_ERROR`로 거부하고 다시 저장하지 않는다 — 기존 판정 기록을 덮어쓰지 않기 위해서다.
 
 ## 7. 가정
@@ -183,29 +197,36 @@ spec 규칙
 - ① T의 초기 기준은 3초(`beacon_recent_sec`), ② 온라인 유지 시간의 초기 기준은 15초(`online_ttl_sec`)다 (requirements.md §1.2). 판정은 두 값을 설정에서 받는다.
 - 대상 지정이 `any:`면 전역 할당(FR-23)이 맡는다. 이 작업은 만들지 않으므로 ②에서 `DENY` / `INVALID_INPUT`으로 거부한다.
 - ③ `ASK` / `LOW_CONFIDENCE`의 `node_id`는 `None`, `p_max`는 최대 확률이다. `MOVE_CLOSER`의 `node_id`는 지정 대상이다.
-- ⓪에서 같은 키에 판정이 이미 끝났으면(`previous`) 그 판정을 반환하고 다시 저장하지 않는다. 충돌(`conflict`)이면 `save_decision()`을 부르지 않는다. 같은 키가 있는데 판정이 아직 없으면(진행 중) `DENY` / `INTERNAL_ERROR`로 거부한다. 두 번째 판정 실행이 이중 예약을 만들지 않게 하기 위해서다.
-- `reserve_if_free()`가 예외를 내면 `INTERNAL_ERROR`로 거부한다. 반영 여부가 불명인 예약의 정리는 이 작업 밖이다.
+- ⓪에서 같은 키에 판정이 이미 끝났으면(`previous`) 그 판정을 반환하고 다시 저장하지 않는다. 충돌(`conflict`)이면 `save_decision()`을 부르지 않는다. 같은 키가 있는데 판정이 아직 없으면(진행 중) `BUSY` / `REQUEST_IN_PROGRESS`로 응답하고 다시 판정하지 않는다. 두 번째 판정 실행이 이중 예약을 만들지 않게 하기 위해서다. 진행 중인 요청은 오류가 아니므로 FR-18 ⓪의 "진행 상태를 반환"을 따른다 (2026-10-27 팀 결정).
+- `reserve_if_free()`를 부른 뒤에 예외로 `INTERNAL_ERROR`가 되면 이번 요청의 예약과 승인 사용분을 바로 취소한다 (#80, 2026-10-27 팀 결정). 취소는 `ExecutionStore.cancel_not_sent(internal_request_id, PENDING, INTERNAL_ERROR, 근거)`다. `reserve_if_free()` 자체의 예외처럼 반영 여부가 불명이어도 같은 호출로 정리한다. 취소도 실패하면 로그만 남긴다. 남은 예약은 재시작 복원이 만료한다 (`specs/state-management/core-restore.md`).
+- `save_decision()` 충돌(`CONFLICT`)로 끝난 요청은 취소하지 않는다. 같은 내부 요청에 다른 판정 기록이 있어서 그 예약을 이번 시도가 정리하면 안 된다.
 - 외부 요청의 중복 방지 보장기간이 지나면 DB가 외부 `request_id`를 비운다 (FR-22). 그 뒤 같은 `request_id`가 오면 ⓪은 새 요청으로 본다. 판정은 ⓪~⑥을 처음부터 검사한다.
 - 신규 조작 접수 제한은 ⓪에서 새 요청으로 확인한 요청에만 적용한다 (FR-22). 한도 이상이면 `DENY` / `CAPACITY_EXCEEDED`다. 같은 요청의 재전송에는 기존 결과를 반환한다.
 - #165가 접점을 정했다. DB는 `link_request()`에서 외부 `request_id`를 비운 행을 만들고 `capacity_exceeded=True`를 반환한다. 판정은 이 플래그를 ⓪에서 검사해 기존 저장·감사 경로로 거부를 기록한다.
-- 미결: 후보가 있는데 관측이 없을 때 `posterior()`가 빈 `posteriors`를 반환하는가, 균등 분포를 반환하는가. 판정은 빈 `posteriors`를 `LOW_CONFIDENCE`로 처리하려 한다. 근접 추정 담당에게 확인한다 (#26).
+- 후보가 있는데 관측이 없으면 `posterior()`는 처음 분포(균등)를 반환한다 (#26, `specs/core-proximity-estimator`). 판정은 빈 `posteriors`도 `LOW_CONFIDENCE`로 처리한다.
 - 실행 직전 재검사는 판정이 제공하고 상태 관리가 호출한다. 재검사 실패의 미전송 취소도 상태 관리가 시작한다.
 - 미결: 명시 지정 임계값의 수치. 근접 추정 담당이 검증셋으로 실험한 뒤 정한다. 설정 이름은 `threshold_explicit_locker`, `threshold_explicit_light`, `threshold_explicit_speaker`다. 기본값 `None`이면 명시 지정 실행을 허가하지 않는다.
 - 미결: 스피커의 근접 임계값. 설정 이름은 `threshold_speaker`다. 기본값 `None`이면 판정은 스피커 요청을 실행하지 않는다 (#61).
-- 미결 — #76: 오류로 거부한 요청을 같은 `request_id`로 재전송할 때 다시 판정할지. #25는 이 부분을 정하지 않았다.
+- 오류로 거부한 요청을 같은 `request_id`로 재전송하면 다시 판정한다 (#76, FR-18, `specs/core-internal-error-retry`).
 
 ## 8. 테스트
 
 | 요구사항 | 테스트 | 확인하는 것 |
 |---|---|---|
+| FR-14 | `test_FR14_재판정은_자기_사용분으로_소진되지_않는다`, `test_FR14_runtime_one_time_retry_after_internal_error_is_ok` (`tests/integration/`) | 재판정의 ④가 자기 사용분을 세지 않는다 |
 | FR-18 | `test_FR18_단계를_0부터_순서대로_검사한다` | 단계를 ⓪부터 ⑥까지 순서대로 검사한다 |
 | FR-18 | `test_FR18_비콘이_없으면_거부하고_뒤_단계를_실행하지_않는다` 외 | 첫 실패 단계에서 멈추고 뒤 단계를 실행하지 않는다 |
 | FR-18 | `test_FR18_단계에서_예외가_나면_INTERNAL_ERROR로_거부한다` 외 | 예외, 누락, 알 수 없는 상태는 `OK`가 되지 않는다 |
-| FR-18 | `test_FR18_근접에_비콘을_본_장소의_전체_기기를_넘긴다` 외 | 장소 기준, 활성 비콘 하나 |
+| FR-18 | `test_FR18_근접에_비콘을_본_장소의_전체_기기를_넘긴다` 외 | 장소 기준 |
+| FR-15 | `test_FR15_활성_비콘이_없으면_BEACON_NOT_SEEN` 외 | 활성 비콘이 없거나 둘이면 거부하고, 신뢰한 기기의 관측만 센다 |
 | FR-18 | `test_FR18_명시_지정은_별도_임계값을_쓴다` 외 | 임계값 선택과 `None` 처리 |
 | FR-18 | `test_FR18_FR19_본인_재조작은_기존_use_id로_OK이고_재조작으로_인계한다` 외 | 실행 종류와 인계 context |
 | FR-22 | `test_FR22_판정_기록에_적용한_값이_담긴다` 외 | 판정 기록과 저장 충돌 |
 | FR-22 | `test_FR22_capacity_stops_before_beacon_and_saves_record` | 용량 거부는 ⓪에서 멈추고 저장·감사한다 |
+| FR-19 | `test_FR19_예약_뒤_오류면_예약을_바로_취소한다` 외 | 오류로 끝난 요청의 예약 정리 (#80) |
+| FR-18 | `test_FR18_진행_중인_같은_키는_REQUEST_IN_PROGRESS를_반환한다` | 진행 중 재전송의 응답 |
+| FR-19 | `test_FR19_runtime_decision_error_releases_reservation` (`tests/integration/`) | 실제 DB에서 오류 뒤 기기가 바로 다시 예약된다 |
+| FR-19 | `test_FR19_runtime_failed_cancel_reservation_is_cleaned_by_restore` (`tests/integration/`) | 취소도 실패해 남은 예약을 재시작 복원이 바로 정리한다 |
 | FR-18, FR-22 | `server/tests/integration/test_capacity_access_real_db.py` | 실제 DB에서 용량 거부, 예약 없음, 기존 재전송 유지 |
 | FR-11 | `test_FR11_Decision에는_사용자_ID가_없다` | 판정에 사용자 ID가 없다 |
 

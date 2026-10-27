@@ -23,9 +23,10 @@ log = logging.getLogger(__name__)
 
 
 class _Stop(Exception):
-    def __init__(self, decision: Decision):
+    def __init__(self, decision: Decision, detail: Mapping[str, Any] | None = None):
         super().__init__(decision.reason)
         self.decision = decision
+        self.detail = detail or {}  # 감사 페이로드에 더할 값
 
 
 class Rechecker:
@@ -52,7 +53,7 @@ class Rechecker:
             try:
                 decision, detail = self._run(ctx)
             except _Stop as stop:
-                decision, detail = stop.decision, {}
+                decision, detail = stop.decision, stop.detail
             self._audit_event(ctx, {"verdict": decision.verdict.value,
                                     "reason": decision.reason.value, **detail})
             return decision
@@ -63,9 +64,10 @@ class Rechecker:
         req, s, node_id = ctx.request, ctx.settings, ctx.node_id
         now = self._clock()
 
-        def stop(verdict: Verdict, reason: ReasonCode, **kw: Any) -> _Stop:
+        def stop(verdict: Verdict, reason: ReasonCode, detail: Mapping[str, Any] | None = None,
+                 **kw: Any) -> _Stop:
             return _Stop(make_decision(req.request_id, ctx.internal_request_id, verdict, reason,
-                                       node_id=node_id, **kw))
+                                       node_id=node_id, **kw), detail)
 
         # ① 비콘 — 활성 비콘은 0 또는 1 개다 (#42). 대상이 있는 장소의 신뢰 기기가 봐야 한다
         beacons = self._repo.beacons_of(req.user_id)
@@ -102,15 +104,17 @@ class Rechecker:
         place_nodes = [n for n in all_nodes if n.place_id == place_id]
         result = self._proximity.posterior(beacons, candidates, now, place_nodes=place_nodes)
         p = dict(result.posteriors).get(node_id, 0.0)
+        prob = {"p": p, "threshold": threshold}  # ③ 이후에 막히면 감사에 남긴다 (NFR-13)
         if p < threshold:
-            raise stop(Verdict.ASK, ReasonCode.MOVE_CLOSER, p_max=p)
+            raise stop(Verdict.ASK, ReasonCode.MOVE_CLOSER, prob, p_max=p)
 
-        # ④ 정책
-        check = self._policy.check(req.user_id, node_id, req.action, now)
+        # ④ 정책 — 이 요청의 ID 를 넘겨 ⑤가 예약한 자기 사용분을 남은 횟수에서 뺀다 (FR-14, FR-19)
+        check = self._policy.check(req.user_id, node_id, req.action, now,
+                                   internal_request_id=ctx.internal_request_id)
         if check.verdict is not Verdict.OK:
             if check.verdict not in (Verdict.NEED_APPROVAL, Verdict.DENY):
                 raise ValueError(f"정책 검사의 알 수 없는 판정: {check.verdict!r}")
-            raise stop(check.verdict, check.reason, p_max=p)
+            raise stop(check.verdict, check.reason, prob, p_max=p)
 
         # 자기 예약 — 타인 점유로 보지 않는다. 대여형만 세션이 있다.
         # 최초 대여는 RESERVED, 재조작은 기존 ACTIVE 세션이어야 한다 (#35)
@@ -121,11 +125,11 @@ class Rechecker:
             if (session is None or session.state is not expected
                     or session.node_id != node_id
                     or not self._repo.session_owner_matches(ctx.use_id, req.user_id)):
-                raise stop(Verdict.DENY, ReasonCode.RECHECK_FAILED, p_max=p)
+                raise stop(Verdict.DENY, ReasonCode.RECHECK_FAILED, prob, p_max=p)
 
         ok = make_decision(req.request_id, ctx.internal_request_id, Verdict.OK, ReasonCode.OK,
                            node_id=node_id, use_id=ctx.use_id, p_max=p)
-        return ok, {"p": p, "threshold": threshold}
+        return ok, prob
 
     def _failed(self, ctx: ExecutionContext, exc: Exception) -> Decision:
         """예외 내용은 감사 기록에만 남기고 `Decision`에는 넣지 않는다."""

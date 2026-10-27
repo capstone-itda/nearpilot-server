@@ -2,6 +2,7 @@
 
 can_execute는 판정과 실행 서비스에 ExecutionReadiness로 제공한다 (#82).
 예약 대기를 넘긴 미전송 예약은 RESERVATION_EXPIRED로 취소한다 (#78, #81).
+판정이 OK가 아닌 요청의 남은 예약은 대기 없이 판정 오류 사유(INTERNAL_ERROR)로 취소한다 (#80).
 호출자는 기기별 공통 재진입 잠금과 검증된 현재 연결 보고를 제공한다.
 """
 
@@ -20,7 +21,7 @@ from nearpilot.core.lifecycle.shared_light import SharedLightService
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
     Capability, CommandOutcome, CommandState, DeviceState, ExecutionStatus,
-    Occupancy, ReasonCode, SessionState, StoreOutcome,
+    Occupancy, ReasonCode, SessionState, StoreOutcome, Verdict,
 )
 from nearpilot.shared.errors import StoreError, StoreOutcomeUnknown
 from nearpilot.shared.interfaces import ExecutionStore, Repository
@@ -213,6 +214,9 @@ class RestoreService:
         unlinked = [r for r in state.bundle.requests
                     if r.internal_request_id not in linked | completed_requests | state.cancelled]
         if pending or unlinked:
+            # 판정이 OK가 아니거나 비었으면 실행할 요청이 아니다. 예약 대기 없이 바로 취소한다 (#80).
+            failed_ids = {r.internal_request_id for r in unlinked
+                          if r.decision is None or r.decision.verdict is not Verdict.OK}
             reservations = [(c.internal_request_id, c.reserved_at) for c in pending]
             reservations += [(r.internal_request_id, r.reserved_at) for r in unlinked]
             if any(at is None for _, at in reservations):
@@ -220,7 +224,10 @@ class RestoreService:
             deadline = timedelta(seconds=state.settings.reservation_wait_sec)
             waiting = False
             for request_id, at in reservations:
-                if self._clock() >= at + deadline:
+                if request_id in failed_ids:
+                    self._cancel_expired(state, request_id, at, linked=False,
+                                         source="restore_failed_request", reason=ReasonCode.INTERNAL_ERROR)
+                elif self._clock() >= at + deadline:
                     self._cancel_expired(state, request_id, at, linked=request_id in linked)
                 else:
                     waiting = True
@@ -263,16 +270,20 @@ class RestoreService:
         state.blockers = ()
 
     def _cancel_expired(self, state: _Restoring, request_id: str, reserved_at: datetime, *,
-                        linked: bool) -> None:
-        """예약 대기를 넘긴 미전송 예약을 취소한다. 명령이 없는 요청도 같은 함수로 취소한다 (#81)."""
+                        linked: bool, source: str = "restore_reservation_expired",
+                        reason: ReasonCode = ReasonCode.RESERVATION_EXPIRED) -> None:
+        """예약 대기를 넘긴 미전송 예약을 취소한다. 명령이 없는 요청도 같은 함수로 취소한다 (#81).
+
+        판정이 OK가 아닌 요청의 예약은 대기와 관계없이 판정 오류 사유로 취소하며 근거의 source로 구분한다 (#80).
+        """
         evidence = state.cancels.setdefault(request_id, {
-            "source": "restore_reservation_expired", "reason": ReasonCode.RESERVATION_EXPIRED.value,
+            "source": source, "reason": reason.value,
             "reserved_at": reserved_at.isoformat(), "confirmed_at": self._clock().isoformat(),
         })
         state.blockers = ("reservation_expired",)
         try:
             saved = self._store.cancel_not_sent(request_id, ExecutionStatus.PENDING,
-                                                ReasonCode.RESERVATION_EXPIRED, evidence)
+                                                reason, evidence)
         except StoreOutcomeUnknown:
             current = self._store.execution(request_id) if linked else None
             if current is None or current.status != ExecutionStatus.NOT_SENT or current.evidence != evidence:

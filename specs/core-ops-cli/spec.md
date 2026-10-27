@@ -76,7 +76,6 @@
 | — | 지표 1~7, 9의 평가 | `tools/evaluation` 후속 spec |
 | — | 관리 REST, GUI | 관리 쓰기 REST는 두지 않는다 (FR-12A). GUI는 CLI 사용 뒤 정한다 |
 | — | 공개용 데이터셋 추출 | `db-evaluation-dataset` (가칭) |
-| — | 점유 중인 기기의 장소·정책 변경 제한 | architecture.md 미결 |
 
 ## 5. 예외 상황
 
@@ -91,6 +90,7 @@
 | `serve`(일반)에서 모델 표가 비었다 | 기존대로 시작하지 않는다 | `test_FR16_serve_requires_models_without_collect_only` |
 | `serve`가 시작에 실패한다 (MQTT 접속, 포트 등) | 종료 코드 1 | `test_FR16_serve_startup_failure_exits_1` |
 | 시드 파일의 형식이 틀리다 (모르는 키, 빠진 키, 잘못된 enum) | 아무것도 쓰지 않고 잘못된 필드를 모두 쓴다. 종료 코드 2 | `test_FR12A_seed_invalid_file_writes_nothing` |
+| 정책이 `one_time`인데 `max_uses`가 1이 아니다 | 입력 오류. 종료 코드 2 | `test_FR14_seed_rejects_one_time_max_uses_over_one` |
 | 시드를 두 번 실행한다 | 계정은 "이미 있음", 같은 정책은 "변경 없음"이다. 비콘, 장소, 신뢰, 종료 정책은 같은 값으로 다시 반영한다(DB 내용은 같고 다시 반영한 항목만 감사 행이 는다). 새 토큰을 만들지 않는다 | `test_FR12A_seed_is_rerunnable` |
 | 시드의 기기가 DB에 없다 (아직 발표 안 됨) | 그 기기 항목을 거부 사유와 함께 쓰고 종료 코드 1. 앞서 반영한 항목은 유지한다 | `test_FR13_seed_unknown_node_reports_and_continues` |
 | 시드 `--dry-run` | DB에 쓰지 않고 반영할 항목만 쓴다 | `test_FR12A_seed_dry_run_writes_nothing` |
@@ -165,7 +165,7 @@
 - 이미 있는 장소를 다른 소유자로 다시 배치하는 요청은 서비스 검사를 지나 DB가 `CONFLICT`/`STATE_CONFLICT`로 거부한다. 쓰기는 일어나지 않는다.
 - `AdminRepository.set_release_policy(node_id, release_policy)`를 추가한다. `node.release_policy`만 바꾸고 `Step.ADMIN` 감사와 한 트랜잭션이다. 진행 중 점유 세션은 생성 당시 값을 보존하므로 소급하지 않는다.
 - 정책은 `current_policy`와 내용이 같으면 쓰지 않는다. 다르면 현재 버전을 `expected_version`으로 새 리비전을 추가한다. 정책이 없으면 버전 1로 등록한다. `policy_id`는 `pol-<node_id>`다.
-- 시드 파일 TOML: `[[accounts]]`(user_id, name, role), `[[beacons]]`(beacon_id, user_id, uuid, major, minor, active), `[[places]]`(place_id, owner, name, nodes), `[[nodes]]`(node_id, trust, release_policy), `[[policies]]`(node_id, visibility, mode, approver, approval_mode, approval_ttl_sec, max_uses). 모르는 키는 거부한다. 선택 키: `beacons.active`(기본 true), `nodes.trust`, `nodes.release_policy`(없으면 건드리지 않는다), `policies.approver`, `approval_ttl_sec`, `max_uses`.
+- 시드 파일 TOML: `[[accounts]]`(user_id, name, role), `[[beacons]]`(beacon_id, user_id, uuid, major, minor, active), `[[places]]`(place_id, owner, name, nodes), `[[nodes]]`(node_id, trust, release_policy), `[[policies]]`(node_id, visibility, mode, approver, approval_mode, approval_ttl_sec, max_uses). 모르는 키는 거부한다. 선택 키: `beacons.active`(기본 true), `nodes.trust`, `nodes.release_policy`(없으면 건드리지 않는다), `policies.approver`, `approval_ttl_sec`, `max_uses`. `approval_mode = one_time`에 1이 아닌 `max_uses`는 입력 오류다 (FR-14).
 - 파일 검사는 키 중복, 두 장소에 든 기기, 어느 `[[places]].nodes`에도 없는 `[[nodes]]`·`[[policies]]` 기기를 입력 오류(2)로 거부한다. 다른 계정 참조(`beacons.user_id` 등)는 DB에 이미 있는 계정일 수 있어 DB에 맡긴다.
 - `seed`는 DB 파일이 없으면 만든다 — 서버를 띄우기 전에도 계정과 장소를 넣을 수 있다. DB를 읽는 다른 명령(collect, split, fit, eval)은 DB가 없으면 2다.
 - 시드는 파일 전체를 검사한 뒤 쓴다. 항목 하나가 거부되면 사유를 쓰고 나머지를 계속한다. 거부가 하나라도 있으면 종료 코드 1이다 — 기기 발표를 기다리는 동안 계정과 장소는 먼저 넣고 다시 실행할 수 있다.
@@ -221,7 +221,7 @@
 ## 7. 가정
 
 - 지표 8의 세부 측정 정의는 미결이다 (architecture.md §4 "RSSI 수집 회차"). 정면 오선택률과 ECE를 6절 "eval"의 정의로 계산한다. 정의가 정해지면 `tools/evaluation`의 계산 함수만 고친다.
-- 수집 회차의 조회 접점은 미결이다 (architecture.md §4 "RSSI 수집 회차"). 이 작업은 `tools/evaluation/runs.py`(`list_runs`, `load_labeled_runs`)를 조회 접점으로 가정하고, 회차의 장소 규칙을 6절 "collect"로 정한다. 정해진 접점이 다르면 `runs.py`와 그 호출만 바꾼다.
+- 수집 회차의 조회 접점은 `tools/evaluation/runs.py`(`list_runs`, `load_labeled_runs`)다 (architecture.md §4 "RSSI 수집 회차", 2026-10-27 담당자 위임 결정). 회차의 장소 규칙은 6절 "collect"다.
 - 중단된 회차(Ctrl+C, `collect close`로 닫은 회차)를 빼는 규칙은 `specs/core-proximity-data-collection` 4절의 후속 작업이다. 이 작업은 닫힌 회차를 모두 분할 대상으로 본다.
 - 무드등 장소의 수집 라벨은 미결이다 (#61). 기기가 하나인 장소도 같은 규칙으로 분할·적합한다.
 
@@ -236,6 +236,7 @@
 | FR-12A | `test_FR12A_seed_invalid_file_writes_nothing` | 잘못된 시드는 아무것도 쓰지 않음 |
 | FR-12A | `test_FR12A_seed_is_rerunnable` | 두 번 실행해도 같은 상태, 토큰 재발급 없음 |
 | FR-12A | `test_FR12A_seed_dry_run_writes_nothing` | dry-run은 쓰지 않음 |
+| FR-14 | `test_FR14_seed_rejects_one_time_max_uses_over_one`, `test_FR14_seed_accepts_one_time_max_uses_one` | `one_time`의 `max_uses`는 없거나 1이다 |
 | FR-12A | `test_FR12A_admin_rejects_non_owner` | 소유자가 아닌 행위자의 장소 쓰기 거부 |
 | FR-13 | `test_FR13_seed_unknown_node_reports_and_continues` | 없는 기기만 거부, 나머지 반영, 종료 코드 1 |
 | FR-13 | `test_FR13_set_release_policy_unknown_node` | 없는 기기는 `NODE_NOT_FOUND` |

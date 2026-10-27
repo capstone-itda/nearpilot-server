@@ -17,6 +17,7 @@
 - 출력: 기기별 복원 상태. `ExecutionReadiness.can_execute(node_id)`로 판정과 `core-execution`에 제공한다 (#82).
 - 바뀌는 상태:
   - 전송을 시작하지 않은 예약 중 예약 대기 제한을 넘긴 예약의 취소 (`cancel_not_sent(expected=PENDING, RESERVATION_EXPIRED)`)
+  - 판정이 `OK`가 아니거나 빈 요청의 남은 예약의 바로 취소 (`cancel_not_sent(expected=PENDING, INTERNAL_ERROR)`, #80)
   - 결과를 확정하지 못한 명령의 기기 `FAULT`와 복구 건
   - `CLOSING` 세션의 논리적 종료 재개
   - 상태 관리 메모리의 기기별 복원 상태
@@ -34,7 +35,7 @@
 | 기록 | 처리 |
 |---|---|
 | 전송을 시작하지 않은 명령 (`pending`) | 예약 시각부터 `reservation_wait_sec`가 지났으면 `cancel_not_sent(expected=PENDING, RESERVATION_EXPIRED)`로 취소한다. 지나지 않았으면 실행을 막고, 지난 뒤의 `tick()`이나 상태 보고에서 취소한다 |
-| 명령을 연결하기 전의 예약 요청 | `RestoreBundle.requests`의 `reserved_at`으로 남은 대기 시간을 계산한다. 명령 부재를 처리 완료로 보지 않는다. 만료하면 같은 `cancel_not_sent(expected=PENDING, RESERVATION_EXPIRED)`로 취소한다. 명령을 만들지 않는다 (#81) |
+| 명령을 연결하기 전의 예약 요청 | `RestoreBundle.requests`의 `reserved_at`으로 남은 대기 시간을 계산한다. 명령 부재를 처리 완료로 보지 않는다. 만료하면 같은 `cancel_not_sent(expected=PENDING, RESERVATION_EXPIRED)`로 취소한다. 명령을 만들지 않는다 (#81). 판정이 `OK`가 아니거나 빈 요청은 대기 없이 `INTERNAL_ERROR`로 바로 취소한다 (#80) |
 | 전송을 시작했고 결과가 없는 명령 (`in_progress`) | 실행 여부가 불명이다. `record_result(UNKNOWN)`으로 격리하고 복구 건을 만든다 |
 | `RESERVED` 세션 | 연결된 요청과 명령의 처리를 따른다. 명령이 없으면 예약 요청의 만료 처리를 따른다 |
 | `ACTIVE` 세션 | 점유를 유지한다. `rental_due_at`을 바꾸지 않는다 |
@@ -85,6 +86,7 @@
 | `pending` 명령의 예약 대기 제한이 서버 중단 중에 지났다 | `cancel_not_sent(expected=PENDING, RESERVATION_EXPIRED)`로 취소한다 | `test_FR19_pending_expired_during_downtime_cancelled` |
 | `pending` 명령의 예약 대기 제한이 아직 남았다 | 실행을 막는다. 제한이 지난 뒤 취소한다 | `test_FR19_pending_waits_then_expires_after_restart` |
 | 예약 뒤 명령 연결 전에 서버가 중단됐다 | 요청의 예약 시각으로 만료를 처리한다. 명령 없이 취소해서 세션과 사용분을 정리한다 | `test_FR19_restore_request_without_command_cancelled` |
+| 판정이 `OK`가 아니거나 빈(오류, 저장 실패 등) 요청의 예약이 남았다 | 대기 시간과 관계없이 바로 `cancel_not_sent(expected=PENDING, INTERNAL_ERROR)`로 취소한다. 판정 오류로 남은 예약이라 예약 대기 제한 사유를 쓰지 않는다 (`architecture.md` §4 "예약 이후 저장"). 근거의 `source`는 `restore_failed_request`다. 실행할 요청이 아니다 (#80, 2026-10-27 팀 결정) | `test_FR19_restore_cancels_stale_reservation_of_failed_request` |
 | 공용형 예약에 요청과 사용분만 있다 | 점유 세션 없이 요청의 만료 처리를 따른다 | `test_FR19_restore_request_without_command_cancelled` |
 | 만료 취소의 저장 결과가 불명이다 | 같은 근거로 재시도한다. 확인 전에는 실행을 막는다 | `test_FR19_expiry_cancel_unknown_retries_same_evidence` |
 | 만료 취소가 `CONFLICT`다 | 실행 차단을 유지하고 예외로 알린다 | `test_FR19_expiry_cancel_conflict_stays_blocked` |

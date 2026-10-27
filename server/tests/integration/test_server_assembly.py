@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sqlite3
 import threading
@@ -16,12 +17,13 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from _runtime import (
-    OWNER, TOKENS, UUID, VISITOR_A, VISITOR_B, FakeProximity, McpCaller, SimBroker, make_config,
+    OWNER, TOKENS, UUID, VISITOR_A, VISITOR_B, FakeProximity, McpCaller, SimBroker, asgi_post, make_config,
     query, running, seed, wait_until,
 )
 from nearpilot.core.lifecycle.node_events import NodeEventService
 from nearpilot.core.lifecycle.restore import RestoreService
 from nearpilot.core.proximity.estimator import HmmProximityEstimator
+from nearpilot.db.repositories.execution_store import SqliteExecutionStore
 from nearpilot.db.repositories.retention import SqliteRetentionStore
 from nearpilot.iot.mqtt import ConnectionFailure, ReportDelivery
 from nearpilot.runtime import Runtime, ShutdownError, create_app
@@ -40,10 +42,10 @@ class World:
     """설정, 시드한 DB, 시뮬레이터와 Runtime 하나."""
 
     def __init__(self, tmp, *, settings=None, runtime=None, database=None, posteriors=None,
-                 node_ids=("locker-1", "locker-2", "light-1"), proximity_factory=None, seeded=True):
+                 node_ids=("locker-1", "locker-2", "light-1"), proximity_factory=None, seeded=True, http=None):
         self.tmp = tmp
         self.cfg = make_config(tmp, settings={**EXPLICIT, **(settings or {})}, runtime=runtime,
-                               database=database)
+                               database=database, http=http)
         if seeded:
             seed(self.cfg.database.path)
         self.broker = SimBroker(tmp, node_ids)
@@ -459,6 +461,24 @@ def test_FR21_runtime_mcp_ownership(world):
     assert query(w.db, "SELECT state FROM use_session")[0]["state"] == "ACTIVE"  # 타인은 반납하지 못했다
 
 
+def test_FR08_runtime_public_hosts_reach_mcp(world):
+    """설정의 `[http] public_hosts`가 조립 서버의 `/mcp` Host 검사까지 닿는다. AP 주소는 포트까지 넣는다."""
+    w = world(http={"public_hosts": ["10.42.0.1:8000"]})
+    app = create_app(w.runtime)
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}).encode()
+    headers = {**McpCaller.HEADERS, "Authorization": f"Bearer {TOKENS[VISITOR_A]}"}
+
+    async def scenario():
+        async with app.router.lifespan_context(app):
+            listed = await asgi_post(app, "/mcp", {**headers, "host": "10.42.0.1:8000"}, body)
+            other = await asgi_post(app, "/mcp", {**headers, "host": "10.42.0.2:8000"}, body)
+            return listed, other
+
+    (listed_status, listed), (other_status, _) = asyncio.run(scenario())
+    assert listed_status == 200 and "request_use" in listed
+    assert other_status == 421
+
+
 def test_FR08_runtime_mcp_real_app_tools(world):
     w = world()
     app = create_app(w.runtime)
@@ -494,3 +514,55 @@ def test_FR08_runtime_mcp_real_app_tools(world):
     text = repr(out)
     for secret in (VISITOR_A, OWNER, "place-a", TOKENS[VISITOR_A], "p_max"):
         assert secret not in text  # 사용자 ID·점유 주체·토큰을 응답에 넣지 않는다 (FR-11, NFR-08)
+
+
+def test_FR19_runtime_open_rental_reoperation_reaches_device(world):
+    w = world()
+    with running(w.runtime):
+        w.ready("locker-1")
+        first = w.use(VISITOR_A, "locker-1", "r-open")
+        assert first.verdict is Verdict.OK
+        wait_until(lambda: query(w.db, "SELECT state FROM use_session WHERE use_id = ?",
+                                 first.use_id)[0]["state"] == "ACTIVE")
+        # 승인 없는 대여의 재조작도 기기에 명령을 보내고 성공한다 (예약 시각이 없어 전송이 막히지 않는다)
+        again = w.use(VISITOR_A, "locker-1", "r-reopen")
+        assert (again.verdict, again.use_id) == (Verdict.OK, first.use_id)
+        wait_until(lambda: [c["status"] for c in w.commands("locker-1")] == ["succeeded", "succeeded"])
+
+
+def test_FR19_runtime_reoperation_after_release_is_use_not_found(world, monkeypatch):
+    w = world()
+    with running(w.runtime):
+        w.ready("locker-1")
+        first = w.use(VISITOR_A, "locker-1", "r-open")
+        assert first.verdict is Verdict.OK
+        wait_until(lambda: query(w.db, "SELECT state FROM use_session WHERE use_id = ?",
+                                 first.use_id)[0]["state"] == "ACTIVE")
+        released = []
+        link_command = SqliteExecutionStore.link_command
+
+        def link_after_release(self, internal_request_id, node_id, action):
+            # 재조작 판정은 끝났고 명령을 연결하기 전이다. 같은 사용자의 반납이 대여를 닫는다.
+            if not released:
+                released.append(w.runtime.core.release_use(VISITOR_A, first.use_id))
+            return link_command(self, internal_request_id, node_id, action)
+
+        monkeypatch.setattr(SqliteExecutionStore, "link_command", link_after_release)
+        again = w.use(VISITOR_A, "locker-1", "r-reopen")
+        # 반납은 정상이다. 재조작은 서버 오류가 아니라 붙을 대여가 없다는 응답이다.
+        assert released[0].verdict is Verdict.OK
+        assert (again.verdict, again.reason, again.use_id) == (
+            Verdict.DENY, ReasonCode.USE_NOT_FOUND, None)
+        assert query(w.db, "SELECT state FROM use_session WHERE use_id = ?",
+                     first.use_id)[0]["state"] == "CLOSED"
+        # 연결을 거부한 재조작은 미전송 명령 한 행으로 남는다. 첫 대여의 명령은 그대로다.
+        assert [c["status"] for c in w.commands("locker-1")] == ["succeeded", "not_sent"]
+        refused = query(w.db, "SELECT status, use_id, json_extract(evidence, '$.reason') AS reason "
+                              "FROM node_command WHERE internal_request_id = ?", again.internal_request_id)
+        assert [tuple(row) for row in refused] == [("not_sent", None, "USE_NOT_FOUND")]
+        # 명령에 연결된 요청이라 재시작 복원의 대상이 아니다.
+        with w.runtime.db.scope() as bound:
+            pending = {request.internal_request_id for bundle in bound.store.restore_pending()
+                       for request in bundle.requests}
+        assert again.internal_request_id not in pending
+        assert [c["action"] for c in w.broker.commands() if c["node_id"] == "locker-1"] == ["open"]
