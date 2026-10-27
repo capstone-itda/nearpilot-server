@@ -24,7 +24,7 @@
   - "진행 중이거나 미해결"인 기록은 기간이 지나도 지우지 않는다(6절에서 정확한 기준을 정한다).
   - `audit_log` 행은 JSONL로 내보낸 것이 확인된 뒤에만 지운다. 내보내기 경로가 없으면(비활성) 지우지 않는다.
   - 한 번의 `cleanup()` 호출은 `BEGIN IMMEDIATE` 트랜잭션 하나로 묶는다.
-  - `link_request`의 외부 요청 수 세기와 삽입은 `BEGIN IMMEDIATE` 트랜잭션 하나로 묶는다. 같은 요청의 재전송에는 한도와 관계없이 기존 결과를 반환한다.
+  - `link_request`의 중복 방지 항목 수 세기와 삽입은 `BEGIN IMMEDIATE` 트랜잭션 하나로 묶는다. 같은 요청의 재전송에는 한도와 관계없이 기존 결과를 반환한다.
   - `request` 행은 절대 지우지 않는다. `node_command` 행도 지우지 않는다. 명령 항목은 요청의 `request_id`를 비우면 끝나므로 행을 지울 필요가 없다 (2026-10-27 팀 결정).
 
 ## 3. 제약
@@ -47,9 +47,10 @@
 - `server/src/nearpilot/db/repositories/repository.py` (`link_request`)
 - `server/src/nearpilot/db/repositories/` (새 `RetentionStore` 구현 파일 추가)
 - `server/tests/db/`
+- fix/db-command-retention: `docs/requirements.md` FR-22의 명령 중복 방지 항목 줄, `docs/architecture.md` §4 "운영 기준의 영역별 분담"의 `link_request` 집계 두 줄 (2026-10-27 팀 결정)
 
 ### 고치지 않는 곳
-- 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
+- 항상: `docs/` (위 줄은 제외), `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
 - 이 작업: `core/`, `api/`, `iot/`, `tools/`, `db/schema/`(마이그레이션 없음 — 기존 컬럼·FK로 충분하다), `db/audit/`(읽기 함수 재사용만, 수정 없음)
 
 ### 다른 영역과 닿는 곳
@@ -83,7 +84,7 @@
 | `cleanup()`을 돌린다 | `rssi_observation`·`collection_run` 행 수는 그대로다 | `test_FR22_cleanup_keeps_collection_observations` |
 | `cleanup()` 중 쓰기 잠금을 얻지 못한다 | 아무것도 지우지 않은 채 `StoreNotApplied`를 올린다. 판정과 실행을 막지 않는다(상태 관리가 다음 주기에 재시도) | `test_NFR03_cleanup_lock_failure_raises_store_not_applied` |
 | 중복 방지 항목 수(요청 항목 + 명령 항목)가 `dedup_entry_limit` 미만이다 | 평소처럼 `request_id`를 넣어 새 행을 만든다. `capacity_exceeded=False` | `test_FR18_link_request_below_limit_is_unaffected` |
-| 행 수가 한도 이상이다(새 요청) | `request_id` 없이 행을 만들고 `RequestLink(is_new=True, capacity_exceeded=True)`를 반환한다. 이 행은 다음 집계에서 빠진다 | `test_FR22_link_request_capacity_exceeded_omits_request_id` |
+| 중복 방지 항목 수가 한도 이상이다(새 요청) | `request_id` 없이 행을 만들고 `RequestLink(is_new=True, capacity_exceeded=True)`를 반환한다. 이 행은 다음 집계에서 빠진다 | `test_FR22_link_request_capacity_exceeded_omits_request_id` |
 | 한도 이상이지만 보장기간이 지난 `request_id`가 있다 | 그 ID를 먼저 비우고 다시 센다. 자리가 나면 새 요청을 평소처럼 연결한다 | `test_FR22_link_request_clears_expired_ids_before_capacity_check` |
 | 한도 이상이고 진행 중인 요청만 있다 | 진행 중 요청의 `request_id`는 비우지 않고 `capacity_exceeded=True`를 반환한다 | `test_FR22_link_request_capacity_keeps_unfinished_request_key` |
 | 요청 항목은 한도 미만이지만 명령 항목을 더하면 한도 이상이다 | 한도 이상으로 본다 (`capacity_exceeded=True`). 외부 `request_id`를 비운 요청의 명령은 세지 않는다. 진행 중(`pending`·`in_progress`) 명령은 요청의 `request_id`가 없어도 센다 | `test_FR22_link_request_counts_command_entries` |
@@ -109,7 +110,7 @@
 ### `use_session` 삭제와 참조 분리
 
 - 지우는 조건: `state = 'CLOSED'` AND `closed_at + use_history_retention_days <= now` AND 미완료 복구(`recovery.use_id = use_id AND completed_at IS NULL`)가 없다.
-- 지우기 직전에 `UPDATE node_command SET use_id = NULL WHERE use_id = ?`와 `UPDATE recovery SET use_id = NULL WHERE use_id = ? AND completed_at IS NOT NULL`을 실행해 FK 참조를 뗀다. `node_command`·완료된 `recovery` 행 자체는 남는다 — 이유: `node_command`는 이 spec에서 지우지 않기로 했으므로(FR-22 미결), `use_session` 보존기간(7일)이 `node_command`의 어떤 보존 기준보다 먼저 끝나도 FK 위반 없이 두 수명을 독립적으로 둘 수 있다. 두 컬럼 모두 `NOT NULL`이 아니라서(`CREATE TABLE` 확인) 스키마 변경이 필요 없다.
+- 지우기 직전에 `UPDATE node_command SET use_id = NULL WHERE use_id = ?`와 `UPDATE recovery SET use_id = NULL WHERE use_id = ? AND completed_at IS NOT NULL`을 실행해 FK 참조를 뗀다. `node_command`·완료된 `recovery` 행 자체는 남는다 — 이유: `node_command`는 지우지 않으므로(FR-22, 2026-10-27 팀 결정), `use_session` 보존기간(7일)이 `node_command`의 어떤 보존 기준보다 먼저 끝나도 FK 위반 없이 두 수명을 독립적으로 둘 수 있다. 두 컬럼 모두 `NOT NULL`이 아니라서(`CREATE TABLE` 확인) 스키마 변경이 필요 없다.
 - `use_session`을 참조하는 FK를 전체 스키마(`0001_initial.sql`~`0005_request_kind.sql`)에서 다시 확인했다. `node_command.use_id`와 `recovery.use_id` 둘뿐이다. `approval_usage`는 `command_id`가 평범한 `TEXT` 컬럼이라 `node_command`나 `use_session`을 FK로 참조하지 않는다. `request`도 `use_session`을 참조하지 않는다(반대로 `use_session.internal_request_id`가 `request`를 참조한다). 뗄 FK는 두 곳뿐이다.
 
 ### `audit_log` 삭제와 JSONL 확인

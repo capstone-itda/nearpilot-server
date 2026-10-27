@@ -455,7 +455,8 @@ def test_FR22_link_request_counts_command_entries(conn, owner, status, limit, ex
     insert_node(conn, node_id="node1", occupancy="rental")
     # 판정이 없는 진행 중 요청이라 한도 정리가 request_id를 비우지 않는다
     insert_request(conn, internal_request_id="keyed", request_id="ext-keyed", input_digest="d")
-    insert_request(conn, internal_request_id="cleared", request_id=None, input_digest="d")
+    # 정리로 ID를 비운 요청은 판정이 있다 (완료 조건)
+    insert_request(conn, internal_request_id="cleared", request_id=None, input_digest="d", verdict="OK", reason_code="OK")
     insert_node_command(conn, command_id="cmd1", internal_request_id=owner, node_id="node1", status=status)
     repo = SqliteRepository(conn, settings=Settings(dedup_entry_limit=limit))
 
@@ -473,18 +474,22 @@ def test_FR22_link_request_recount_after_clearing_counts_command_entries(conn):
         verdict="DENY", reason_code="BEACON_NOT_SEEN",
     )
     insert_audit_log(conn, internal_request_id="expired", created_at="2026-01-01T00:00:00+00:00")
+    insert_node_command(
+        conn, command_id="cmd-expired", internal_request_id="expired", node_id="node1", status="succeeded",
+    )
     insert_request(conn, internal_request_id="live", request_id="ext-live", input_digest="d")
     insert_node_command(
         conn, command_id="cmd-live", internal_request_id="live", node_id="node1", status="in_progress",
     )
-    repo = SqliteRepository(conn, settings=Settings(dedup_entry_limit=2, request_dedup_ttl_sec=60))
+    # 정리 전 4(두 요청 항목 + 두 명령 항목)라 한도 3에서 정리한다
+    repo = SqliteRepository(conn, settings=Settings(dedup_entry_limit=3, request_dedup_ttl_sec=60))
     later = replace(_use_request(request_id="new"),
                     received_at=datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=61))
 
     result = repo.link_request(later, "new")
 
-    # 만료 요청의 ID를 비워도 진행 중 요청의 항목 1 + 그 명령 1 = 2가 남아 한도 이상이다
-    assert result.capacity_exceeded is True
+    # 만료 요청의 ID를 비우면 그 요청의 끝난 명령 항목도 빠져 진행 중 요청의 항목 1 + 그 명령 1 = 2만 남는다
+    assert result.capacity_exceeded is False
     expired = conn.execute("SELECT request_id FROM request WHERE internal_request_id = 'expired'").fetchone()
     assert expired["request_id"] is None
     live = conn.execute("SELECT request_id FROM request WHERE internal_request_id = 'live'").fetchone()
