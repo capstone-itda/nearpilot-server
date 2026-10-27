@@ -353,3 +353,4 @@ class AdminWriteReason(StrEnum):
     COLLECTION_OVERLAP = "COLLECTION_OVERLAP"
     INVALID_INTERVAL = "INVALID_INTERVAL"
     NOT_PLACE_OWNER = "NOT_PLACE_OWNER"  # 행위자가 장소 소유자가 아니다. outcome 은 REJECTED
+    NODE_OCCUPIED = "NODE_OCCUPIED"  # 점유 중인 기기의 장소 이동·정책 변경. outcome 은 CONFLICT

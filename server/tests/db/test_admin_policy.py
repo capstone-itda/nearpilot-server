@@ -26,6 +26,10 @@ def _setup(conn, owner="owner1"):
     insert_node(conn, node_id="node1")
 
 
+def _rows(conn, table):
+    return [tuple(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")]
+
+
 def test_FR14_set_policy_first(admin, conn):
     _setup(conn)
 
@@ -96,21 +100,32 @@ def test_FR14_set_policy_missing_refs(admin, conn):
 def test_FR14_set_policy_no_retroactive(admin, conn):
     _setup(conn)
     admin.set_policy(_revision(version=1), expected_version=None)
+    # 기기는 AVAILABLE이고 세션은 닫혔다 — 점유 중이 아니므로 정책 쓰기가 거부되지 않는다.
     insert_request(conn, internal_request_id="req1", user_id="owner1", node_id="node1")
     insert_use_session(
-        conn, use_id="use1", internal_request_id="req1", user_id="owner1", node_id="node1", state="ACTIVE"
+        conn, use_id="use1", internal_request_id="req1", user_id="owner1", node_id="node1", state="CLOSED",
+        end_reason="release", closed_at="2026-01-01T00:10:00+00:00",
     )
     insert_approval(
-        conn, approval_id="appr1", node_id="node1", requester_user_id="owner1", policy_version=1,
-        status="approved", internal_request_id="req1", pending_until="2026-01-01T00:10:00+00:00",
+        conn, approval_id="appr-pending", node_id="node1", requester_user_id="owner1", policy_version=1,
+        status="pending", internal_request_id="req1", pending_until="2026-01-01T00:10:00+00:00",
+        valid_until=None,
     )
+    insert_approval(
+        conn, approval_id="appr-approved", node_id="node1", requester_user_id="owner1", policy_version=1,
+        status="approved", internal_request_id="req1", approved_by_user_id="owner1",
+        pending_until="2026-01-01T00:10:00+00:00",
+    )
+    approvals_before = _rows(conn, "approval")
+    sessions_before = _rows(conn, "use_session")
 
-    admin.set_policy(_revision(version=2), expected_version=1)
+    result = admin.set_policy(_revision(version=2), expected_version=1)
 
-    session_row = conn.execute("SELECT state FROM use_session WHERE use_id = 'use1'").fetchone()
-    assert session_row["state"] == "ACTIVE"
-    approval_row = conn.execute("SELECT policy_version FROM approval WHERE approval_id = 'appr1'").fetchone()
-    assert approval_row["policy_version"] == 1
+    assert result.outcome == AdminWriteOutcome.APPLIED
+    policy_row = conn.execute("SELECT current_version FROM access_policy WHERE node_id = 'node1'").fetchone()
+    assert policy_row["current_version"] == 2
+    assert _rows(conn, "approval") == approvals_before  # policy_version과 상태를 포함해 승인 행이 그대로다
+    assert _rows(conn, "use_session") == sessions_before  # 닫힌 세션 행이 그대로다
 
 
 def test_NFR03_set_policy_concurrent(tmp_path):
