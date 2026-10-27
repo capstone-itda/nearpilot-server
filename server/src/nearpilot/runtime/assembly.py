@@ -34,7 +34,9 @@ from nearpilot.core.policy.checker import RepositoryPolicyChecker
 from nearpilot.core.proximity.estimator import HmmProximityEstimator
 from nearpilot.core.proximity.model import ProximityModel, load_models
 from nearpilot.db.repositories import SqliteDashboardReads
-from nearpilot.iot.mqtt import ConnectionFailure, MqttCommandGateway, MqttConnection, ReportDelivery
+from nearpilot.iot.mqtt import (
+    ConnectionFailure, MqttCommandGateway, MqttConnection, OccupancyPublisher, ReportDelivery,
+)
 from nearpilot.runtime.auth_audit import AuditedAuthenticator
 from nearpilot.runtime.config import DashboardConfig, ServerConfig
 from nearpilot.runtime.database import ThreadDatabase
@@ -360,7 +362,14 @@ class Runtime:
         connection = MqttConnection(cfg.mqtt, on_report=delivery.submit, on_connection_lost=lost,
                                     client_factory=self._client_factory, clock=clock)
         gateway = MqttCommandGateway(connection, delivery, clock=clock)
-        lost.bind(gateway.on_connection_lost)
+        # 점유 표시는 저장한 기기 상태만 옮긴다. 판정과 상태를 바꾸지 않는다.
+        occupancy = OccupancyPublisher(connection, repo.nodes, clock=clock)
+
+        def connection_lost() -> None:
+            gateway.on_connection_lost()
+            occupancy.on_connection_lost()
+
+        lost.bind(connection_lost)
 
         # 상태 관리. 모든 서비스가 같은 잠금과 복구 서비스를 쓴다 (NFR-04).
         recovery = FaultRecoveryService(repository=repo, store=store, clock=clock, lock_for=locks,
@@ -403,6 +412,7 @@ class Runtime:
             PeriodicTask("restore", rt.restore_tick_sec, restore.tick, scope=db.scope),
             PeriodicTask("recovery", rt.recovery_tick_sec, recovery.tick, scope=db.scope),
             PeriodicTask("shared_light", rt.shared_light_tick_sec, shared_light.tick, scope=db.scope),
+            PeriodicTask("occupancy", rt.occupancy_tick_sec, occupancy.tick, scope=db.scope),
             PeriodicTask("retention", s.retention_cleanup_interval_sec,
                          lambda: retention.cleanup(clock()), scope=db.scope),
         ]

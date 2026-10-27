@@ -2,9 +2,41 @@
 // Build-time tuning shared by every device. Copy to config.local.h only to change it.
 // Device ID, MQTT account, Wi-Fi, server/time-source address and clock trust are NOT here:
 // they are injected over USB (`python -m tools.node_lab provision`) and kept in NVS.
+// The light-1 build profile overrides these two values for GPIO23 output.
 // No extra board is required. Leave OUTPUT_PIN=-1 for serial-only verification.
+#ifndef NP_OUTPUT_PIN
 #define NP_OUTPUT_PIN -1
+#endif
+#ifndef NP_OUTPUT_ACTIVE_HIGH
 #define NP_OUTPUT_ACTIVE_HIGH true
+#endif
+// Locker servo. The locker-1 build profile sets NP_SERVO_PIN=13; -1 leaves the servo off.
+// Boot holds the locked angle; open turns to the open angle and relocks after the hold.
+#ifndef NP_SERVO_PIN
+#define NP_SERVO_PIN -1
+#endif
+#ifndef NP_SERVO_LOCKED_DEG
+#define NP_SERVO_LOCKED_DEG 0
+#endif
+#ifndef NP_SERVO_OPEN_DEG
+#define NP_SERVO_OPEN_DEG 90
+#endif
+#ifndef NP_SERVO_OPEN_HOLD_MS
+#define NP_SERVO_OPEN_HOLD_MS 3000UL
+#endif
+// SG90-class pulse range for 0..180 degrees at 50 Hz.
+#define NP_SERVO_MIN_US 500
+#define NP_SERVO_MAX_US 2400
+#define NP_SERVO_FREQ_HZ 50
+#define NP_SERVO_LEDC_CHANNEL 0
+#define NP_SERVO_LEDC_BITS 16
+// WS2812B occupancy stick. The locker-1 build profile sets NP_LED_PIN=19; -1 leaves it off.
+// AVAILABLE shows blue, other stored states red; off until the first valid `occupancy`.
+#ifndef NP_LED_PIN
+#define NP_LED_PIN -1
+#endif
+#define NP_LED_COUNT 8
+#define NP_LED_LEVEL 64
 #define NP_RSSI_FRAME_MS 1000UL
 #define NP_STATUS_MS 1000UL
 // Retry starts at these minimums, doubles after each failure and stops at NP_RETRY_MAX_MS.

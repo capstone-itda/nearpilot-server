@@ -21,6 +21,8 @@ log = logging.getLogger(__name__)
 REPORT_QOS = {"announce": 1, "rssi": 0, "status": 1, "result": 1}
 SUBSCRIPTIONS = tuple((f"nearpilot/node/+/{kind}", qos)
                       for kind, qos in REPORT_QOS.items())
+# Server -> node kinds and their retain flag; both use QoS 1 (architecture.md §5 MQTT 1절).
+REQUEST_RETAIN = {"cmd": False, "occupancy": True}
 
 
 class ConnectionFailure(RuntimeError):
@@ -184,21 +186,21 @@ class MqttConnection:
             self._stop_done.set()
 
     def publish_request(self, node_id: str, kind: str, payload: bytes):
-        """Transport only; called by the CORE-facing command module.
+        """Transport only; called by the CORE-facing command module and the occupancy display.
 
         Returns Paho's publish receipt, never a physical command result.
         """
         if (not isinstance(node_id, str) or not node_id
                 or any(char in node_id for char in "/+#\x00")):
             raise ValueError("Invalid MQTT node ID")
-        if kind != "cmd" or not isinstance(payload, bytes):
+        if kind not in REQUEST_RETAIN or not isinstance(payload, bytes):
             raise ValueError("Invalid MQTT request")
         with self._condition:
             if not self._running or not self._ready:
                 raise NotReady("MQTT subscriptions not ready; publish not attempted")
             try:
                 receipt = self._client.publish(f"nearpilot/node/{node_id}/{kind}", payload,
-                                               qos=1, retain=False)
+                                               qos=1, retain=REQUEST_RETAIN[kind])
                 if receipt.rc != mqtt.MQTT_ERR_SUCCESS:
                     raise ValueError("Publish rejected")
                 return receipt

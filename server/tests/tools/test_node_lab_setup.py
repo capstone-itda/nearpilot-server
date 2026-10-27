@@ -68,3 +68,21 @@ def test_NFR12_sim_clock_trust_rejects_remote_host(tmp_path):
         setup.initialize(tmp_path / "bad", mode="sim", host="192.168.1.2", port=18883,
             nodes=["light-1"], beacon_uuid="11111111-2222-3333-4444-555555555555", major=1, minor=2)
     assert not (tmp_path / "bad").exists()
+
+
+def test_FR04_init_registers_locker_as_rental(tmp_path, generated):
+    folder = setup.initialize(tmp_path / "locker", mode="hardware", host="10.0.0.5", port=18883,
+        nodes=["locker-1", "light-1"], beacon_uuid="11111111-2222-3333-4444-555555555555", major=1, minor=2)
+    fleet = json.loads((folder / "fleet.json").read_text(encoding="utf-8"))
+    kinds = {d["node_id"]: (d["capability"], d["occupancy"]) for d in fleet["devices"]}
+    assert kinds == {"locker-1": ("locker", "rental"), "light-1": ("light", "shared")}
+    acl = (folder / "broker.acl").read_text(encoding="utf-8")
+    assert "user locker-1" in acl
+
+
+@pytest.mark.parametrize("nodes", [["speaker-1"], ["locker 1"], ["locker-1", "locker-1"]])
+def test_FR04_init_rejects_unsupported_node_ids(tmp_path, generated, nodes):
+    with pytest.raises(ValueError, match="기기 ID"):
+        setup.initialize(tmp_path / "bad", mode="hardware", host="10.0.0.5", port=18883,
+            nodes=nodes, beacon_uuid="11111111-2222-3333-4444-555555555555", major=1, minor=2)
+    assert not (tmp_path / "bad").exists()

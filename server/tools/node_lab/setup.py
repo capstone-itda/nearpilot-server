@@ -26,6 +26,17 @@ def executable(name: str) -> str:
     raise ValueError(f"{name} 실행 파일이 필요하다. PATH에 추가한다.")
 
 
+# Device ID prefix -> (capability, occupancy). Lockers are rental, lights shared (requirements.md).
+KINDS = {"light": ("light", "shared"), "locker": ("locker", "rental")}
+
+
+def node_kind(node: str) -> tuple[str, str]:
+    match = re.fullmatch(r"(light|locker)-[a-zA-Z0-9_-]+", node)
+    if not match:
+        raise ValueError("기기 ID는 light- 또는 locker- 접두사의 영문·숫자·밑줄·하이픈이다")
+    return KINDS[match.group(1)]
+
+
 def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
@@ -41,9 +52,9 @@ def initialize(folder: Path, *, mode: str, host: str, port: int, nodes: list[str
         raise ValueError("host가 올바르지 않다")
     if mode == "sim" and host not in ("127.0.0.1", "localhost"):
         raise ValueError("시뮬레이터의 0초 시각 오차는 같은 PC의 localhost에서만 쓴다")
-    if (not nodes or len(nodes) != len(set(nodes))
-            or any(not re.fullmatch(r"light-[a-zA-Z0-9_-]+", node) for node in nodes)):
-        raise ValueError("기기 ID는 서로 다른 light- 접두사의 영문·숫자·밑줄·하이픈이다")
+    if not nodes or len(nodes) != len(set(nodes)):
+        raise ValueError("기기 ID는 서로 달라야 한다")
+    kinds = {node: node_kind(node) for node in nodes}
     beacon_uuid = str(UUID(beacon_uuid))
     if not 0 <= major <= 65535 or not 0 <= minor <= 65535:
         raise ValueError("major와 minor는 0~65535다")
@@ -111,7 +122,8 @@ stop_timeout_sec = 5.0
     devices = []
     for i, node in enumerate(nodes):
         distance = math.hypot(i * 2.0, 0.5)
-        devices.append(dict(node_id=node, place="node-lab", capability="light", occupancy="shared",
+        capability, occupancy = kinds[node]
+        devices.append(dict(node_id=node, place="node-lab", capability=capability, occupancy=occupancy,
             username=node, password_file=str(folder / f".env.{node}"),
             store=str(folder / f"sim-{node}.sqlite3"), scenario=dict(actuation_sec=0.1,
                 beacons=[{**beacon, "rssi": -59.0 - 20.0 * math.log10(distance)}])))
@@ -120,7 +132,7 @@ stop_timeout_sec = 5.0
     acl = "user nearpilot-server\n" + "\n".join(
         [f"topic read nearpilot/node/+/{kind}" for kind in
          ("announce", "rssi", "status", "result")]
-        + ["topic write nearpilot/node/+/cmd"]) + "\n\n"
+        + [f"topic write nearpilot/node/+/{kind}" for kind in ("cmd", "occupancy")]) + "\n\n"
     (folder / "broker.acl").write_text(acl + acl_sections(load_fleet(folder / "fleet.json")), encoding="utf-8")
     (folder / "broker.conf").write_text(
         f"listener {port} {host}\nallow_anonymous false\n"

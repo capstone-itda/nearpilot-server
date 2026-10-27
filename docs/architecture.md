@@ -1000,12 +1000,13 @@ MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_sess
 | `status` | 기기 → 서버 | 1 | false |
 | `result` | 기기 → 서버 | 1 | false |
 | `cmd` | 서버 → 기기 | 1 | false |
+| `occupancy` | 서버 → 기기 | 1 | true |
 
 - MQTT의 전송 확인은 제어 신호 출력 완료를 뜻하지 않는다. 서버는 `result`의 명령 결과를 확인한다.
 - `clean_session`은 브로커의 이전 세션을 지운다. retained 기능 발표는 연결이 끝나도 남을 수 있다.
 - 클라이언트가 전송 중인 메시지를 다시 발행할 수 있다. 서버와 기기는 아래 명령 ID·기기 연결 ID·만료 검사로 대응한다.
-- 기기는 자기 `announce`, `rssi`, `status`, `result`만 발행한다. 기기는 자기 `cmd`만 구독한다.
-- 서버는 기기 보고를 구독한다. 실행 명령은 서버만 발행한다.
+- 기기는 자기 `announce`, `rssi`, `status`, `result`만 발행한다. 기기는 자기 `cmd`와 `occupancy`만 구독한다.
+- 서버는 기기 보고를 구독한다. 실행 명령과 점유 표시는 서버만 발행한다.
 - 서버는 기기별 자격정보, 토픽의 `node_id`, 본문의 `node_id`를 대조한다. 기기의 발표는 신뢰 부여가 아니다.
 
 전달 동작의 근거는 [MQTT 3.1.1 규격](https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/mqtt-v3.1.1.html)과 [Paho 클라이언트 문서](https://eclipse.dev/paho/files/paho.mqtt.python/html/client.html)다.
@@ -1038,6 +1039,7 @@ MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_sess
 | `status` | `observed_at`: UTC 시각, 펌웨어의 명령 처리 상태: 필드와 타입은 미결이다 | 처리 대기, 처리 중, 확인 불가를 구분한다. 실제 상태와 센서 고장 값은 담지 않는다. |
 | `result` | `command_id`: 문자열, `event_id`: UUID 문자열, `state`: 아래 상태 값, `occurred_at`: UTC 시각, `error_code?`: 문자열 | 제어 신호 출력 결과다. 재보고 시 사건 ID, 결과와 발생 시각을 유지한다. |
 | `cmd` | `command_id`: 문자열, `action`: `open`·`on`·`off`, `target_session_id`: 문자열, `issued_at`: UTC 시각, `expires_at`: UTC 시각 | 현재 연결을 지정한다. 사물함은 `open`, 조명·스피커는 `on`·`off`를 받는다. |
+| `occupancy` | `device_state`: `AVAILABLE`·`RESERVED`·`ACTIVE`·`CLOSING`·`FAULT` 중 하나, `sent_at`: UTC 시각 | 대여형 기기의 저장된 기기 상태다. 표시에만 쓴다. 구동과 실행 판정의 근거가 아니다. |
 
 - `on`과 `off`는 조명 제어와 스피커 재생·정지의 제어 신호 출력이다. 실제 상태를 증명하지 않는다.
 - RSSI의 `uuid`는 하이픈을 포함한 소문자 UUID 문자열이다. `major`와 `minor`는 0~65535의 정수다.
@@ -1046,6 +1048,14 @@ MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_sess
 - 기기는 서버의 점유 상태나 `AVAILABLE`을 결정하지 않는다.
 - 문 닫힘, 조명 켜짐, 센서 고장과 물리 안전은 보고 대상에서 제외한다.
 - 새 계약에는 반납 검사 요청과 결과가 없다. 일반 `status`를 가상의 검사 통과로 바꾸지 않는다.
+
+점유 표시(`occupancy`)는 담당자가 2026-10-27에 이슈 발행 없이 직접 정했다.
+
+- IOT는 신뢰한 대여형 기기의 저장된 기기 상태가 바뀌면 `occupancy`를 retained로 발행한다. MQTT 연결을 다시 확인한 뒤에도 다시 발행한다. 확인 주기는 `runtime.occupancy_tick_sec`다.
+- 본문은 `schema_version` 2, `node_id`, `device_state`, `sent_at`만 담는다. 사용자 ID, `use_id`와 점유 주체를 담지 않는다.
+- 기기는 `occupancy`를 표시에만 쓴다. 명령 접수, 구동, 반납과 상태 보고를 바꾸지 않는다. 기기는 서버의 점유 상태를 결정하지 않는다.
+- retained 메시지라서 서버가 멈춘 뒤에도 마지막 표시가 남는다. 표시는 현재 점유의 근거가 아니다.
+- 사물함 LED 표시: `AVAILABLE`은 파란색, 그 밖의 상태는 빨간색이다. 유효한 `occupancy`를 받기 전에는 끈다.
 
 #### 4. 명령 접수와 중복 처리
 

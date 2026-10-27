@@ -16,13 +16,14 @@ from datetime import datetime, timedelta
 from uuid import UUID
 
 from nearpilot.shared.enums import (
-    Action, Capability, CommandState, NodeResultState, Occupancy, RejectCode,
+    Action, Capability, CommandState, DeviceState, NodeResultState, Occupancy, RejectCode,
 )
 from nearpilot.shared.models import (
     BeaconKey, NodeAnnounce, NodeCommand, NodeResult, NodeStatus, RssiFrame,
 )
 
-__all__ = ["SCHEMA_VERSION", "MessageValidationError", "decode_message", "encode_command"]
+__all__ = ["SCHEMA_VERSION", "MessageValidationError", "decode_message", "encode_command",
+           "encode_occupancy"]
 
 SCHEMA_VERSION = 2
 
@@ -203,3 +204,13 @@ def encode_command(command: NodeCommand) -> bytes:
     data.update(command_id=_string(command.command_id, "command_id"),
                 action=_enum(Action, command.action, "action").value)
     return json.dumps(data, allow_nan=False).encode("utf-8")
+
+
+def encode_occupancy(node_id: str, device_state: DeviceState, sent_at: datetime) -> bytes:
+    """Encode the retained display of a stored device state. No user or use ID is included."""
+    node_id = _string(node_id, "node_id")
+    if any(c in node_id for c in "/+#\x00"):
+        _fail("node_id")
+    return json.dumps(dict(schema_version=SCHEMA_VERSION, node_id=node_id,
+        device_state=_enum(DeviceState, device_state, "device_state").value,
+        sent_at=_wire_time(sent_at, "sent_at")), allow_nan=False).encode("utf-8")

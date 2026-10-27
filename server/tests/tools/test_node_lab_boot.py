@@ -1,9 +1,13 @@
 """FR-04 FR-13 boot order and readiness logs of the node_lab firmware and console."""
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
+import threading
 from types import SimpleNamespace
 
-from nearpilot.shared.enums import Capability, DeviceState, Occupancy, TrustState
-from nearpilot.shared.models import NodeInfo
+import pytest
+
+from nearpilot.shared.enums import Action, Capability, DeviceState, Occupancy, ReasonCode, TrustState, Verdict
+from nearpilot.shared.models import Decision, NodeInfo
 from tools.node_lab.boot_check import summarize
 from tools.node_lab.session import Lab
 
@@ -91,3 +95,47 @@ def test_FR13_lab_logs_readiness_changes_only():
                          current=current + timedelta(seconds=20))
     states = [(r["ready"], r["fault"], r["online"]) for r in lab.evidence.records]
     assert states == [(True, False, True), (False, True, True), (False, True, False)]
+
+
+class FakeCore:
+    def __init__(self):
+        self.requests, self.releases = [], []
+
+    def request_use(self, request):
+        self.requests.append(request)
+        return Decision("", request.request_id, Verdict.OK, ReasonCode.OK, node_id="locker-1", use_id="use-1")
+
+    def release_use(self, user_id, use_id):
+        self.releases.append((user_id, use_id))
+        return Decision("", "", Verdict.OK, ReasonCode.OK, use_id=use_id)
+
+
+def console_lab():
+    lab = Lab.__new__(Lab)
+    lab.evidence = Evidence()
+    lab.options = {"user_id": "lab-visitor"}
+    lab.last_use_id = None
+    lab._snapshot_lock = threading.RLock()
+    lab.snapshot = lambda: {}
+    lab.runtime = SimpleNamespace(core=FakeCore(), db=SimpleNamespace(scope=lambda: nullcontext(None)))
+    return lab
+
+
+def test_FR19_lab_open_targets_nearest_locker_and_release_uses_last_use():
+    lab = console_lab()
+    lab.use("open")
+    request = lab.runtime.core.requests[-1]
+    assert (request.target.capability, request.action) == (Capability.LOCKER, Action.OPEN)
+    lab.release()
+    assert lab.runtime.core.releases == [("lab-visitor", "use-1")]
+    assert lab.last_use_id is None
+    with pytest.raises(ValueError, match="use_id"):
+        lab.release()
+
+
+@pytest.mark.parametrize("action,target", [("open", "nearest:light"), ("on", "nearest:locker")])
+def test_FR06_lab_rejects_action_for_other_capability(action, target):
+    lab = console_lab()
+    with pytest.raises(ValueError, match="시험 대상"):
+        lab.use(action, target)
+    assert not lab.runtime.core.requests
