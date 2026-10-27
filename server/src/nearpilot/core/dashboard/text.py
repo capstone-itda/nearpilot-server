@@ -36,6 +36,8 @@ _REASON_TEXT: dict[ReasonCode, str] = {
     ReasonCode.NO_CANDIDATE: "쓸 수 있는 기기 없음",
     ReasonCode.TARGET_UNAVAILABLE: "지금 쓸 수 없는 기기",
     ReasonCode.LOW_CONFIDENCE: "어느 기기 앞인지 확신 부족",
+    ReasonCode.UNSUPPORTED_PARAMETER: "조명이 받은 밝기나 색을 지원하지 않음",
+    ReasonCode.PARAMETER_OUT_OF_RANGE: "밝기가 조명의 상한을 넘음",
     ReasonCode.MOVE_CLOSER: "기기에 더 가까이 가야 함",
     ReasonCode.APPROVAL_REQUIRED: "승인 필요",
     ReasonCode.POLICY_DENIED: "정책이 허락하지 않음",

@@ -100,7 +100,7 @@ def test_fr19_fake_store_satisfies_protocol():
     record = CommandRecord("cmd-1", "ir-1", "locker-1", Action.OPEN, ExecutionStatus.PENDING)
 
     class FakeStore:
-        def link_command(self, internal_request_id, node_id, action):
+        def link_command(self, internal_request_id, node_id, action, light=None):
             return StoreResult(StoreOutcome.APPLIED, record)
 
         def link_internal_request(self, req):

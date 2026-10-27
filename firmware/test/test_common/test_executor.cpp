@@ -492,6 +492,94 @@ void test_NFR10_dfplayer_frames() {
     TEST_ASSERT_EQUAL_HEX8_ARRAY(loopFolder, frame, sizeof(loopFolder));
 }
 
+void test_NFR10_light_ring_scaled_never_exceeds_brightness() {
+    TEST_ASSERT_EQUAL_HEX32(0x00001E, np::lightRingScaled(0x0000FF, 30));
+    TEST_ASSERT_EQUAL_HEX32(np::lightRingRgb(true, 64), np::lightRingScaled(0xFFFFFF, 64));
+    TEST_ASSERT_EQUAL_HEX32(0, np::lightRingScaled(0x0000FF, 0));
+    TEST_ASSERT_EQUAL_HEX32(0, np::lightRingScaled(0x010101, 64));  // Rounds down.
+    // Every color at every brightness keeps each channel at or below the brightness.
+    const uint32_t colors[] = {0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF, 0x123456, 0xFEFEFE};
+    for (unsigned b = 0; b <= 255; ++b) {
+        for (uint32_t rgb : colors) {
+            const uint32_t out = np::lightRingScaled(rgb, uint8_t(b));
+            for (int shift = 16; shift >= 0; shift -= 8) TEST_ASSERT_TRUE((out >> shift & 0xFF) <= b);
+        }
+    }
+}
+
+// Records what the executor hands to the output; parameters must reach it unchanged.
+struct RecordingPort : FakePort {
+    np::Actuation last;
+    np::OutputResult output(const np::Actuation& request) override {
+        last = request;
+        return FakePort::output(request);
+    }
+};
+
+std::string lightCommand(const std::string& id, int brightness, const char* color) {
+    std::string base = command(id.c_str());
+    base.pop_back();
+    return base + ",\"parameters\":{\"brightness\":" + std::to_string(brightness) + ",\"color\":\"" + color + "\"}}";
+}
+
+void test_FR09_executor_passes_parameters() {
+    FakeStore store;
+    RecordingPort port;
+    np::Ledger ledger(store);
+    np::Executor executor(ledger, port, 128, 512);
+    executor.handle(lightCommand("a", 30, "#0000FF"), false);
+    assertPublished({"accepted", "running", "succeeded"}, port);
+    TEST_ASSERT_TRUE(port.last.light);
+    TEST_ASSERT_EQUAL_UINT8(30, port.last.brightness);
+    TEST_ASSERT_EQUAL_HEX32(0x0000FF, port.last.color);
+}
+
+void test_FR22_parameters_change_conflicts() {
+    FakeStore store;
+    FakePort port;
+    np::Ledger ledger(store);
+    np::Executor executor(ledger, port, 128, 512);
+    executor.handle(lightCommand("a", 30, "#0000FF"), false);
+    executor.handle(lightCommand("a", 30, "#0000FF"), false);  // Same content: stored result only.
+    TEST_ASSERT_EQUAL_INT(1, port.actuations);
+    TEST_ASSERT_EQUAL_STRING("succeeded", port.published.back().c_str());
+    executor.handle(lightCommand("a", 40, "#0000FF"), false);
+    TEST_ASSERT_EQUAL_STRING("rejected:COMMAND_ID_CONFLICT", port.published.back().c_str());
+    executor.handle(command("a"), false);  // Dropping the parameters is a different content too.
+    TEST_ASSERT_EQUAL_STRING("rejected:COMMAND_ID_CONFLICT", port.published.back().c_str());
+    TEST_ASSERT_EQUAL_INT(1, port.actuations);
+}
+
+void test_FR19_parameters_command_not_rerun_after_restart() {
+    FakeStore store;
+    {
+        FakePort port;
+        np::Ledger ledger(store);
+        np::Executor executor(ledger, port, 128, 512);
+        executor.handle(lightCommand("a", 30, "#0000FF"), false);
+    }
+    FakePort port;
+    np::Ledger reopened(store);
+    np::Executor restarted(reopened, port, 128, 512);
+    restarted.replay();
+    restarted.handle(lightCommand("a", 30, "#0000FF"), false);
+    TEST_ASSERT_EQUAL_INT(0, port.actuations);
+    TEST_ASSERT_EQUAL_STRING("succeeded", port.published.back().c_str());
+}
+
+void test_FR22_parameters_record_fits() {
+    // A worst-case light record with a later error code stays within the configured record size.
+    FakeStore store;
+    FakePort port;
+    np::Ledger ledger(store);
+    np::Executor executor(ledger, port, 128, 512);
+    port.checks = {nullptr, "UNSUPPORTED_PARAMETER"};
+    executor.handle(lightCommand(std::string(128, 'x'), 255, "#FFFFFF"), false);
+    TEST_ASSERT_EQUAL_STRING("failed:UNSUPPORTED_PARAMETER", port.published.back().c_str());
+    TEST_ASSERT_EQUAL_UINT32(1, store.slots.size());
+    TEST_ASSERT_TRUE(store.slots.begin()->second.size() <= 512);
+}
+
 std::string occupancyBody(const char* state, const char* node = "locker-1", int version = 2) {
     return std::string("{\"schema_version\":") + std::to_string(version) + ",\"node_id\":\"" + node
         + "\",\"device_state\":\"" + state + "\",\"sent_at\":\"2026-10-27T07:00:00Z\"}";
@@ -621,6 +709,11 @@ void runExecutorTests() {
     RUN_TEST(test_NFR10_servo_pulse_for_angle);
     RUN_TEST(test_NFR10_light_ring_color);
     RUN_TEST(test_NFR10_dfplayer_frames);
+    RUN_TEST(test_NFR10_light_ring_scaled_never_exceeds_brightness);
+    RUN_TEST(test_FR09_executor_passes_parameters);
+    RUN_TEST(test_FR22_parameters_change_conflicts);
+    RUN_TEST(test_FR19_parameters_command_not_rerun_after_restart);
+    RUN_TEST(test_FR22_parameters_record_fits);
     RUN_TEST(test_FR19_occupancy_display_colors);
     RUN_TEST(test_FR19_occupancy_display_ignores_invalid_messages);
     RUN_TEST(test_FR06_evicted_command_does_not_actuate);

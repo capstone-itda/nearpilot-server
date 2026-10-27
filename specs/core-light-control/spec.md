@@ -37,6 +37,7 @@
 - `server/src/nearpilot/core/decision/`, `server/src/nearpilot/core/lifecycle/`
 - `server/src/nearpilot/db/`
 - `server/src/nearpilot/iot/messages/`
+- `server/tools/evaluation/db.py` — 마이그레이션 수와 같은 기대 스키마 버전
 - `server/config/`
 - `firmware/`
 - 각 계층의 테스트
@@ -86,7 +87,8 @@
 | `controls`만 바뀜 | 신뢰 유지, 감사 기록 | `test_FR04_controls_change_keeps_trust` |
 | 펌웨어가 상한 초과 밝기 수신 | `UNSUPPORTED_PARAMETER`, 출력 없음 | `test_NFR10_light_parameters_above_cap_rejected` |
 | 펌웨어가 같은 ID에 다른 `parameters` 수신 | `COMMAND_ID_CONFLICT` | `test_FR22_parameters_change_conflicts` |
-| 펌웨어 재시작 뒤 같은 명령 재전송 | 저장 결과만 보고, 재구동 없음 | 기존 `test_executor` 재시작 테스트 + 인자 명령 |
+| 펌웨어 재시작 뒤 같은 명령 재전송 | 저장 결과만 보고, 재구동 없음 | `test_FR19_parameters_command_not_rerun_after_restart` |
+| 조명 제어 정보가 없는 조명에 인자 | 인자 없는 요청은 그대로 실행, 인자 요청은 `UNSUPPORTED_PARAMETER` | `test_FR09_runtime_light_without_controls_stays_plain` |
 
 ## 6. 결정
 
@@ -108,7 +110,8 @@
 | FR-09 | `tests/api/test_mcp_light.py` | 입력 스키마, 타입·형식·대상 검사, 조회 응답 `controls` |
 | FR-09, FR-18 | `tests/core/test_light_setting.py` | 지원·상한 검사, 생략 값, 경계, 인계 |
 | FR-22 | `tests/core/test_light_setting.py` | digest 보존과 충돌 |
-| FR-19 | `tests/db/test_light_store.py` | `link_command` 저장, 마지막 설정 조회, 발표 저장 |
+| FR-04, FR-09, FR-19 | `tests/db/test_light_store.py` | `link_command` 저장, 마지막 설정 조회, 발표 저장과 감사, 마이그레이션 |
 | FR-04, FR-06 | `tests/iot/test_light_messages.py` | `controls` 해석, `parameters` 인코딩 |
-| FR-20 | `tests/core/test_light_setting.py` | 밝기 0 `on`이 마지막 제어 상태 `on` |
+| FR-20 | `tests/core/lifecycle/test_shared_light.py` | 밝기 0 `on`의 성공이 유지 대상자를 더한다 |
+| FR-09, FR-19, FR-22 | `tests/integration/test_light_control_flow.py` | MCP → CORE → DB → MQTT 경로, 생략 값 유지, 거부 시 명령 없음, 같은 `request_id` 충돌 |
 | NFR-10, FR-22 | `firmware/test/test_common/test_command.cpp`, `test_executor.cpp` | 펌웨어 검증, 내용 비교, 출력 상한 |

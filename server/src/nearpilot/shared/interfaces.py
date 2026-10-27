@@ -60,6 +60,7 @@ from nearpilot.shared.models import (
     ExecutionContext,
     ExecutionResult,
     InternalRequest,
+    LightSetting,
     NodeAnnounce,
     NodeCommand,
     NodeInfo,
@@ -168,6 +169,14 @@ class Repository(Protocol):
         처음 보는 node_id 는 DISCOVERED 로 만든다. 내용이 같은 재발표는 신뢰 상태를 바꾸지 않는다.
         기능이나 점유 방식이 다르면 새 값으로 바꾸고 신뢰 상태를 DISCOVERED 로 되돌린다.
         되돌린 변경은 같은 트랜잭션에서 감사 로그에 남긴다.
+        조명 제어 정보만 바뀌면 신뢰 상태를 유지하고 새 값과 감사 로그를 저장한다 (FR-04).
+        """
+        ...
+
+    def last_light_setting(self, node_id: str) -> LightSetting | None:
+        """기기의 마지막 조명 설정 (FR-09). 전송 시작이 가장 늦은 `succeeded` `on` 명령의 설정이다.
+
+        그런 명령이 없거나 그 명령에 설정이 없으면 None 이다. 판정은 None 이면 설정 기본값을 쓴다.
         """
         ...
 
@@ -287,8 +296,13 @@ class ExecutionStore(Protocol):
     - 공용형에는 점유 세션이 없다. 세션 관련 반영은 대여형에만 적용한다.
     """
 
-    def link_command(self, internal_request_id: str, node_id: str, action: Action) -> StoreResult:
-        """요청의 명령을 연결한다. 이미 있으면 기존 명령과 진행 상태를 반환한다. 키: internal_request_id"""
+    def link_command(
+        self, internal_request_id: str, node_id: str, action: Action, light: LightSetting | None = None,
+    ) -> StoreResult:
+        """요청의 명령을 연결한다. 이미 있으면 기존 명령과 진행 상태를 반환한다. 키: internal_request_id
+
+        light 는 판정이 정한 조명 설정이다. 명령 기록에 함께 저장하고 `CommandRecord.light` 로 돌려준다 (FR-09).
+        """
         ...
 
     def link_internal_request(self, req: InternalRequest) -> StoreResult:

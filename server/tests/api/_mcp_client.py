@@ -42,10 +42,10 @@ class FakeCore:
         self.status = {"use_id": "use-1", "state": "ACTIVE", "rental_due_at": NOW,
                        "overtime_sec": 0.0, "closed_at": None}
         self.devices = [{"node_id": "locker-1", "capability": "locker", "occupancy": "rental",
-                         "access": "operable"}]
+                         "access": "operable", "controls": None}]
         self.device_state = {"node_id": "locker-1", "capability": "locker", "occupancy": "rental",
                              "state": "available", "online": True, "trusted": True,
-                             "access_mode": "open"}
+                             "access_mode": "open", "controls": None}
         self.device_calls, self.state_calls = [], []
         self.error: Exception | None = None
         self.decision = Decision("internal-1", "r1", Verdict.OK, ReasonCode.OK, node_id="locker-1",

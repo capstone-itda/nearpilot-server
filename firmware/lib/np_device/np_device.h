@@ -6,11 +6,18 @@
 
 namespace np {
 
+// light is set only for a light `on` that carried validated `parameters` (FR-09):
+// brightness is the per-channel output limit and color is 0xRRGGBB before scaling.
 struct Actuation {
     Actuation(const std::string& id = "", const std::string& requestedAction = "")
-        : commandId(id), action(requestedAction) {}
+        : commandId(id), action(requestedAction), light(false), brightness(0), color(0) {}
+    Actuation(const std::string& id, const std::string& requestedAction, uint8_t level, uint32_t rgb)
+        : commandId(id), action(requestedAction), light(true), brightness(level), color(rgb) {}
     std::string commandId;
     std::string action;
+    bool light;
+    uint8_t brightness;
+    uint32_t color;
 };
 
 enum class OutputResult { Completed, Failed, Unknown };
@@ -47,6 +54,15 @@ inline unsigned servoPulseUs(int degrees, unsigned minUs, unsigned maxUs) {
 // 0xRRGGBB for the light ring: on is white at the given level, off is dark.
 inline uint32_t lightRingRgb(bool on, uint8_t level) {
     return on ? uint32_t(level) << 16 | uint32_t(level) << 8 | level : 0;
+}
+
+// Each channel is channel * brightness / 255, rounded down, so no channel exceeds brightness
+// for any color (architecture.md §5 MQTT 3절). White at brightness equals lightRingRgb(true, brightness).
+inline uint32_t lightRingScaled(uint32_t rgb, uint8_t brightness) {
+    uint32_t out = 0;
+    for (int shift = 16; shift >= 0; shift -= 8)
+        out |= ((rgb >> shift & 0xFF) * brightness / 255) << shift;
+    return out;
 }
 
 // PWM duty for a pulse width at the given frequency and duty resolution.

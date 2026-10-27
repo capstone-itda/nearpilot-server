@@ -9,9 +9,11 @@ import asyncio
 import logging
 from collections.abc import Callable, Sequence
 from datetime import datetime
+from typing import Annotated, Any
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import Field, WithJsonSchema
 from starlette.applications import Starlette
 
 from nearpilot.api.auth.authenticator import Authenticator
@@ -20,16 +22,22 @@ from nearpilot.api.mcp.response import (
     denied_response, device_state_denied, device_state_response, devices_response, host_response,
     status_denied, status_response,
 )
-from nearpilot.shared.enums import Action, ReasonCode
+from nearpilot.shared.config import is_light_color
+from nearpilot.shared.enums import Action, Capability, ReasonCode
 from nearpilot.shared.interfaces import CoreService
-from nearpilot.shared.models import Account, TargetSpec, UseRequest
+from nearpilot.shared.models import Account, LightSetting, TargetSpec, UseRequest
 
 log = logging.getLogger(__name__)
 
 _TOOL_DESCRIPTION = (
     "기기 사용을 요청한다. target_spec 은 nearest:locker, locker-1 형식이고 "
     "action 은 open, close, on, off 중 하나다. close 는 본인이 대여 중인 사물함을 닫는다. 반납이 아니다. "
-    "같은 요청을 다시 보낼 때는 같은 request_id 를 쓴다."
+    "조명(nearest:light, light-1)의 on 에만 선택 인자 brightness 와 color 를 쓸 수 있다. "
+    "brightness 는 0 이상 k 이하의 정수다. k 는 find_available_devices 나 get_device_state 의 "
+    "controls.brightness_max 다. color 는 #RRGGBB 형식이고, controls.color 가 true 인 기기만 받는다. "
+    "범위 밖 값과 지원하지 않는 인자는 실행하지 않고 거부한다. 생략한 인자는 그 조명의 마지막 설정을 유지한다. "
+    "이미 켜진 조명에도 on 으로 밝기와 색을 바꾼다. 끄려면 brightness 0 대신 off 를 쓴다. "
+    "같은 요청을 다시 보낼 때는 같은 request_id 와 같은 인자를 쓴다."
 )
 
 _ACCESS_DESCRIPTION = (
@@ -65,14 +73,39 @@ def _transport_security(public_hosts: Sequence[str]) -> TransportSecuritySetting
     )
 
 
+def _light_input(target: TargetSpec, action: Action, brightness: Any, color: Any) -> LightSetting | None:
+    """조명 설정 인자의 자료형, 형식, 대상 기능과 동작을 검사한다 (FR-09). 틀리면 ValueError.
+
+    문자열 숫자, 실수, 불리언을 정수로 바꾸지 않는다. 기기별 지원과 상한은 판정이 검사한다.
+    """
+    if brightness is None and color is None:
+        return None
+    if target.capability is not Capability.LIGHT or action is not Action.ON:
+        raise ValueError("조명 on 이 아닌 요청의 인자")
+    if brightness is not None and (type(brightness) is not int or not 0 <= brightness <= 255):
+        raise ValueError("brightness 형식 오류")
+    if color is not None and not is_light_color(color):
+        raise ValueError("color 형식 오류")
+    return LightSetting(brightness, color)
+
+
 def build_app(
     core: CoreService, authenticator: Authenticator, clock: Callable[[], datetime],
-    *, public_hosts: Sequence[str] = (),
+    *, public_hosts: Sequence[str] = (), light_brightness_max: int = 255,
 ) -> Starlette:
     mcp = MCPServer("nearpilot")
+    # 스키마는 형식만 알린다. 값은 Any 로 받아서 SDK 가 자료형을 바꾸지 않게 하고 직접 검사한다.
+    brightness_schema = WithJsonSchema({
+        "type": "integer", "minimum": 0, "maximum": light_brightness_max,
+        "description": "조명 밝기. 0 이상 controls.brightness_max 이하의 정수. 조명 on 에만 쓴다."})
+    color_schema = WithJsonSchema({
+        "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$",
+        "description": "조명 색. #RRGGBB. controls.color 가 true 인 조명의 on 에만 쓴다."})
 
-    @mcp.tool(name="request_use", description=_TOOL_DESCRIPTION)
-    async def request_use(target_spec: str, action: str, request_id: str, ctx: Context) -> dict:
+    async def request_use(
+        target_spec: str, action: str, request_id: str, ctx: Context,
+        brightness: Any = None, color: Any = None,
+    ) -> dict:
         try:
             account = _account_of(ctx)
             if account is None:  # 미들웨어를 거치지 않았다
@@ -80,10 +113,12 @@ def build_app(
             try:
                 if not request_id:
                     raise ValueError("request_id 가 비었다")
+                target, act = TargetSpec.parse(target_spec), Action(action)
                 req = UseRequest(
                     user_id=account.user_id, request_id=request_id,
-                    target=TargetSpec.parse(target_spec), action=Action(action),
-                    host_kind=None, received_at=clock())
+                    target=target, action=act,
+                    host_kind=None, received_at=clock(),
+                    light=_light_input(target, act, brightness, color))
             except ValueError:
                 return denied_response(ReasonCode.INVALID_INPUT, request_id)
             # 판정과 실행 인계는 동기 함수다. 이벤트 루프를 막지 않는다.
@@ -91,6 +126,12 @@ def build_app(
         except Exception:  # noqa: BLE001 - 알 수 없는 오류는 거부한다. 예외 내용은 응답에 넣지 않는다
             log.exception("request_use 도구 처리 중 예외")
             return denied_response(ReasonCode.INTERNAL_ERROR, request_id)
+
+    # 상한은 설정 값이라 주석 문자열로 쓸 수 없다. 평가한 주석 객체로 바꾼 뒤 도구로 등록한다.
+    request_use.__annotations__.update(
+        brightness=Annotated[Any, brightness_schema, Field(default=None)],
+        color=Annotated[Any, color_schema, Field(default=None)])
+    mcp.tool(name="request_use", description=_TOOL_DESCRIPTION)(request_use)
 
     @mcp.tool(name="request_access", description=_ACCESS_DESCRIPTION)
     async def request_access(node_id: str, action: str, request_id: str, ctx: Context) -> dict:

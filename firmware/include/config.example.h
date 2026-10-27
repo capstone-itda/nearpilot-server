@@ -35,12 +35,16 @@
 #define NP_LED_COUNT 8
 #define NP_LED_LEVEL 64
 // WS2812B light ring. The light-1 build profile sets NP_LIGHT_RING_PIN=18; -1 leaves it off.
-// on lights every LED white at the level, off clears it; off at boot.
+// on without parameters lights every LED white at the level, off clears it; off at boot.
+// MAX_LEVEL is this firmware's own per-channel output limit, announced as controls.brightness_max.
+// Parameters above it are rejected whatever the server allows (NFR-10). 64 is the level verified
+// white on light-1 powered from the board 5V by a power bank; raise it only after measuring current.
 #ifndef NP_LIGHT_RING_PIN
 #define NP_LIGHT_RING_PIN -1
 #endif
 #define NP_LIGHT_RING_COUNT 16
 #define NP_LIGHT_RING_LEVEL 64
+#define NP_LIGHT_RING_MAX_LEVEL 64
 // DFPlayer Mini speaker on UART2. The speaker-1 build profile sets TX=17, RX=16; -1 leaves it off.
 // Boot waits for the module, then sets the volume and stops; on loops the SD folder until off.
 #ifndef NP_SPEAKER_TX_PIN

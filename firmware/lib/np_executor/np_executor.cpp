@@ -91,7 +91,7 @@ void Executor::handle(const std::string& payload, bool receivedBusy) {
     progress.set(activeRecord_);
     event(progress, "running");
     port_.publish(progress);  // Not stored: a restart before the result restores the receipt as unknown.
-    OutputResult output = port_.actuator().output({id, command["action"].as<std::string>()});
+    OutputResult output = port_.actuator().output(commandActuation(id, command));
     finish(output == OutputResult::Completed ? "succeeded" : output == OutputResult::Failed ? "failed" : "unknown");
 }
 

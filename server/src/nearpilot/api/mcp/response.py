@@ -58,8 +58,8 @@ def status_denied(reason: ReasonCode) -> dict[str, Any]:
     return status_response({"reason_code": reason.value})
 
 
-_DEVICE_KEYS = ("node_id", "capability", "occupancy", "access")
-_STATE_KEYS = ("node_id", "capability", "occupancy", "state", "online", "trusted", "access_mode")
+_DEVICE_KEYS = ("node_id", "capability", "occupancy", "access", "controls")
+_STATE_KEYS = ("node_id", "capability", "occupancy", "state", "online", "trusted", "access_mode", "controls")
 
 
 def devices_response(devices: Sequence[Mapping[str, Any]], reason: ReasonCode | None = None) -> dict[str, Any]:

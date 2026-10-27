@@ -7,7 +7,8 @@ import json
 from _mcp_client import TOKEN_A, TOKEN_B, Client, run
 
 UNAVAILABLE = {"node_id": None, "capability": None, "occupancy": None, "state": None, "online": None,
-               "trusted": None, "access_mode": None, "reason": "TARGET_UNAVAILABLE"}
+               "trusted": None, "access_mode": None, "controls": None,
+               "reason": "TARGET_UNAVAILABLE"}
 
 
 def devices(c, token=TOKEN_A):
@@ -40,7 +41,7 @@ def test_FR11_목록_항목에서_허용_목록_밖의_키를_버린다():
     c = Client()
     c.core.devices = [{**c.core.devices[0], "user_id": "user-b", "p": 0.97, "place_id": "p"}]
     resp = devices(c)
-    assert set(resp["devices"][0]) == {"node_id", "capability", "occupancy", "access"}
+    assert set(resp["devices"][0]) == {"node_id", "capability", "occupancy", "access", "controls"}
     assert "user-b" not in json.dumps(resp) and "0.97" not in json.dumps(resp)
 
 
@@ -71,7 +72,7 @@ def test_FR11_상태에서_허용_목록_밖의_키를_버린다():
                            "place_id": "p"}
     resp = state(c, {"node_id": "locker-1"})
     assert set(resp) == {"node_id", "capability", "occupancy", "state", "online", "trusted",
-                         "access_mode", "reason"}
+                         "access_mode", "controls", "reason"}
     assert "user-b" not in json.dumps(resp)
 
 

@@ -105,10 +105,112 @@ void test_FR06_canonical_content_fields() {
         np::canonicalContent(doc).c_str());
 }
 
+np::CommandContext ringContext() {
+    np::CommandContext value = context();
+    value.lightMaxLevel = 64;
+    value.lightColor = true;
+    return value;
+}
+
+const char* withParameters(const char* parameters, const np::CommandContext& ctx = ringContext(),
+                           const char* action = "on") {
+    JsonDocument doc;
+    fill(doc);
+    doc["action"] = action;
+    JsonDocument value;
+    deserializeJson(value, parameters);
+    doc["parameters"] = value;
+    return np::validateCommand(doc, ctx);
+}
+
+void test_NFR10_light_parameters_boundaries() {
+    TEST_ASSERT_NULL(withParameters("{\"brightness\":0,\"color\":\"#0000FF\"}"));
+    TEST_ASSERT_NULL(withParameters("{\"brightness\":64,\"color\":\"#0000FF\"}"));
+    TEST_ASSERT_NULL(withParameters("{\"color\":\"#FFFFFF\",\"brightness\":30}"));  // Key order is free.
+}
+
+void test_NFR10_light_parameters_above_cap_rejected() {
+    // The firmware limit holds even when a server would allow more.
+    TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER", withParameters("{\"brightness\":65,\"color\":\"#0000FF\"}"));
+    TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER", withParameters("{\"brightness\":255,\"color\":\"#FFFFFF\"}"));
+    TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER", withParameters("{\"brightness\":-1,\"color\":\"#FFFFFF\"}"));
+}
+
+void test_NFR10_light_parameters_format_rejected() {
+    const char* bad[] = {
+        "{\"brightness\":\"30\",\"color\":\"#0000FF\"}", "{\"brightness\":30.5,\"color\":\"#0000FF\"}",
+        "{\"brightness\":true,\"color\":\"#0000FF\"}", "{\"brightness\":30,\"color\":\"#0000ff\"}",
+        "{\"brightness\":30,\"color\":\"0000FF\"}", "{\"brightness\":30,\"color\":\"#0000FG\"}",
+        "{\"brightness\":30,\"color\":\"#0000FF0\"}", "{\"brightness\":30}", "{\"color\":\"#0000FF\"}",
+        "{\"brightness\":30,\"color\":\"#0000FF\",\"extra\":1}", "[30,\"#0000FF\"]", "30"};
+    for (const char* parameters : bad)
+        TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER", withParameters(parameters));
+}
+
+void test_NFR10_light_parameters_unsupported() {
+    const char* blue = "{\"brightness\":30,\"color\":\"#0000FF\"}";
+    TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER", withParameters(blue, context()));  // No ring.
+    TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER", withParameters(blue, ringContext(), "off"));
+    np::CommandContext white = ringContext();
+    white.lightColor = false;
+    TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER", withParameters(blue, white));
+    TEST_ASSERT_NULL(withParameters("{\"brightness\":30,\"color\":\"#FFFFFF\"}", white));
+    np::CommandContext speaker = ringContext();
+    speaker.capability = "speaker";
+    TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER", withParameters(blue, speaker));
+    // Parameters are checked before the clock: the order is part of the contract.
+    np::CommandContext untrusted = ringContext();
+    untrusted.clockTrusted = false;
+    TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER",
+                             withParameters("{\"brightness\":65,\"color\":\"#FFFFFF\"}", untrusted));
+    TEST_ASSERT_EQUAL_STRING("CLOCK_UNVERIFIED", withParameters(blue, untrusted));
+}
+
+void test_FR22_parameters_join_content() {
+    JsonDocument doc;
+    fill(doc);
+    const std::string plain = np::canonicalContent(doc);  // Unchanged without parameters.
+    TEST_ASSERT_EQUAL_STRING(
+        "[\"light-01\",\"on\",\"session-1\",\"2026-10-23T00:00:00Z\",\"2026-10-23T00:00:30Z\"]", plain.c_str());
+    doc["parameters"]["brightness"] = 30;
+    doc["parameters"]["color"] = "#0000FF";
+    const std::string blue = np::canonicalContent(doc);
+    TEST_ASSERT_EQUAL_STRING(
+        "[\"light-01\",\"on\",\"session-1\",\"2026-10-23T00:00:00Z\",\"2026-10-23T00:00:30Z\",[30,\"#0000FF\"]]",
+        blue.c_str());
+    doc["parameters"]["brightness"] = 31;
+    TEST_ASSERT_FALSE(blue == np::canonicalContent(doc));
+    JsonDocument swapped;
+    fill(swapped);
+    swapped["parameters"]["color"] = "#0000FF";
+    swapped["parameters"]["brightness"] = 30;
+    TEST_ASSERT_EQUAL_STRING(blue.c_str(), np::canonicalContent(swapped).c_str());
+}
+
+void test_FR09_command_actuation() {
+    JsonDocument doc;
+    fill(doc);
+    np::Actuation plain = np::commandActuation("cmd-1", doc);
+    TEST_ASSERT_FALSE(plain.light);
+    TEST_ASSERT_EQUAL_STRING("on", plain.action.c_str());
+    doc["parameters"]["brightness"] = 30;
+    doc["parameters"]["color"] = "#0000FF";
+    np::Actuation blue = np::commandActuation("cmd-1", doc);
+    TEST_ASSERT_TRUE(blue.light);
+    TEST_ASSERT_EQUAL_UINT8(30, blue.brightness);
+    TEST_ASSERT_EQUAL_HEX32(0x0000FF, blue.color);
+}
+
 }  // namespace
 
 void runCommandTests() {
     RUN_TEST(test_FR06_validate_order);
     RUN_TEST(test_FR06_capability_action_matrix);
     RUN_TEST(test_FR06_canonical_content_fields);
+    RUN_TEST(test_NFR10_light_parameters_boundaries);
+    RUN_TEST(test_NFR10_light_parameters_above_cap_rejected);
+    RUN_TEST(test_NFR10_light_parameters_format_rejected);
+    RUN_TEST(test_NFR10_light_parameters_unsupported);
+    RUN_TEST(test_FR22_parameters_join_content);
+    RUN_TEST(test_FR09_command_actuation);
 }

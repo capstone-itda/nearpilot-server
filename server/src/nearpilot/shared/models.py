@@ -14,7 +14,7 @@ from datetime import datetime
 from math import fsum, isclose, isfinite
 from typing import Any
 
-from nearpilot.shared.config import Settings
+from nearpilot.shared.config import Settings, is_light_color
 from nearpilot.shared.enums import (
     ApprovalDecisionReason,
     AdminWriteOutcome,
@@ -106,6 +106,67 @@ class BeaconKey:
 
 
 @dataclass(frozen=True, slots=True)
+class LightControls:
+    """조명 기기가 발표한 조명 제어 정보 (FR-04, FR-09).
+
+    brightness_max 는 펌웨어가 지키는 채널별 출력 상한이다. color 는 색 지원 여부다.
+    """
+
+    brightness_max: int
+    color: bool
+
+    def __post_init__(self) -> None:
+        if isinstance(self.brightness_max, bool) or not isinstance(self.brightness_max, int):
+            raise ValueError("brightness_max 는 정수여야 한다")
+        if not 1 <= self.brightness_max <= 255:
+            raise ValueError("brightness_max 는 1~255 여야 한다")
+        if not isinstance(self.color, bool):
+            raise ValueError("color 는 불리언이어야 한다")
+
+
+@dataclass(frozen=True, slots=True)
+class LightSetting:
+    """조명 `on` 의 밝기와 색 (FR-09). 각 값은 없을 수 있다.
+
+    방문자 입력(`UseRequest.light`)은 받은 값만 담는다. 서버가 정한 값(`NodeCommand.light`)은 둘 다 담는다.
+    밝기는 0~255 정수, 색은 대문자 `#RRGGBB` 다. 기기별 상한 검사는 판정이 한다.
+    """
+
+    brightness: int | None = None
+    color: str | None = None
+
+    def __post_init__(self) -> None:
+        b = self.brightness
+        if b is not None and (isinstance(b, bool) or not isinstance(b, int) or not 0 <= b <= 255):
+            raise ValueError("brightness 는 0~255 정수여야 한다")
+        if self.color is not None:
+            if not is_light_color(self.color):
+                raise ValueError("color 는 #RRGGBB 여야 한다")
+            object.__setattr__(self, "color", self.color.upper())
+
+    @property
+    def complete(self) -> bool:
+        return self.brightness is not None and self.color is not None
+
+    def to_json(self) -> dict[str, Any]:
+        """저장과 비교에 쓰는 정규화 값. 없는 값은 넣지 않는다."""
+        out: dict[str, Any] = {}
+        if self.brightness is not None:
+            out["brightness"] = self.brightness
+        if self.color is not None:
+            out["color"] = self.color
+        return out
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any] | None) -> LightSetting | None:
+        if data is None:
+            return None
+        if not isinstance(data, Mapping) or set(data) - {"brightness", "color"}:
+            raise ValueError(f"조명 설정 형식 오류: {data!r}")
+        return cls(data.get("brightness"), data.get("color"))
+
+
+@dataclass(frozen=True, slots=True)
 class NodeInfo:
     """판정에 필요한 노드 정보. ONLINE 여부는 저장하지 않고 last_seen_at + TTL 로 계산한다."""
 
@@ -120,6 +181,7 @@ class NodeInfo:
     release_policy: Mapping[str, Any] = field(default_factory=dict)
     session_id: str | None = None  # 현재 기기 연결 ID. 확인한 연결이 없으면 None
     session_first_seen_at: datetime | None = None  # 현재 연결의 첫 수신 시각
+    light_controls: LightControls | None = None  # 발표한 조명 제어 정보. 없으면 인자를 받지 않는다 (FR-09)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "release_policy", _freeze(self.release_policy))
@@ -218,6 +280,7 @@ class UseRequest:
     host_kind: str | None
     received_at: datetime
     parent_internal_request_id: str | None = None  # 재질문·승인 후 재요청 연결
+    light: LightSetting | None = None  # 조명 `on` 의 받은 인자. 인자가 없으면 None (FR-09)
 
 
 @dataclass(frozen=True, slots=True)
@@ -387,6 +450,8 @@ class ExecutionContext:
     # ReserveResult.reserved_at 을 그대로 담는다 (#80). 예약 대기는 이 시각부터 잰다.
     # 인계 시각부터 다시 세지 않는다. DB 쓰기가 없는 공용형 open 요청은 None 이다.
     reserved_at: datetime | None = None
+    # 판정이 정한 조명 설정. 조명 제어 정보를 발표한 기기의 `on` 에만 있고 두 값을 모두 담는다 (FR-09).
+    light: LightSetting | None = None
 
     def __post_init__(self) -> None:
         internal = self.execution_kind == ExecutionKind.SERVER_INTERNAL
@@ -444,6 +509,7 @@ class CommandRecord:
     outcome: CommandOutcome | None = None
     occurred_at: datetime | None = None
     evidence: Mapping[str, Any] = field(default_factory=dict)
+    light: LightSetting | None = None  # 명령에 담을 조명 설정. 재전송과 재시작 뒤에도 같다 (FR-09)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "evidence", _freeze(self.evidence))
@@ -494,6 +560,7 @@ class NodeAnnounce:
     session_id: str
     seq: int
     sent_at: datetime
+    light_controls: LightControls | None = None  # 조명 기기만 담는다. 신뢰 상태를 바꾸지 않는다 (FR-04)
 
 
 @dataclass(frozen=True, slots=True)
@@ -554,6 +621,7 @@ class NodeCommand:
     target_session_id: str  # 대상 기기 연결 ID. `NodeInfo.session_id` 에서 가져온다.
     issued_at: datetime
     expires_at: datetime  # issued_at + Settings.exec_timeout_sec
+    light: LightSetting | None = None  # `cmd.parameters`. 서버가 정한 밝기와 색을 모두 담는다 (FR-09)
 
 
 @dataclass(frozen=True, slots=True)
