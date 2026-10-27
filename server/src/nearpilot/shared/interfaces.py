@@ -262,6 +262,10 @@ class Repository(Protocol):
 
     def session_owner_matches(self, use_id: str, user_id: str) -> bool: ...  # FR-21
 
+    def has_open_session(self, user_id: str, node_id: str) -> bool:
+        """그 계정의 RESERVED·ACTIVE·CLOSING 세션이 그 기기에 있으면 True (FR-09 비공개 기기 본인 조회)."""
+        ...
+
     def is_place_owner(self, user_id: str, node_id: str) -> bool:
         """기기가 속한 장소의 소유 계정이 user_id 인지 반환한다 (FR-12A, #84).
 

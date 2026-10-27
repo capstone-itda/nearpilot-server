@@ -600,6 +600,40 @@ def test_FR20_internal_off_success_clears_light(env):
     assert env.service.tick() == ()
 
 
+def test_FR20_shared_speaker_follows_light_rules(env):
+    """공용형 스피커의 on은 재생, off는 정지다. fixture의 `light-1`을 스피커로 바꿔 조명과 같은 규칙을 확인한다."""
+    env.repository.light = replace(env.repository.light, capability=Capability.SPEAKER)
+    calls = active(env)
+    execution(env)
+    assert [holder.user_id for holder in env.service.holders()] == ["visitor-a"]
+    advance(env, 14)
+    assert candidates(env) == ()
+    assert calls == []
+    advance(env, 1)
+    assert candidates(env) == ("light-1",)
+    ctx = calls[0]
+    assert ctx.execution_kind == ExecutionKind.SERVER_INTERNAL
+    assert (ctx.internal_request.node_id, ctx.internal_request.action) == ("light-1", Action.OFF)
+    assert ctx.internal_request.cause == InternalRequestCause.LEAVE_OFF
+    # 명시적 off는 다른 유지 대상자가 남아 있어도 유지 대상자를 비운다.
+    execution(env, "visitor-a", "request-2")
+    execution(env, "visitor-b", "request-3")
+    execution(env, request_id="request-off", action=Action.OFF)
+    assert env.service.holders() == []
+    advance(env, 15)
+    assert candidates(env) == ()
+    assert len(calls) == 1
+    # 대여형 스피커와 사물함은 대상이 아니다.
+    for capability in (Capability.SPEAKER, Capability.LOCKER):
+        env.repository.light = replace(env.repository.light, capability=capability,
+                                       occupancy=Occupancy.RENTAL)
+        env.service = env.new_service()
+        execution(env)
+        advance(env, 15)
+        assert env.service.holders() == []
+        assert candidates(env) == ()
+
+
 def test_FR20_exhausted_approval_keeps_holder(env):
     original = env.policy.check
     def check(user_id, node_id, action, now):

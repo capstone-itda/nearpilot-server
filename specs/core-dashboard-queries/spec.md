@@ -15,7 +15,7 @@
 
 - 입력:
   - DB의 커밋된 행: 장소, 기기, 계정, 활성 비콘, RSSI 관측, 요청, 점유, 명령, 승인, 감사 로그.
-  - 서버가 시작할 때 읽은 근접 모델, MQTT 연결 상태, 공용 조명의 유지 대상자, 평가 리포트 파일(`var/reports/*.csv`).
+  - 서버가 시작할 때 읽은 근접 모델, MQTT 연결 상태, 공용형 기기(조명·스피커)의 유지 대상자, 평가 리포트 파일(`var/reports/*.csv`).
   - 설정 `[dashboard]` (선택 섹션).
 - 출력:
   - `DashboardQueries` 9개와 `MonitorSnapshot.current_events`의 구현. 결과는 architecture.md §5 "대시보드 조회"와 "WebSocket" 형식이다.

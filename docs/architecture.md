@@ -941,6 +941,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | `Repository.approvals_in_scope` | 요청자 ID, 기기 ID | `Sequence[ApprovalRecord]` |
 | `Repository.save_decision` | `Decision`, `DecisionRecord` | `StoreResult` |
 | `Repository.is_place_owner` | 계정 ID, 기기 ID | `bool` |
+| `Repository.has_open_session` | 계정 ID, 기기 ID | `bool`. 그 계정의 `RESERVED`·`ACTIVE`·`CLOSING` 세션이 그 기기에 있으면 참. 비공개 기기 상태 조회의 본인 점유 확인에 쓴다 (FR-09) |
 | `AdminRepository.register_account` | `AccountRegistration` | `AdminWriteResult` |
 | `AdminRepository.register_beacon` | `BeaconRegistration` | `AdminWriteResult` |
 | `AdminRepository.set_node_trust` | 기기 ID, `TrustState` | `AdminWriteResult` |

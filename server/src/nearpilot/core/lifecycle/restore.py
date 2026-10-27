@@ -20,7 +20,7 @@ from nearpilot.core.lifecycle.release import ReleaseService
 from nearpilot.core.lifecycle.shared_light import SharedLightService
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Capability, CommandOutcome, CommandState, DeviceState, ExecutionStatus,
+    CommandOutcome, CommandState, DeviceState, ExecutionStatus,
     Occupancy, ReasonCode, SessionState, StoreOutcome, Verdict,
 )
 from nearpilot.shared.errors import StoreError, StoreOutcomeUnknown
@@ -381,7 +381,8 @@ class RestoreService:
 
     @staticmethod
     def _is_light(node: NodeInfo) -> bool:
-        return node.capability == Capability.LIGHT and node.occupancy == Occupancy.SHARED
+        """공용형 기기(조명·스피커)다. 기능과 무관하게 점유 방식으로만 가른다 (FR-20)."""
+        return node.occupancy == Occupancy.SHARED
 
     @staticmethod
     def _same_command(expected: CommandRecord, actual: CommandRecord | None) -> None:

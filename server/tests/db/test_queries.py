@@ -1,5 +1,5 @@
 """조회 함수: beacons_of, rssi_since, nodes, current_policy, valid_approval,
-session, session_owner_matches, account_by_token_hash."""
+session, session_owner_matches, has_open_session, account_by_token_hash."""
 
 from __future__ import annotations
 
@@ -174,3 +174,34 @@ def test_FR21_session_lookup(conn, repo):
     assert session.use_id == "use1"
     assert session.state.value == "ACTIVE"
     assert repo.session("missing") is None
+
+
+def test_FR09_has_open_session(conn, repo):
+    insert_user(conn, user_id="u1")
+    insert_user(conn, user_id="u2", token_hash="hash-2")
+    insert_place(conn)
+    for state in ("RESERVED", "ACTIVE", "CLOSING", "CLOSED"):
+        insert_node(conn, node_id=f"node-{state}")
+        insert_request(conn, internal_request_id=f"req-{state}", request_id=f"ext-{state}")
+        insert_use_session(
+            conn, use_id=f"use-{state}", internal_request_id=f"req-{state}",
+            node_id=f"node-{state}", state=state,
+        )
+    insert_node(conn, node_id="node-empty")
+
+    # 열린 세 상태는 True, CLOSED만 있으면 False다
+    assert repo.has_open_session("u1", "node-RESERVED") is True
+    assert repo.has_open_session("u1", "node-ACTIVE") is True
+    assert repo.has_open_session("u1", "node-CLOSING") is True
+    assert repo.has_open_session("u1", "node-CLOSED") is False
+    # 다른 계정의 세션, 세션이 없는 기기, 없는 기기는 본인의 열린 세션이 아니다
+    assert repo.has_open_session("u2", "node-ACTIVE") is False
+    assert repo.has_open_session("u1", "node-empty") is False
+    assert repo.has_open_session("u1", "missing-node") is False
+
+    # 종료된 세션이 있어도 같은 기기에 새 세션이 열리면 True다
+    insert_request(conn, internal_request_id="req-again", request_id="ext-again")
+    insert_use_session(
+        conn, use_id="use-again", internal_request_id="req-again", node_id="node-CLOSED", state="ACTIVE",
+    )
+    assert repo.has_open_session("u1", "node-CLOSED") is True

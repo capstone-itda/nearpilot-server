@@ -1,8 +1,8 @@
 # DB 스키마와 저장소 (`Repository`, `AccountLookup`, `AuditLog`)
 
 - 담당: paiwhy (DB)
-- 요구사항: FR-01, FR-03, FR-05, FR-13, FR-14, FR-15, FR-19, FR-21, FR-22, NFR-03, NFR-08
-- 따르는 결정: #15, #17, #20, #24, #27, #28, #29, #31, #32, #33, #34, #39, #40, #41, #42, #44, #54, 2026-10-27 결정 4 (재판정은 자기 사용분을 세지 않는다)
+- 요구사항: FR-01, FR-03, FR-05, FR-09, FR-13, FR-14, FR-15, FR-19, FR-21, FR-22, NFR-03, NFR-08
+- 따르는 결정: #15, #17, #20, #24, #27, #28, #29, #31, #32, #33, #34, #39, #40, #41, #42, #44, #54, 2026-10-27 결정 4 (재판정은 자기 사용분을 세지 않는다), 2026-10-27 팀 결정 (`has_open_session`, 승인 뒤 재요청은 승인 기록으로 원 요청과 연결)
 
 ## 1. 왜
 
@@ -80,6 +80,7 @@
 ### 고치지 않는 곳
 - 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
 - 이 작업: `core/` (`core/policy` 포함), `api/`, `iot/`, `tools/`
+- 예외: fix/core-small-gaps는 `shared/interfaces.py`에 `Repository.has_open_session`을 더한다 (2026-10-27 팀 결정)
 
 ### 다른 영역과 닿는 곳
 | 계약 | 사용 또는 제공 | 상대 영역 |
@@ -117,6 +118,8 @@
 | 최초 대여 요청이 `ACTIVE`가 된 뒤 같은 `internal_request_id`로 다시 호출한다 | 재조작 검사보다 기존 예약 조회를 먼저 한다. `REOPERATING`이 아니라 기존 `use_id`로 `RESERVED`를 반환한다. | `test_FR19_reserve_resend_after_active` |
 | 본인 `ACTIVE` 세션이 있는 기기에 재조작을 요청한다 | `REOPERATING`과 기존 `use_id`를 반환한다. 새 세션을 만들지 않는다. 승인이 있으면 이번 요청의 사용분만 예약한다. | `test_FR19_reserve_reoperating` |
 | 본인 `ACTIVE` 세션이 있지만 기기가 `FAULT`로 격리됐다 | `REOPERATING`이 아니라 `DEVICE_BUSY`를 반환한다. 사용분을 예약하지 않는다. | `test_FR19_reserve_reoperating_fault` |
+| 승인 사용분을 예약한다 (`approval_id`가 있다) | 사용분 행이 새 요청을 승인과 잇고, 승인 행이 승인 신청 요청과 잇는다. 요청 행의 `parent_internal_request_id`는 바꾸지 않는다 | `test_FR09_reserve_links_new_request_to_approval_request` |
+| 계정이 기기에 열린 세션이 있는지 묻는다 (`has_open_session`) | `RESERVED`·`ACTIVE`·`CLOSING` 세션이 있으면 `True`, `CLOSED`뿐이거나 없으면 `False` | `test_FR09_has_open_session` |
 | 계정이 같은 `exclusive_group`의 다른 기기를 점유 중이다 | `USER_BUSY`를 반환한다. 아무 행도 만들지 않는다. | `test_FR19_reserve_user_busy` |
 | 승인 남은 횟수가 0이다 | `APPROVAL_EXHAUSTED`를 반환한다. 세션과 사용분을 만들지 않는다. | `test_FR19_reserve_approval_exhausted` |
 | 대상 기기가 `AVAILABLE`이 아니다 (`FAULT` 포함) | `DEVICE_BUSY`를 반환한다. | `test_FR19_reserve_not_available` |
@@ -162,6 +165,7 @@
 - `approval` 테이블에는 `architecture.md`가 명시하지 않은 구현 컬럼으로 `created_at`, `pending_until`을 둔다 — `create_approval_request()`의 멱등 판단과 만료 계산에 필요하다 (`architecture.md` §6 "저장 필드와 스키마는 구현할 때 구체화한다").
 - `node_command`는 `CommandRecord`의 모든 필드에 대응하는 컬럼을 지금 만든다 — 후속 작업이 컬럼을 추가하면서 마이그레이션하지 않도록 한다. 행 쓰기 함수는 `db-execution-store`가 만든다.
 - 테스트 데이터는 `tests/db/`의 fixture가 SQL로 직접 넣는다 — `AdminRepository`의 DB 구현은 아직 없다. `#30`의 결정은 `Protocol`까지만 반영됐고, 구현은 `db-approval-admin`이 한다.
+- 원 요청 연결(FR-09, 2026-10-27 팀 결정): 승인 뒤 재요청은 승인 기록으로 잇는다. `approval_usage.internal_request_id`(새 요청) → `approval_id` → `approval.internal_request_id`(승인 신청 요청)다. 새 쓰기는 없다. `request.parent_internal_request_id`를 예약 때 채우지 않는다 — 채우면 `execution_context()`가 판정이 인계한 원래 문맥과 달라져 실행 결과 인계가 `ValueError`로 실패한다 (`architecture.md` §4 #83, 검토에서 확인).
 - 공용형 기기는 `reserve_if_free()`에서 ⑤⑥과 세션 생성을 건너뛴다. 승인 사용분만 예약한다. `approval_id`가 `None`이면 아무것도 쓰지 않고 `RESERVED`를 반환한다 (#27).
 - 기간형이고 `max_uses`가 NULL이어도 요청별 사용분 행을 만든다. 횟수 검사만 생략한다 (#27).
 - 횟수 한도는 `one_time`이면 1, `time_window`면 `max_uses`다 (`_use_limit`). `valid_approval`·`approvals_in_scope`의 남은 횟수와 사용분 예약이 같은 규칙을 쓴다 (FR-14, 2026-10-27 담당자 위임 결정).
@@ -183,6 +187,7 @@
 | FR-13 | `test_FR13_*` | 발표와 `touch_node()`의 갱신 규칙, 신뢰 되돌림의 감사 기록 |
 | FR-14 | `test_FR14_*` | 현재 정책 리비전 조회, 승인 범위와 남은 횟수, 승인 신청 중복·만료, 결정의 조건부 갱신과 멱등성 |
 | FR-15 | `test_FR15_beacons_of_active_only` | 활성 비콘만 반환한다 |
+| FR-09 | `test_FR09_has_open_session`, `test_FR09_reserve_links_new_request_to_approval_request` | 본인 열린 세션 조회, 승인 뒤 재요청과 원 요청의 연결 |
 | FR-19 | `test_FR19_reserve_*` | 원자적 예약, 멱등성, 재조작(`REOPERATING`), ⑤⑥과 승인 횟수 검사, 공용형 처리 |
 | FR-21 | `test_FR21_owner_matches` | 본인 `use_id`만 `True`다 |
 | FR-22 | `test_FR22_*` | 외부 키 연결, 판정 저장, 감사 기록 중복 처리 |
