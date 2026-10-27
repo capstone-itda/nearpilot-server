@@ -89,16 +89,16 @@ def flow(tmp_path_factory):
 
         client.publish = publish
 
-        world.decide("ok", VISITOR_A, "locker-1", {"locker-1": 0.97}, Verdict.OK)
+        world.decide("ok", VISITOR_A, "nearest:locker", {"locker-1": 0.97}, Verdict.OK)
         wait_until(lambda: commands_of(world, "ok") == ["succeeded"] and state_of(world, "locker-1") == "ACTIVE")
         tick()
 
-        world.decide("light", VISITOR_B, "light-1", {"light-1": 0.9}, Verdict.OK, Action.ON)
+        world.decide("light", VISITOR_B, "nearest:light", {"light-1": 0.9}, Verdict.OK, Action.ON)
         wait_until(lambda: commands_of(world, "light") == ["succeeded"])
         tick()
 
         world.broker.drop_commands = {"locker-3"}  # 결과가 오지 않는다. 1 초 뒤 결과 불명이 되고 기기를 격리한다
-        world.decide("fault", VISITOR_B, "locker-3", {"locker-3": 0.97}, Verdict.DENY)
+        world.decide("fault", VISITOR_B, "nearest:locker", {"locker-3": 0.97}, Verdict.DENY)
         wait_until(lambda: commands_of(world, "fault") == ["unknown"] and state_of(world, "locker-3") == "FAULT")
         tick()
 
@@ -125,7 +125,7 @@ def test_FR12B_요청_하나의_이벤트가_순서대로_나간다(flow):
     call, *rest = mine
     assert dict(call.fields) == {
         "requestId": flow.world.requests["ok"], "tool": "request_use", "action": Action.OPEN,
-        "target": {"kind": "explicit", "capability": "locker", "nodeId": "locker-1"},
+        "target": {"kind": "nearest", "capability": "locker"},
     }
     assert [(e.fields["step"], e.fields["result"]) for e in rest if e.type == "step"] == [
         (Step(str(i)), "pass") for i in range(7)]

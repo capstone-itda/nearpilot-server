@@ -263,6 +263,8 @@ def _candidate(payload: Mapping[str, Any], names: Mapping[str, str]) -> str | No
 
 
 def _proximity(payload: Mapping[str, Any], names: Mapping[str, str]) -> str | None:
+    if payload.get("skipped") is True and payload.get("reason") == "explicit_target":
+        return "명시 지정 · 근접 확률 검사 생략"
     if "posteriors" not in payload:
         return None
     p = payload.get("p")  # 명시 지정은 대상의 확률, 아니면 가장 큰 후보 (기기 ID, 확률)

@@ -167,10 +167,11 @@ def test_FR18_재검사는_모두_통과하면_OK이고_저장하지_않는다()
     assert (d.verdict, d.reason, d.node_id, d.use_id) == (Verdict.OK, ReasonCode.OK, "locker-1", "use-1")
 
 
-def test_FR18_재검사_비콘이_없으면_거부한다():
+@pytest.mark.parametrize("target", ["nearest:locker", "locker-1"])
+def test_FR18_재검사_비콘이_없으면_거부한다(target):
     rc, repo, prox, pol, audit = build()
     repo.frames = []
-    d = rc.recheck(ctx())
+    d = rc.recheck(ctx(target=target))
     assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.BEACON_NOT_SEEN)
     assert "nodes" not in repo.calls and prox.calls == [] and pol.calls == []
 
@@ -180,11 +181,12 @@ def test_FR18_재검사_비콘이_없으면_거부한다():
     {"trust_state": TrustState.REVOKED},
     {"last_seen_at": NOW - timedelta(seconds=999)},
 ])
-def test_FR18_재검사_대상이_후보_밖이면_거부한다(kw):
+@pytest.mark.parametrize("target", ["nearest:locker", "locker-1"])
+def test_FR18_재검사_대상이_후보_밖이면_거부한다(kw, target):
     rc, repo, prox, pol, audit = build()
     repo.nodes_list = [node(**kw), node("locker-2"), anchor()]
     repo.frames = [frame("anchor-1")]
-    d = rc.recheck(ctx())
+    d = rc.recheck(ctx(target=target))
     assert (d.verdict, d.reason, d.node_id) == (Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE, "locker-1")
     assert prox.calls == []
 
@@ -210,9 +212,10 @@ def test_FR18_재검사는_다른_기기를_고르지_않는다():
     (Verdict.NEED_APPROVAL, ReasonCode.ACTION_NOT_ALLOWED),
     (Verdict.DENY, ReasonCode.POLICY_DENIED),
 ])
-def test_FR18_재검사_정책_결과를_그대로_반영한다(verdict, reason):
+@pytest.mark.parametrize("target", ["nearest:locker", "locker-1"])
+def test_FR18_재검사_정책_결과를_그대로_반영한다(verdict, reason, target):
     rc, *_ = build(policy=FakePolicy(PolicyCheckResult(verdict, reason, 2)))
-    d = rc.recheck(ctx())
+    d = rc.recheck(ctx(target=target))
     assert (d.verdict, d.reason) == (verdict, reason)
 
 
@@ -260,10 +263,11 @@ def test_FR18_재검사_공용형은_예약_검사를_건너뛴다():
     lambda r: setattr(r, "session_obj", UseSession("use-1", "i1", "locker-2", SessionState.RESERVED)),
     lambda r: setattr(r, "owner_ok", False),
 ])
-def test_FR18_재검사_예약이_유효하지_않으면_RECHECK_FAILED(mutate):
+@pytest.mark.parametrize("target", ["nearest:locker", "locker-1"])
+def test_FR18_재검사_예약이_유효하지_않으면_RECHECK_FAILED(mutate, target):
     rc, repo, *_ = build()
     mutate(repo)
-    d = rc.recheck(ctx())
+    d = rc.recheck(ctx(target=target))
     assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.RECHECK_FAILED)
 
 
@@ -348,11 +352,12 @@ def test_FR18_재검사는_대상_장소의_전체_기기를_근접에_넘긴다
     assert sorted(prox.place_nodes[0]) == ["anchor-1", "locker-1"] and prox.calls == [["locker-1"]]
 
 
-def test_FR18_재검사_비콘을_다른_장소만_봤으면_거부한다():
+@pytest.mark.parametrize("target", ["nearest:locker", "locker-1"])
+def test_FR18_재검사_비콘을_다른_장소만_봤으면_거부한다(target):
     rc, repo, prox, pol, audit = build()
     repo.nodes_list = [node(), node("other-1", place_id="q")]
     repo.frames = [frame("other-1")]
-    d = rc.recheck(ctx())
+    d = rc.recheck(ctx(target=target))
     assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.BEACON_NOT_SEEN)
     assert prox.calls == []
 
@@ -363,12 +368,15 @@ def test_FR18_재검사_활성_비콘이_둘이면_RECHECK_FAILED():
     assert rc.recheck(ctx()).reason is ReasonCode.RECHECK_FAILED
 
 
-def test_FR18_재검사_명시_지정은_별도_임계값을_쓰고_없으면_RECHECK_FAILED():
+def test_FR17_재검사_명시_지정은_확률과_임계값_없이_통과한다():
     settings = Settings(version="v1", threshold_locker=0.95, threshold_explicit_locker=0.6)
-    rc, *_ = build({"locker-1": 0.7})
+    rc, repo, prox, pol, audit = build({"locker-1": 0.0})
     assert rc.recheck(ctx(target="locker-1", settings=settings)).verdict is Verdict.OK
     assert rc.recheck(ctx()).reason is ReasonCode.MOVE_CLOSER  # 일반 임계값 0.95
-    assert rc.recheck(ctx(target="locker-1")).reason is ReasonCode.RECHECK_FAILED
+    assert rc.recheck(ctx(target="locker-1")).verdict is Verdict.OK
+    assert len(prox.calls) == 1  # nearest 요청만 확률을 계산한다.
+    assert audit.events[-1].payload["skipped"] is True
+    assert "p" not in audit.events[-1].payload and "threshold" not in audit.events[-1].payload
 
 
 # ── ③ 이후에 막히면 확률을 감사에 남긴다 (NFR-13) ──────────────────────────

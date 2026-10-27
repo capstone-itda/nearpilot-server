@@ -75,10 +75,9 @@ def select_candidates(
     ]
 
 
-def threshold_for(settings: Settings, capability: Capability, explicit: bool) -> float | None:
-    """요청 종류와 명시 지정 여부로 임계값을 고른다. 설정에 없으면 None 이다."""
-    name = f"threshold_explicit_{capability.value}" if explicit else f"threshold_{capability.value}"
-    return getattr(settings, name, None)
+def threshold_for(settings: Settings, capability: Capability) -> float | None:
+    """근접 지정과 전역 할당의 임계값. 명시 지정에는 적용하지 않는다."""
+    return getattr(settings, f"threshold_{capability.value}", None)
 
 
 def make_decision(
@@ -234,8 +233,8 @@ class DecisionPipeline:
         if any_kind and (self._window is None or req.target.capability is not Capability.LOCKER):
             raise _Stop(Step.CANDIDATE, self._decision(req, iid, Verdict.DENY, ReasonCode.INVALID_INPUT))
         explicit = req.target.kind is TargetKind.EXPLICIT
-        threshold = threshold_for(s, req.target.capability, explicit)
-        if threshold is None:  # 설정이 없는 요청 종류는 실행을 허가하지 않는다
+        threshold = None if explicit else threshold_for(s, req.target.capability)
+        if not explicit and threshold is None:  # 근접 지정과 전역 할당은 임계값이 필요하다
             self._audit_step(Step.CANDIDATE, iid, {"threshold": None, "explicit": explicit})
             raise _Stop(Step.CANDIDATE, self._decision(req, iid, Verdict.DENY, ReasonCode.INVALID_INPUT))
         candidates = select_candidates(
@@ -249,35 +248,34 @@ class DecisionPipeline:
         if not candidates:
             raise _Stop(Step.CANDIDATE, self._decision(req, iid, Verdict.DENY, ReasonCode.NO_CANDIDATE))
 
-        # ③ 근접 — 명시 지정에도 ② 의 전체 후보를 넘긴다 (#26). 장소 전체 기기도 넘긴다 (#39)
-        place_nodes = [n for n in all_nodes if n.place_id == place_id]
-        result = self._proximity.posterior(beacons, candidates, now, place_nodes=place_nodes)
-        posteriors = dict(result.posteriors)
-        applied.model_version, applied.calib_version = result.model_version, result.calib_version
-        applied.posteriors = posteriors
-        applied.window_start, applied.window_end = result.window_start, result.window_end
-        prox_detail = {"posteriors": posteriors, "threshold": threshold,
-                       "model_version": result.model_version, "calib_version": result.calib_version}
+        # ③ 근접 — 명시 지정은 ①의 장소 확인과 ②의 후보 검사 뒤 확률 계산을 생략한다.
         check: PolicyCheckResult | None = None
+        p: float | None
         if explicit:
             node_id = req.target.node_id
-            p = posteriors.get(node_id, 0.0)
-            self._audit_step(Step.PROXIMITY, iid, {**prox_detail, "p": p})
-            if p < threshold:
-                raise _Stop(Step.PROXIMITY, self._decision(
-                    req, iid, Verdict.ASK, ReasonCode.MOVE_CLOSER, node_id=node_id, p_max=p))
-        elif any_kind:
-            self._audit_step(Step.PROXIMITY, iid, {**prox_detail, "best": result.best})
-            node_id, p, check = self._assign_any(
-                req, iid, applied, by_id, posteriors, result.best, threshold, now)
+            p = None
+            self._audit_step(Step.PROXIMITY, iid, {"skipped": True, "reason": "explicit_target",
+                                                  "node_id": node_id})
         else:
-            best = result.best
-            self._audit_step(Step.PROXIMITY, iid, {**prox_detail, "best": best})
-            if best is None or best[1] < threshold or best[0] not in by_id:
-                p_max = best[1] if best else None
-                raise _Stop(Step.PROXIMITY, self._decision(
-                    req, iid, Verdict.ASK, ReasonCode.LOW_CONFIDENCE, p_max=p_max))
-            node_id, p = best
+            place_nodes = [n for n in all_nodes if n.place_id == place_id]
+            result = self._proximity.posterior(beacons, candidates, now, place_nodes=place_nodes)
+            posteriors = dict(result.posteriors)
+            applied.model_version, applied.calib_version = result.model_version, result.calib_version
+            applied.posteriors = posteriors
+            applied.window_start, applied.window_end = result.window_start, result.window_end
+            prox_detail = {"posteriors": posteriors, "threshold": threshold,
+                           "model_version": result.model_version, "calib_version": result.calib_version}
+            self._audit_step(Step.PROXIMITY, iid, {**prox_detail, "best": result.best})
+            if any_kind:
+                node_id, p, check = self._assign_any(
+                    req, iid, applied, by_id, posteriors, result.best, threshold, now)
+            else:
+                best = result.best
+                if best is None or best[1] < threshold or best[0] not in by_id:
+                    p_max = best[1] if best else None
+                    raise _Stop(Step.PROXIMITY, self._decision(
+                        req, iid, Verdict.ASK, ReasonCode.LOW_CONFIDENCE, p_max=p_max))
+                node_id, p = best
         node = by_id[node_id]
 
         # ④ 정책 — 확정한 대상만 검사한다. `any:` 요청은 배정 전에 후보마다 검사했다
@@ -305,7 +303,7 @@ class DecisionPipeline:
     # ── 보조 ────────────────────────────────────────────────────────
 
     def _check_policy(
-        self, req: UseRequest, iid: str, applied: _Applied, node_id: str, p: float, now: datetime
+        self, req: UseRequest, iid: str, applied: _Applied, node_id: str, p: float | None, now: datetime
     ) -> PolicyCheckResult:
         """④ 정책 검사 하나. OK 가 아니면 그 판정으로 멈춘다."""
         check = self._policy.check(req.user_id, node_id, req.action, now, internal_request_id=iid)

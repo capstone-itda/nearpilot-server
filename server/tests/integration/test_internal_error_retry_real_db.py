@@ -31,10 +31,10 @@ def _fix_proximity(world):
 
 def test_FR18_오류_거부_뒤_같은_입력_재전송은_같은_내부_요청으로_다시_판정한다(world):
     _break_proximity(world)
-    failed = world.pipeline.decide(world.request(VISITOR_A))
+    failed = world.pipeline.decide(world.request(VISITOR_A, "nearest:locker"))
     assert (failed.verdict, failed.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
     _fix_proximity(world)
-    d = world.pipeline.decide(world.request(VISITOR_A))
+    d = world.pipeline.decide(world.request(VISITOR_A, "nearest:locker"))
     assert (d.verdict, d.reason) == (Verdict.OK, ReasonCode.OK)
     assert d.internal_request_id == failed.internal_request_id
     assert world.count("SELECT COUNT(*) FROM request") == 1
@@ -44,13 +44,13 @@ def test_FR18_오류_거부_뒤_같은_입력_재전송은_같은_내부_요청�
 
 def test_FR19_오류_거부_뒤_재판정은_예약을_하나만_둔다(world):
     _break_proximity(world)
-    world.pipeline.decide(world.request(VISITOR_A))
+    world.pipeline.decide(world.request(VISITOR_A, "nearest:locker"))
     _fix_proximity(world)
-    world.pipeline.decide(world.request(VISITOR_A))
+    world.pipeline.decide(world.request(VISITOR_A, "nearest:locker"))
     assert world.count("SELECT COUNT(*) FROM use_session WHERE state = 'RESERVED'") == 1
 
 
 def test_FR18_확정_판정은_재전송해도_다시_판정하지_않는다(world):
-    first = world.pipeline.decide(world.request(VISITOR_A))
+    first = world.pipeline.decide(world.request(VISITOR_A, "nearest:locker"))
     _break_proximity(world)  # 다시 판정하면 INTERNAL_ERROR 가 된다
-    assert world.pipeline.decide(world.request(VISITOR_A)) == first
+    assert world.pipeline.decide(world.request(VISITOR_A, "nearest:locker")) == first

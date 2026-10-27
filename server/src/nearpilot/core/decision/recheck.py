@@ -93,20 +93,23 @@ class Rechecker:
 
         # ② 대상 — 다른 기기를 고르지 않는다
         explicit = req.target.kind is TargetKind.EXPLICIT
-        threshold = threshold_for(s, req.target.capability, explicit)
-        if threshold is None:  # 최초 판정이 거부했어야 할 요청이다
-            raise ValueError("임계값 설정이 없다")
         candidates = select_candidates(all_nodes, req.target.capability, s, now, place_id)
         if node_id not in {n.node_id for n in candidates}:
             raise stop(Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE)
 
-        # ③ 근접 — 전체 후보와 장소 전체 기기를 넘기고 대상의 확률만 읽는다 (#26, #39)
-        place_nodes = [n for n in all_nodes if n.place_id == place_id]
-        result = self._proximity.posterior(beacons, candidates, now, place_nodes=place_nodes)
-        p = dict(result.posteriors).get(node_id, 0.0)
-        prob = {"p": p, "threshold": threshold}  # ③ 이후에 막히면 감사에 남긴다 (NFR-13)
-        if p < threshold:
-            raise stop(Verdict.ASK, ReasonCode.MOVE_CLOSER, prob, p_max=p)
+        # ③ 근접 — 명시 지정도 ①②는 다시 검사하지만 확률 계산은 생략한다.
+        p: float | None = None
+        prob: dict[str, Any] = {"skipped": True, "reason_detail": "explicit_target"}
+        if not explicit:
+            threshold = threshold_for(s, req.target.capability)
+            if threshold is None:
+                raise ValueError("임계값 설정이 없다")
+            place_nodes = [n for n in all_nodes if n.place_id == place_id]
+            result = self._proximity.posterior(beacons, candidates, now, place_nodes=place_nodes)
+            p = dict(result.posteriors).get(node_id, 0.0)
+            prob = {"p": p, "threshold": threshold}
+            if p < threshold:
+                raise stop(Verdict.ASK, ReasonCode.MOVE_CLOSER, prob, p_max=p)
 
         # ④ 정책 — 이 요청의 ID 를 넘겨 ⑤가 예약한 자기 사용분을 남은 횟수에서 뺀다 (FR-14, FR-19)
         check = self._policy.check(req.user_id, node_id, req.action, now,

@@ -6,7 +6,8 @@
 
 # 운영 수치 (nearpilot.shared.config.Settings). version 만 필수다.
 # 빠진 키는 Settings 의 시연용 초기값을 쓴다. 미설정 임계값(None)은 TOML 에 쓰지 않는다.
-# threshold_speaker 와 명시 지정 임계값은 담당 검증 전까지 비워 둔다. 비우면 실행을 허가하지 않는다.
+# threshold_speaker 는 담당 검증 전까지 비워 둔다. 비우면 스피커의 근접 지정 실행을 허가하지 않는다.
+# 명시 지정은 장소의 비콘 수신을 확인하고 기기별 근접 확률 검사를 생략한다.
 [settings]
 version = "demo-1"
 threshold_locker = 0.95

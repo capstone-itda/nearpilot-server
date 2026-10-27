@@ -29,10 +29,10 @@ from nearpilot.runtime import Runtime
 from nearpilot.shared.enums import Action, Verdict
 from nearpilot.shared.models import TargetSpec, UseRequest
 
-# 명시 지정 임계값을 0.5 로 낮춘다. 0.97 은 넘고 0.3 은 모자란다. 응답하지 않는 기기는 1 초 뒤 결과 불명이 된다.
+# 근접 지정 임계값을 0.5 로 낮춘다. 0.97 은 넘고 0.3 은 모자란다. 응답하지 않는 기기는 1 초 뒤 결과 불명이 된다.
 # 시나리오가 느린 환경에서도 비콘과 기기가 끊기지 않고 공용 조명의 유지 대상자가 이탈로 꺼지지 않게 시간을 길게 둔다.
 SETTINGS = {
-    "threshold_explicit_locker": 0.5, "threshold_explicit_light": 0.5, "exec_timeout_sec": 1.0,
+    "threshold_locker": 0.5, "threshold_light": 0.5, "exec_timeout_sec": 1.0,
     "beacon_recent_sec": 30.0, "online_ttl_sec": 300.0, "leave_absent_sec": 600.0,
 }
 REPORTING = ("locker-1", "locker-2", "locker-3", "light-1")  # 상태를 보고하는 기기
@@ -142,12 +142,12 @@ def build_dashboard_world(tmp: Path) -> DashboardWorld:
     """서버를 띄워 여섯 가지 흐름을 만들고 멈춘다. 흐름이 기대한 판정이 아니면 `AssertionError` 다."""
     world = DashboardWorld(tmp)
     with world:
-        world.decide("ok", VISITOR_A, "locker-1", {"locker-1": 0.97}, Verdict.OK)
-        world.decide("busy", VISITOR_B, "locker-1", {"locker-1": 0.97}, Verdict.BUSY)
-        world.decide("ask", VISITOR_B, "locker-2", {"locker-2": 0.3}, Verdict.ASK)
+        world.decide("ok", VISITOR_A, "nearest:locker", {"locker-1": 0.97}, Verdict.OK)
+        world.decide("busy", VISITOR_B, "nearest:locker", {"locker-1": 0.97}, Verdict.BUSY)
+        world.decide("ask", VISITOR_B, "nearest:locker", {"locker-2": 0.3}, Verdict.ASK)
         world.broker.drop_commands = {"locker-3"}  # 결과가 오지 않는다
-        world.decide("fault", VISITOR_B, "locker-3", {"locker-3": 0.97}, Verdict.DENY)
-        world.decide("light", VISITOR_B, "light-1", {"light-1": 0.9}, Verdict.OK, Action.ON)
+        world.decide("fault", VISITOR_B, "nearest:locker", {"locker-3": 0.97}, Verdict.DENY)
+        world.decide("light", VISITOR_B, "nearest:light", {"light-1": 0.9}, Verdict.OK, Action.ON)
         world.access("access", VISITOR_A, "light-2", Action.ON)
         wait_until(world.runtime.services.shared_light.holders)  # 켠 사람이 유지 대상자로 보일 때까지
     return world
