@@ -2,7 +2,7 @@
 
 - 담당: paiwhy (DB)
 - 요구사항: FR-06, FR-07, FR-19, FR-20, FR-21, FR-22, NFR-03, NFR-04
-- 따르는 결정: #17, #19, #20, #35, #37, #38, #78, #81, #84, #92, #113, PR #50, PR #51, PR #103, PR #104, PR #105, 2026-10-26 센서 기반 물리 검증 제외 (#196)
+- 따르는 결정: #17, #19, #20, #35, #37, #38, #78, #81, #84, #92, #113, PR #50, PR #51, PR #103, PR #104, PR #105, 2026-10-26 센서 기반 물리 검증 제외 (#196), 2026-10-27 결정 3 (재조작과 반납의 경합)
 
 ## 1. 왜
 
@@ -81,6 +81,7 @@
 | 새 요청을 처음 명령에 연결한다 | `APPLIED`와 새 `CommandRecord`(`PENDING`)를 반환한다 | `test_FR18_link_command_creates` |
 | 같은 `internal_request_id`로 다시 연결한다 | `ALREADY_APPLIED`와 기존 `CommandRecord`를 반환한다. 새 행을 만들지 않는다 | `test_FR18_link_command_idempotent` |
 | `cancel_not_sent`로 이미 취소된 요청에 `link_command`가 온다 | `CONFLICT`다. 명령 행을 만들지 않는다 | `test_FR19_link_command_after_cancel_conflict` |
+| 재조작 요청을 연결하는데 그 사이 반납이 대여를 닫았다 (이번 요청의 세션도, 기기의 `ACTIVE` 세션도 없다. 반납을 시작한 `CLOSING` 세션만 있어도 같다) | `CONFLICT`·`STATE_CONFLICT`다. `NOT_SENT` 명령 행을 하나 만들어 `StoreResult.command`로 돌려준다 (`use_id` 없음, 근거 `{"source": "link_command", "reason": "USE_NOT_FOUND"}`). 같은 요청의 재호출은 그 명령을 `ALREADY_APPLIED`로 돌려준다. 이번 요청의 `reserved` 사용분이 있으면 같은 트랜잭션에서 반환하고 감사(`cancel_not_sent`, 사유 `USE_NOT_FOUND`, 새 명령 ID)를 남긴다. 승인 없는 재조작은 명령 행만 쓴다. 같은 요청의 재호출은 아무것도 쓰지 않는다. `LookupError`를 던지지 않는다 | `test_FR19_link_command_reoperation_after_close_conflict` |
 | `PENDING` 명령을 전송 시작한다 | `APPLIED`와 `IN_PROGRESS`로 바뀐 `CommandRecord`를 반환한다 | `test_FR19_begin_send_applied` |
 | 같은 명령으로 전송 시작을 다시 부른다 | `ALREADY_APPLIED`다. 재전송 허가가 아니다 | `test_FR19_begin_send_idempotent` |
 | 같은 기기의 다른 명령이 결과를 확정하지 못했다 | `CONFLICT`와 `COMMAND_IN_PROGRESS`다 | `test_FR19_begin_send_command_in_progress` |
@@ -152,6 +153,7 @@
   - 상태 관리가 정한 방식(#92): 정규 JSON(키 정렬, 공백 없음, UTF-8)으로 직렬화한 뒤 SHA-256을 적용한다. 값은 소문자 hex 64자다. `core/lifecycle/fault_recovery.settlement_digest()`가 계산한다. DB는 이 값을 계산하지 않고 `recovery.settlement_digest` 컬럼에 저장·대조만 한다.
 - `SqliteExecutionStore`를 `db/repositories/execution_store.py`에 둔다. `SqliteRepository`와 같은 `sqlite3.Connection`을 받는다 — DB 쓰기 경로는 하나다 (`AGENTS.md` 의존 규칙 5).
 - `CommandRecord.reserved_at`은 `request.received_at`을 그대로 쓴다. 새 컬럼을 두지 않는다 — ⓪~⑥ 판정과 `reserve_if_free()`는 같은 호출 안에서 동기적으로 끝나므로 "예약 시각"과 "요청 수신 시각"은 실질적으로 같다. `use_session`과 `request`에는 애초에 별도의 예약 시각 컬럼이 없다(`0001_initial.sql`). `link_command`는 `now`를 인자로 받지 않으므로(`interfaces.py`) 호출 시각을 대신 쓸 수도 없다. #80으로 DB가 실제 예약 시각을 `ReserveResult.reserved_at`에 저장해 돌려주기로 했다. 이번 작업은 임시로 수신 시각을 쓰고, 반영은 `db-contract-followups`에서 한다.
+- 재조작 요청의 대여가 연결 전에 반납으로 닫혔으면 `link_command`는 예외 대신 `CONFLICT`·`STATE_CONFLICT`를 반환하고, 이번 요청의 예약 사용분을 같은 트랜잭션에서 반환한다. 사용자의 정상 반납이 겹친 경우라 서버 오류가 아니다. 사용분을 반환하지 않으면 승인 횟수가 영구히 묶인다 (2026-10-27 팀 결정).
 - `link_command`의 실행 종류 판단은 `node.occupancy`를 가장 먼저 보고, 대여형이면 이번 요청의 점유 세션 유무 → 기기의 `ACTIVE` 세션 유무 순서로만 본다. `approval_usage` 행의 존재는 보지 않는다 — `open` 정책의 재조작은 승인 사용분을 예약하지 않아 행이 없으므로(#27), 사용분로 판단하면 공용형과 구분하지 못한다.
 - `restore_pending`은 `BEGIN IMMEDIATE`가 아니라 새로 만든 `BEGIN DEFERRED`(`deferred_transaction`)로 여러 조회를 하나의 스냅숏으로 묶는다 — 읽기만 하므로 쓰기 잠금을 잡아 다른 트랜잭션을 기다리게 할 필요가 없다.
 - "명령 연결 전의 예약 요청"은 `node_command`에 연결이 없고 **세션이 `RESERVED`이거나 승인 사용분이 `reserved`인, 예약이 남은 요청**으로 찾는다. 판정 값으로 거르지 않는다 (`OK`, 다른 판정, `NULL`) — 오류 뒤 취소마저 실패한 예약도 재시작 복원이 정리해야 한다 (#80). 예약 조건으로 찾으므로 `open` 정책의 공용형 성공(#27, 쓰기 없음)처럼 복원할 예약이 없는 요청은 섞이지 않는다. 대상 기기는 `request.node_id` → `RESERVED` 세션의 `node_id` → `reserved` 사용분의 `approval.node_id` 순서로 찾는다 — 오류 판정은 `request.node_id` 없이 저장될 수 있다. 이미 `cancel_not_sent`로 취소된 요청은 세션·사용분 상태가 `RESERVED`·`reserved`가 아니게 되므로 이 조건에서 자연히 빠진다.

@@ -74,6 +74,17 @@ def _internal(ctx: ExecutionContext) -> bool:
     return ctx.execution_kind == ExecutionKind.SERVER_INTERNAL
 
 
+def _closed_rental_refusal(command: CommandRecord) -> bool:
+    """`link_command`가 반납으로 닫힌 대여의 재조작을 거부하며 남긴 `NOT_SENT` 명령인가.
+
+    붙일 점유 세션이 없어 `use_id`가 비어 있다.
+    """
+    return (command.status == ExecutionStatus.NOT_SENT
+            and command.execution_kind == ExecutionKind.RENTAL_REOPERATION
+            and command.evidence.get("source") == "link_command"
+            and command.evidence.get("reason") == ReasonCode.USE_NOT_FOUND.value)
+
+
 class ExecutionService:
     """공통 기기 잠금으로 준비·저장을 직렬화한다. 통신 대기 중에는 잠금을 푼다.
 
@@ -186,10 +197,22 @@ class ExecutionService:
                     raise
             else:
                 if linked.outcome == StoreOutcome.CONFLICT:
+                    if (linked.conflict_reason == StoreConflictReason.STATE_CONFLICT
+                        and ctx.execution_kind == ExecutionKind.RENTAL_REOPERATION):
+                        # 반납이 재조작할 대여를 먼저 닫았다. DB가 사용분을 반환하고 미전송 명령을 남겼으니
+                        # 다시 연결하지 않는다. 연결 전 취소의 충돌에는 명령이 없다.
+                        if linked.command is not None:
+                            self._bind(attempt, linked.command)
+                        attempt.refused, attempt.reason = True, ReasonCode.USE_NOT_FOUND
+                        return None
                     attempt.blockers = ("link_conflict",)
                     return None
                 current = linked.command or self._store.execution(ctx.internal_request_id)
         self._bind(attempt, current)
+        if _closed_rental_refusal(current):
+            # 앞선 호출이 연결을 거부하고 남긴 명령이다. 재인계(재시작 뒤 포함)도 전송하지 않고 같은 결과를 낸다.
+            attempt.refused, attempt.reason = True, ReasonCode.USE_NOT_FOUND
+            return None
         if current.status != ExecutionStatus.PENDING or attempt.claimed or attempt.cancel is not None:
             return None
         if not self._ready(attempt) or not self._within_wait(attempt):
@@ -458,7 +481,8 @@ class ExecutionService:
         ctx = attempt.context
         if current is None or (
             current.internal_request_id != ctx.internal_request_id or current.node_id != ctx.node_id
-            or current.action != _action(ctx) or current.use_id != ctx.use_id
+            or current.action != _action(ctx)
+            or (current.use_id != ctx.use_id and not _closed_rental_refusal(current))
             or current.usage_id != ctx.usage_id or current.execution_kind != ctx.execution_kind
             or (attempt.command is not None and current.command_id != attempt.command.command_id)
         ):

@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from datetime import datetime, timezone
+
+import pytest
 
 from nearpilot.db.repositories.execution_store import SqliteExecutionStore
 from nearpilot.db.schema import connect
 from nearpilot.shared.enums import (
     Action,
+    CommandOutcome,
+    EndReason,
+    ExecutionKind,
     ExecutionStatus,
     ReasonCode,
+    ReserveOutcome,
     StoreConflictReason,
     StoreOutcome,
 )
@@ -220,6 +227,78 @@ def test_FR19_cancel_not_sent_releases_usage_reserved_after_cancel(store, repo, 
     assert result.outcome == StoreOutcome.APPLIED
     states = {r["usage_id"]: r["state"] for r in conn.execute("SELECT usage_id, state FROM approval_usage")}
     assert states == {first.usage_id: "released", again.usage_id: "released"}
+
+
+@pytest.mark.parametrize("finished", [True, False], ids=["closed", "closing"])
+@pytest.mark.parametrize("approved", [True, False], ids=["approved", "open"])
+def test_FR19_link_command_reoperation_after_close_conflict(store, repo, conn, approved, finished):
+    _seed_reoperation(conn)
+    if approved:
+        insert_policy(conn, policy_id="policy1", node_id="node1", approval_mode="time_window", max_uses=2)
+        insert_approval(conn, approval_id="approval1", node_id="node1", internal_request_id="req-initial")
+        insert_approval_usage(
+            conn, usage_id="usage-initial", approval_id="approval1", internal_request_id="req-initial",
+            state="consumed",
+        )
+    reserved = repo.reserve_if_free(ReserveRequest(
+        internal_request_id="req-reop", user_id="u1", node_id="node1", action=Action.OPEN,
+        approval_id="approval1" if approved else None,
+    ))
+    assert reserved.outcome == ReserveOutcome.REOPERATING
+    # 재조작 판정 뒤 명령을 연결하기 전에 같은 사용자의 반납이 대여를 닫는다. 종료 저장 전(CLOSING)이어도 같다.
+    assert store.begin_close("use1", EndReason.RELEASE).outcome == StoreOutcome.APPLIED
+    if finished:
+        closed_at = datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc)
+        assert store.finish_close("use1", closed_at, EndReason.RELEASE).outcome == StoreOutcome.APPLIED
+
+    result = store.link_command("req-reop", "node1", Action.OPEN)
+
+    assert result.outcome == StoreOutcome.CONFLICT
+    assert result.conflict_reason == StoreConflictReason.STATE_CONFLICT
+    # 연결은 거부하지만 미전송 명령 하나를 남긴다. 붙일 세션이 없어 use_id가 없다.
+    refused = result.command
+    assert (refused.status, refused.outcome) == (ExecutionStatus.NOT_SENT, CommandOutcome.NOT_SENT)
+    assert (refused.execution_kind, refused.use_id) == (ExecutionKind.RENTAL_REOPERATION, None)
+    assert (refused.send_started_at, refused.send_attempted) == (None, False)
+    assert refused.reserved_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
+    assert refused.evidence == {"source": "link_command", "reason": "USE_NOT_FOUND"}
+    assert store.execution("req-reop") == refused
+    count = conn.execute("SELECT COUNT(*) AS n FROM node_command WHERE internal_request_id = 'req-reop'").fetchone()
+    assert count["n"] == 1
+    audits = [
+        (row["command_id"], json.loads(row["payload_json"])) for row in conn.execute(
+            "SELECT command_id, payload_json FROM audit_log WHERE internal_request_id = 'req-reop'"
+        )
+    ]
+    if approved:
+        # 이번 요청의 사용분만 반환하고, 기존 대여의 사용분은 그대로다.
+        states = {
+            row["internal_request_id"]: row["state"]
+            for row in conn.execute("SELECT internal_request_id, state FROM approval_usage")
+        }
+        assert states == {"req-initial": "consumed", "req-reop": "released"}
+        usage = conn.execute("SELECT usage_id FROM approval_usage WHERE internal_request_id = 'req-reop'").fetchone()
+        assert refused.usage_id == usage["usage_id"]
+        assert audits == [(refused.command_id, {
+            "event": "cancel_not_sent", "reason": "USE_NOT_FOUND",
+            "evidence": {"source": "link_command", "cause": "rental_closed"},
+        })]
+    else:
+        assert conn.execute("SELECT COUNT(*) AS n FROM approval_usage").fetchone()["n"] == 0
+        assert refused.usage_id is None
+        assert audits == []
+    # 닫는 중이거나 닫힌 대여와 기기는 이 거부가 바꾸지 않는다.
+    session_state, device_state = ("CLOSED", "AVAILABLE") if finished else ("CLOSING", "CLOSING")
+    assert conn.execute("SELECT state FROM use_session WHERE use_id = 'use1'").fetchone()["state"] == session_state
+    assert conn.execute("SELECT device_state FROM node WHERE node_id = 'node1'").fetchone()["device_state"] == device_state
+
+    changes = conn.total_changes
+    again = store.link_command("req-reop", "node1", Action.OPEN)
+
+    # 같은 요청의 재호출은 그 명령을 돌려준다. 쓰는 것이 없다.
+    assert again.outcome == StoreOutcome.ALREADY_APPLIED
+    assert again.command == refused
+    assert conn.total_changes == changes
 
 
 def test_FR19_cancel_not_sent_idempotent(store, conn):

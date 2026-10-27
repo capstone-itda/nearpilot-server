@@ -2,7 +2,7 @@
 
 - 담당: JM-220 (상태 관리)
 - 요구사항: FR-06, FR-07, FR-18, FR-19, NFR-03, NFR-04
-- 따르는 결정: #15, #16, #17, #19, #35, #38, #78, #79, #80, #81, #82, #86
+- 따르는 결정: #15, #16, #17, #19, #35, #38, #78, #79, #80, #81, #82, #86, 2026-10-27 결정 3 (재조작과 반납의 경합)
 
 ## 1. 왜
 
@@ -70,6 +70,7 @@ sequenceDiagram
 |---|---|---|
 | `begin_send()`의 `COMMAND_IN_PROGRESS` | `COMMAND_IN_PROGRESS` | 방문자 요청은 `pending`을 유지한다. 서버 내부 요청은 `cancel_not_sent(expected=PENDING)` |
 | `begin_send()`의 `STATE_CONFLICT` | `DEVICE_BUSY` | 위와 같다 |
+| 재조작할 대여가 연결 전에 반납으로 닫혔다 (`link_command()`의 `STATE_CONFLICT`) | `USE_NOT_FOUND` | DB가 연결 거부와 함께 사용분을 반환한다. 다시 연결하지 않는다 |
 | 재시작 복원 미완료 (`can_execute()`가 `False`) | `TARGET_UNAVAILABLE` | 방문자 요청은 `pending`을 유지한다. 서버 내부 요청은 명령 연결 뒤이면 취소한다 |
 | 기기의 현재 연결 ID 없음 | `NODE_NOT_CONNECTED` | `cancel_not_sent(expected=PENDING, NODE_NOT_CONNECTED)` |
 | 예약 대기 제한 만료 | `RESERVATION_EXPIRED` | `cancel_not_sent(expected=PENDING, RESERVATION_EXPIRED)` |
@@ -161,6 +162,8 @@ sequenceDiagram
 | 다른 명령이 같은 기기에서 진행 중이다 | `begin_send()`가 `COMMAND_IN_PROGRESS`다. 전송하지 않는다. `reason`은 `COMMAND_IN_PROGRESS`다 | `test_FR19_begin_conflict_blocks_send` |
 | 반납이 시작되어 기기가 `CLOSING`이다 | `begin_send()`가 `STATE_CONFLICT`다. 전송하지 않는다. `reason`은 `DEVICE_BUSY`다 | `test_FR19_begin_conflict_blocks_send` |
 | 재시작 복원을 마치지 않은 기기다 | 전송하지 않는다. `pending`을 유지하고 `reason`은 `TARGET_UNAVAILABLE`이다 | `test_FR19_restore_unconfirmed_blocks_send` |
+| 재조작 인계 전에 같은 사용자의 반납이 대여를 닫았다 | `link_command()`가 `CONFLICT`와 `NOT_SENT` 명령을 돌려준다. 전송하지 않는다. 결과는 `NOT_SENT`이고 `reason`은 `USE_NOT_FOUND`다. 예외를 내지 않는다. 재인계(재시작 뒤 포함)가 그 명령을 `ALREADY_APPLIED`로 받아도 같은 결과다 | `test_FR19_reoperation_link_after_close_is_use_not_found` |
+| 그 밖의 연결 충돌이다 (최초 대여·공용형의 `STATE_CONFLICT`, 재조작의 `CONTENT_CONFLICT`) | 지금처럼 `link_conflict`로 막는다. 사유를 정하지 않는다 | `test_FR19_other_link_conflicts_stay_link_conflict` |
 | 기기의 현재 연결 ID가 없다 | 전송하지 않는다. `NODE_NOT_CONNECTED`로 취소하고 `reason`에 담는다 | `test_FR06_no_session_cancelled_with_reason` |
 | IOT가 `NOT_SENT`를 반환한다 | `cancel_not_sent(expected=IN_PROGRESS, COMMAND_NOT_SENT)`를 부른다. `reason`은 `COMMAND_NOT_SENT`다 | `test_FR19_iot_not_sent_cancelled_with_reason` |
 | 서버 내부 요청을 인계한다 | 재검사 없이 내부 확인 뒤 `link_internal_request`로 저장하고 전송한다 | `test_FR20_internal_request_executes_without_recheck` |
@@ -223,6 +226,8 @@ sequenceDiagram
 | FR-06 | `test_FR06_no_session_cancelled_with_reason` | 현재 연결이 없으면 `NODE_NOT_CONNECTED`로 취소하고 사유를 반환한다 |
 | FR-19 | `test_FR19_iot_not_sent_cancelled_with_reason` | IOT 미전송 증명을 `COMMAND_NOT_SENT`로 취소한다 |
 | FR-19 | `test_FR19_begin_conflict_blocks_send` | 구동 경합과 상태 충돌의 사유를 `reason`으로 반환한다 |
+| FR-19 | `test_FR19_reoperation_link_after_close_is_use_not_found` | 반납과 겹친 재조작은 `USE_NOT_FOUND`로 끝난다 |
+| FR-19 | `test_FR19_other_link_conflicts_stay_link_conflict` | 반납 경합이 아닌 연결 충돌은 바뀌지 않는다 |
 | FR-20 | `test_FR20_internal_request_executes_without_recheck` | 서버 내부 요청을 재검사 없이 저장하고 전송한다 |
 | FR-07 | `test_FR07_late_success_keeps_fault` | 늦은 성공을 저장에 넘긴다. 기존 격리와 사용분 보류를 유지한다 |
 | FR-07 | `test_FR07_restart_same_event_does_not_recalculate_rental_due` | 재시작 뒤 같은 보고로 대여시간 기준을 다시 계산하지 않는다 |

@@ -223,6 +223,7 @@ api  ──▶  core  ──▶  db
 |---|---|
 | 같은 기기의 다른 구동 명령 | `COMMAND_IN_PROGRESS` |
 | `CLOSING`·`FAULT` 같은 상태 충돌 | `DEVICE_BUSY` |
+| 재조작할 대여가 반납으로 이미 닫힘 | `USE_NOT_FOUND` |
 | 재시작 복원 미완료 | `TARGET_UNAVAILABLE` |
 | 기기의 현재 연결 없음 | `NODE_NOT_CONNECTED` |
 | 예약 대기 제한 만료 | `RESERVATION_EXPIRED` |
@@ -386,7 +387,7 @@ CORE는 명령 결과와 논리적 종료를 판단한다. DB는 현재 상태�
 
 | 사건 또는 조회 | 입력 | 함께 반환하거나 반영할 내용 |
 |---|---|---|
-| 기존 실행 조회와 명령 연결 | 내부 요청 ID, 확정 기기와 동작 | 기존 명령과 진행 상태를 반환한다. 중복 인계로 새 명령을 만들지 않는다. |
+| 기존 실행 조회와 명령 연결 | 내부 요청 ID, 확정 기기와 동작 | 기존 명령과 진행 상태를 반환한다. 중복 인계로 새 명령을 만들지 않는다. 재조작할 대여가 반납으로 이미 닫혔으면 연결을 거부하고 `USE_NOT_FOUND` 근거의 미전송 명령을 남기며 이번 요청의 사용분을 반환한다 (2026-10-27 결정). |
 | 전송 시작 | 요청·명령 참조와 실행 전 준비 상태 | 취소 여부와 현재 상태를 검사한다. 같은 기기의 다른 미완료 구동 명령, 기기 상태, 점유 세션 상태도 같은 트랜잭션에서 검사한다. 시작 기록과 이번 호출의 시작 허용 여부를 반환한다. |
 | 확실한 미전송 취소 | 요청·예약·명령·사용분 참조, 사유와 근거 | 예약 정리, 사용분 반환, 명령 상태와 감사 테이블 기록을 함께 반영한다. |
 | 실행 성공 | 명령 ID와 제어 신호 출력 완료 결과 | 명령 성공, 대여형 기기와 세션 `ACTIVE`, 사용분 소진과 감사 기록을 함께 반영한다. |
@@ -432,7 +433,7 @@ CORE는 명령 결과와 논리적 종료를 판단한다. DB는 현재 상태�
 - 실행 결과는 명령 하나에 하나만 확정한다. 이미 다른 결과가 있으면 `conflict`다. 상충한 결과는 감사 기록에 남긴다.
 - 미전송 취소는 기대 상태를 함께 받는다. 재검사 실패와 예약 대기 제한은 `pending`에서만 취소한다. IOT가 미전송을 증명하면 `in_progress`에서도 취소한다.
 - 명령을 연결하지 않은 요청도 `cancel_not_sent(expected=pending)`로 취소한다. DB는 예약과 사용분만 정리하고 명령을 만들지 않는다 ([#81](https://github.com/capstone-itda/nearpilot-server/issues/81)).
-- 미전송 취소의 사유는 원인별로 구분한다. 재검사 거부는 재검사의 사유, 검사 오류는 `RECHECK_FAILED`, 예약 대기 제한은 `RESERVATION_EXPIRED`, 현재 연결 없음은 `NODE_NOT_CONNECTED`, IOT의 미전송 증명은 `COMMAND_NOT_SENT`다 ([#78](https://github.com/capstone-itda/nearpilot-server/issues/78)). 검사 오류용 사유를 정상 만료에 쓰지 않는다.
+- 미전송 취소의 사유는 원인별로 구분한다. 재검사 거부는 재검사의 사유, 검사 오류는 `RECHECK_FAILED`, 예약 대기 제한은 `RESERVATION_EXPIRED`, 현재 연결 없음은 `NODE_NOT_CONNECTED`, IOT의 미전송 증명은 `COMMAND_NOT_SENT`, 재조작할 대여가 반납으로 이미 닫힘은 `USE_NOT_FOUND`다 ([#78](https://github.com/capstone-itda/nearpilot-server/issues/78), 2026-10-27 결정). 검사 오류용 사유를 정상 만료에 쓰지 않는다.
 - 최초 대여의 확실한 미전송 취소는 대여형 기기를 `AVAILABLE`로, 점유 세션을 `cancelled` 사유의 `CLOSED`로 둔다.
 - 저장 오류는 `StoreNotApplied`와 `StoreOutcomeUnknown` 예외로 구분한다. `StoreOutcomeUnknown`이면 `execution`으로 다시 조회한다.
 - 최초 대여의 실행 성공 때 CORE는 인계받은 `Settings`로 `rental_due_at`을 계산해서 전달한다. 재조작의 성공은 `rental_due_at`을 갱신하지 않는다.

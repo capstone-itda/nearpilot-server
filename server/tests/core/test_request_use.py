@@ -215,6 +215,13 @@ def test_FR19_중단_사유별_호스트_판정(reason, verdict, host_reason):
     assert (d.verdict, d.reason, d.use_id, d.node_id) == (verdict, host_reason, None, "locker-1")
 
 
+def test_FR19_반납과_겹친_재조작은_USE_NOT_FOUND():
+    svc, *_ = build(result=stopped(ReasonCode.USE_NOT_FOUND))
+    d = svc.request_use(REQ)
+    assert (d.verdict, d.reason, d.use_id, d.node_id) == (
+        Verdict.DENY, ReasonCode.USE_NOT_FOUND, None, "locker-1")
+
+
 def test_FR18_재검사_판정이_있으면_먼저_쓴다():
     blocked = Decision("i1", "r1", Verdict.ASK, ReasonCode.MOVE_CLOSER, node_id="locker-1", p_max=0.4)
     svc, *_ = build(result=stopped(None, recheck=blocked))
