@@ -56,7 +56,7 @@ class ReasonCode(StrEnum):
     TARGET_UNAVAILABLE = "TARGET_UNAVAILABLE"  # 미신뢰·오프라인·FAULT
     # ③
     LOW_CONFIDENCE = "LOW_CONFIDENCE"  # ASK: 사후확률이 임계값 미만
-    MOVE_CLOSER = "MOVE_CLOSER"  # ASK: 명시적 지정이지만 근접 확률 부족
+    MOVE_CLOSER = "MOVE_CLOSER"  # ASK: 근접 지정·전역 할당의 실행 직전 대상 확률 부족
     # ④
     APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
     POLICY_DENIED = "POLICY_DENIED"

@@ -82,7 +82,7 @@ class DeviceQueryService:
 
         found: list[tuple[float, str, dict[str, Any]]] = []
         for capability in Capability:
-            threshold = threshold_for(s, capability, False)
+            threshold = threshold_for(s, capability)
             if threshold is None:
                 continue
             candidates = select_candidates(

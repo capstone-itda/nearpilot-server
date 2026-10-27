@@ -185,17 +185,24 @@ def test_NFR04_runtime_partial_startup_cleanup(world, monkeypatch):
 # ── 차단과 판정 ────────────────────────────────────────────────────
 
 
-def test_FR09_runtime_unset_threshold_stays_blocked(world):
+def test_FR17_runtime_explicit_without_threshold_executes_but_nearest_speaker_stays_blocked(world):
     w = world(settings={"threshold_explicit_locker": None}, node_ids=("locker-1", "speaker-1"),
-              posteriors={"locker-1": 0.99, "speaker-1": 0.99})
+              posteriors={"locker-1": 0.0, "speaker-1": 0.99})
     assert w.cfg.settings.threshold_speaker is None
     with running(w.runtime):
         w.ready("locker-1", "speaker-1")
         explicit = w.use(VISITOR_A, "locker-1")
         speaker = w.use(VISITOR_A, "nearest:speaker", "r2", Action.ON)
-        assert (explicit.verdict, explicit.reason) == (Verdict.DENY, ReasonCode.INVALID_INPUT)
+        assert (explicit.verdict, explicit.reason) == (Verdict.OK, ReasonCode.OK)
+        assert explicit.p_max is None
         assert speaker.verdict is Verdict.DENY and speaker.use_id is None
-        assert w.broker.commands() == [] and w.commands() == []
+        assert [c["node_id"] for c in w.broker.commands()] == ["locker-1"]
+        assert len(w.commands()) == 1
+        repeated = w.use(VISITOR_A, "locker-1")
+        assert repeated == explicit and len(w.broker.commands()) == 1
+        reoperation = w.use(VISITOR_A, "locker-1", "r3")
+        assert reoperation.verdict is Verdict.OK and reoperation.use_id == explicit.use_id
+        assert len(w.broker.commands()) == 2
 
 
 def test_NFR04_runtime_pending_node_stays_blocked(world):

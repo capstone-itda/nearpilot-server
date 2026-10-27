@@ -136,7 +136,7 @@ def ok_rental(make_world):
 
 def ask_proximity(make_world):
     w = make_world({"locker-1": 0.3})
-    return w, w.pipeline.decide(w.request(VISITOR_A))
+    return w, w.pipeline.decide(w.request(VISITOR_A, "nearest:locker"))
 
 
 def nearest_ok(make_world):
@@ -220,24 +220,24 @@ OPEN_STEPS = [(P, None), (P, "비콘 최근 수신"), (P, "후보 4대")]  # 사
 
 # 시나리오 → (만드는 함수, 기대하는 일곱 칸의 (결과, 상세 문구))
 SCENARIOS = {
-    "OK": (ok_rental, [*OPEN_STEPS, (P, "근접 통과 0.97"), (P, "정책 통과"), (P, "비어 있음"),
+    "OK": (ok_rental, [*OPEN_STEPS, (K, None), (P, "정책 통과"), (P, "비어 있음"),
                        (P, "다른 점유 없음")]),
     "ASK ③": (ask_proximity, [*OPEN_STEPS, (S, "근접 부족 0.30"), (K, None), (K, None), (K, None)]),
     "nearest OK": (nearest_ok, [*OPEN_STEPS, (P, "근접 통과 0.90"), (P, "정책 통과"), (P, "비어 있음"),
                                 (P, "다른 점유 없음")]),
     "nearest ASK ③": (nearest_ask, [*OPEN_STEPS, (S, "근접 부족 0.30"), (K, None), (K, None), (K, None)]),
-    "BUSY ⑤": (busy_device, [*OPEN_STEPS, (P, "근접 통과 0.97"), (P, "정책 통과"), (S, "다른 사람이 점유 중"),
+    "BUSY ⑤": (busy_device, [*OPEN_STEPS, (K, None), (P, "정책 통과"), (S, "다른 사람이 점유 중"),
                              (K, None)]),
-    "USER_BUSY ⑥": (busy_user, [*OPEN_STEPS, (P, "근접 통과 0.50"), (P, "정책 통과"), (P, "비어 있음"),
+    "USER_BUSY ⑥": (busy_user, [*OPEN_STEPS, (K, None), (P, "정책 통과"), (P, "비어 있음"),
                                 (S, "이미 다른 기기를 쓰는 중")]),
-    "공용 OK": (ok_shared, [(P, None), (P, "비콘 최근 수신"), (P, "후보 1대"), (P, "근접 통과 0.97"),
+    "공용 OK": (ok_shared, [(P, None), (P, "비콘 최근 수신"), (P, "후보 1대"), (K, None),
                             (P, "정책 통과"), (K, None), (K, None)]),
     "⓪ 한도 초과": (capacity, [(S, "서버가 바쁨"), (K, None), (K, None), (K, None), (K, None), (K, None),
                            (K, None)]),
     "① 비콘 없음": (deny_beacon, [(P, None), (S, "활성 비콘 없음"), (K, None), (K, None), (K, None), (K, None),
                               (K, None)]),
-    "④ 승인 필요": (need_approval, [*OPEN_STEPS, (P, "근접 통과 0.97"), (S, "승인 필요"), (K, None), (K, None)]),
-    "④ 승인 소진": (approval_exhausted, [*OPEN_STEPS, (P, "근접 통과 0.97"), (S, "사용 횟수를 다 씀"), (K, None),
+    "④ 승인 필요": (need_approval, [*OPEN_STEPS, (K, None), (S, "승인 필요"), (K, None), (K, None)]),
+    "④ 승인 소진": (approval_exhausted, [*OPEN_STEPS, (K, None), (S, "사용 횟수를 다 씀"), (K, None),
                                      (K, None)]),
     "any: OK": (any_ok, [*OPEN_STEPS, (P, "근접 통과 0.50"), (P, "정책 통과"), (P, "비어 있음"),
                          (P, "다른 점유 없음")]),
@@ -314,7 +314,7 @@ def test_FR12A_오류로_끝난_요청은_닿은_마지막_단계에서_멈추�
         raise RuntimeError("일시 장애")
 
     w.prox.posterior = boom  # ③ 근접 추정이 실패한다
-    failed = w.pipeline.decide(w.request(VISITOR_A))
+    failed = w.pipeline.decide(w.request(VISITOR_A, "nearest:locker"))
     assert (failed.verdict, failed.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
     states = cells(w, failed.internal_request_id)
     assert [result for result, _ in states] == [P, P, S, K, K, K, K]  # 판정 행이 없어 닿은 ② 에서 멈춘 것으로 본다
@@ -324,10 +324,11 @@ def test_FR12A_오류로_끝난_요청은_닿은_마지막_단계에서_멈추�
     assert "일시 장애" not in audit_text(error, {})  # payload 의 repr(exc) 를 옮기지 않는다
 
     del w.prox.posterior
-    again = w.pipeline.decide(w.request(VISITOR_A))
+    again = w.pipeline.decide(w.request(VISITOR_A, "nearest:locker"))
     assert (again.verdict, again.internal_request_id) == (Verdict.OK, failed.internal_request_id)
     assert cells(w, again.internal_request_id) == [
-        (P, "서버 오류로 끝난 요청을 다시 판정"), *SCENARIOS["OK"][1][1:]]
+        (P, "서버 오류로 끝난 요청을 다시 판정"), *OPEN_STEPS[1:],
+        (P, "근접 통과 0.97"), *SCENARIOS["OK"][1][4:]]
 
 
 def test_FR12A_오류_뒤_다시_판정해_앞_단계에서_거부되면_거기서_멈춘다(make_world):
@@ -409,9 +410,9 @@ def test_FR12B_실제_명령_진행에_따라_이벤트가_앞에서부터_늘�
     stages.append(events_of(w, iid))  # 결과 저장
     for earlier, later in zip(stages, stages[1:]):
         assert later[: len(earlier)] == earlier
-    assert [len(events) for events in stages] == [10, 10, 11, 13]
+    assert [len(events) for events in stages] == [8, 8, 9, 11]
     assert [e.type for e in stages[-1]] == [
-        "mcp_call", *["step"] * 7, "posterior", "verdict", "command", "exec_result", "mcp_result"]
+        "mcp_call", *["step"] * 6, "verdict", "command", "exec_result", "mcp_result"]
     req, audits, _ = read(w, iid)
     commands = w.reads.commands_of([iid])
     assert outcome(req, commands) == ("제어 신호 출력 완료", None)

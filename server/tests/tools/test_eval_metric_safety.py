@@ -1111,7 +1111,14 @@ def test_NFR04_metric6_runs_on_harness(ascii_tmp_path, mosquitto):
     assert attempts["explicit_release"]["released"] is True  # 반납이 되는 경우를 기준으로 본다
     for scenario in FAULTS:
         assert attempts[scenario]["recovered"] is True
-        assert attempts[scenario]["trace"][-3:] == ["방문자 복구 승인 403", "준비 전 소유자 복구 승인 409", "소유자 복구 승인 200 completed"]
+        trace = attempts[scenario]["trace"]
+        assert "방문자 복구 승인 403" in trace
+        assert trace[-1] == "소유자 복구 승인 200 completed"
+        # 실제 브로커에서는 준비 조회 전에 idle 보고가 도착할 수도 있다.
+        early = [entry for entry in trace if entry.startswith("준비 전 소유자 복구 승인")]
+        assert early in ([], ["준비 전 소유자 복구 승인 409"])
+        if early:
+            assert trace.index("방문자 복구 승인 403") < trace.index(early[0]) < len(trace) - 1
     assert "release_use visitor-2 200 DENY/USE_NOT_FOUND" in attempts["foreign_release"]["trace"]
     # 늦게 답한 대여는 성공으로 끝났고, 명령이 처리 중이던 때의 반납은 받아들여지지 않았다 (점유는 그때 RESERVED였다)
     pending = attempts["pending_command_release"]

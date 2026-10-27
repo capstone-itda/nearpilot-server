@@ -88,7 +88,7 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 수집 회차 | 같은 비콘의 관측을 한 라벨과 수집 구간으로 묶은 기록. 학습·검증·시험 분할의 단위다 | `collection_run`, `collection_id` | |
 | 수집 라벨 | 수집 회차에서 관측한 위치. 기기 1~7 앞 또는 `none`이다 | `collection_run.label` | |
 | 후보 밖 상태 | 전체 상태 중 ②의 후보 기기 앞이 아닌 상태 | | |
-| 근접 임계값 | 판정이 ③에서 사후확률과 비교하는 설정 값. 명시적 지정 요청에는 별도 값을 쓴다 | `threshold_locker`, `threshold_light`, `threshold_speaker`, `threshold_explicit_locker`, `threshold_explicit_light`, `threshold_explicit_speaker` | |
+| 근접 임계값 | 판정이 근접 지정과 허용 후보 중 배정의 ③에서 사후확률과 비교하는 설정 값. 명시적 지정 요청에는 쓰지 않는다 | `threshold_locker`, `threshold_light`, `threshold_speaker` | |
 | 내부 요청 ID | 서버가 외부 요청 ID에 연결하는 전역 고유 ID | `internal_request_id` | |
 | 명령 ID | 서버가 물리 명령마다 발급하는 고유 ID | `command_id` | |
 | 정규화 입력 | ⓪이 같은 요청인지 대조하는 입력. 대상 지정, 동작, 원 요청 연결 ID로 구성한다 | `input_digest` | |

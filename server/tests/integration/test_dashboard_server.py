@@ -56,7 +56,7 @@ DASHBOARD_API = DashboardSettings(queue_max_events=1000, batch_max_events=50, au
 WEAK_RSSI_DBM = -80.0
 # 계정 이름. 조회와 이벤트에 이름이 새는지 이름으로 찾도록 눈에 띄는 값을 쓴다
 ACCOUNT_NAMES = {OWNER: "acct-name-owner", VISITOR_A: "acct-name-a", VISITOR_B: "acct-name-b"}
-REQUEST_EVENTS = ["mcp_call", *["step"] * 7, "posterior", "verdict", "command", "exec_result", "mcp_result"]
+REQUEST_EVENTS = ["mcp_call", *["step"] * 6, "verdict", "command", "exec_result", "mcp_result"]
 
 
 # ── 서버와 스트림 ────────────────────────────────────────────────────
@@ -318,11 +318,12 @@ def check_rest(flow: Flow) -> None:
     call = next(e for e in of(flow.stream.events, flow.rid("open")) if e["type"] == "mcp_call")
     assert opened["personId"] == call["personId"]
 
-    # 요청 한 건: 일곱 단계가 모두 지났고 실행 결과와 응답 시각이 있다
+    # 요청 한 건: 명시 지정은 ③을 생략하고 실행 결과와 응답 시각을 남긴다.
     request = flow.body("request")
     assert (request["id"], request["tool"], request["verdict"], request["reason"]) == (
         flow.rid("open"), "request_use", "OK", "OK")
-    assert [step["result"] for step in request["steps"]] == ["pass"] * 7
+    assert [step["result"] for step in request["steps"]] == [*["pass"] * 3, "skip", *["pass"] * 3]
+    assert "posteriors" not in request and "threshold" not in request
     assert request["execution"] == "succeeded" and request["respondedAt"] and request["personId"] == call["personId"]
 
     # 신뢰도: 서버를 시작한 뒤의 판정 둘. 평가 리포트 폴더가 없으니 evaluation 은 없다

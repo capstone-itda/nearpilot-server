@@ -20,7 +20,7 @@ class Settings:
     threshold_light: float = 0.75
     # 스피커 수치는 미결이다. None 은 미설정이며 실행을 허가하지 않는다 (#61).
     threshold_speaker: float | None = None
-    # 명시 지정 수치는 미결이다. None 은 미설정이며 실행을 허가하지 않는다 (FR-17)。
+    # 이전 설정과 저장된 스냅샷을 읽기 위한 호환 필드다. 명시 지정 판정에는 쓰지 않는다 (FR-17).
     threshold_explicit_locker: float | None = None
     threshold_explicit_light: float | None = None
     threshold_explicit_speaker: float | None = None

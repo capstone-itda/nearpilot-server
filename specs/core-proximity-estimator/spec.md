@@ -67,7 +67,7 @@
 | (#88 결정 뒤) | 서버 시작 때 장소별로 어느 모델 버전을 읽을지 고르는 조립 코드 | #88 |
 | `feat/core-proximity-data-collection` | 수집 회차와 라벨 기록, "앞"의 거리 기준 | FR-16 |
 | `feat/core-proximity-model-fit` | 보정 방법(우도 온도)과 수집 회차로 모델 파일을 만드는 적합 함수 (`specs/core-proximity-model-fit/spec.md`) | FR-16 |
-| `feat/core-proximity-calibration` | 실데이터 적합, 명시 지정 임계값 실험, 운영 모델 파일 | FR-16, FR-17, 지표 8 |
+| `feat/core-proximity-calibration` | 실데이터 적합, 운영 임계값 실험, 운영 모델 파일 | FR-16, FR-17, 지표 8 |
 
 - 임계값 비교와 대상 선택 — 판정의 몫이다 (#39).
 - 운영용 모델 파일 — 실데이터가 없다. 이 작업은 테스트용 합성 모델 파일만 만든다.
@@ -98,7 +98,7 @@
 
 ## 6. 결정
 
-- 관측이 없는 후보의 값은 처음 분포의 값이다 — 판정 spec 7절의 질문에 대한 답이다. 판정은 임계값과 비교해서 `ASK`를 낸다. 빈 `posteriors`는 명시 지정 요청에서 `posteriors[지정 대상]`이 없고, 0은 감사 기록에서 "그 기기 앞이 아님"으로 읽힌다. 명시 지정 임계값은 처음 분포의 값보다 높아야 한다 (`feat/core-proximity-calibration`에서 확인).
+- 관측이 없는 후보의 값은 처음 분포의 값이다 — 판정 spec 7절의 질문에 대한 답이다. 판정은 근접 지정과 전역 할당에서 임계값과 비교한다. 명시 지정은 근접 추정을 호출하지 않는다. 0은 감사 기록에서 "그 기기 앞이 아님"으로 읽힌다.
 - 모델 파일에 없는 `trusted` 기기가 있으면 예외를 던진다 — 그 기기를 빼고 계산하면 그 기기 앞의 확률이 옆 후보로 옮겨 가서 오선택이 생길 수 있다. 예외는 판정이 거부로 처리하고 감사 기록에 남긴다.
 - 예외는 세 가지다 — 입력 관계가 맞지 않으면 `ProximityInputError`(`ValueError`), 장소의 모델이 없거나 `trusted` 기기가 모델에 없으면 `ModelMismatchError`(`LookupError`), 모델 파일이 잘못됐으면 `ModelFileError`(`ValueError`). 판정은 어느 것이든 예상하지 못한 예외로 거부한다.
 - 모델 파일의 경로는 `{모델 루트}/{place_id}/{model_version}.json`이고 형식은 JSON이다 — 표준 라이브러리로 읽고 diff로 검토할 수 있다. 모델 루트는 생성자 인자로 받는다. 같은 버전의 파일을 덮어쓰지 않는다 (#40).

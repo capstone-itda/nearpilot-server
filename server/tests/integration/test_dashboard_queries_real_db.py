@@ -105,7 +105,7 @@ def test_FR12A_실제_흐름의_이력과_요청_한_건(world):
     } == {
         "ok": (Verdict.OK, "제어 신호 출력 완료", None),
         "busy": (Verdict.BUSY, "실행 안 함", ReasonCode.DEVICE_BUSY),
-        "ask": (Verdict.ASK, "다시 질문", ReasonCode.MOVE_CLOSER),
+        "ask": (Verdict.ASK, "다시 질문", ReasonCode.LOW_CONFIDENCE),
         "fault": (Verdict.OK, "결과 불명 → 고장 격리", ReasonCode.EXEC_UNKNOWN),  # 판정은 OK 였고 실행이 불명이었다
         "light": (Verdict.OK, "제어 신호 출력 완료", None),
     }
@@ -128,7 +128,7 @@ def test_FR12A_실제_흐름의_이력과_요청_한_건(world):
     ok = service.request(ids["ok"])
     assert (ok["posteriors"], ok["threshold"], ok["nodeId"]) == ({"locker-1": 0.97}, 0.5, "locker-1")
     assert service.request(ids["busy"])["reason"] is ReasonCode.DEVICE_BUSY
-    assert service.request(ids["ask"])["reason"] is ReasonCode.MOVE_CLOSER
+    assert service.request(ids["ask"])["reason"] is ReasonCode.LOW_CONFIDENCE
     assert service.request(ids["access"]) is None  # 접근 신청은 request_use 가 아니다
     assert service.request("없는 요청") is None
 

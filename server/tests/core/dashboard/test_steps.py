@@ -157,6 +157,21 @@ def test_FR12A_감사_행_순서와_상관없이_같은_단계를_만든다():
         request_steps(req, OK_RENTAL, Occupancy.RENTAL, NAMES)
 
 
+@pytest.mark.parametrize("verdict,reason", [
+    (Verdict.OK, ReasonCode.OK),
+    (Verdict.DENY, ReasonCode.POLICY_DENIED),
+])
+def test_FR12A_FR17_명시_지정의_근접_생략은_skip이고_확률이_없다(verdict, reason):
+    rows = trail(BEACON, CANDIDATE,
+                 (Step.PROXIMITY, {"skipped": True, "reason": "explicit_target", "node_id": "locker-1"}),
+                 policy(verdict.value, reason.value),
+                 decided(Step.POLICY, verdict.value, reason.value))
+    states = request_steps(request(verdict, reason), rows, Occupancy.RENTAL, NAMES)
+    assert states[3].result == "skip"
+    assert states[4].result == ("pass" if verdict is Verdict.OK else "stop")
+    assert proximity(rows) is None
+
+
 def test_FR12A_단계의_상세와_시각은_그_단계의_감사_행에서_온다():
     states = request_steps(request(Verdict.OK, ReasonCode.OK), OK_RENTAL, Occupancy.RENTAL, NAMES)
     assert [(s.detail, s.at) for s in states] == [

@@ -249,10 +249,11 @@ def test_FR18_같은_입력은_같은_판정을_반환한다():
 # ── 첫 실패에서 멈춘다 ──────────────────────────────────────────────
 
 
-def test_FR18_비콘이_없으면_거부하고_뒤_단계를_실행하지_않는다():
+@pytest.mark.parametrize("target", ["nearest:locker", "locker-1"])
+def test_FR18_비콘이_없으면_거부하고_뒤_단계를_실행하지_않는다(target):
     pipe, repo, prox, pol, audit = build()
     repo.frames = []
-    d = pipe.decide(request())
+    d = pipe.decide(request(target))
     assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.BEACON_NOT_SEEN)
     assert "nodes" not in repo.calls and prox.calls == [] and pol.calls == []
 
@@ -316,13 +317,13 @@ def test_FR18_임계값은_설정에서_받는다():
     assert pipe.decide(request()).reason is ReasonCode.LOW_CONFIDENCE
 
 
-def test_FR18_명시_지정도_전체_후보로_근접을_계산하고_확률_미만이면_MOVE_CLOSER():
+def test_FR17_명시_지정은_다른_기기의_확률이_높아도_지정_기기를_검사한다():
     pipe, repo, prox, pol, audit = build({"locker-1": 0.4, "locker-2": 0.6})
     repo.nodes_list = [node("locker-1"), node("locker-2")]
     d = pipe.decide(request("locker-1"))
-    assert prox.calls == [["locker-1", "locker-2"]]
-    assert (d.verdict, d.reason, d.node_id) == (Verdict.ASK, ReasonCode.MOVE_CLOSER, "locker-1")
-    assert pol.calls == []
+    assert prox.calls == []
+    assert (d.verdict, d.reason, d.node_id, d.p_max) == (Verdict.OK, ReasonCode.OK, "locker-1", None)
+    assert pol.calls == ["locker-1"]
 
 
 def test_FR18_정책은_확정한_대상만_검사한다():
@@ -337,9 +338,10 @@ def test_FR18_정책은_확정한_대상만_검사한다():
     (Verdict.NEED_APPROVAL, ReasonCode.ACTION_NOT_ALLOWED),
     (Verdict.DENY, ReasonCode.POLICY_DENIED),
 ])
-def test_FR18_정책_결과를_그대로_판정에_반영한다(verdict, reason):
+@pytest.mark.parametrize("target", ["nearest:locker", "locker-1"])
+def test_FR18_정책_결과를_그대로_판정에_반영한다(verdict, reason, target):
     pipe, repo, prox, pol, audit = build(policy=FakePolicy(PolicyCheckResult(verdict, reason, 2)))
-    d = pipe.decide(request())
+    d = pipe.decide(request(target))
     assert (d.verdict, d.reason) == (verdict, reason)
     assert repo.reserved == []
 
@@ -581,19 +583,24 @@ def test_FR18_비콘을_본_장소가_하나로_정해지지_않으면_INTERNAL_
 # ── 임계값 (#39, #61) ───────────────────────────────────────────────
 
 
-def test_FR18_명시_지정은_별도_임계값을_쓴다():
+def test_FR17_명시_지정은_이전_임계값을_쓰지_않고_근접_지정은_검사한다():
     settings = Settings(threshold_locker=0.95, threshold_explicit_locker=0.6)
-    pipe, *_ = build({"locker-1": 0.7}, settings=settings)
+    pipe, *_ = build({"locker-1": 0.0}, settings=settings)
     assert pipe.decide(request("locker-1")).verdict is Verdict.OK
     pipe, *_ = build({"locker-1": 0.7}, settings=settings)
     assert pipe.decide(request("nearest:locker")).reason is ReasonCode.LOW_CONFIDENCE
 
 
-def test_FR18_명시_지정_임계값이_없으면_INVALID_INPUT이고_근접을_부르지_않는다():
+def test_FR17_명시_지정은_임계값이_없어도_근접을_부르지_않고_허가한다():
     pipe, repo, prox, pol, audit = build(settings=Settings())
     d = pipe.decide(request("locker-1"))
-    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INVALID_INPUT)
-    assert prox.calls == [] and pol.calls == [] and repo.reserved == []
+    assert (d.verdict, d.reason, d.p_max) == (Verdict.OK, ReasonCode.OK, None)
+    assert prox.calls == [] and pol.calls == ["locker-1"] and len(repo.reserved) == 1
+    record = repo.records[-1]
+    assert record.model_version is None and record.calib_version is None
+    assert record.posteriors == {} and record.window_start is None and record.window_end is None
+    skipped = next(e for e in audit.events if e.step is Step.PROXIMITY)
+    assert skipped.payload == {"skipped": True, "reason": "explicit_target", "node_id": "locker-1"}
 
 
 def test_FR18_스피커_임계값이_없으면_INVALID_INPUT():
@@ -603,6 +610,48 @@ def test_FR18_스피커_임계값이_없으면_INVALID_INPUT():
     d = pipe.decide(request("nearest:speaker", action=Action.ON))
     assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INVALID_INPUT)
     assert prox.calls == []
+
+
+@pytest.mark.parametrize("outcome", [ReserveOutcome.RESERVED, ReserveOutcome.REOPERATING])
+def test_FR17_명시_지정의_최초_사용과_재조작은_근접_추정_없이_인계한다(outcome):
+    pipe, repo, prox, pol, audit = build(settings=Settings())
+    repo.reserve_outcome = outcome
+    prox.posterior = lambda *a, **kw: pytest.fail("명시 지정에서 근접 추정을 호출했다")
+    d, context = pipe.decide_for_execution(request("locker-1"))
+    expected = (ExecutionKind.RENTAL_INITIAL if outcome is ReserveOutcome.RESERVED
+                else ExecutionKind.RENTAL_REOPERATION)
+    assert d.verdict is Verdict.OK and context.execution_kind is expected
+    assert d.p_max is None and pol.calls == ["locker-1"]
+
+
+def test_FR15_명시_지정은_다른_장소의_비콘으로_사용하지_못한다():
+    pipe, repo, prox, pol, audit = build(settings=Settings())
+    repo.nodes_list = [node(), node("locker-2", place_id="other")]
+    d = pipe.decide(request("locker-2"))  # 비콘은 locker-1만 봤다.
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE)
+    assert prox.calls == [] and pol.calls == [] and repo.reserved == []
+
+
+@pytest.mark.parametrize("outcome,reason", [
+    (ReserveOutcome.DEVICE_BUSY, ReasonCode.DEVICE_BUSY),
+    (ReserveOutcome.USER_BUSY, ReasonCode.USER_BUSY),
+])
+def test_FR19_명시_지정도_점유_충돌을_거부한다(outcome, reason):
+    pipe, repo, prox, pol, audit = build(settings=Settings())
+    repo.reserve_outcome = outcome
+    d = pipe.decide(request("locker-1"))
+    assert (d.verdict, d.reason, d.p_max) == (Verdict.BUSY, reason, None)
+    assert prox.calls == [] and pol.calls == ["locker-1"]
+
+
+def test_FR17_스피커_명시_지정은_일반_임계값이_없어도_정책을_검사한다():
+    pipe, repo, prox, pol, audit = build(settings=Settings())
+    repo.nodes_list = [node("speaker-1", Occupancy.SHARED, Capability.SPEAKER)]
+    repo.frames = [frame("speaker-1")]
+    repo.reserve_use_id = None
+    d = pipe.decide(request("speaker-1", action=Action.ON))
+    assert (d.verdict, d.node_id, d.p_max) == (Verdict.OK, "speaker-1", None)
+    assert prox.calls == [] and pol.calls == ["speaker-1"]
 
 
 # ── 재조작과 실행 인계 (#35, #16) ────────────────────────────────────

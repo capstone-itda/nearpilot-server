@@ -46,7 +46,8 @@ def request_steps(
 ) -> list[StepState]:
     """⓪~⑥ 일곱 칸. 판정이 멈춘 단계는 stop, 그 앞은 pass, 뒤는 skip 이다.
 
-    판정이 OK 면 모든 단계가 pass 이고 공용형은 ⑤⑥이 skip 이다. 판정 중이면 감사 행이 닿은 단계까지 pass,
+    판정이 OK 면 모든 단계가 pass 이고 공용형은 ⑤⑥이 skip 이다. 명시 지정의 ③ 생략 행은 skip 이다.
+    판정 중이면 감사 행이 닿은 단계까지 pass,
     나머지는 pending 이다. occupancy 는 req.node_id 기기의 점유형이고 모르면 None 이다 (공용형 규칙을 쓰지 않는다).
     """
     rows, decision = judgment(audits)
@@ -62,6 +63,10 @@ def request_steps(
         # 멈춘 단계는 마지막 판정 행이 남은 단계다. 판정 행이 없으면(서버 오류, 정리된 감사) 닿은 단계에서 멈춘 것으로 본다
         stop = _INDEX[decision.step] if decision is not None else max(reached, 0)
         results = [_PASS if i < stop else _STOP if i == stop else _SKIP for i in range(count)]
+    if results[_INDEX[Step.PROXIMITY]] == _PASS and any(
+        a.step is Step.PROXIMITY and a.payload.get("skipped") is True for a in rows
+    ):
+        results[_INDEX[Step.PROXIMITY]] = _SKIP
     return [_state(step, result, req, rows, decision, names) for step, result in zip(_STEPS, results)]
 
 
