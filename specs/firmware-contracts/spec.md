@@ -190,6 +190,7 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
 | 세 기능이 시리얼·선택 GPIO 출력을 쓴다 | 출력 함수가 끝나면 출력 완료다. 출력 함수가 없으면 불명이다 | `test_NFR10_signal_output_completes` |
 | 사물함 서보 각도를 출력한다 | 각도를 0~180°로 자르고 펄스 폭과 PWM duty로 바꾼다 | `test_NFR10_servo_pulse_for_angle` |
 | 조명 원형 LED에 `on`·`off`가 온다 | `on`은 밝기만큼의 흰색, `off`는 꺼짐이다 | `test_NFR10_light_ring_color` |
+| 스피커에 DFPlayer 명령을 보낸다 | 볼륨, 정지, 폴더 반복 프레임과 체크섬이 DFPlayer 설명서의 예와 같다 | `test_NFR10_dfplayer_frames` |
 | 사물함에 `close`가 온다 | `open`과 같은 검사를 거쳐 허용한다. 조명·스피커의 `close`는 `UNSUPPORTED_ACTION`이다 | `test_FR06_capability_action_matrix` |
 | 점유 표시가 온다 | `AVAILABLE`은 파란색, `RESERVED`·`ACTIVE`·`CLOSING`·`FAULT`는 빨간색이다 | `test_FR19_occupancy_display_colors` |
 | 다른 기기, 다른 버전이나 모르는 상태의 점유 표시가 온다 | 무시하고 마지막 색을 유지한다 | `test_FR19_occupancy_display_ignores_invalid_messages` |
@@ -604,6 +605,15 @@ MQTT v2 실제 기기 시험 (2026-10-26~27, ESP32-WROOM-32E, COM6, 펌웨어 `5
   - 담당자가 `on`에서 링이 켜지고 `off`에서 꺼지는 것을 눈으로 확인했다. 관찰은 서버의 성공 판단에 쓰지 않는다 (architecture.md §5 MQTT 7절).
 - 서버 전체 `pytest`는 4,209개 통과, 23개 생략, 1개 예상 실패, 1개 실패다. 실패한 `tests/tools/test_eval_metric_safety.py::test_NFR04_metric6_runs_on_harness`는 전체 실행에서 두 번 연속 실패했다. 단독 실행과 `tests/tools` 실행에서는 통과했다. 이 작업은 서버 코드를 바꾸지 않았다.
 - 원본은 `server/var/node-lab-v2`의 `evidence.jsonl`, `provision.jsonl`, `ring-serial.log`다. Git에서 제외한다.
+
+### 2026-10-27 speaker-1 DFPlayer 출력 설정
+
+- 담당자가 UART2(TX GPIO17, RX GPIO16)의 DFPlayer, 볼륨 30, `01/` 폴더 반복, 재생 중 `on`의 재전송 생략을 골랐다. 제품 펌웨어에 `esp32dev-speaker-1` 빌드 환경을 더했다.
+- 담당자가 배선과 납땜을 마쳤다. 별도 하드웨어 확인 스케치 없이 제품 펌웨어로 실기 확인을 하기로 했다.
+- macOS에서 `pio run`으로 `esp32dev`, `esp32dev-light-1`, `esp32dev-locker-1`, `esp32dev-speaker-1`을 모두 컴파일했다. speaker-1은 RAM 57,644바이트, Flash 1,101,997바이트다. 우리 코드의 컴파일 경고는 없다. light-1 GPIO18 원형 LED 출력(#225) 위에서 다시 확인했다.
+- `pio test -e native`의 공통 테스트 45개가 통과했다. Apple clang 21로 실행했다.
+- 서버 전체 `pytest`는 4,225개 통과, 4개 생략, 1개 예상 실패다. 서버 코드는 바꾸지 않았다.
+- 이번 작업에서 업로드, 부팅 로그와 실제 재생은 확인하지 않았다.
 
 실제 기기는 다음 절차로 검증한다 (architecture.md §5 MQTT 7절).
 

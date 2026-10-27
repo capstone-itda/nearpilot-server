@@ -55,4 +55,27 @@ inline uint32_t servoDuty(unsigned pulseUs, unsigned frequencyHz, unsigned bits)
     return uint32_t(full * pulseUs * frequencyHz / 1000000ULL);
 }
 
+// DFPlayer Mini serial commands used by the speaker. Sent without an acknowledgement request.
+const uint8_t kDfplayerVolume = 0x06;
+const uint8_t kDfplayerStop = 0x16;
+const uint8_t kDfplayerLoopFolder = 0x17;
+const unsigned kDfplayerFrameBytes = 10;
+
+// One DFPlayer frame: start, version, length, command, no-ack, parameter, checksum, end.
+inline void dfplayerFrame(uint8_t command, uint16_t parameter, uint8_t frame[kDfplayerFrameBytes]) {
+    frame[0] = 0x7E;
+    frame[1] = 0xFF;
+    frame[2] = 0x06;
+    frame[3] = command;
+    frame[4] = 0x00;
+    frame[5] = uint8_t(parameter >> 8);
+    frame[6] = uint8_t(parameter);
+    uint16_t sum = 0;
+    for (unsigned i = 1; i <= 6; ++i) sum += frame[i];
+    uint16_t checksum = uint16_t(0 - sum);
+    frame[7] = uint8_t(checksum >> 8);
+    frame[8] = uint8_t(checksum);
+    frame[9] = 0xEF;
+}
+
 }  // namespace np
