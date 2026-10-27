@@ -104,10 +104,15 @@ class PolicyChecker(Protocol):
     정책 모드, 승인 범위, 정책 버전 비교 규칙은 이 함수 안에 둔다. 판정은 순서와 중단만 맡는다.
     ③ 에서 확정한 대상만 검사한다. 검사 결과로 다른 기기를 고르지 않는다 (FR-18).
     저장소를 바꾸지 않는다. 승인 사용분 예약은 ⑤⑥ 의 `reserve_if_free()` 가 한다.
+
+    `internal_request_id` 가 있으면 남은 횟수에서 그 요청의 승인 사용분을 뺀다. 자기 사용분은 이미
+    확보한 몫이라 새 사용으로 세지 않는다. 같은 요청의 재판정(#76)과 실행 직전 재검사가 넘긴다.
+    없으면 모든 사용분을 센다.
     """
 
     def check(
-        self, user_id: str, node_id: str, action: Action, now: datetime
+        self, user_id: str, node_id: str, action: Action, now: datetime,
+        *, internal_request_id: str | None = None,
     ) -> PolicyCheckResult: ...
 
 
@@ -182,8 +187,16 @@ class Repository(Protocol):
     def current_policy(self, node_id: str) -> PolicyRevision: ...
 
     def valid_approval(
-        self, user_id: str, node_id: str, action: Action, policy_version: int, now: datetime
-    ) -> Approval | None: ...
+        self, user_id: str, node_id: str, action: Action, policy_version: int, now: datetime,
+        *, internal_request_id: str | None = None,
+    ) -> Approval | None:
+        """시간상 유효한 승인 하나를 반환한다. 없으면 `None` 이다 (FR-14).
+
+        `Approval.remaining_uses` 는 허용 횟수에서 reserved·held·consumed 사용분을 뺀 값이다(무제한이면
+        `None`). `internal_request_id` 가 있으면 그 요청의 사용분은 세지 않는다 (#76).
+        `approvals_in_scope()` 와 `reserve_if_free()` 의 한도 검사는 바꾸지 않는다.
+        """
+        ...
 
     def approvals_in_scope(self, user_id: str, node_id: str) -> Sequence[ApprovalRecord]:
         """요청자·기기의 승인 이력을 모두 반환한다 (#60, FR-03, FR-14).

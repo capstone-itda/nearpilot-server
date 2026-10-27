@@ -137,10 +137,26 @@ class FakePolicy:
     def __init__(self, result=None):
         self.result = result or PolicyCheckResult(Verdict.OK, ReasonCode.OK, 1)
         self.calls = []
+        self.request_ids = []
 
-    def check(self, user_id, node_id, action, now):
+    def check(self, user_id, node_id, action, now, *, internal_request_id=None):
         self.calls.append(node_id)
+        self.request_ids.append(internal_request_id)
         return self.result
+
+
+class OwnUsagePolicy(FakePolicy):
+    """`own` 요청이 승인의 마지막 한 번을 확보해 뒀다. 그 요청의 ID를 받으면 사용분을 빼서 통과하고, 아니면 소진이다."""
+
+    def __init__(self, own):
+        super().__init__(PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED, 1))
+        self.own = own
+
+    def check(self, user_id, node_id, action, now, *, internal_request_id=None):
+        exhausted = super().check(user_id, node_id, action, now, internal_request_id=internal_request_id)
+        if internal_request_id == self.own:
+            return PolicyCheckResult(Verdict.OK, ReasonCode.OK, 1, approval_id="a1")
+        return exhausted
 
 
 class FakeReadiness:
@@ -321,6 +337,21 @@ def test_FR18_승인_ID를_점유_요청에_넘긴다():
     pipe, repo, *_ = build(policy=pol)
     pipe.decide(request())
     assert repo.reserved[0].approval_id == "a1"
+
+
+def test_FR14_재판정은_자기_사용분으로_소진되지_않는다():
+    # 오류로 거부한 요청을 같은 내부 요청으로 다시 판정한다. 이전 시도가 승인의 마지막 사용분을 확보해 뒀다 (#76)
+    pipe, repo, prox, pol, audit = build(policy=OwnUsagePolicy(own="i1"))
+    d = pipe.decide(request())
+    assert (d.verdict, d.reason) == (Verdict.OK, ReasonCode.OK)
+    assert pol.request_ids == ["i1"]
+    assert repo.reserved[0].approval_id == "a1"  # ⑤는 같은 승인으로 기존 사용분을 쓴다
+
+    # 다른 요청이 확보한 사용분은 그대로 세므로 소진으로 멈춘다
+    pipe, repo, *_ = build(policy=OwnUsagePolicy(own="other"))
+    d = pipe.decide(request())
+    assert (d.verdict, d.reason) == (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED)
+    assert repo.reserved == []
 
 
 @pytest.mark.parametrize("outcome,verdict,reason", [
@@ -720,8 +751,9 @@ class PerNodePolicy(FakePolicy):
         super().__init__()
         self.by_node = by_node or {}
 
-    def check(self, user_id, node_id, action, now):
+    def check(self, user_id, node_id, action, now, *, internal_request_id=None):
         self.calls.append(node_id)
+        self.request_ids.append(internal_request_id)
         return self.by_node.get(node_id, self.result)
 
 
@@ -812,6 +844,12 @@ def test_FR23_배정받은_기기를_예약하고_인계한다():
     assert (ctx.node_id, ctx.use_id, ctx.request.target.kind.value) == ("locker-1", "use-1", "any")
     allocation = [e.payload["allocation"] for e in audit.events if "allocation" in e.payload]
     assert allocation == [{"allowed": ("locker-2", "locker-1"), "assigned": "locker-1"}]
+
+
+def test_FR23_any_배정의_정책_검사도_내부_요청_ID를_넘긴다():
+    pipe, repo, prox, pol, audit, window = any_build(policy=PerNodePolicy())
+    pipe.decide(request(ANY))
+    assert pol.calls == ["locker-2", "locker-1"] and pol.request_ids == ["i1", "i1"]
 
 
 def test_FR23_예약에_정책의_승인_ID를_넘긴다():

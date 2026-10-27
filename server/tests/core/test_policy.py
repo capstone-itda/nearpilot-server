@@ -41,6 +41,7 @@ class FakePolicyRepository:
         self._approvals_in_scope_error = approvals_in_scope_error
         self.current_policy_calls: list[str] = []
         self.valid_approval_calls: list[tuple] = []
+        self.valid_approval_request_ids: list[str | None] = []
         self.approvals_in_scope_calls: list[tuple] = []
 
     def current_policy(self, node_id: str) -> PolicyRevision:
@@ -49,8 +50,9 @@ class FakePolicyRepository:
             raise LookupError(f"policy not found for {node_id}")
         return self._policy
 
-    def valid_approval(self, user_id, node_id, action, policy_version, now):
+    def valid_approval(self, user_id, node_id, action, policy_version, now, *, internal_request_id=None):
         self.valid_approval_calls.append((user_id, node_id, action, policy_version, now))
+        self.valid_approval_request_ids.append(internal_request_id)
         return self._approval
 
     def approvals_in_scope(self, user_id, node_id):
@@ -347,3 +349,14 @@ def test_FR14_check_uses_single_valid_approval():
     checker.check("u1", "node1", Action.OPEN, NOW)
 
     assert len(repo.valid_approval_calls) == 1
+
+
+def test_FR14_check_passes_internal_request_id():
+    """받은 요청 ID를 저장소에 그대로 넘긴다. 주지 않으면 None 이라 모든 사용분을 센다."""
+    repo = FakePolicyRepository(policy=_restricted_policy(), approval=_approval(remaining_uses=1))
+    checker = RepositoryPolicyChecker(repo)
+
+    checker.check("u1", "node1", Action.OPEN, NOW)
+    checker.check("u1", "node1", Action.OPEN, NOW, internal_request_id="req-1")
+
+    assert repo.valid_approval_request_ids == [None, "req-1"]

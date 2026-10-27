@@ -66,6 +66,28 @@ def test_FR14_remaining_uses_time_window_follows_max_uses(conn, repo, max_uses, 
     assert _remaining(conn, repo) == (after,) * 3
 
 
+@pytest.mark.parametrize("approval_mode, max_uses, holders, given, expected", [
+    ("one_time", None, ["A"], "A", 1),  # 자기 사용분은 세지 않는다
+    ("one_time", None, ["A"], None, 0),
+    ("one_time", None, ["A"], "B", 0),  # 다른 요청의 사용분은 센다
+    ("time_window", 2, ["A", "B"], "A", 1),
+    ("time_window", 2, ["A", "B"], "C", 0),
+])
+def test_FR14_valid_approval_excludes_own_request_usage(
+    conn, repo, approval_mode, max_uses, holders, given, expected
+):
+    _approved(conn, approval_mode, max_uses)
+    for n, internal_request_id in enumerate(holders):
+        insert_approval_usage(conn, f"usage{n}", "appr1", internal_request_id, state="reserved")
+
+    approval = repo.valid_approval("u1", "node1", Action.OPEN, 1, NOW, internal_request_id=given)
+
+    assert approval.remaining_uses == expected
+    # 승인 이력(사유 고르기)의 남은 횟수는 요청을 가리지 않고 센다
+    [record] = repo.approvals_in_scope("u1", "node1")
+    assert record.remaining_uses == 0
+
+
 def _shared_light(conn, approval_mode, max_uses):
     """승인된 승인(appr1)이 있는 공용형 조명과 요청 행 req1~req3 을 넣는다."""
     insert_user(conn)

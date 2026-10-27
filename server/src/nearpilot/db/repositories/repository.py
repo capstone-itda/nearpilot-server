@@ -185,7 +185,8 @@ class SqliteRepository:
         )
 
     def valid_approval(
-        self, user_id: str, node_id: str, action: Action, policy_version: int, now: datetime
+        self, user_id: str, node_id: str, action: Action, policy_version: int, now: datetime,
+        *, internal_request_id: str | None = None,
     ) -> Approval | None:
         row = self._conn.execute(
             "SELECT a.approval_id, a.node_id, a.requester_user_id, a.action, a.policy_id, "
@@ -209,7 +210,8 @@ class SqliteRepository:
             status=ApprovalStatus(row["status"]),
             valid_until=parse_iso(row["valid_until"]),
             remaining_uses=self._remaining_uses(
-                row["approval_id"], _use_limit(row["approval_mode"], row["max_uses"])),
+                row["approval_id"], _use_limit(row["approval_mode"], row["max_uses"]),
+                exclude_request_id=internal_request_id),
         )
 
     def approvals_in_scope(self, user_id: str, node_id: str) -> Sequence[ApprovalRecord]:
@@ -242,15 +244,19 @@ class SqliteRepository:
             for row in rows
         ]
 
-    def _remaining_uses(self, approval_id: str, use_limit: int | None) -> int | None:
+    def _remaining_uses(
+        self, approval_id: str, use_limit: int | None, exclude_request_id: str | None = None
+    ) -> int | None:
+        """`exclude_request_id` 가 있으면 그 요청의 사용분은 세지 않는다 (#76)."""
         if use_limit is None:
             return None
         used = self._conn.execute(
             "SELECT COUNT(*) AS c FROM approval_usage "
-            "WHERE approval_id = ? AND state IN (?, ?, ?)",
+            "WHERE approval_id = ? AND state IN (?, ?, ?) "
+            "AND (? IS NULL OR internal_request_id <> ?)",
             (
                 approval_id, ApprovalUsageState.RESERVED.value, ApprovalUsageState.HELD.value,
-                ApprovalUsageState.CONSUMED.value,
+                ApprovalUsageState.CONSUMED.value, exclude_request_id, exclude_request_id,
             ),
         ).fetchone()["c"]
         return max(use_limit - used, 0)

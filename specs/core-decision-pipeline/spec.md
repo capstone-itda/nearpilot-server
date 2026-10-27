@@ -13,8 +13,8 @@ spec 규칙
 # FR-18 결정론적 판정 파이프라인 (⓪~⑥)
 
 - 담당: eunji719 (판정)
-- 요구사항: FR-15, FR-18, FR-22
-- 따르는 결정: #15, #23, #24, #25, #26, #27, #33, #34, #35, #39, #42, #165
+- 요구사항: FR-14, FR-15, FR-18, FR-22
+- 따르는 결정: #15, #23, #24, #25, #26, #27, #33, #34, #35, #39, #42, #165, 2026-10-27 결정 4 (재판정은 자기 사용분을 세지 않는다)
 
 ## 1. 왜
 
@@ -114,6 +114,8 @@ spec 규칙
 | 두 요청이 같은 기기를 동시에 요청한다 | `reserve_if_free()` 결과를 따른다. 실패한 요청은 `BUSY`다 | `test_FR18_FR19_점유_실패는_reserve_if_free_결과를_따른다` |
 | 공용형 제한 기기를 요청한다 | `reserve_if_free()`를 호출한다. `use_id`는 `None`이고 `usage_id`는 사용분 ID다 | `test_FR18_공용형_승인_사용분_ID를_점유_요청에_넘기고_인계에_담는다` |
 | 공용형 `open` 기기를 승인 없이 요청한다 | `reserve_if_free()`를 호출한다. DB는 아무것도 쓰지 않고 `RESERVED`를 반환한다 | `test_FR18_FR19_공용형도_reserve_if_free를_호출하고_세션은_없다` |
+| 오류로 거부한 요청을 재판정하는데 이전 시도가 그 승인의 마지막 사용분을 확보해 두었다 | ④는 자기 사용분을 세지 않아 통과한다. ⑤는 같은 사용분을 쓴다. `APPROVAL_EXHAUSTED`가 아니다 | `test_FR14_재판정은_자기_사용분으로_소진되지_않는다` |
+| 실제 DB에서 `one_time` 승인 요청이 예약 뒤 오류로 끝나고 같은 요청으로 재전송된다 | `OK`로 판정한다. 사용분은 하나다 | `test_FR14_runtime_one_time_retry_after_internal_error_is_ok` (`tests/integration/`) |
 | 같은 `internal_request_id`에 다른 판정을 다시 저장한다 | DB가 충돌로 거부한다. decision은 기존 판정 기록을 덮어쓰지 않는다 | `test_FR22_판정_저장이_충돌하면_OK가_아니고_다시_저장하지_않는다` |
 | 실행 직전 재검사에서 자기 요청의 예약을 만난다 | 타인 점유로 보지 않는다 | `specs/core-recheck/spec.md` |
 | 실행 직전 재검사가 실패한다 | 상태 관리가 전송을 막고 `cancel_not_sent`로 이번 요청의 예약과 승인 사용분을 정리한다 | `specs/core-recheck/spec.md` (판정은 `recheck()`만 제공한다) |
@@ -176,6 +178,7 @@ spec 규칙
   - `ExecutionContext`는 이번 호출에서 새로 `OK`가 난 요청에만 만든다. 재전송에는 만들지 않는다. 같은 요청의 재인계는 상태 관리가 `internal_request_id`로 처리한다 (#16).
   - 실행 종류는 기기의 점유 방식과 `reserve_if_free()` 결과로 정한다. 공용형은 `SHARED`, 대여형은 `RESERVED`이면 `RENTAL_INITIAL`, `REOPERATING`이면 `RENTAL_REOPERATION`이다. 둘이 맞지 않으면(공용형에 세션이 돌아오는 등) 불변 조건 위반이다. `INTERNAL_ERROR`로 거부한다.
   - `execute()`는 이 작업이 부르지 않는다.
+- ④ 정책 검사는 `PolicyChecker.check(..., internal_request_id=내부 요청 ID)`로 부른다. 오류로 거부한 요청의 재판정(#76)이 이전 시도가 확보한 자기 사용분 때문에 `APPROVAL_EXHAUSTED`로 멈추지 않는다. ⑤의 `reserve_if_free()`는 같은 요청의 기존 사용분을 그대로 쓴다 (2026-10-27 팀 결정).
 - `save_decision()`이 충돌(`CONFLICT`)을 반환하면 `OK`가 아니라 `INTERNAL_ERROR`로 거부하고 다시 저장하지 않는다 — 기존 판정 기록을 덮어쓰지 않기 위해서다.
 
 ## 7. 가정
@@ -198,6 +201,7 @@ spec 규칙
 
 | 요구사항 | 테스트 | 확인하는 것 |
 |---|---|---|
+| FR-14 | `test_FR14_재판정은_자기_사용분으로_소진되지_않는다`, `test_FR14_runtime_one_time_retry_after_internal_error_is_ok` (`tests/integration/`) | 재판정의 ④가 자기 사용분을 세지 않는다 |
 | FR-18 | `test_FR18_단계를_0부터_순서대로_검사한다` | 단계를 ⓪부터 ⑥까지 순서대로 검사한다 |
 | FR-18 | `test_FR18_비콘이_없으면_거부하고_뒤_단계를_실행하지_않는다` 외 | 첫 실패 단계에서 멈추고 뒤 단계를 실행하지 않는다 |
 | FR-18 | `test_FR18_단계에서_예외가_나면_INTERNAL_ERROR로_거부한다` 외 | 예외, 누락, 알 수 없는 상태는 `OK`가 되지 않는다 |
