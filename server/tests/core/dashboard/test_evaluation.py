@@ -144,13 +144,18 @@ def test_FR12A_평가는_지표마다_가장_늦은_리포트를_쓴다(tmp_path
     assert [(metric["id"], metric["name"], metric["sample"]) for metric in result["metrics"]] == expected
 
 
-def test_FR12A_평가는_생성_시각이_같으면_파일_경로_순서로_정한다(tmp_path):
+def test_FR12A_평가는_생성_시각이_같으면_파일_경로_순서로_정한다(tmp_path, monkeypatch):
     stamp = "2026-10-20T01:00:00+00:00"
-    # 파일을 만든 순서(b → a)가 아니라 경로 순서(a < b)에서 앞서는 쪽이 이긴다
-    write_report(tmp_path / "b.csv", stamp, rows_of(("ece", 20)))
+    write_report(tmp_path / "b.csv", stamp, rows_of(("flicker", 20), ("ece", 21)))
     write_report(tmp_path / "a.csv", stamp, rows_of(("ece", 10)))
+    # 파일 시스템의 나열 순서(b → a)가 아니라 경로 순서(a < b)에서 앞서는 쪽을 더 늦은 리포트로 본다
+    glob = Path.glob
+    monkeypatch.setattr(Path, "glob", lambda self, pattern: iter(sorted(glob(self, pattern), reverse=True)))
 
-    assert [metric["sample"] for metric in evaluation_of(tmp_path)["metrics"]] == ["10"]
+    metrics = evaluation_of(tmp_path)["metrics"]
+
+    # 지표마다 합치므로 b 에만 있는 지표도 나온다
+    assert [(metric["name"], metric["sample"]) for metric in metrics] == [("보정 오차", "10"), ("흔들림", "20")]
 
 
 @pytest.mark.parametrize(
