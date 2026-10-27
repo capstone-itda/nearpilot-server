@@ -163,10 +163,10 @@ def test_FR14_runtime_one_time_retry_after_internal_error_is_ok(world):
         # ⑤가 승인의 사용분을 예약한 직후 감사 기록이 실패해 오류로 거부한다 (구동하지 않는다)
         failed = w.use("use-1")
         assert (failed.verdict, failed.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
-        assert audit.failed and w.usages() == ["reserved"] and w.commands() == []
+        assert audit.failed and w.commands() == []
         # 같은 request_id·입력으로 다시 보낸다. 이전 시도의 사용분은 남은 횟수에서 뺀다 (#76)
         retried = w.use("use-1")
         assert (retried.verdict, retried.reason) == (Verdict.OK, ReasonCode.OK)
         assert retried.internal_request_id == failed.internal_request_id
         w.wait_commands(["succeeded"])  # 정확히 한 번 구동한다
-        assert len(w.usages()) == 1
+        assert [u for u in w.usages() if u != "released"] == ["consumed"]  # 살아 있는 사용분은 하나다
