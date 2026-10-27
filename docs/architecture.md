@@ -247,7 +247,7 @@ api  ──▶  core  ──▶  db
 - ④ 정책 검사의 남은 횟수는 같은 요청의 사용분을 세지 않는다. 판정과 재검사는 `PolicyChecker.check`와 `Repository.valid_approval`에 내부 요청 ID를 넘긴다. 같은 요청의 재판정(#76)과 실행 직전 재검사가 자기 사용분 때문에 소진으로 막히지 않는다 (2026-10-27 팀 결정).
 - 승인의 횟수 한도는 `one_time`이면 1, `time_window`면 `max_uses`(NULL이면 무제한)다. 남은 횟수, 사용분 예약의 한도 검사, 대시보드의 남은 횟수가 같은 규칙을 쓴다 (2026-10-27 담당자 위임 결정).
 - 예약한 사용분의 소진, 보류, 반환은 `ExecutionStore`가 반영한다.
-- DB는 예약을 쓴 결과에 저장한 예약 시각 `reserved_at`을 담는다. 승인이 필요한 공용형 요청도 사용분 행을 쓰므로 `reserved_at`이 있다. 쓰기가 없는 결과는 `None`이다. 판정은 이 값을 `ExecutionContext.reserved_at`으로 그대로 넘긴다 ([#80](https://github.com/capstone-itda/nearpilot-server/issues/80)).
+- DB는 예약을 쓴 결과에 저장한 예약 시각 `reserved_at`을 담는다. 승인이 필요한 공용형 요청도 사용분 행을 쓰므로 `reserved_at`이 있다. 승인 없는 대여의 재조작(`REOPERATING`)은 쓰기가 없어도 대여형 실행이라 요청 접수 시각을 `reserved_at`으로 담는다. 그 밖의 쓰기가 없는 결과는 `None`이다. 판정은 이 값을 `ExecutionContext.reserved_at`으로 그대로 넘긴다 ([#80](https://github.com/capstone-itda/nearpilot-server/issues/80)).
 
 ### 승인 요청과 소유자 결정
 

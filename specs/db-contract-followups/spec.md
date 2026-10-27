@@ -39,7 +39,7 @@
 ## 3. 제약
 
 - `approvals_in_scope`는 요청자·기기의 승인 이력을 모두 반환한다. 시각·동작·정책 버전으로 거르지 않는다. 만료된 대기 신청도 `status`는 `PENDING`이다 (`interfaces.py`, #60).
-- `reserve_if_free`는 예약을 쓴 결과에 저장한 예약 시각을 담는다. 대여형은 `use_session.reserved_at`, 승인이 필요한 공용형은 `approval_usage.reserved_at`에 저장한다. 쓰기가 없는 결과(공용형 `open`, 거부)는 `None`이다 (#80, `architecture.md` §4 "예약과 승인 사용분").
+- `reserve_if_free`는 예약을 쓴 결과에 저장한 예약 시각을 담는다. 대여형은 `use_session.reserved_at`, 승인이 필요한 공용형은 `approval_usage.reserved_at`에 저장한다. 쓰기가 없는 결과(공용형 `open`, 거부)는 `None`이다. 승인 없는 대여의 재조작(`REOPERATING`)은 쓰기가 없어도 요청 접수 시각을 담는다. 실행이 대여형 요청의 예약 시각 없음을 `reservation_time_unconfirmed`로 막기 때문이다 (#80, `architecture.md` §4 "예약과 승인 사용분").
 - 같은 요청의 중복 예약은 처음 저장한 예약 시각을 그대로 반환한다 (#80, FR-19).
 - `save_decision`은 `DecisionRecord.settings`의 전체 스냅샷을 저장한다. 버전만 저장하지 않는다 (#83).
 - `execution_context`는 저장한 요청, 확정 `node_id`, `use_id`·`usage_id`, `execution_kind`, `reserved_at`과 저장한 설정 스냅샷으로 문맥을 만든다. 현재 설정으로 채우지 않는다. 명령이 없으면 `None`이다. 조회 오류는 `StoreError`다 (#83).
@@ -91,6 +91,7 @@
 | 대여형 최초 예약을 한다 | `reserved_at`을 저장하고 반환한다 | `test_FR19_reserve_returns_reserved_at` |
 | 승인이 필요한 공용형 예약을 한다 | 사용분에 `reserved_at`을 저장하고 반환한다 | `test_FR19_reserve_shared_usage_reserved_at` |
 | 공용형 `open` 요청이나 거부 결과다 | `reserved_at`은 `None`이다 | `test_FR19_reserve_no_write_reserved_at_none` |
+| 승인 없는 대여의 재조작이다 | `reserved_at`은 요청 접수 시각이다. 서버 조립에서 재조작 명령이 기기에 가서 성공한다 | `test_FR19_reserve_reoperating_without_approval_has_reserved_at`, `test_FR19_runtime_open_rental_reoperation_reaches_device` |
 | 같은 요청으로 예약을 다시 호출한다 | 처음 저장한 `reserved_at`을 반환한다 | `test_FR19_reserve_duplicate_keeps_reserved_at` |
 | 판정을 저장한다 | 적용 설정 전체를 저장한다 | `test_FR22_save_decision_stores_settings_snapshot` |
 | 명령 ID로 문맥을 조회한다 | 저장한 요청, 대상, 연결, 실행 종류, 예약 시각, 설정 스냅샷으로 만든 문맥을 반환한다 | `test_FR07_execution_context_found` |
@@ -110,6 +111,7 @@
 ## 6. 결정
 
 - 예약 시각은 대여형 `use_session.reserved_at`, 승인이 필요한 공용형 `approval_usage.reserved_at`에 저장한다 — PR #101 리뷰에서 담당자가 정했다. 공용형 `open`은 저장할 행이 없으므로 `None`이다.
+- 승인 없는 대여의 재조작은 저장할 행이 없어도 요청 접수 시각을 `reserved_at`으로 반환한다 — 2026-10-27 담당자 위임 결정. `None`이면 실행이 `reservation_time_unconfirmed`로 전송을 막아 재조작이 기기에 가지 않았다 (서버 지표 평가에서 찾음). 명령 행의 예약 시각도 요청 접수 시각이라 결과 인계의 실행 문맥과 같다.
 - 예약 시각은 `request.received_at`을 저장한다 — `ReserveRequest`에 시각 필드가 없고, DB가 직접 현재 시각을 읽지 않아 결과가 결정적이다. 수신 시각은 실제 예약보다 조금 이르므로 예약 대기 만료가 이르게 잡히는 안전한 쪽이다.
 - `request` 테이블은 새로 만들어 옮긴다. `user_id`를 비울 수 있게 하고 `request_kind`를 추가한다 — SQLite는 기존 컬럼의 NOT NULL을 바꿀 수 없다. 가짜 계정을 만들지 않는다는 #86의 약속을 지킨다.
   - 순서: `PRAGMA foreign_keys=OFF` → 새 테이블 생성 → 행 복사 → 이전 테이블 삭제 → 이름 변경 → 인덱스 재생성 → `PRAGMA foreign_key_check` → `PRAGMA foreign_keys=ON`.

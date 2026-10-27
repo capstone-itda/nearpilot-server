@@ -96,6 +96,20 @@ def test_FR19_reserve_reoperating(conn, repo):
     assert conn.execute("SELECT COUNT(*) AS c FROM use_session").fetchone()["c"] == 1
 
 
+def test_FR19_reserve_reoperating_without_approval_has_reserved_at(conn, repo):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="node1", occupancy="rental", device_state="ACTIVE")
+    _seed_request(conn, internal_request_id="rental-req")
+    insert_use_session(conn, use_id="use1", internal_request_id="rental-req", state="ACTIVE")
+    _seed_request(conn, internal_request_id="reop-req", received_at="2026-01-01T00:00:05+00:00")
+
+    result = repo.reserve_if_free(_request(internal_request_id="reop-req"))
+
+    assert (result.outcome, result.usage_id) == (ReserveOutcome.REOPERATING, None)
+    assert result.reserved_at.isoformat() == "2026-01-01T00:00:05+00:00"
+
+
 def test_FR19_reserve_reoperating_fault(conn, repo):
     insert_user(conn)
     insert_place(conn)
