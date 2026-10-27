@@ -85,6 +85,6 @@ def acl_sections(fleet: FleetConfig) -> str:
         base = f"nearpilot/node/{device.node_id}"
         lines = [f"user {device.username}"]
         lines += [f"topic write {base}/{kind}" for kind in REPORTS]
-        lines += [f"topic read {base}/cmd"]
+        lines += [f"topic read {base}/{kind}" for kind in ("cmd", "occupancy")]
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks) + "\n"

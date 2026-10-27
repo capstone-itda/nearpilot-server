@@ -118,6 +118,8 @@ def test_NFR11_mqtt_version_qos_retain(setup_connection):
     receipt = connection.publish_request("node-a", "cmd", b"{}")
     assert receipt.rc == 0
     assert client.publications == [("nearpilot/node/node-a/cmd", b"{}", 1, False)]
+    connection.publish_request("node-a", "occupancy", b"{}")  # 점유 표시는 retained다 (FR-19).
+    assert client.publications[-1] == ("nearpilot/node/node-a/occupancy", b"{}", 1, True)
     with pytest.raises(ValueError):
         connection.publish_request("node-a", "safety_check", b"{}")  # 반납 검사 토픽은 없다 (FR-20).
 

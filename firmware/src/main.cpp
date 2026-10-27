@@ -22,6 +22,7 @@
 #include "np_executor.h"
 #include "np_ledger.h"
 #include "np_nvs_store.h"
+#include "np_occupancy.h"
 #include "np_ready.h"
 #if __has_include("config.local.h")
 #include "config.local.h"
@@ -47,6 +48,14 @@ static_assert(NP_SERVO_PIN < 0 || NP_SERVO_PIN != NP_OUTPUT_PIN, "servo and GPIO
 static_assert(NP_SERVO_LOCKED_DEG >= 0 && NP_SERVO_LOCKED_DEG <= 180, "servo locked angle");
 static_assert(NP_SERVO_OPEN_DEG >= 0 && NP_SERVO_OPEN_DEG <= 180, "servo open angle");
 static_assert(NP_SERVO_MIN_US < NP_SERVO_MAX_US && NP_SERVO_OPEN_HOLD_MS > 0, "servo pulse range and hold");
+#ifndef NP_LED_PIN
+#error "config.local.h needs the NP_LED_* values (see config.example.h)"
+#endif
+static_assert(NP_LED_PIN < 0 || (NP_LED_PIN != NP_SERVO_PIN && NP_LED_PIN != NP_OUTPUT_PIN), "LED stick shares a pin");
+static_assert(NP_LED_COUNT > 0 && NP_LED_LEVEL > 0 && NP_LED_LEVEL <= 255, "LED stick size and level");
+#if NP_LED_PIN >= 0
+#include <Adafruit_NeoPixel.h>
+#endif
 
 // Per-device values are injected over USB and kept in their own NVS namespace.
 // The command record namespace is never opened for writing by provisioning.
@@ -242,6 +251,33 @@ void relockStep() {
     if (NP_SERVO_PIN < 0 || !relock.due(millis())) return;
     servoAngle(NP_SERVO_LOCKED_DEG);
     Serial.printf("SERVO_RELOCKED pin=%d angle=%d\n", NP_SERVO_PIN, NP_SERVO_LOCKED_DEG);
+}
+
+// ---- Occupancy LED stick: shows the server's retained display, never decides it ----
+
+#if NP_LED_PIN >= 0
+Adafruit_NeoPixel ledStick(NP_LED_COUNT, NP_LED_PIN, NEO_GRB + NEO_KHZ800);
+#endif
+np::OccupancyDisplay shownOccupancy = np::OccupancyDisplay::Invalid;
+
+void showOccupancy(np::OccupancyDisplay display) {
+#if NP_LED_PIN >= 0
+    uint32_t rgb = np::occupancyRgb(display, NP_LED_LEVEL);
+    for (int i = 0; i < NP_LED_COUNT; ++i) ledStick.setPixelColor(i, rgb);
+    ledStick.show();
+#endif
+    shownOccupancy = display;
+}
+
+void occupancyInput(const String& payload) {
+    np::OccupancyDisplay display = np::decodeOccupancy(payload.c_str(), config.nodeId);
+    if (display == np::OccupancyDisplay::Invalid) {
+        Serial.println("OCCUPANCY_IGNORED reason=invalid_message");  // Keeps the last color.
+        return;
+    }
+    if (display == shownOccupancy) return;
+    showOccupancy(display);
+    Serial.printf("OCCUPANCY_DISPLAY pin=%d state=%s\n", NP_LED_PIN, np::occupancyName(display));
 }
 
 const char* outputMode() {
@@ -475,6 +511,11 @@ void setup() {
             "initial=locked\n", NP_SERVO_PIN, NP_SERVO_LOCKED_DEG, NP_SERVO_OPEN_DEG,
             static_cast<unsigned long>(NP_SERVO_OPEN_HOLD_MS), NP_SERVO_MIN_US, NP_SERVO_MAX_US, NP_SERVO_FREQ_HZ);
     }
+#if NP_LED_PIN >= 0
+    ledStick.begin();
+    showOccupancy(np::OccupancyDisplay::Invalid);  // Off until the first valid display.
+    Serial.printf("LED_OUTPUT pin=%d count=%d level=%d initial=off\n", NP_LED_PIN, NP_LED_COUNT, NP_LED_LEVEL);
+#endif
     Serial.printf("NODE_START node=%s config=%s generation=%lu mode=%s storage=%d reset_reason=%s\n",
         configured ? config.nodeId.c_str() : "-", loaded, config.generation,
         outputMode(), storageReady, resetReason());
@@ -565,6 +606,10 @@ void loop() {
             String base = String("nearpilot/node/") + config.nodeId.c_str();
             bool subscribed = mqtt.subscribe(base + "/cmd", 1);
             feedWatchdog();
+            if (subscribed && NP_LED_PIN >= 0) {
+                subscribed = mqtt.subscribe(base + "/occupancy", 1);
+                feedWatchdog();
+            }
             if (!subscribed) {
                 mqttDelay = backoff(mqttDelay);
                 Serial.printf("MQTT_SUBSCRIBE_FAILED error=%d next_retry_ms=%lu\n", mqtt.lastError(), mqttDelay);
@@ -572,7 +617,8 @@ void loop() {
             } else {
                 mqttDelay = NP_RECONNECT_MS;
                 wasConnected = true;
-                Serial.printf("MQTT_CONNECTED session_id=%s subscribed=cmd\n", session.c_str());
+                Serial.printf("MQTT_CONNECTED session_id=%s subscribed=%s\n", session.c_str(),
+                    NP_LED_PIN >= 0 ? "cmd,occupancy" : "cmd");
             }
         } else {
             mqttDelay = backoff(mqttDelay);
@@ -616,6 +662,7 @@ void loop() {
         Incoming received = inbox.front();
         inbox.erase(inbox.begin());
         if (received.topic.endsWith("/cmd")) executor.handle(received.payload.c_str(), received.receivedBusy);
+        else if (received.topic.endsWith("/occupancy")) occupancyInput(received.payload);
     }
     replayStep();
     if (current - lastStatus >= NP_STATUS_MS) {

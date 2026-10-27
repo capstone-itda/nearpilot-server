@@ -114,9 +114,10 @@ IR 송출, 서보 제어 신호와 스피커 제어 신호는 같은 원칙을 �
 - `status`는 `observed_at`과 `command_state`(`idle`, `busy`, `unknown`)만 담는다. 실제 상태와 센서 고장 값은 담지 않는다 (FR-07, architecture.md §5 MQTT 3절).
 - 펌웨어의 상태 보고는 서버의 점유 해제와 `FAULT` 복구를 대신하지 않는다 (FR-20, NFR-04).
 - ESP32와 NimBLE를 쓴다. 시연 장비는 NFR-10의 사물함, LED 조명, 스피커와 IR 무드등을 따른다 (NFR-10, NFR-14).
-- MQTT 3.1.1, UTF-8 JSON, 다섯 토픽의 QoS와 retain은 계약을 따른다. 모든 메시지는 `schema_version=2`다 (NFR-11, architecture.md §5 MQTT 1~3절).
+- MQTT 3.1.1, UTF-8 JSON, 여섯 토픽의 QoS와 retain은 계약을 따른다. 모든 메시지는 `schema_version=2`다 (NFR-11, architecture.md §5 MQTT 1~3절).
 - MQTT 접속마다 새 UUID인 `session_id`를 만든다. 연결·토픽별 `seq`는 1부터 증가한다 (FR-07, architecture.md §5 MQTT 2절).
-- `clean_session=true`로 접속하고 자기 `cmd`를 매번 구독한다 (NFR-08, NFR-11).
+- `clean_session=true`로 접속하고 자기 `cmd`를 매번 구독한다. LED 표시가 있는 빌드는 자기 `occupancy`도 구독한다 (NFR-08, NFR-11).
+- `occupancy`는 표시에만 쓴다. 명령 접수, 구동, 상태 보고와 서버의 점유 판단을 바꾸지 않는다 (FR-19, architecture.md §5 MQTT 3절).
 - 기기별 자격정보와 접속 설정은 실행 설정에서 받는다. 비밀번호를 저장소와 로그에 넣지 않는다 (NFR-08).
 - 기기는 독립 AP 안에서 동작한다. 행사장 Wi-Fi와 외부 시각 서버를 필수로 두지 않는다 (NFR-12).
 - 시간 값과 임계값은 이름, 단위와 허용 범위가 있는 설정으로 받는다. 미측정 수치를 상수로 넣지 않는다 (requirements.md §1.2).
@@ -142,6 +143,7 @@ IR 송출, 서보 제어 신호와 스피커 제어 신호는 같은 원칙을 �
 | 계약 | 사용 또는 제공 | 상대 영역 |
 |---|---|---|
 | MQTT v2의 `cmd` | 서버 요청을 받는다 | IOT |
+| MQTT v2의 `occupancy` | 대여형 기기의 점유 표시를 받는다 | IOT |
 | MQTT v2의 네 기기 보고 | 기능, RSSI, 명령 처리 상태와 실행 결과를 제공한다 | IOT |
 | 폐쇄망 시각원과 기기별 최대 오차 | 동기화와 실측 근거를 제공한다. 설정 연결은 #140의 미결을 따른다 | 서버 배포 |
 
@@ -188,6 +190,8 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
 | 세 기능이 시리얼·선택 GPIO 출력을 쓴다 | 출력 함수가 끝나면 출력 완료다. 출력 함수가 없으면 불명이다 | `test_NFR10_signal_output_completes` |
 | 사물함 서보 각도를 출력한다 | 각도를 0~180°로 자르고 펄스 폭과 PWM duty로 바꾼다 | `test_NFR10_servo_pulse_for_angle` |
 | 사물함이 열린 뒤 유지 시간이 지난다 | 열림 한 번에 한 번만 잠금 각도로 되돌린다. 새 `open`은 유지 시간을 다시 센다 | `test_FR06_servo_relocks_once_after_hold` |
+| 점유 표시가 온다 | `AVAILABLE`은 파란색, `RESERVED`·`ACTIVE`·`CLOSING`·`FAULT`는 빨간색이다 | `test_FR19_occupancy_display_colors` |
+| 다른 기기, 다른 버전이나 모르는 상태의 점유 표시가 온다 | 무시하고 마지막 색을 유지한다 | `test_FR19_occupancy_display_ignores_invalid_messages` |
 
 3단계의 사례와 테스트는 다음과 같다.
 
@@ -267,6 +271,11 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
   - 부팅하면 잠금 각도를 낸다. 허가한 새 `open`은 열림 각도 신호를 내고 바로 `Completed`다. 서보가 실제로 도달한 각도는 관측하지 않는다 (FR-07).
   - 유지 시간이 지나면 loop가 잠금 각도로 되돌린다. 되돌리기는 명령이 아니며 결과를 보고하지 않는다. 재부팅과 기존 결과 재보고는 다시 열지 않는다.
   - 서보 전원은 USB가 아닌 외부 전원으로 공급한다. 외부 전원과 ESP32의 GND를 묶는다.
+- `locker-1`은 GPIO19의 WS2812B LED 스틱 8개로 점유 표시를 보인다 — 담당자가 2026-10-27에 골랐다. 서버 계약도 담당자가 직접 정했다 (architecture.md §5 MQTT 3절).
+  - `esp32dev-locker-1` 빌드에서 `NP_LED_PIN=19`를 지정하고 `adafruit/Adafruit NeoPixel@1.12.3`을 쓴다. 개수와 밝기는 `NP_LED_COUNT`, `NP_LED_LEVEL`이다.
+  - 부팅하면 LED를 끈다. 유효한 `occupancy`를 받으면 8개를 모두 같은 색으로 칠한다. 잘못된 표시는 무시하고 마지막 색을 유지한다.
+  - 해석은 `lib/np_occupancy`가 맡는다. 판정·명령 경로와 공유하지 않는다.
+  - LED 스틱 전원은 외부 5V에서 받고 GND를 공통으로 둔다. DIN은 3.3V 신호로 구동한다.
 
 ## 7. 가정
 
@@ -554,6 +563,14 @@ MQTT v2 실제 기기 시험 (2026-10-26~27, ESP32-WROOM-32E, COM6, 펌웨어 `5
 - 담당자의 지시로 COM7의 사물함 노드에 `esp32dev-locker-1`을 업로드했다. 기록한 영역의 해시 검증을 통과했다.
 - 서보 전원은 USB로 공급하지 않으므로 시리얼 부팅 로그 `SERVO_OUTPUT`과 실제 서보 동작은 이번 작업에서 확인하지 않았다.
 - 서버 전체 `pytest`는 3,646개 통과, 17개 생략, 1개 예상 실패다. 서버 코드는 바꾸지 않았다.
+
+### 2026-10-27 locker-1 GPIO19 점유 표시 LED
+
+- 담당자가 GPIO19의 WS2812B 8개, 비점유 파란색, 점유 빨간색을 골랐다. 서버의 retained `occupancy` 발행과 함께 구현했다.
+- `pio run`으로 `esp32dev`, `esp32dev-light-1`, `esp32dev-locker-1`을 모두 컴파일했다. locker-1은 RAM 57,932바이트, Flash 1,119,241바이트다. 우리 코드의 컴파일 경고는 없다.
+- `pio test -e native`의 공통 테스트 44개가 통과했다.
+- 서버 전체 `pytest`는 3,667개 통과, 19개 생략, 1개 예상 실패다. 실제 Mosquitto로 실행한 `tests/iot/test_broker_acl.py` 11개도 통과했다.
+- 실제 기기의 LED 점등은 이번 작업에서 확인하지 않았다.
 
 실제 기기는 다음 절차로 검증한다 (architecture.md §5 MQTT 7절).
 

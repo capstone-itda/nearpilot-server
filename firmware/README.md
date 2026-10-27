@@ -77,6 +77,17 @@ pio run -e esp32dev-locker-1 -t upload --upload-port COM6
 - 기존 결과 재보고와 재부팅은 다시 열지 않는다. 되돌리기는 명령 결과를 보고하지 않는다.
 - 부팅 로그 `SERVO_OUTPUT pin=13 locked_deg=0 open_deg=90 hold_ms=3000 ...`으로 적용한 설정을 확인한다. 되돌릴 때 `SERVO_RELOCKED`가 나온다.
 - 서보 전원(5V)은 외부 전원으로 공급하고 ESP32와 GND를 묶는다. GPIO와 보드의 3.3V 핀으로 서보 전원을 공급하지 않는다.
+
+### locker-1의 GPIO19 점유 표시 LED
+
+같은 `esp32dev-locker-1` 빌드가 GPIO19의 WS2812B LED 스틱(8개)으로 서버의 점유 표시를 보인다.
+
+- LED 스틱의 DIN은 보드의 `IO19`에 연결한다. 5V는 외부 전원에서 받고 GND를 공통으로 묶는다.
+- 서버가 retained `nearpilot/node/locker-1/occupancy`를 발행한다. `AVAILABLE`은 파란색, `RESERVED`·`ACTIVE`·`CLOSING`·`FAULT`는 빨간색이다.
+- 부팅하면 LED를 끈다. 첫 유효한 표시를 받기 전에는 꺼져 있다. 잘못된 표시는 무시하고 마지막 색을 유지한다.
+- 부팅 로그 `LED_OUTPUT pin=19 count=8 level=64 initial=off`로 설정을, `OCCUPANCY_DISPLAY pin=19 state=free|occupied`로 색 변경을 확인한다.
+- 표시는 서버의 저장 상태를 보여 줄 뿐이다. 명령 접수와 구동에 쓰지 않는다. 서버가 멈춰도 마지막 표시가 남는다.
+- 브로커 ACL은 서버 계정에 `topic write nearpilot/node/+/occupancy`, 기기 계정에 자기 `occupancy` 읽기를 둔다.
 - 성공 보고는 열림 각도 신호 출력과 결과 저장을 뜻한다. 문이 실제로 열렸다는 근거가 아니다.
 
 ## 설정과 확인

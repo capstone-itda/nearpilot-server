@@ -85,7 +85,7 @@ def test_NFR08_cross_node_report_write_denied(peers, kind):
     assert until_marker(server, own) == [(own, b"own-marker")]
 
 
-@pytest.mark.parametrize("kind", ["cmd"])
+@pytest.mark.parametrize("kind", ["cmd", "occupancy"])
 def test_NFR08_cross_node_command_read_denied(peers, kind):
     server, node = peers("nearpilot-server"), peers("node-a")
     own = f"nearpilot/node/node-a/{kind}"
@@ -98,7 +98,7 @@ def test_NFR08_cross_node_command_read_denied(peers, kind):
     # MQTT 3.1.1 may accept a subscription filter while filtering each message.
 
 
-@pytest.mark.parametrize("kind", ["cmd"])
+@pytest.mark.parametrize("kind", ["cmd", "occupancy"])
 def test_FR06_only_server_publishes_commands(peers, kind):
     server, node = peers("nearpilot-server"), peers("node-a")
     topic = f"nearpilot/node/node-a/{kind}"

@@ -93,6 +93,7 @@
 - `decode_message(topic, payload, received_at=...)`는 보고를 shared 모델로 변환한다. RSSI는 `RssiFrame` 튜플을 반환한다.
 - 호출자는 최초 수신 시각을 UTC `datetime`으로 전달한다. MQTT 전달 정보는 호출자가 보존한다.
 - `encode_command(NodeCommand)`는 UTF-8 JSON 바이트를 반환한다. `encode_safety_check`는 없앴다.
+- `encode_occupancy(node_id, device_state, sent_at)`는 점유 표시를 UTF-8 JSON 바이트로 반환한다. `schema_version`, `node_id`, `device_state`, `sent_at`만 담는다 — 담당자가 2026-10-27에 직접 정했다 (architecture.md §5 MQTT 3절). 테스트는 `test_FR19_occupancy_display_carries_only_device_state`와 `test_NFR11_invalid_occupancy_display_rejected`다.
 - 형식이 잘못되면 `MessageValidationError`를 던진다. 예외 메시지에 본문을 넣지 않는다. 호출자가 거부를 기록한다.
 - 중복 JSON 키와 유한하지 않은 JSON 수를 거부한다. 알 수 없는 추가 필드는 판정 필드에 넣지 않는다.
 - 반납 검사 결과의 변환과 검사 요청의 직렬화를 없앤다 — 2026-10-26 결정으로 반납 검사를 제외했다.

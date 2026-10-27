@@ -2,7 +2,7 @@
 
 - 담당: 이 작업을 지시한 담당자 (상태 관리의 IOT 구현 범위)
 - 구현 브랜치: `feat/iot-mqtt-gateway`
-- 요구사항: FR-06, FR-07, FR-13, NFR-08, NFR-11, NFR-12
+- 요구사항: FR-06, FR-07, FR-13, FR-19, NFR-08, NFR-11, NFR-12
 - 따르는 결정: architecture.md에 반영한 #19, #38, #88, #140이다. 2026-10-26 센서 기반 물리 검증 제외 (#196)로 검사 토픽을 없앴다.
 - 상태: 연결 책임을 구현했다. 전체 분할과 순서는 [plan.md](plan.md)에 있다. CORE와 후속 IOT 모듈의 최종 조립은 후속 작업이다.
 
@@ -30,6 +30,7 @@ CORE가 기기와 통신하려면 MQTT 연결과 구독이 먼저 준비되어�
 | `status` | 기기 → 서버 | 1 | false |
 | `result` | 기기 → 서버 | 1 | false |
 | `cmd` | 서버 → 기기 | 1 | false |
+| `occupancy` | 서버 → 기기 | 1 | true |
 
 ## 3. 제약
 
@@ -37,6 +38,7 @@ CORE가 기기와 통신하려면 MQTT 연결과 구독이 먼저 준비되어�
 - 연결은 `paho-mqtt` 2.x의 스레드 방식을 쓴다 (architecture.md §8·9).
 - Mosquitto는 익명 접속을 거부한다. 기기는 자기 보고만 발행하고 자기 명령만 구독한다 (NFR-08).
 - 서버만 `cmd`를 발행한다. CORE가 인계한 명령만 발행 경로에 연결한다 (FR-06).
+- 서버만 `occupancy`를 발행한다. 저장한 기기 상태만 옮기고 판정과 상태를 바꾸지 않는다 (FR-19, NFR-07).
 - Mosquitto의 계정별 ACL로 인증 주체와 허용 토픽을 묶고, 토픽·본문의 기기 ID 대조는 보고 검증 모듈이 한다 (NFR-08, S2 A안).
 - 접속 설정은 실행 설정에서 받는다. 실제 비밀번호 파일은 커밋하지 않는다 (NFR-08).
 - 독립 AP 안에서 실행한다. 외부 인터넷을 연결 조건으로 두지 않는다 (NFR-12).
@@ -82,7 +84,12 @@ CORE가 기기와 통신하려면 MQTT 연결과 구독이 먼저 준비되어�
 | retained 발표가 온다 | 보고 경로에 전달한다. 온라인으로 바꾸지 않는다 | `test_FR13_retained_announce_not_online` |
 | 익명 계정이 접속한다 | 브로커가 거부한다 | `test_NFR08_anonymous_connection_denied` |
 | 다른 기기의 보고를 발행하거나 명령을 읽는다 | 브로커가 차단한다 | `test_NFR08_cross_node_report_write_denied`, `test_NFR08_cross_node_command_read_denied` |
-| 기기 계정이 명령을 발행한다 | 브로커가 차단한다 | `test_FR06_only_server_publishes_commands` |
+| 기기 계정이 명령이나 점유 표시를 발행한다 | 브로커가 차단한다 | `test_FR06_only_server_publishes_commands` |
+| 대여형 기기의 저장 상태가 바뀐다 | 바뀐 상태만 retained `occupancy`로 한 번 발행한다 | `test_FR19_occupancy_published_once_per_state_change` |
+| 공용형이거나 신뢰하지 않은 기기다 | 점유 표시를 발행하지 않는다 | `test_FR19_occupancy_only_for_trusted_rental_nodes` |
+| 연결이 끊겼다 다시 준비된다 | 현재 저장 상태를 다시 발행한다 | `test_FR19_occupancy_republished_after_connection_loss` |
+| 점유 표시 발행 결과가 불명이다 | 기억하지 않고 다음 주기에 다시 발행한다 | `test_FR19_unconfirmed_occupancy_publish_retried` |
+| 발행 준비가 안 됐다 | 이번 주기를 멈추고 준비된 뒤 다시 발행한다 | `test_FR19_not_ready_stops_occupancy_round` |
 | 발행 뒤 연결이 끊긴다 | 명령 대기 모듈에 알린다. 미전송으로 추정하지 않는다 | `test_FR07_disconnect_keeps_uncertainty` |
 | 서버가 종료한다 | S3의 접점을 따른다. 미해결 명령을 성공으로 만들지 않는다 | `test_FR07_shutdown_does_not_claim_success` |
 
@@ -99,6 +106,11 @@ CORE가 기기와 통신하려면 MQTT 연결과 구독이 먼저 준비되어�
 - Paho 수신과 CORE 인계 작업을 분리한다 — CORE 잠금 대기가 MQTT 수신을 막지 않게 한다.
 - Mosquitto 실행은 `server/`의 `mosquitto -c config/mosquitto.conf`다 — architecture.md의 기존 경로를 따른다.
 - 이 spec은 연결 책임을 맡는다 — 담당자가 IoT 전체 spec의 분할을 요청했다.
+- 점유 표시 `occupancy`를 더한다 — 담당자가 2026-10-27에 이슈 발행 없이 직접 정했다 (architecture.md §5 MQTT 3절).
+  - `publish_request()`는 `cmd`와 `occupancy`만 받는다. 둘 다 QoS 1이고 `occupancy`만 retained다.
+  - `mqtt/occupancy.py`의 `OccupancyPublisher`가 신뢰한 대여형 기기의 `NodeInfo.device_state`를 바뀔 때만 발행한다. 연결 상실 뒤에는 다시 발행한다.
+  - 본문 변환은 `iot.messages.encode_occupancy`다. 사용자와 `use_id`를 담지 않는다 (NFR-08).
+  - 서버 계정은 `nearpilot/node/+/occupancy`에 쓰고, 기기 계정은 자기 `occupancy`만 읽는다.
 
 ## 7. 가정
 
@@ -113,8 +125,9 @@ CORE가 기기와 통신하려면 MQTT 연결과 구독이 먼저 준비되어�
 | FR-06 | `test_FR06_only_server_publishes_commands` | 명령 토픽의 발행 권한을 제한한다 |
 | FR-07 | `test_FR07_disconnect_keeps_uncertainty` | 연결 끊김을 미전송·성공으로 바꾸지 않는다 |
 | FR-13 | `test_FR13_reconnect_resubscribes` | 재구독과 현재 연결 확인을 구분한다 |
+| FR-19 | 5절의 `test_FR19_*`, `test_FR19_occupancy_display_carries_only_device_state` | 저장한 대여형 기기 상태만 retained로 발행한다 |
 | NFR-08 | 5절의 `test_NFR08_*` | 익명·교차 기기 접근을 막는다 |
-| NFR-11 | `test_NFR11_mqtt_version_qos_retain` | 다섯 토픽의 전달 설정을 확인한다 |
+| NFR-11 | `test_NFR11_mqtt_version_qos_retain` | 여섯 토픽의 전달 설정을 확인한다 |
 | NFR-12 | `test_NFR12_local_broker_without_internet` | 외부 서비스 없이 연결한다 |
 
 단위 테스트는 MQTT 전송과 CORE의 fake를 쓴다. 접근 제어는 임시 자격정보와 실제 Mosquitto로 검증한다.

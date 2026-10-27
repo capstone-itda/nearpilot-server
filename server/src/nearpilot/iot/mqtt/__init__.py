@@ -6,8 +6,9 @@ from .connection import (
     PublishUncertain,
 )
 from .delivery import DeliveryConfig, ReportDelivery
+from .occupancy import OccupancyPublisher
 
 __all__ = [
     "ConnectionFailure", "DeliveryConfig", "IncomingReport", "MqttCommandGateway", "MqttConfig",
-    "MqttConnection", "NotReady", "PublishUncertain", "ReportDelivery",
+    "MqttConnection", "NotReady", "OccupancyPublisher", "PublishUncertain", "ReportDelivery",
 ]

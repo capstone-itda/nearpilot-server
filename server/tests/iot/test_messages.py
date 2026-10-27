@@ -7,10 +7,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from nearpilot.iot.messages import (
-    MessageValidationError, decode_message, encode_command,
+    MessageValidationError, decode_message, encode_command, encode_occupancy,
 )
 from nearpilot.shared.enums import (
-    Action, CommandState, Capability, NodeResultState, Occupancy,
+    Action, CommandState, Capability, DeviceState, NodeResultState, Occupancy,
 )
 from nearpilot.shared.models import (
     BeaconKey, NodeAnnounce, NodeCommand, NodeResult, NodeStatus, RssiFrame,
@@ -235,6 +235,22 @@ def test_NFR08_outbound_allowlist():
 def test_NFR11_invalid_outbound_fields_rejected(field, value):
     with pytest.raises(MessageValidationError):
         encode_command(replace(command(), **{field: value}))
+
+
+@pytest.mark.parametrize("state", list(DeviceState))
+def test_FR19_occupancy_display_carries_only_device_state(state):
+    """점유 표시는 저장한 기기 상태만 담는다. 사용자와 use_id를 보내지 않는다 (NFR-08)."""
+    data = json.loads(encode_occupancy("locker-1", state, SENT))
+    assert datetime.fromisoformat(data.pop("sent_at")) == SENT
+    assert data == dict(schema_version=2, node_id="locker-1", device_state=state.value)
+
+
+@pytest.mark.parametrize("node_id,state,sent_at", [("", DeviceState.ACTIVE, SENT),
+    ("a/b", DeviceState.ACTIVE, SENT), ("locker-1", "OPEN", SENT),
+    ("locker-1", DeviceState.ACTIVE, SENT.replace(tzinfo=None))])
+def test_NFR11_invalid_occupancy_display_rejected(node_id, state, sent_at):
+    with pytest.raises(MessageValidationError):
+        encode_occupancy(node_id, state, sent_at)
 
 
 def test_NFR11_all_v2_message_shapes():

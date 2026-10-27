@@ -9,6 +9,7 @@
 #include "np_command.h"
 #include "np_executor.h"
 #include "np_clock.h"
+#include "np_occupancy.h"
 
 namespace {
 
@@ -488,6 +489,29 @@ void test_FR06_servo_relocks_once_after_hold() {
     TEST_ASSERT_TRUE(relock.due(0xFFFFFF00UL + 3000));
 }
 
+std::string occupancyBody(const char* state, const char* node = "locker-1", int version = 2) {
+    return std::string("{\"schema_version\":") + std::to_string(version) + ",\"node_id\":\"" + node
+        + "\",\"device_state\":\"" + state + "\",\"sent_at\":\"2026-10-27T07:00:00Z\"}";
+}
+
+void test_FR19_occupancy_display_colors() {
+    using np::OccupancyDisplay;
+    TEST_ASSERT_TRUE(np::decodeOccupancy(occupancyBody("AVAILABLE").c_str(), "locker-1") == OccupancyDisplay::Free);
+    for (const char* held : {"RESERVED", "ACTIVE", "CLOSING", "FAULT"})
+        TEST_ASSERT_TRUE(np::decodeOccupancy(occupancyBody(held).c_str(), "locker-1") == OccupancyDisplay::Occupied);
+    TEST_ASSERT_EQUAL_HEX32(0x000040, np::occupancyRgb(OccupancyDisplay::Free, 64));
+    TEST_ASSERT_EQUAL_HEX32(0x400000, np::occupancyRgb(OccupancyDisplay::Occupied, 64));
+    TEST_ASSERT_EQUAL_HEX32(0, np::occupancyRgb(OccupancyDisplay::Invalid, 64));
+}
+
+void test_FR19_occupancy_display_ignores_invalid_messages() {
+    using np::OccupancyDisplay;
+    const std::string invalid[] = {occupancyBody("ACTIVE", "locker-2"), occupancyBody("ACTIVE", "locker-1", 1),
+        occupancyBody("OPEN"), "{\"schema_version\":2,\"node_id\":\"locker-1\"}", "not json", "[]"};
+    for (const std::string& body : invalid)
+        TEST_ASSERT_TRUE(np::decodeOccupancy(body.c_str(), "locker-1") == OccupancyDisplay::Invalid);
+}
+
 void test_FR06_evicted_command_does_not_actuate() {
     FakeStore store(1);
     FakePort port;
@@ -593,6 +617,8 @@ void runExecutorTests() {
     RUN_TEST(test_NFR10_signal_output_completes);
     RUN_TEST(test_NFR10_servo_pulse_for_angle);
     RUN_TEST(test_FR06_servo_relocks_once_after_hold);
+    RUN_TEST(test_FR19_occupancy_display_colors);
+    RUN_TEST(test_FR19_occupancy_display_ignores_invalid_messages);
     RUN_TEST(test_FR06_evicted_command_does_not_actuate);
     RUN_TEST(test_FR06_busy_rejection_replaces_expired_record);
 }

@@ -23,6 +23,7 @@ release_tick_sec = 0.25
 restore_tick_sec = 0.25
 recovery_tick_sec = 0.25
 shared_light_tick_sec = 1.0
+occupancy_tick_sec = 1.0
 
 [http]
 host = "127.0.0.1"

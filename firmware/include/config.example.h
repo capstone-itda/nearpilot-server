@@ -30,6 +30,13 @@
 #define NP_SERVO_FREQ_HZ 50
 #define NP_SERVO_LEDC_CHANNEL 0
 #define NP_SERVO_LEDC_BITS 16
+// WS2812B occupancy stick. The locker-1 build profile sets NP_LED_PIN=19; -1 leaves it off.
+// AVAILABLE shows blue, other stored states red; off until the first valid `occupancy`.
+#ifndef NP_LED_PIN
+#define NP_LED_PIN -1
+#endif
+#define NP_LED_COUNT 8
+#define NP_LED_LEVEL 64
 #define NP_RSSI_FRAME_MS 1000UL
 #define NP_STATUS_MS 1000UL
 // Retry starts at these minimums, doubles after each failure and stops at NP_RETRY_MAX_MS.
