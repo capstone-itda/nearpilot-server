@@ -127,6 +127,7 @@
 | 신뢰한 기기가 다른 기능이나 점유 방식으로 발표한다 | 신뢰 상태를 `discovered`로 되돌린다. 같은 트랜잭션에서 감사 로그를 남긴다. | `test_FR13_announce_changed` |
 | 정책이 없는 기기로 `current_policy()`를 호출한다 | `LookupError`를 던진다. | `test_FR14_current_policy_missing` |
 | 승인의 동작, 정책 버전, 요청자가 다르거나 만료됐다 | `valid_approval()`이 `None`을 반환한다. | `test_FR14_valid_approval_scope` |
+| `internal_request_id`를 주고 그 요청의 사용분이 한도를 채웠다 | 그 사용분을 빼고 센다. `one_time`이면 `remaining_uses`가 1이다. 다른 요청의 사용분은 그대로 센다 | `test_FR14_valid_approval_excludes_own_request_usage` |
 | 같은 요청자·기기·동작·정책 버전에 유효한 `pending` 신청이 있다 | `create_approval_request()`가 새 신청을 만들지 않고 기존 신청을 반환한다. | `test_FR14_create_approval_request_dedup` |
 | 만료된 `pending` 신청 뒤 다시 신청한다 | 새 신청을 만든다. | `test_FR14_create_approval_request_after_expiry` |
 | `pending`이 아니거나 정책 버전이 다른 승인을 결정한다 | 반영하지 않고 사유를 구분해 반환한다. | `test_FR14_decide_approval_invalid` |
@@ -151,6 +152,7 @@
   - 본인 `ACTIVE` 세션이 있어도 기기 `device_state`가 `ACTIVE`가 아니면(`FAULT` 등) `REOPERATING`이 아니라 `DEVICE_BUSY`를 반환한다 — `isolate_device()`는 점유 세션을 바꾸지 않고 기기만 `FAULT`로 격리하므로, 세션은 `ACTIVE`로 남아도 기기는 격리된 상태일 수 있다. `interfaces.py`의 "타인 점유 또는 RESERVED·CLOSING·FAULT는 DEVICE_BUSY"는 본인 재조작에도 똑같이 적용한다.
   - `exclusive_group`이 NULL이면 ⑥을 검사하지 않는다.
 - `valid_approval()`에 조건을 만족하는 승인이 여럿이면 `valid_until`이 가장 늦은 승인을 반환한다. 같으면 `approval_id` 순이다.
+- `valid_approval()`은 키워드 인자 `internal_request_id`(기본 `None`)를 받는다. 주어지면 남은 횟수(`remaining_uses`)에서 그 요청의 사용분 행을 세지 않는다. `approvals_in_scope()`와 사용분 예약의 한도 검사는 바꾸지 않는다 (#76, 2026-10-27 팀 결정).
 - `link_request()`는 감사 기록을 쓰지 않는다 — 충돌 이벤트는 판정이 `AuditLog.append()`로 남긴다.
 - 같은 `internal_request_id`에 다른 판정을 저장하면 기존 판정을 보존하고 `StoreResult(CONFLICT, CONTENT_CONFLICT)`를 반환한다. 같은 판정이면 `StoreResult(ALREADY_APPLIED)`를 반환하고 아무것도 바꾸지 않는다 — `interfaces.py`의 `save_decision` docstring이 이미 값 객체로 구분하라고 정했다. 예외로 던지지 않는다.
 - `upsert_announced_node()`의 신뢰 되돌림 감사는 `Step.ANNOUNCE`를 쓴다 — `architecture.md` §4 "기기 발표와 관측의 저장"이 이미 정했다.

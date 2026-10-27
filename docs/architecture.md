@@ -244,6 +244,7 @@ api  ──▶  core  ──▶  db
 - 호출 하나는 `BEGIN IMMEDIATE` 트랜잭션 하나다. 대여형의 ⑤⑥ 검사, `RESERVED` 생성, 승인 사용분 예약과 공용형의 승인 사용분 예약은 같은 쓰기 경로다.
 - 공용형 예약은 `approval_usage`의 `reserved` 행만 만든다. DB는 기기 상태와 점유 세션을 바꾸지 않는다.
 - 승인 방식이 `time_window`이고 `max_uses`가 NULL이어도 DB는 요청별 사용분 행을 만든다. 사용분 행은 명령과 감사 기록을 연결한다. DB는 횟수 검사만 생략한다.
+- ④ 정책 검사의 남은 횟수는 같은 요청의 사용분을 세지 않는다. 판정과 재검사는 `PolicyChecker.check`와 `Repository.valid_approval`에 내부 요청 ID를 넘긴다. 같은 요청의 재판정(#76)과 실행 직전 재검사가 자기 사용분 때문에 소진으로 막히지 않는다 (2026-10-27 팀 결정).
 - 승인의 횟수 한도는 `one_time`이면 1, `time_window`면 `max_uses`(NULL이면 무제한)다. 남은 횟수, 사용분 예약의 한도 검사, 대시보드의 남은 횟수가 같은 규칙을 쓴다 (2026-10-27 담당자 위임 결정).
 - 예약한 사용분의 소진, 보류, 반환은 `ExecutionStore`가 반영한다.
 - DB는 예약을 쓴 결과에 저장한 예약 시각 `reserved_at`을 담는다. 승인이 필요한 공용형 요청도 사용분 행을 쓰므로 `reserved_at`이 있다. 쓰기가 없는 결과는 `None`이다. 판정은 이 값을 `ExecutionContext.reserved_at`으로 그대로 넘긴다 ([#80](https://github.com/capstone-itda/nearpilot-server/issues/80)).

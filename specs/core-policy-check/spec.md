@@ -73,12 +73,14 @@
 | `restricted` 정책에서 `valid_approval()`이 `None`을 반환하는 그 외 모든 경우(대기·거부·만료·버전바뀜·동작다름은 구분하지 않는다) | `NEED_APPROVAL`/`APPROVAL_REQUIRED`를 반환한다 | `test_FR14_check_falls_back_to_required` |
 | 승인이 여럿이어도 `valid_approval()`이 고른 승인 하나만 본다 | 추가 조회를 하지 않는다. 반환값을 그대로 쓴다 | `test_FR14_check_uses_single_valid_approval` |
 | 입력 `node_id` 외의 기기를 검사하지 않는다 | `Repository`에 `node_id` 인자만 그대로 전달한다. 다른 기기를 조회하지 않는다 | `test_FR18_check_does_not_substitute_node` |
+| `internal_request_id`를 받았다 (판정 ④, 재검사 ④) | `valid_approval()`에 그대로 넘긴다. 남은 횟수는 그 요청의 사용분을 빼고 센다. 같은 요청의 재판정(#76)과 재검사가 자기 사용분 때문에 `APPROVAL_EXHAUSTED`가 되지 않는다 | `test_FR14_check_passes_internal_request_id` |
 | 어떤 경우에도 저장소를 바꾸지 않는다 | fake `Repository`에 쓰기 메서드가 없어도 `check()`가 예외 없이 끝난다 | `test_FR14_check_does_not_write` |
 
 ## 6. 결정
 
 - 정책 없음과 정책이 허용하지 않는 경우 모두 `ReasonCode.POLICY_DENIED`를 쓴다 — `AccessMode`는 `open`·`restricted` 둘뿐이고 `restricted`는 항상 `OK`나 `NEED_APPROVAL`로 이어지므로, `DENY`는 정책이 아예 없는 경우뿐이다. 두 경우를 가리키는 별도 사유 코드가 `enums.py`에 없다.
 - `Repository.current_policy()`가 `LookupError`를 던지면 정책 없음으로 본다 — `db-repository`의 `current_policy()` 구현이 정책 없는 기기에 `LookupError`를 던지기로 결정했다.
+- `check()`는 키워드 인자 `internal_request_id`(기본 `None`)를 받아 `valid_approval()`에 넘긴다. 저장소는 남은 횟수에서 그 요청의 사용분을 뺀다. 자기 사용분은 이미 확보한 몫이라 새 사용으로 세지 않는다. 같은 요청의 재판정(#76)과 재검사가 쓴다 (`shared` 계약 변경, 2026-10-27 팀 결정).
 - 유효 승인의 소진 여부는 `Approval.remaining_uses == 0`으로 판단한다. `valid_approval()`은 시간상 유효성만 보고 남은 횟수는 보지 않으므로, `core/policy`가 직접 확인한다 — FR-14 "서버는 사용 횟수를 넘은 요청을... 거부한다"를 `core/policy`가 맡는다. `remaining_uses`가 `None`이면 무제한이므로 소진이 아니다. 남은 횟수는 저장소가 `one_time`을 1회로 보고 계산한다 (FR-14).
 - 장소 소유자·승인자 본인의 요청도 특별 취급하지 않는다. 일반 요청자와 같은 절차로 검사한다 — 문서에 근거가 없어 암묵적 권한 상승을 넣지 않는 쪽을 택했다 (4-3, 가정으로 유지).
 - 승인이 여럿이어도 `valid_approval()`이 반환한 승인 하나만 쓴다. 여러 승인 중 어느 것을 "사유" 판단에 쓸지 고르는 규칙은 세분화 작업(이슈 #60)의 몫이다.
