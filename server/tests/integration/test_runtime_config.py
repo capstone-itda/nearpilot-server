@@ -54,12 +54,22 @@ def test_FR22_runtime_example_config_loads():
     (lambda r: r["proximity"].update(models={}), "proximity.models"),
     (lambda r: r.setdefault("runtime", {}).update(shutdown_timeout_sec=0), "runtime.shutdown_timeout_sec"),
     (lambda r: r["settings"].update(online_ttl_sec=0.5, status_report_sec=1.0), "online_ttl_sec"),
+    (lambda r: r["http"].update(public_hosts="mcp.example.test"), "http.public_hosts"),
+    (lambda r: r["http"].update(public_hosts=["https://mcp.example.test"]), "http.public_hosts"),
+    (lambda r: r["http"].update(public_hosts=[""]), "http.public_hosts"),
 ])
 def test_FR22_runtime_invalid_config_stops_startup(tmp_path, change, key):
     raw = _raw(tmp_path)
     change(raw)
     with pytest.raises(ConfigError, match=key.replace(".", r"\.")):
         parse_config(raw, base=tmp_path)
+
+
+def test_FR22_runtime_http_public_hosts_is_optional(tmp_path):
+    raw = _raw(tmp_path)
+    assert parse_config(raw, base=tmp_path).http.public_hosts == ()
+    raw["http"]["public_hosts"] = ["mcp.example.test"]
+    assert parse_config(raw, base=tmp_path).http.public_hosts == ("mcp.example.test",)
 
 
 def test_FR22_runtime_invalid_model_stops_startup(tmp_path):

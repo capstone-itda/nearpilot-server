@@ -49,6 +49,29 @@ def test_FR08_계정_조회_실패는_500():
     assert "secret" not in r.text
 
 
+def test_FR08_공개_Host를_설정하면_터널로_온_요청을_받는다():
+    c = Client(public_hosts=("mcp.example.test",))
+    r = run(c.post("tools/list", headers={"host": "mcp.example.test",
+                                          "origin": "https://mcp.example.test"}))
+    assert r.status_code == 200, r.text
+    assert run(c.post("tools/list")).status_code == 200  # localhost 는 그대로 받는다
+
+
+@pytest.mark.parametrize("public_hosts", [(), ("mcp.example.test",)])
+def test_FR08_설정하지_않은_Host는_유효한_토큰이어도_421(public_hosts):
+    c = Client(public_hosts=public_hosts)
+    r = run(c.post("tools/list", headers={"host": "evil.example.test"}))
+    assert r.status_code == 421
+    assert c.core.requests == []
+
+
+def test_FR08_설정하지_않은_Origin은_403():
+    c = Client(public_hosts=("mcp.example.test",))
+    r = run(c.post("tools/list", headers={"host": "mcp.example.test",
+                                          "origin": "https://evil.example.test"}))
+    assert r.status_code == 403
+
+
 # ── FR-09 request_use ───────────────────────────────────────────────
 
 

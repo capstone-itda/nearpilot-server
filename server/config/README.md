@@ -48,6 +48,8 @@ keepalive, 접속·시작·종료 제한 시간, 재접속 최소·최대 대기
 - 상대 경로는 설정 파일이 있는 디렉터리 기준이다. 알 수 없는 키나 빠진 필수 키는 시작을 막는다.
 - `[settings]`는 운영 수치(`Settings`)다. `version`만 필수이고 빠진 키는 시연용 초기값을 쓴다.
   미설정 임계값(스피커, 명시 지정)은 쓰지 않는다. 비워 두면 그 요청은 실행을 허가하지 않는다.
+- `[http]`의 `public_hosts`는 선택이다. 터널 같은 공개 주소로 `/mcp`를 열 때 그 Host를 쓴다 (예: `["mcp.example.com"]`).
+  `/mcp`는 localhost와 이 Host로 온 요청만 받는다. 다른 Host는 토큰이 맞아도 `421`이다.
 - `[runtime]`은 주기 작업 간격, SQLite 대기시간과 종료 대기 제한이다. 모두 선택이다.
 - `[proximity.models]`에 장소별 모델 버전을 명시한다. 파일은 `<model_root>/<place_id>/<model_version>.json`이다.
 - `[mqtt]`와 `[delivery]`는 모든 키가 필수다. `password_file`은 서버 계정의 원문 비밀번호 파일이다.
