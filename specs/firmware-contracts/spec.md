@@ -570,7 +570,13 @@ MQTT v2 실제 기기 시험 (2026-10-26~27, ESP32-WROOM-32E, COM6, 펌웨어 `5
 - `pio run`으로 `esp32dev`, `esp32dev-light-1`, `esp32dev-locker-1`을 모두 컴파일했다. locker-1은 RAM 57,932바이트, Flash 1,119,241바이트다. 우리 코드의 컴파일 경고는 없다.
 - `pio test -e native`의 공통 테스트 44개가 통과했다.
 - 서버 전체 `pytest`는 main 최신 위에서 3,675개 통과, 19개 생략, 1개 예상 실패다. 실제 Mosquitto로 실행한 `tests/iot/test_broker_acl.py` 11개도 통과했다.
-- 실제 기기의 LED 점등은 이번 작업에서 확인하지 않았다.
+- 담당자의 지시로 COM7의 사물함 노드에 업로드했다. 해시 검증을 통과했다. 시험 브로커 ACL에 `occupancy` 권한을 더한 뒤 node_lab으로 실기 시험을 했다.
+  - 부팅 로그는 `LED_OUTPUT pin=19 count=8 level=64 initial=off`, 접속 로그는 `subscribed=cmd,occupancy`다.
+  - 서버 상태가 `ACTIVE`일 때 `OCCUPANCY_DISPLAY pin=19 state=occupied`가 나왔다.
+  - 2026-10-27 08:00:00 UTC 반납 뒤 LED가 파란색으로 바뀌었다. 08:00:29 `open`은 허가되어 `succeeded`로 끝났고, LED가 빨간색으로 바뀌었다. 08:00:48 반납 뒤 다시 파란색이 됐다.
+  - 서보가 90°로 열린 뒤 3초 뒤 0°로 돌아오는 것을 담당자가 눈으로 확인했다. 이번 시험에서는 시리얼을 기록하지 않아 `SERVO_RELOCKED` 로그는 남지 않았다.
+  - LED 색과 서보 각도는 담당자의 관찰이다. 서버의 성공 판단에는 쓰지 않는다 (architecture.md §5 MQTT 7절).
+  - 시험 설정은 `threshold_locker = 0.8`이다. 요구사항의 초기값 0.95보다 낮춘 연결 시험이다.
 
 실제 기기는 다음 절차로 검증한다 (architecture.md §5 MQTT 7절).
 
