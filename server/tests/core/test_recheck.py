@@ -121,10 +121,26 @@ class FakePolicy:
     def __init__(self, result=None):
         self.result = result or PolicyCheckResult(Verdict.OK, ReasonCode.OK, 1)
         self.calls = []
+        self.request_ids = []
 
-    def check(self, user_id, node_id, action, now):
+    def check(self, user_id, node_id, action, now, *, internal_request_id=None):
         self.calls.append(node_id)
+        self.request_ids.append(internal_request_id)
         return self.result
+
+
+class OwnUsagePolicy(FakePolicy):
+    """`own` 요청이 승인의 마지막 한 번을 확보해 뒀다. 그 요청의 ID를 받으면 사용분을 빼서 통과하고, 아니면 소진이다."""
+
+    def __init__(self, own):
+        super().__init__(PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED, 2))
+        self.own = own
+
+    def check(self, user_id, node_id, action, now, *, internal_request_id=None):
+        exhausted = super().check(user_id, node_id, action, now, internal_request_id=internal_request_id)
+        if internal_request_id == self.own:
+            return PolicyCheckResult(Verdict.OK, ReasonCode.OK, 2, approval_id="a1")
+        return exhausted
 
 
 class FakeAudit:
@@ -201,25 +217,29 @@ def test_FR18_재검사_정책_결과를_그대로_반영한다(verdict, reason)
 
 
 def test_FR19_recheck_ignores_own_reserved_usage():
-    # 승인 소진은 ⑤가 예약한 이 요청의 사용분까지 센 결과다. usage_id 가 있으면 통과하고 없으면 거부한다
-    exhausted = PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED, 2)
-    rc, *_ = build(policy=FakePolicy(exhausted))
+    # ④는 이 요청의 ID 를 넘겨 ⑤가 예약한 자기 사용분을 남은 횟수에서 뺀다. 다른 요청의 사용분으로 소진됐으면 거부한다
+    rc, repo, prox, pol, audit = build(policy=OwnUsagePolicy(own="i1"))
     d = rc.recheck(ctx(usage_id="usage-1"))
     assert (d.verdict, d.reason) == (Verdict.OK, ReasonCode.OK)
-    d = rc.recheck(ctx())
+    assert pol.request_ids == ["i1"]
+    rc, *_ = build(policy=OwnUsagePolicy(own="other"))
+    d = rc.recheck(ctx(usage_id="usage-1"))
     assert (d.verdict, d.reason) == (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED)
 
 
 @pytest.mark.parametrize("verdict,reason", [
+    (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED),
     (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_PENDING),
     (Verdict.NEED_APPROVAL, ReasonCode.ACTION_NOT_ALLOWED),
     (Verdict.DENY, ReasonCode.POLICY_DENIED),
     (Verdict.DENY, ReasonCode.APPROVAL_EXHAUSTED),
 ])
 def test_FR19_재검사_자기_사용분은_승인_소진만_통과시킨다(verdict, reason):
-    rc, *_ = build(policy=FakePolicy(PolicyCheckResult(verdict, reason, 2)))
+    # 자기 사용분을 뺀 뒤에도 정책이 막으면 usage_id 가 있어도 그 판정으로 멈춘다
+    rc, repo, prox, pol, audit = build(policy=FakePolicy(PolicyCheckResult(verdict, reason, 2)))
     d = rc.recheck(ctx(usage_id="usage-1"))
     assert (d.verdict, d.reason) == (verdict, reason)
+    assert pol.request_ids == ["i1"]
 
 
 def test_FR18_재검사는_자기_예약을_타인_점유로_보지_않는다():
@@ -253,8 +273,7 @@ def test_FR18_재검사_예약이_유효하지_않으면_RECHECK_FAILED(mutate):
     lambda r: setattr(r, "owner_ok", False),
 ])
 def test_FR19_자기_사용분으로_정책을_통과해도_예약을_검사한다(mutate):
-    exhausted = PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED, 2)
-    rc, repo, *_ = build(policy=FakePolicy(exhausted))
+    rc, repo, *_ = build(policy=OwnUsagePolicy(own="i1"))
     mutate(repo)
     d = rc.recheck(ctx(usage_id="usage-1"))
     assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.RECHECK_FAILED)

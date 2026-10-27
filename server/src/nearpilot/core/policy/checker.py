@@ -21,7 +21,10 @@ class RepositoryPolicyChecker:
     def __init__(self, repository: Repository) -> None:
         self._repository = repository
 
-    def check(self, user_id: str, node_id: str, action: Action, now: datetime) -> PolicyCheckResult:
+    def check(
+        self, user_id: str, node_id: str, action: Action, now: datetime,
+        *, internal_request_id: str | None = None,
+    ) -> PolicyCheckResult:
         try:
             policy = self._repository.current_policy(node_id)
         except LookupError:
@@ -30,9 +33,11 @@ class RepositoryPolicyChecker:
         if policy.mode == AccessMode.OPEN:
             return PolicyCheckResult(verdict=Verdict.OK, reason=ReasonCode.OK, policy_version=policy.version)
 
-        approval = self._repository.valid_approval(user_id, node_id, action, policy.version, now)
+        approval = self._repository.valid_approval(
+            user_id, node_id, action, policy.version, now, internal_request_id=internal_request_id)
         if approval is not None:
             # valid_approval()은 시간상 유효성만 본다. 남은 횟수는 여기서 직접 확인한다 (FR-14).
+            # 남은 횟수는 internal_request_id 의 사용분을 뺀 값이다. 자기 사용분으로 소진되지 않는다.
             if approval.remaining_uses == 0:
                 return PolicyCheckResult(
                     verdict=Verdict.NEED_APPROVAL,

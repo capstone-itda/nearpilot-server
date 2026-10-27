@@ -14,8 +14,22 @@ import pytest
 
 from _runtime import OWNER, VISITOR_A, FakeProximity, SimBroker, make_config, query, running, seed, wait_until
 from nearpilot.runtime import Runtime, ShutdownError
-from nearpilot.shared.enums import Action, ApprovalStatus, ReasonCode, Verdict
+from nearpilot.shared.enums import Action, ApprovalStatus, ReasonCode, Step, Verdict
 from nearpilot.shared.models import TargetSpec, UseRequest
+
+
+class FlakyAudit:
+    """`step` 의 감사 기록을 처음 한 번만 예외로 끊고, 나머지는 실제 감사 기록에 맡긴다."""
+
+    def __init__(self, inner, step):
+        self._inner, self._step = inner, step
+        self.failed = False
+
+    def append(self, event):
+        if event.step is self._step and not self.failed:
+            self.failed = True
+            raise RuntimeError("감사 기록 장애")
+        self._inner.append(event)
 
 
 class LockerWorld:
@@ -39,6 +53,12 @@ class LockerWorld:
     @property
     def db(self):
         return self.cfg.database.path
+
+    def fail_audit_once(self, step):
+        """서버를 시작하기 전에 부른다. 서버가 `step` 의 감사 기록을 처음 한 번 못 쓰게 한다."""
+        flaky = FlakyAudit(self.runtime.db.audit_log(), step)
+        self.runtime.db.audit_log = lambda: flaky
+        return flaky
 
     def ready(self):
         restore = self.runtime.services.restore
@@ -69,6 +89,9 @@ class LockerWorld:
         assert used.verdict is Verdict.OK
         self.wait_commands(commands)
         assert self.runtime.core.release_use(VISITOR_A, used.use_id).verdict is Verdict.OK
+
+    def usages(self):
+        return [row["state"] for row in query(self.db, "SELECT state FROM approval_usage")]
 
     def commands(self):
         return [row["status"] for row in query(self.db, "SELECT status FROM node_command")]
@@ -129,3 +152,21 @@ def test_FR14_time_window_max_uses_counts_exactly(world):
         third = w.use("use-3")
         assert (third.verdict, third.reason) == (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED)
         assert w.commands() == ["succeeded", "succeeded"]  # 정확히 두 번 구동했다
+
+
+def test_FR14_runtime_one_time_retry_after_internal_error_is_ok(world):
+    w = world("one_time", 1)
+    audit = w.fail_audit_once(Step.DEVICE_OCCUPANCY)
+    with running(w.runtime):
+        w.ready()
+        w.approve("access-1")
+        # ⑤가 승인의 사용분을 예약한 직후 감사 기록이 실패해 오류로 거부한다 (구동하지 않는다)
+        failed = w.use("use-1")
+        assert (failed.verdict, failed.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+        assert audit.failed and w.usages() == ["reserved"] and w.commands() == []
+        # 같은 request_id·입력으로 다시 보낸다. 이전 시도의 사용분은 남은 횟수에서 뺀다 (#76)
+        retried = w.use("use-1")
+        assert (retried.verdict, retried.reason) == (Verdict.OK, ReasonCode.OK)
+        assert retried.internal_request_id == failed.internal_request_id
+        w.wait_commands(["succeeded"])  # 정확히 한 번 구동한다
+        assert len(w.usages()) == 1

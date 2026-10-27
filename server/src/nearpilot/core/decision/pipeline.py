@@ -298,7 +298,7 @@ class DecisionPipeline:
         self, req: UseRequest, iid: str, applied: _Applied, node_id: str, p: float, now: datetime
     ) -> PolicyCheckResult:
         """④ 정책 검사 하나. OK 가 아니면 그 판정으로 멈춘다."""
-        check = self._policy.check(req.user_id, node_id, req.action, now)
+        check = self._policy.check(req.user_id, node_id, req.action, now, internal_request_id=iid)
         applied.policy_version = check.policy_version
         self._audit_step(Step.POLICY, iid, {"node_id": node_id, "verdict": check.verdict.value,
                                            "reason": check.reason.value,
@@ -331,7 +331,7 @@ class DecisionPipeline:
         first_failure: tuple[str, float, PolicyCheckResult] | None = None
         for neg_p, nid in qualified:
             p = -neg_p
-            check = self._policy.check(req.user_id, nid, req.action, now)
+            check = self._policy.check(req.user_id, nid, req.action, now, internal_request_id=iid)
             self._audit_step(Step.POLICY, iid, {"node_id": nid, "verdict": check.verdict.value,
                                                "reason": check.reason.value,
                                                "policy_version": check.policy_version})
