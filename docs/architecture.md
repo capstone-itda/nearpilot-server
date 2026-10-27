@@ -69,10 +69,11 @@ nearpilot-server/
 │   │   ├── seed/               시드 파일 예시 (계정, 비콘, 장소, 정책)
 │   │   ├── plans/              수집 계획 예시
 │   │   ├── layouts/            기기 배치 예시
-│   │   └── fit/                적합 설정 예시 (분할, 후보 값, 통과 기준)
+│   │   ├── fit/                적합 설정 예시 (분할, 후보 값, 통과 기준)
+│   │   └── eval/               서버 지표 평가 설정 예시 (횟수, 통과 기준, 시뮬레이터 장면)
 │   ├── src/nearpilot/
 │   │   ├── shared/             계층 간 계약: 도메인 모델, 열거형, 인터페이스, 설정
-│   │   ├── cli/                운영 명령 `nearpilot`: serve, seed, recover, collect, split, fit, eval (FR-16)
+│   │   ├── cli/                운영 명령 `nearpilot`: serve, seed, recover, collect, split, fit, eval, evaluate-server, evaluate-reask (FR-16, NFR-13)
 │   │   ├── api/
 │   │   │   ├── mcp/            MCP 엔드포인트와 도구 6개 (FR-08~FR-11)
 │   │   │   ├── auth/           토큰으로 계정 식별, 무효 토큰 거부
@@ -1412,6 +1413,7 @@ sequenceDiagram
 | 수치 계산 | numpy, scipy (HMM과 할당) | `server/pyproject.toml` |
 | DB | SQLite (WAL) | FR-19 |
 | 테스트 | pytest | NFR-13 |
+| 평가 그래프 | matplotlib. 선택 의존성 `eval`로 설치한다 (`pip install -e ".[eval]"`). 없으면 그래프만 건너뛴다. | NFR-13, `server/pyproject.toml` |
 | MQTT 브로커 | Mosquitto. 독립 AP 안에서 실행한다. 설정 파일은 `server/config/mosquitto.conf`다. | #19 |
 | 대시보드 | React 18, TypeScript, Vite | `dashboard/package.json` |
 | 대시보드 테스트 | Vitest (단위), Playwright (화면) | `dashboard/package.json` |

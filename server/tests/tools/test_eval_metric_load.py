@@ -111,6 +111,18 @@ class FakeHarness:
         barrier.wait()
 
 
+class DbHarness(FakeHarness):
+    """`FakeHarness`에 서버 DB와 시뮬레이터의 명령 기록을 붙인다. 질의는 실제 SQL로 돈다."""
+
+    def __init__(self, config, db, stored):
+        super().__init__(config)
+        self.db = db
+        self.nodes = {node.node_id: SimpleNamespace(store=SimpleNamespace(command=stored.get)) for node in config.nodes}
+
+    def query(self, sql, *params):
+        return self.db.execute(sql, params).fetchall()
+
+
 # ── 이중 점유와 중복 실행 판정 ────────────────────────────────────────
 
 
@@ -152,13 +164,21 @@ def test_NFR03_load_overlapping_sessions_compare_instants():
     assert overlapping_sessions([rows[0], rows[0]]) == []  # 같은 세션이 두 번 와도 자기와 겹치지 않는다
 
 
-def test_NFR03_load_sessions_start_at_reservation_audit_time():
+def server_db():
+    """지표 3의 질의가 읽는 서버 테이블만 가진 빈 DB."""
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
     db.executescript("""
+        CREATE TABLE request (internal_request_id TEXT, request_id TEXT);
         CREATE TABLE use_session (use_id TEXT, internal_request_id TEXT, node_id TEXT, reserved_at TEXT, closed_at TEXT);
         CREATE TABLE audit_log (internal_request_id TEXT, step TEXT, payload_json TEXT, created_at TEXT);
+        CREATE TABLE node_command (command_id TEXT, internal_request_id TEXT, node_id TEXT);
     """)
+    return db
+
+
+def test_NFR03_load_sessions_start_at_reservation_audit_time():
+    db = server_db()
     sessions = [  # (use_id, 요청, 요청을 받은 시각 reserved_at, 닫힌 시각)
         ("a", "ra", "2026-10-26T10:00:00+00:00", "2026-10-26T10:00:05+00:00"),
         ("b", "rb", "2026-10-26T10:00:01+00:00", "2026-10-26T10:00:09+00:00"),  # a가 닫히기 전에 받았고 닫힌 뒤에 예약했다
@@ -170,11 +190,13 @@ def test_NFR03_load_sessions_start_at_reservation_audit_time():
         ("rc", Step.DEVICE_OCCUPANCY, ReserveOutcome.DEVICE_BUSY, "2026-10-26T10:00:20.100000+00:00"),  # 예약이 아니다
         ("rc", Step.BEACON, ReserveOutcome.RESERVED, "2026-10-26T10:00:20.200000+00:00"),  # 단계가 다르다
     ]
+    db.executemany("INSERT INTO request VALUES (?, ?)", [("ra", "m3-0"), ("rb", "m3-1"), ("rc", "m3-rt-0")])
     db.executemany("INSERT INTO use_session VALUES (?, ?, 'locker-1', ?, ?)", sessions)
     db.executemany("INSERT INTO audit_log VALUES (?, ?, ?, ?)", [
         (request, step.value, json.dumps({"outcome": outcome}), created_at) for request, step, outcome, created_at in audits])
 
-    rows = db.execute(metric_load._SESSIONS, (Step.DEVICE_OCCUPANCY.value, ReserveOutcome.RESERVED.value)).fetchall()
+    rows = db.execute(metric_load._SESSIONS, (Step.DEVICE_OCCUPANCY.value, ReserveOutcome.RESERVED.value,
+                                              len(metric_load._PREFIX), metric_load._PREFIX)).fetchall()
 
     assert {row["use_id"]: row["started_at"] for row in rows} == {  # 감사 기록이 없는 세션은 reserved_at이다
         "a": "2026-10-26T10:00:00.200000+00:00", "b": "2026-10-26T10:00:05.100000+00:00",
@@ -213,6 +235,46 @@ def test_NFR03_load_executed_commands_count_actuated_by_original_request():
 
     assert executed == {"r1": 2, "r4": 1, "r5": 1}
     assert duplicate_executions(executed) == ["r1"]
+
+
+def test_NFR03_load_counts_only_its_own_requests():
+    def at(second):
+        return f"2026-10-26T10:00:{second:02d}+00:00"
+
+    def fill(requests):
+        """요청마다 세션 하나와 구동한 명령을 DB와 시뮬레이터 기록에 넣는다. 요청은 (요청 ID, 시작, 끝, 명령 수)다."""
+        db, stored = server_db(), {}
+        for request_id, started, closed, commands in requests:
+            internal = f"internal-{request_id}"
+            db.execute("INSERT INTO request VALUES (?, ?)", (internal, request_id))
+            db.execute("INSERT INTO use_session VALUES (?, ?, 'locker-1', ?, ?)", (f"use-{request_id}", internal, started, closed))
+            db.execute("INSERT INTO audit_log VALUES (?, ?, ?, ?)", (
+                internal, Step.DEVICE_OCCUPANCY.value, json.dumps({"outcome": ReserveOutcome.RESERVED.value}), started))
+            for number in range(commands):
+                command_id = f"{request_id}-{number}"
+                db.execute("INSERT INTO node_command VALUES (?, ?, 'locker-1')", (command_id, internal))
+                stored[command_id] = CommandRecord(command_id, "{}", "succeeded", "e", at(0), None)
+        return db, stored
+
+    own = [("m3-0", at(0), at(5), 1), ("m3-rt-0", at(5), at(9), 1)]  # 맞닿을 뿐 겹치지 않고, 한 번씩 구동했다
+    others = [  # 같은 기기를 쓴 다른 지표의 요청. 거르지 않으면 지표 3의 세션과 겹치고 중복 구동이 생긴다
+        ("m1-0", at(1), at(4), 1), ("m4-1", at(2), None, 2), ("m5-explicit-000-rent", at(3), at(8), 1),
+        ("m6-leave-001-rent", at(4), at(6), 2), ("m7-0", at(6), None, 1),
+        ("m30-0", at(7), at(8), 2),  # 접두어와 비슷하지만 `m3-`로 시작하지 않는다
+    ]
+    config = with_counts(m3_requests=2, m3_retransmits=1, m3_clients=2)
+
+    alone = run_metric3(DbHarness(config, *fill(own)), config, random.Random(1))
+    mixed = run_metric3(DbHarness(config, *fill(own + others)), config, random.Random(1))
+
+    assert (alone.raw["sessions"], alone.raw["overlaps"], alone.raw["duplicates"]) == (2, [], [])
+    assert alone.raw["executed"] == {"internal-m3-0": 1, "internal-m3-rt-0": 1}
+    assert mixed.rows == alone.rows  # trials·failures·passed·note가 다른 지표의 요청에 흔들리지 않는다
+    for key in ("sessions", "overlaps", "executed", "duplicates"):
+        assert mixed.raw[key] == alone.raw[key]
+    everything = fill(own + others)[0].execute(
+        "SELECT use_id, node_id, reserved_at AS started_at, closed_at FROM use_session").fetchall()
+    assert overlapping_sessions(everything)  # 거르지 않으면 이중 점유로 보였을 자료다
 
 
 def test_NFR03_load_counts_lock_errors():
@@ -402,12 +464,22 @@ def test_NFR01_metric7_collects_only_request_use_latency():
 # ── 실제 프로세스 ──────────────────────────────────────────────────────
 
 
-def test_NFR03_load_runs_on_harness(tmp_path, mosquitto):
-    config = with_counts(m3_requests=20, m3_retransmits=5, m3_clients=4)
+def test_NFR03_load_runs_on_harness(ascii_tmp_path, mosquitto):
+    config = with_counts(m3_requests=20, m3_retransmits=5, m3_clients=4, m7_server_requests=3)
 
-    with Harness(config, tmp_path / "work", server_root=SERVER) as harness:
+    with Harness(config, ascii_tmp_path / "work", server_root=SERVER) as harness:
+        run_metric7(harness, config)  # 평가 명령은 지표 3 앞에서 다른 지표를 돌린다. 그 세션과 명령이 같은 DB에 있다
+        others = harness.query("SELECT count(*) AS n FROM use_session")[0]["n"]
         outcome = run_metric3(harness, config, random.Random(config.seed))
+        own = harness.query(
+            "SELECT s.internal_request_id FROM use_session s JOIN request r ON r.internal_request_id = s.internal_request_id "
+            "WHERE r.request_id LIKE 'm3-%'")
+        own_requests = {row["internal_request_id"] for row in harness.query(
+            "SELECT internal_request_id FROM request WHERE request_id LIKE 'm3-%'")}
 
+    assert others >= 1  # 지표 7이 세션을 만들었으므로, 거르지 않으면 지표 3의 집계가 달라진다
+    assert outcome.raw["sessions"] == len(own)  # 지표 3의 요청이 만든 세션만 센다
+    assert set(outcome.raw["executed"]) <= own_requests
     double, duplicate, errors = outcome.rows
     assert [row["metric"] for row in outcome.rows] == ["m3_double_occupancy", "m3_duplicate_execution", "m3_lock_errors"]
     assert (double["failures"], double["passed"]) == (0, True)
@@ -421,10 +493,10 @@ def test_NFR03_load_runs_on_harness(tmp_path, mosquitto):
     json.dumps(outcome.raw)
 
 
-def test_NFR01_metric7_runs_on_harness(tmp_path, mosquitto):
+def test_NFR01_metric7_runs_on_harness(ascii_tmp_path, mosquitto):
     config = with_counts(m7_server_requests=5)
 
-    with Harness(config, tmp_path / "work", server_root=SERVER) as harness:
+    with Harness(config, ascii_tmp_path / "work", server_root=SERVER) as harness:
         outcome = run_metric7(harness, config)
 
     latencies = outcome.raw["latencies"]

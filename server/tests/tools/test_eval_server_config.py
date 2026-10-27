@@ -53,7 +53,7 @@ def test_NFR13_eval_config_loads_example():
             "m5_each": 30, "m6_each": 30, "m7_server_requests": 100, "m9_sets": 50}.items() <= config.counts.items()
     assert {"m1_max_wrong_rate": 0.025, "m3_max_double_occupancy": 0, "m3_max_duplicate_execution": 1,
             "m7_max_median_sec": 1.0, "m7_max_p95_sec": 2.0}.items() <= config.acceptance.items()
-    assert config.rssi["near"] > config.rssi["far"] > config.rssi["absent"]
+    assert config.rssi["near"] > config.rssi["far"]
     with pytest.raises(TypeError):  # 지표를 구현하는 쪽이 설정 값을 바꾸지 못한다
         config.counts["m3_requests"] = 1
 

@@ -4,7 +4,7 @@
 `nearpilot seed`로 계정, 장소, 기기, 정책을 넣는다. MCP와 REST는 HTTP로 부르고, DB는 읽기 전용 연결로만 읽는다 (NFR-13).
 운영 DB, 운영 브로커, 실제 기기에는 접속하지 않는다. 포트는 비어 있는 localhost 포트를 고른다.
 `tools/`는 `tests/`를 import하지 않는다. 서버와 시드는 운영과 같은 `nearpilot` 명령이다.
-`workdir`은 ASCII 경로여야 한다. Mosquitto가 한글 경로의 설정 파일을 열지 못한다.
+`workdir`은 ASCII 경로여야 한다. Mosquitto가 한글 경로의 설정 파일을 열지 못한다. 아니면 프로세스를 띄우기 전에 `HarnessError`다.
 """
 
 from __future__ import annotations
@@ -115,6 +115,9 @@ class Harness:
 
     def _start(self) -> None:
         config = self.config
+        if not str(self.workdir).isascii():  # 폴더도 프로세스도 만들기 전에 거절한다
+            raise HarnessError(f"작업 폴더 경로에 ASCII가 아닌 글자가 있다: {self.workdir}. "
+                               f"Mosquitto가 한글 경로의 설정 파일을 열지 못한다. ASCII 경로를 쓴다")
         self._check_model()
         mosquitto, mosquitto_passwd = find_mosquitto()
         example = tomllib.loads((self.server_root / "config" / "server.example.toml").read_text(encoding="utf-8"))

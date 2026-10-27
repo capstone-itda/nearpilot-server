@@ -103,7 +103,6 @@ m9_min_match_rate = 1.0
 [rssi]
 near = -53.0
 far = -62.0
-absent = -90.0
 """
 
 # 지표 번호 → 가짜 지표 함수가 돌려주는 결과. 행은 통과 칸이 True, False, 빈 값인 것이 섞여 있다.
@@ -377,7 +376,7 @@ def test_NFR13_evaluate_server_seeds_metrics_3_and_9(server_dir, run_cli, fake_r
 def test_NFR13_evaluate_server_metric_9_alone_needs_no_harness(server_dir, run_cli, fake_run, fake_plots):
     # 지표 9는 서버 없이 잰다. 다른 지표가 읽는 횟수와 통과 기준, RSSI가 설정에 없어도 된다
     text = "\n".join(line for line in EVAL_TOML.splitlines()
-                     if not line.startswith(("m1_", "m3_", "m4_", "m5_", "m6_", "m7_", "near", "far", "absent")))
+                     if not line.startswith(("m1_", "m3_", "m4_", "m5_", "m6_", "m7_", "near", "far")))
     write_eval(server_dir, text)
 
     code, out, err = run_cli(server_argv("--metrics", "9"), cwd=server_dir)
@@ -458,7 +457,7 @@ def test_NFR13_evaluate_server_required_settings_match_the_example_config():
     assert set(config.counts) == reads[0]
     # 지표 7의 호스트 쪽 기준은 이 도구가 재지 않는다 (예시에 표의 행을 보존하려고 둔 값)
     assert {key for key in config.acceptance if not key.startswith("m7_host_")} == reads[1]
-    assert reads[2] <= set(config.rssi)  # 예시의 absent는 지표 모듈이 읽지 않는다
+    assert set(config.rssi) == reads[2]
 
 
 def test_NFR13_evaluate_server_plot_failure_is_only_a_warning(server_dir, run_cli, fake_run, monkeypatch):

@@ -8,7 +8,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
+import tempfile
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -163,3 +166,23 @@ def write_plan(tmp_path: Path):
         return path
 
     return write
+
+
+@pytest.fixture
+def ascii_tmp_path(tmp_path: Path) -> Iterator[Path]:
+    """`Harness`의 작업 폴더를 둘 ASCII 폴더. `tmp_path`가 ASCII면 그것이다.
+
+    한국어 Windows의 `tmp_path`는 사용자 폴더 이름 때문에 ASCII가 아닐 수 있고, Mosquitto가 한글 경로의 설정 파일을
+    열지 못해서 `Harness`가 시작 전에 거절한다. 그때는 `tempfile.mkdtemp()`의 폴더를 쓰고 시험이 끝나면 지운다.
+    그 폴더도 ASCII가 아니면 시험을 건너뛴다.
+    """
+    if str(tmp_path).isascii():
+        yield tmp_path
+        return
+    folder = Path(tempfile.mkdtemp(prefix="nearpilot-eval-"))
+    try:
+        if not str(folder).isascii():
+            pytest.skip(f"An ASCII work folder is required ({folder})")
+        yield folder
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)

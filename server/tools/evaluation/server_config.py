@@ -81,7 +81,7 @@ class EvalConfig:
     nodes: tuple[NodeSpec, ...]
     counts: Mapping[str, int]  # 지표별 횟수. 키 예: "m3_requests", "m3_retransmits", "m3_clients", "m5_each"
     acceptance: Mapping[str, float]  # 통과 기준. 키 예: "m1_max_wrong_rate", "m7_max_median_sec"
-    rssi: Mapping[str, float]  # 시뮬레이터 RSSI. 키 예: "near", "far", "absent"
+    rssi: Mapping[str, float]  # 시뮬레이터 RSSI. 키 예: "near", "far"
     beacon_uuid: str  # 모든 사용자의 비콘 uuid
     beacon_major: int  # 모든 사용자의 비콘 major
 

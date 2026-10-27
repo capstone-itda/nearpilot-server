@@ -1,8 +1,9 @@
 """지표 5(정책·발견·차단)와 지표 6(종료·복구)의 시나리오와 집계 (specs/db-evaluation-server-metrics/spec.md 6절 "결정").
 
-`run_metric5`는 미등록, 무권한, 1회 승인, 기간 승인, 타인 핸들, 미신뢰를 `counts["m5_each"]`번씩 돌려서 허가 없이 기기가 구동되거나
-남의 점유가 바뀐 횟수를 센다 (NFR-07). `run_metric6`은 명시 해제, 이탈, 대여시간 초과, 무응답, 명령 처리 실패, 결과 불명, 타인 반납을
-`counts["m6_each"]`번씩 돌려서 자동 반납, 타인 반납, 장애 중 일반 반납, 소유자 승인 없는 복구, 복구 성공을 센다 (NFR-04, FR-07, FR-20).
+`run_metric5`는 미등록, 비콘 없음, 무권한, 1회 승인, 기간 승인, 타인 핸들, 미신뢰를 `counts["m5_each"]`번씩 돌려서 허가 없이 기기가 구동되거나
+남의 점유가 바뀐 횟수를 센다 (NFR-07). `run_metric6`은 명시 해제, 이탈, 대여시간 초과, 무응답, 명령 처리 실패, 결과 불명, 미완료 명령 중 반납,
+타인 반납을 `counts["m6_each"]`번씩 돌려서 자동 반납, 타인 반납, 미완료 명령·장애 중 일반 반납, 소유자 승인 없는 복구, 복구 성공을 센다
+(NFR-04, FR-07, FR-20).
 서버는 고치지 않는다. MCP와 REST, 읽기 전용 DB 연결, 시뮬레이터의 명령 기록만 쓴다.
 
 기기를 구동했는지는 응답이 아니라 시뮬레이터의 명령 기록으로 센다. 시도마다 요청 ID에 지표, 시나리오, 순번을 넣고, 그 접두어로 시작하는
@@ -26,28 +27,31 @@
 
 from __future__ import annotations
 
+import threading
 import time
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
+from functools import partial
 from typing import Any
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    AccessMode, ApprovalMode, Capability, DeviceState, EndReason, Occupancy, ReasonCode, RecoveryStatus, Role,
-    SessionState, Verdict)
+    AccessMode, ApprovalMode, Capability, DeviceState, EndReason, ExecutionStatus, Occupancy, ReasonCode, RecoveryStatus,
+    Role, SessionState, Verdict)
 from tools.evaluation.harness import Harness
-from tools.evaluation.metric_load import _actuated, _hear, _release
+from tools.evaluation.metric_load import _actuated, _hear, _release, _run_parallel
 from tools.evaluation.rows import MetricOutcome, metric_row
 from tools.evaluation.server_config import EvalConfig, EvalConfigError, NodeSpec
 
 # 시도의 `scenario` 값. 행마다 어느 시나리오의 시도를 세는지가 이 이름으로 정해진다.
-M5_SCENARIOS = ("unregistered", "unauthorized", "one_time", "time_window", "foreign_handle", "untrusted")
+M5_SCENARIOS = ("unregistered", "no_beacon", "unauthorized", "one_time", "time_window", "foreign_handle", "untrusted")
 M6_SCENARIOS = ("explicit_release", "leave", "rental_overrun", "no_response", "command_failed", "result_unknown",
-                "foreign_release")
+                "pending_command_release", "foreign_release")
 _APPROVAL_SCENARIOS = ("one_time", "time_window")  # 소유자가 승인한 요청이 구동되는지 보는 시나리오
 _LEAVE_SCENARIOS = ("leave", "rental_overrun")  # 서버가 점유를 닫을 수 있는 기회
 _FAULT_SCENARIOS = ("no_response", "command_failed", "result_unknown")  # 기기가 FAULT가 되는 시나리오
+_UNFINISHED_SCENARIOS = (*_FAULT_SCENARIOS, "pending_command_release")  # 방문자의 반납이 일반 반납이 되면 안 되는 시나리오
 
 _ACTION = {Capability.LOCKER: "open", Capability.LIGHT: "on", Capability.SPEAKER: "on"}  # 기기 종류마다 요청하는 동작
 _APPROVAL_REQUIRED = "approval_required"  # `find_available_devices`의 `access` 값 (MCP 계약)
@@ -71,6 +75,7 @@ def run_metric5(h: Harness, config: EvalConfig) -> MetricOutcome:
 
     시나리오는 `M5_SCENARIOS` 순서다. 설정에 필요한 기기가 없으면 그 시나리오는 건너뛴다.
       unregistered   토큰 없음과 틀린 토큰으로 `request_use`. 401이고 구동 0이어야 한다.
+      no_beacon      유효한 토큰이지만 어느 기기도 방문자의 비콘을 듣지 못하는 장면에서 `request_use`. 거절되고 구동 0이어야 한다.
       unauthorized   제한 기기에 승인 없이 `request_use`. 승인 필요로 거절되고 구동 0이어야 한다.
       one_time       1회 승인(`one_time` 제한 기기): 승인 → 요청 OK(구동 1) → 반납 → 다시 요청은 승인이 필요하고 구동 0.
       time_window    기간 승인(`time_window` 제한 기기): 승인 → 유효시간 안에 두 번 OK → 유효시간이 끝난 뒤 요청은 구동 0.
@@ -82,6 +87,7 @@ def run_metric5(h: Harness, config: EvalConfig) -> MetricOutcome:
     summarize_metric5([], config.acceptance)  # 통과 기준이 빠졌으면 긴 시나리오를 돌리기 전에 알린다
     scenarios = (
         ("unregistered", _unregistered, bench.open_node, "신뢰하는 개방 기기가 설정에 없다"),
+        ("no_beacon", _no_beacon, bench.open_node, "신뢰하는 개방 기기가 설정에 없다"),
         ("unauthorized", _unauthorized, bench.restricted, "신뢰하는 제한 기기(mode = restricted)가 설정에 없다"),
         ("one_time", _one_time, bench.one_time, "approval_mode = one_time인 제한 기기가 설정에 없다"),
         ("time_window", _time_window, bench.time_window,
@@ -109,6 +115,9 @@ def run_metric6(h: Harness, config: EvalConfig) -> MetricOutcome:
                        셋은 기기가 FAULT가 되길 기다린 뒤 같은 순서로 확인한다: 방문자의 `release_use`는 일반 반납이 되지 않아야 하고,
                        방문자의 복구 승인은 거부되고, 준비 전 소유자 승인도 거부되어야 한다. 시나리오를 정상으로 되돌리고 `ready`가 되면
                        소유자 승인으로 `completed`와 기기 AVAILABLE이 되어야 한다.
+      pending_command_release  대여 명령에 기기가 제한 시간 안에 늦게 답한다. 명령이 처리 중이고 기기가 아직 FAULT가 아닐 때 같은 방문자가
+                       `release_use`를 보낸다. 서버가 반납을 보류해야 하고 세션이 일반 반납으로 닫히면 실패다. 장애 중 일반 반납과
+                       같은 행(`m6_release_during_fault`)에 센다.
       foreign_release  방문자 B가 A의 대여를 반납한다. 거부되고 A의 세션은 그대로여야 한다.
     """
     bench = _Bench(h, config, "m6")
@@ -121,6 +130,7 @@ def run_metric6(h: Harness, config: EvalConfig) -> MetricOutcome:
         ("leave", _leave, bench.rental, ""),
         ("rental_overrun", _rental_overrun, bench.rental, ""),
         *((name, _fault(name), bench.rental, "") for name in _FAULT_SCENARIOS),
+        ("pending_command_release", _pending_command_release, bench.rental, ""),
         ("foreign_release", _foreign_release, bench.rental, ""),
     )
     attempts, skipped = _run(bench, scenarios, each)
@@ -135,8 +145,8 @@ def summarize_metric5(attempts: Sequence[Mapping[str, Any]], acceptance: Mapping
     """
     return [
         _count_row("m5_out_of_scope", _limit(acceptance, "m5_max_out_of_scope"), attempts, M5_SCENARIOS, "out_of_scope",
-                   "허가 없이 구동되거나 남의 점유가 바뀐 조작 수. 미등록, 무권한, 승인 소진·만료 뒤 요청, 타인 핸들, "
-                   "미신뢰 기기 앞의 요청을 시뮬레이터 구동 기록과 응답으로 센다"),
+                   "허가 없이 구동되거나 남의 점유가 바뀐 조작 수. 미등록, 비콘 근거 없는 요청, 무권한, 승인 소진·만료 뒤 요청, "
+                   "타인 핸들, 미신뢰 기기 앞의 요청을 시뮬레이터 구동 기록과 응답으로 센다"),
         _count_row("m5_untrusted_candidates", _limit(acceptance, "m5_max_untrusted_candidates"), attempts, ("untrusted",),
                    "untrusted_candidate", "미신뢰 기기가 기기 목록이나 요청 응답에 나온 횟수"),
         _rate_row("m5_valid_approval_success", _limit(acceptance, "m5_min_valid_approval_success_rate"), attempts,
@@ -149,16 +159,18 @@ def summarize_metric6(attempts: Sequence[Mapping[str, Any]], acceptance: Mapping
     """지표 6의 행 셋. 통과 기준은 `acceptance`에서 읽는다.
 
     `setup_failed` 시도는 값과 시험 횟수에 넣지 않는다. 시험 횟수는 그 행이 판정하는 시나리오의 시도 수다: 자동 반납은 이탈·대여시간 초과,
-    타인 반납은 `foreign_release`, 장애 중 반납·승인 없는 복구는 장애 셋이다. 복구 성공은 `recovered`가 있는 시도(장애 셋)다.
+    타인 반납은 `foreign_release`, 미완료 명령·장애 중 반납은 장애 셋과 `pending_command_release`, 승인 없는 복구는 장애 셋이다.
+    복구 성공은 `recovered`가 있는 시도(장애 셋)다.
     """
     return [
         _count_row("m6_auto_release", _limit(acceptance, "m6_max_auto_release"), attempts, _LEAVE_SCENARIOS, "auto_release",
                    "이탈이나 대여시간 초과 뒤 서버가 점유를 닫은 횟수"),
         _count_row("m6_foreign_release", _limit(acceptance, "m6_max_foreign_release"), attempts, ("foreign_release",),
                    "foreign_release", "다른 방문자의 반납이 받아들여진 횟수"),
-        _count_row("m6_release_during_fault", _limit(acceptance, "m6_max_release_during_fault"), attempts, _FAULT_SCENARIOS,
+        _count_row("m6_release_during_fault", _limit(acceptance, "m6_max_release_during_fault"), attempts, _UNFINISHED_SCENARIOS,
                    "release_during_fault",
-                   "기기가 FAULT인 동안 방문자의 반납이 일반 반납으로 끝난 횟수 (무응답, 명령 처리 실패, 결과 불명)"),
+                   "명령이 끝나지 않았거나 기기가 FAULT인 동안 방문자의 반납이 일반 반납으로 끝난 횟수 "
+                   "(무응답, 명령 처리 실패, 결과 불명, 처리 중인 명령)"),
         _count_row("m6_unapproved_recovery", _limit(acceptance, "m6_max_unapproved_recovery"), attempts, _FAULT_SCENARIOS,
                    "unapproved_recovery",
                    "방문자의 승인이나 준비 전의 승인이 받아들여졌거나, 소유자의 준비 상태 승인 없이 FAULT가 풀린 횟수"),
@@ -388,6 +400,11 @@ class _Bench:
     def device_state(self, node_id: str) -> str:
         return self.h.query("SELECT device_state FROM node WHERE node_id = ?", node_id)[0]["device_state"]
 
+    def pending(self, node_id: str) -> bool:
+        """기기에 결과를 기다리는 명령이 있다. 서버는 이 동안 반납을 시작하지 않는다 (FR-20)."""
+        return bool(self.h.query("SELECT 1 FROM node_command WHERE node_id = ? AND status = ?",
+                                 node_id, ExecutionStatus.IN_PROGRESS.value))
+
     def session(self, use_id: str) -> dict[str, Any] | None:
         rows = self.h.query(
             "SELECT use_id, user_id, state, end_reason, closed_at FROM use_session WHERE use_id = ?", use_id)
@@ -507,11 +524,15 @@ class _Bench:
             raise _SetupFailed(f"GET /approvals가 {status}로 끝났다")
         return items
 
+    def now(self) -> datetime:
+        """서버와 같은 PC의 현재 시각. 승인의 유효시간과 견준다."""
+        return datetime.now(timezone.utc)
+
     def wait_expiry(self, grant: Mapping[str, Any]) -> None:
         """승인의 유효시간(`valid_until`)이 끝나기를 기다린다. 서버와 같은 PC의 시계로 잰다."""
         if not grant.get("valid_until"):
             raise _SetupFailed("승인에 valid_until이 없다")
-        remaining = (datetime.fromisoformat(grant["valid_until"]) - datetime.now(timezone.utc)).total_seconds()
+        remaining = (datetime.fromisoformat(grant["valid_until"]) - self.now()).total_seconds()
         self.pause(max(0.0, remaining) + self.margin)
 
     def readiness(self, node_id: str) -> Mapping[str, Any]:
@@ -568,6 +589,19 @@ def _unregistered(b: _Bench, index: int) -> dict[str, Any]:
     b.wait_access(visitor, node.node_id)  # 등록된 방문자는 그 기기를 쓸 수 있는 자리에 있다
     calls = b.anonymous(b.rid("unregistered", index, "a"), node)
     return {"out_of_scope": b.breaches(calls, b.rid("unregistered", index, "")), "trace": [_brief(call) for call in calls]}
+
+
+def _no_beacon(b: _Bench, index: int) -> dict[str, Any]:
+    node, visitor = b.open_node, b.visitor(index)
+    b.scene({})  # 어느 기기도 방문자의 비콘을 듣지 못한다. 토큰은 유효하다
+    b.settle(node.node_id)
+    listed = b.devices(visitor)
+    if listed:  # 앞 장면의 프레임이 서버에 남았으면 비콘 근거가 없는 장면이 아니다
+        raise _SetupFailed(f"비콘을 듣는 기기가 없는데 {visitor}의 기기 목록에 {listed}가 있다")
+    request_id = b.rid("no_beacon", index, "a")
+    call = b.call(visitor, "request_use", {"target_spec": f"nearest:{node.capability}", "action": _ACTION[node.capability],
+                                           "request_id": request_id})
+    return {"out_of_scope": b.breaches([call], request_id), "trace": [_brief(call)]}
 
 
 def _unauthorized(b: _Bench, index: int) -> dict[str, Any]:
@@ -766,6 +800,58 @@ def _break_and_recover(b: _Bench, index: int, name: str, node: NodeSpec, visitor
     if status in (200, 202) and b.at_rest(node.node_id):  # 202는 정산이 진행 중이다. 기기가 AVAILABLE이 되길 기다려서 확인한다
         fields["recovered"] = True
     return fields
+
+
+def _pending_command_release(b: _Bench, index: int) -> dict[str, Any]:
+    """대여 명령이 처리 중일 때 같은 방문자가 반납한다. 서버가 반납을 보류해야 한다 (FR-20).
+
+    기기가 `exec_timeout_sec`의 중간에 늦게 답하게 해서, 명령이 처리 중이고 기기가 아직 FAULT가 아닌 때를 만든다.
+    `request_use`는 결과가 올 때까지 응답하지 않아서 다른 스레드로 보내고, 그동안 `release_use`를 보낸다. 대여가 확정되기 전이라
+    점유 세션은 RESERVED이고, 응답이 오기 전이라 점유 ID는 DB에서 읽는다.
+    """
+    name, node, visitor = "pending_command_release", b.rental, b.visitor(index)
+    b.scene(b.everyone_near(node))
+    b.settle(node.node_id)
+    b.wait_access(visitor, node.node_id)
+    sent: list[dict[str, Any]] = []
+    answered = threading.Event()
+
+    def rent() -> None:
+        try:
+            sent.extend(b.request(visitor, b.rid(name, index, "a"), node))
+        finally:
+            answered.set()
+
+    b.h.set_scenario(node.node_id, result_delay_sec=(b.settings.exec_timeout_sec - b.config.actuation_sec) / 2)
+    try:
+        _, fields = _run_parallel(2, [rent, partial(_release_while_pending, b, node, visitor, answered)])
+    except _SetupFailed as failed:
+        raise _SetupFailed(f"{failed} (request_use {[_brief(call) for call in sent]})") from failed
+    finally:
+        b.h.set_scenario(node.node_id, **_NORMAL)
+        b.give_back(visitor, b.open_use(node.node_id, visitor), node.node_id)
+    fields["trace"] = [_brief(call) for call in sent] + fields["trace"]
+    return fields
+
+
+def _release_while_pending(b: _Bench, node: NodeSpec, visitor: str, answered: threading.Event) -> dict[str, Any]:
+    """명령이 처리 중인 것을 본 뒤 방문자의 `release_use`를 보내고, 서버가 반납을 보류했는지 판정한다.
+
+    반납을 서버가 처리하는 동안 명령이 끝났다면 그때의 일반 반납은 정당하다. 그 시도는 지표의 실패가 아니라 장면을 만들지 못한 것이다:
+    반납 응답이 `COMMAND_IN_PROGRESS`가 아니고 응답 뒤에 처리 중인 명령도 없으면 반납을 처리한 시점의 상태를 알 수 없다.
+    """
+    if not b.h.wait_until(lambda: b.pending(node.node_id) or answered.is_set(), b.limit):
+        raise _SetupFailed(f"명령이 {b.limit:g}초 안에 처리 중이 되지 않았다")
+    use_id, state = b.open_use(node.node_id, visitor), b.device_state(node.node_id)
+    if use_id is None or state == DeviceState.FAULT or not b.pending(node.node_id):
+        raise _SetupFailed(f"처리 중인 명령과 열린 점유가 있는 장면이 아니다 (점유 {use_id}, device_state {state})")
+    release = b.call(visitor, "release_use", {"use_id": use_id})
+    session = b.session(use_id)
+    if release["reason"] != ReasonCode.COMMAND_IN_PROGRESS and not b.pending(node.node_id):
+        raise _SetupFailed(f"반납 응답 전에 명령이 끝났다 ({release['verdict']}/{release['reason']})")
+    b.h.wait_until(lambda: not b.pending(node.node_id), b.limit)  # 늦은 결과가 오고 서버가 처리한 뒤에 정리한다
+    return {"release_during_fault": int(_normal_release(release, session)),
+            "trace": [_brief(release), f"반납 뒤 세션 {session and session['state']}"]}
 
 
 def _foreign_release(b: _Bench, index: int) -> dict[str, Any]:

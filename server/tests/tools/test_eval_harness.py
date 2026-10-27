@@ -63,15 +63,15 @@ def assert_stopped(spawned):
     assert not [thread.name for thread in threading.enumerate() if thread.name.startswith("node-sim-")]
 
 
-def test_NFR13_harness_requires_mosquitto(monkeypatch, tmp_path, spawned):
+def test_NFR13_harness_requires_mosquitto(monkeypatch, ascii_tmp_path, spawned):
     monkeypatch.delenv("MOSQUITTO_EXECUTABLE", raising=False)
     monkeypatch.delenv("MOSQUITTO_PASSWD_EXECUTABLE", raising=False)
     monkeypatch.setattr(shutil, "which", lambda *args, **kwargs: None)
-    workdir = tmp_path / "work"
+    workdir = ascii_tmp_path / "work"
 
     with pytest.raises(HarnessError, match="mosquitto"):
         find_mosquitto()
-    monkeypatch.setenv("MOSQUITTO_EXECUTABLE", str(tmp_path / "missing"))  # 가리키는 파일이 없는 경로도 없는 것이다
+    monkeypatch.setenv("MOSQUITTO_EXECUTABLE", str(ascii_tmp_path / "missing"))  # 가리키는 파일이 없는 경로도 없는 것이다
     with pytest.raises(HarnessError, match="missing"):
         find_mosquitto()
     with pytest.raises(HarnessError, match="mosquitto"):
@@ -82,15 +82,26 @@ def test_NFR13_harness_requires_mosquitto(monkeypatch, tmp_path, spawned):
     assert not workdir.exists()
 
 
-def test_NFR13_harness_rejects_trusted_node_missing_from_model(tmp_path, spawned):
+def test_NFR13_harness_rejects_trusted_node_missing_from_model(ascii_tmp_path, spawned):
     config = small_config()
     config = dataclasses.replace(config, nodes=(*config.nodes, NodeSpec("ghost-1", "locker", "rental")))
 
     with pytest.raises(HarnessError, match="ghost-1"):  # 모델에 없는 trusted 기기는 모든 요청을 모델 오류로 만든다
-        with Harness(config, tmp_path / "work", server_root=SERVER):
+        with Harness(config, ascii_tmp_path / "work", server_root=SERVER):
             pytest.fail("모델이 맞지 않으면 시작하지 않아야 한다")
 
     assert spawned == []
+
+
+def test_NFR13_harness_rejects_non_ascii_workdir_before_starting(tmp_path, spawned):
+    workdir = tmp_path / "작업 폴더"  # Mosquitto가 한글 경로의 설정 파일을 열지 못한다
+
+    with pytest.raises(HarnessError, match="ASCII"):
+        with Harness(small_config(), workdir, server_root=SERVER):
+            pytest.fail("ASCII가 아닌 작업 폴더는 시작하지 않아야 한다")
+
+    assert spawned == []  # 아무 프로세스도 띄우지 않았다
+    assert not workdir.exists()
 
 
 def test_NFR13_harness_set_rssi_and_scenario_replace_simulated_scenario(tmp_path):
@@ -119,28 +130,28 @@ def test_NFR13_harness_set_rssi_and_scenario_replace_simulated_scenario(tmp_path
     pytest.param("import sys; print('stand-in server', flush=True); sys.exit(3)", id="exits"),
     pytest.param("import time; print('stand-in server', flush=True); time.sleep(60)", id="never-listens"),
 ])
-def test_NFR13_harness_startup_timeout_cleans_up(monkeypatch, tmp_path, mosquitto, spawned, server_script):
+def test_NFR13_harness_startup_timeout_cleans_up(monkeypatch, ascii_tmp_path, mosquitto, spawned, server_script):
     config = dataclasses.replace(small_config(), startup_timeout_sec=2.0)
     monkeypatch.setattr(Harness, "_server_command", lambda self: [sys.executable, "-c", server_script])
 
     with pytest.raises(HarnessError, match="stand-in server"):  # 서버 로그 끝이 오류에 담긴다
-        with Harness(config, tmp_path / "work", server_root=SERVER):
+        with Harness(config, ascii_tmp_path / "work", server_root=SERVER):
             pytest.fail("서버가 포트를 열지 않으면 시작하지 않아야 한다")
 
     assert_stopped(spawned)
 
 
-def test_NFR13_harness_cleans_up_on_error(tmp_path, mosquitto, spawned):
+def test_NFR13_harness_cleans_up_on_error(ascii_tmp_path, mosquitto, spawned):
     with pytest.raises(RuntimeError, match="scenario failed"):  # 정리하고도 예외를 삼키지 않는다
-        with Harness(small_config(), tmp_path / "work", server_root=SERVER):
+        with Harness(small_config(), ascii_tmp_path / "work", server_root=SERVER):
             raise RuntimeError("scenario failed")
 
     assert_stopped(spawned)
 
 
-def test_NFR13_harness_runs_tool_call(tmp_path, mosquitto, spawned):
+def test_NFR13_harness_runs_tool_call(ascii_tmp_path, mosquitto, spawned):
     config = small_config()
-    with Harness(config, tmp_path / "work", server_root=SERVER) as harness:
+    with Harness(config, ascii_tmp_path / "work", server_root=SERVER) as harness:
         harness.set_rssi("locker-1", {"visitor-1": config.rssi["near"]})
 
         def listed() -> bool:  # 조회만 한다. 근접 확률이 임계값을 넘으면 기기가 나온다

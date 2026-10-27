@@ -15,6 +15,7 @@ import json
 import re
 import sqlite3
 import subprocess
+import threading
 import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -36,6 +37,7 @@ SERVER = Path(__file__).resolve().parents[2]
 EXAMPLE = SERVER / "config" / "eval" / "server-metrics.example.toml"
 FAULTS = ("no_response", "command_failed", "result_unknown")
 ACTION = {"locker": "open", "light": "on", "speaker": "on"}  # 기기 종류마다 요청하는 동작
+EPOCH = datetime(2026, 10, 27, tzinfo=timezone.utc)  # 가짜 시계가 0초일 때의 현재 시각
 
 
 @pytest.fixture
@@ -49,6 +51,14 @@ def mosquitto():
 @pytest.fixture
 def acceptance():
     return load_eval_config(EXAMPLE).acceptance
+
+
+@pytest.fixture(autouse=True)
+def virtual_clock(monkeypatch):
+    """`FakeHarness`로 도는 시나리오는 현재 시각을 가짜 시계(`FakeHarness.clock`)로 읽는다. 실제 하네스로 도는 시험은 실제 시계를 쓴다."""
+    real = metric_safety._Bench.now
+    monkeypatch.setattr(metric_safety._Bench, "now", lambda self: EPOCH + timedelta(seconds=self.h.clock)
+                        if isinstance(self.h, FakeHarness) else real(self))
 
 
 def with_counts(**counts):
@@ -78,6 +88,7 @@ def attempt(scenario, **fields):
 def test_NFR07_metric5_summary_counts(acceptance):
     attempts = [
         attempt("unregistered"), attempt("unregistered"),
+        attempt("no_beacon"), attempt("no_beacon", out_of_scope=1),
         attempt("unauthorized"), attempt("unauthorized", out_of_scope=1),
         attempt("one_time", approval_ok=True), attempt("one_time", approval_ok=False),
         attempt("time_window", approval_ok=True), attempt("time_window", approval_ok=True, out_of_scope=2),
@@ -89,9 +100,9 @@ def test_NFR07_metric5_summary_counts(acceptance):
 
     assert [row["metric"] for row in (scope, untrusted, approval)] == [
         "m5_out_of_scope", "m5_untrusted_candidates", "m5_valid_approval_success"]
-    # 범위 밖 조작은 모든 시나리오의 합이고, 실패는 그 값이 0보다 큰 시도 수다 (값 5, 시도 4건)
+    # 범위 밖 조작은 모든 시나리오의 합이고, 실패는 그 값이 0보다 큰 시도 수다 (값 6, 시도 5건)
     assert (scope["value"], scope["limit"], scope["passed"], scope["trials"], scope["failures"]) == (
-        5, acceptance["m5_max_out_of_scope"], False, 12, 4)
+        6, acceptance["m5_max_out_of_scope"], False, 14, 5)
     # 미신뢰 후보는 `untrusted` 시나리오만 판정한다. 다른 시나리오의 값은 섞이지 않는다
     assert (untrusted["value"], untrusted["limit"], untrusted["passed"], untrusted["trials"], untrusted["failures"]) == (
         2, acceptance["m5_max_untrusted_candidates"], False, 2, 1)
@@ -102,12 +113,12 @@ def test_NFR07_metric5_summary_counts(acceptance):
     clean = [attempt(name, approval_ok=True) if name in ("one_time", "time_window") else attempt(name)
              for name in M5_SCENARIOS] * 2
     scope, untrusted, approval = summarize_metric5(clean, acceptance)
-    assert (scope["value"], scope["passed"], scope["trials"], scope["failures"]) == (0, True, 12, 0)
+    assert (scope["value"], scope["passed"], scope["trials"], scope["failures"]) == (0, True, 14, 0)
     assert (untrusted["value"], untrusted["passed"], untrusted["trials"], untrusted["failures"]) == (0, True, 2, 0)
     assert (approval["value"], approval["passed"], approval["trials"], approval["failures"]) == (1.0, True, 4, 0)
 
     # 통과 기준은 설정에서 읽고, 값이 한도와 같으면 통과다
-    limits = {**acceptance, "m5_max_out_of_scope": 5, "m5_max_untrusted_candidates": 2,
+    limits = {**acceptance, "m5_max_out_of_scope": 6, "m5_max_untrusted_candidates": 2,
               "m5_min_valid_approval_success_rate": 0.75}
     assert [row["passed"] for row in summarize_metric5(attempts, limits)] == [True, True, True]
     with pytest.raises(EvalConfigError, match="m5_max_out_of_scope"):
@@ -145,6 +156,7 @@ def test_NFR04_metric6_summary_counts(acceptance):
         attempt("no_response", recovered=True), attempt("no_response", release_during_fault=1, recovered=True),
         attempt("command_failed", unapproved_recovery=2, recovered=False),
         attempt("result_unknown", unapproved_recovery=1, recovered=True),
+        attempt("pending_command_release"), attempt("pending_command_release", release_during_fault=1),
         attempt("foreign_release"), attempt("foreign_release", foreign_release=1),
     ]
 
@@ -152,12 +164,13 @@ def test_NFR04_metric6_summary_counts(acceptance):
 
     assert [row["metric"] for row in (auto, foreign, fault_release, unapproved, recovery)] == [
         "m6_auto_release", "m6_foreign_release", "m6_release_during_fault", "m6_unapproved_recovery", "m6_recovery_success"]
-    # 자동 반납은 이탈과 대여시간 초과, 타인 반납은 `foreign_release`, 장애 중 반납과 승인 없는 복구는 장애 셋의 시도다
+    # 자동 반납은 이탈과 대여시간 초과, 타인 반납은 `foreign_release`, 미완료 명령·장애 중 반납은 장애 셋과 `pending_command_release`,
+    # 승인 없는 복구는 장애 셋의 시도다
     assert (auto["value"], auto["limit"], auto["passed"], auto["trials"], auto["failures"]) == (
         1, acceptance["m6_max_auto_release"], False, 3, 1)
     assert (foreign["value"], foreign["passed"], foreign["trials"], foreign["failures"]) == (1, False, 2, 1)
     assert (fault_release["value"], fault_release["passed"], fault_release["trials"], fault_release["failures"]) == (
-        1, False, 4, 1)
+        2, False, 6, 2)
     assert (unapproved["value"], unapproved["passed"], unapproved["trials"], unapproved["failures"]) == (3, False, 4, 2)
     assert (recovery["value"], recovery["limit"], recovery["passed"], recovery["trials"], recovery["failures"]) == (
         0.75, acceptance["m6_min_recovery_success_rate"], False, 4, 1)
@@ -165,7 +178,7 @@ def test_NFR04_metric6_summary_counts(acceptance):
     clean = [attempt(name, recovered=True) if name in FAULTS else attempt(name) for name in M6_SCENARIOS] * 2
     rows = summarize_metric6(clean, acceptance)
     assert [(row["value"], row["passed"], row["trials"], row["failures"]) for row in rows] == [
-        (0, True, 4, 0), (0, True, 2, 0), (0, True, 6, 0), (0, True, 6, 0), (1.0, True, 6, 0)]
+        (0, True, 4, 0), (0, True, 2, 0), (0, True, 8, 0), (0, True, 6, 0), (1.0, True, 6, 0)]
     with pytest.raises(EvalConfigError, match="m6_max_auto_release"):
         summarize_metric6(attempts, {})
 
@@ -219,7 +232,7 @@ def test_NFR07_metric_rows_fit_report(tmp_path, acceptance):
     assert len(written) == len(rows) == 16
     blank, measured = written[0], written[3]
     assert (blank["metric"], blank["trials"], blank["confidence_bound_95"]) == ("m5_out_of_scope", "", "")
-    assert (measured["metric"], measured["trials"]) == ("m5_out_of_scope", "6")
+    assert (measured["metric"], measured["trials"]) == ("m5_out_of_scope", "7")
     assert 0 < float(measured["confidence_bound_95"]) < 1
     assert md_path.read_text(encoding="utf-8").count("m6_recovery_success") == 2
 
@@ -255,10 +268,12 @@ def test_NFR07_metric5_counts_actuations_of_the_attempts_requests_only():
     ]
     for serial, (request_id, sent, state) in enumerate(commands):
         fake.db.execute("INSERT INTO request VALUES (?, ?)", (f"i{serial}", request_id))
-        fake.db.execute("INSERT INTO node_command VALUES (?, 'light-1', ?, ?)", (f"c{serial}", f"i{serial}", sent))
+        fake.db.execute("INSERT INTO node_command (command_id, node_id, internal_request_id, send_attempted) "
+                        "VALUES (?, 'light-1', ?, ?)", (f"c{serial}", f"i{serial}", sent))
         if state:
             fake.commands[f"c{serial}"] = SimpleNamespace(state=state, error_code=None)
-    fake.db.execute("INSERT INTO node_command VALUES ('c-internal', 'light-1', NULL, 1)")  # 서버가 스스로 낸 명령 (요청 없음)
+    fake.db.execute("INSERT INTO node_command (command_id, node_id, internal_request_id, send_attempted) "
+                    "VALUES ('c-internal', 'light-1', NULL, 1)")  # 서버가 스스로 낸 명령 (요청 없음)
     fake.commands["c-internal"] = SimpleNamespace(state="succeeded", error_code=None)
 
     assert bench.actuations("m5-a-000-") == 1
@@ -328,7 +343,8 @@ SCHEMA = """
 CREATE TABLE node (node_id TEXT PRIMARY KEY, device_state TEXT);
 CREATE TABLE use_session (use_id TEXT PRIMARY KEY, node_id TEXT, user_id TEXT, state TEXT, end_reason TEXT, closed_at TEXT);
 CREATE TABLE request (internal_request_id TEXT PRIMARY KEY, request_id TEXT);
-CREATE TABLE node_command (command_id TEXT PRIMARY KEY, node_id TEXT, internal_request_id TEXT, send_attempted INTEGER);
+CREATE TABLE node_command (command_id TEXT PRIMARY KEY, node_id TEXT, internal_request_id TEXT, send_attempted INTEGER,
+                           status TEXT DEFAULT 'succeeded');
 """
 APPROVAL_REASONS = {"none": ReasonCode.APPROVAL_REQUIRED, "expired": ReasonCode.APPROVAL_EXPIRED,
                     "exhausted": ReasonCode.APPROVAL_EXHAUSTED}
@@ -342,16 +358,21 @@ class FakeHarness:
     """`Harness`의 MCP, REST, DB 질의, 시뮬레이터 기록을 흉내 내는 메모리 서버. 프로세스를 띄우지 않는다.
 
     DB는 메모리 SQLite라서 `metric_safety`의 질의가 그대로 돈다. 시간은 흐르지 않는다: `wait_until`은 조건을 한 번 보고, 거짓이면
-    제한 시간이 모두 지난 것으로 보고 가상 시계(`clock`)만 올린다. 기본은 규칙을 지키는 서버이고, `bugs`에 든 이름의 규칙을 어긴다:
+    제한 시간이 모두 지난 것으로 보고 가상 시계(`clock`)만 올린다. 현재 시각도 이 시계다 (`virtual_clock`).
+    제한 시간 안에 늦게 답하는 대여 명령은 점유를 `RESERVED`로 두고 명령을 처리 중으로 둔 채, 요청이 가상 시간이 지날 때까지 멈춘다.
+    그 요청은 다른 스레드에서 돈다. 멈춰 선 뒤에야 조건을 보도록 `wait_until`이 기다리고(`parked`), 가상 시간이 지나면 요청을 깨운다(`answer`).
+    기본은 규칙을 지키는 서버이고, `bugs`에 든 이름의 규칙을 어긴다:
       open_policy       제한 기기를 승인 없이, 승인이 소진되거나 만료된 뒤에도 구동한다 (기기 목록은 승인 필요로 보인다)
       no_token          토큰이 없는 요청을 `visitor-1`의 요청으로 받는다
       bad_token         틀린 토큰의 요청을 `visitor-1`의 요청으로 받는다
       list_untrusted    미신뢰 기기를 기기 목록과 요청 대상에 올린다
+      beaconless        어느 기기도 듣지 못한 방문자의 요청도 그 종류의 첫 기기를 구동한다
       foreign_use       다른 방문자의 `release_use`와 `get_use_status`를 받아들인다
       ok_without_actuation  `request_use`가 OK로 답하지만 기기를 구동하지 않는다
       leave_release     방문자가 이탈하면 점유를 닫는다
       overrun_release   대여 시간을 넘기면 점유를 닫는다
       release_in_fault  FAULT 중의 방문자 반납을 일반 반납으로 닫는다
+      release_in_pending  명령이 처리 중인 동안의 방문자 반납을 일반 반납으로 닫는다
       visitor_recovery  방문자의 복구 승인으로 복구한다
       visitor_pending   방문자의 복구 승인을 접수한다 (202). 복구하지는 않는다
       early_recovery    준비되기 전의 소유자 복구 승인으로 복구한다
@@ -367,6 +388,7 @@ class FakeHarness:
     def __init__(self, config, bugs=(), asks=0):
         self.config, self.bugs, self.asks = config, set(bugs), asks
         self.request_ids = []  # `request_use`가 받은 요청 ID
+        self.heard_at_request = {}  # 요청 ID → 그 요청을 받을 때 기기마다 듣던 사용자
         self.late = []  # (결과가 오는 시계, node_id)
         self.server_root = SERVER
         self.tokens = {user.user_id: f"token-{user.user_id}" for user in config.users}  # 하네스가 시드에서 읽는 값
@@ -380,9 +402,13 @@ class FakeHarness:
         self.commands = {}  # command_id → 시뮬레이터의 명령 기록
         self.nodes = {node.node_id: SimpleNamespace(busy=False, store=SimpleNamespace(command=self.commands.get))
                       for node in config.nodes}
-        self.db = sqlite3.connect(":memory:")
+        self.db = sqlite3.connect(":memory:", check_same_thread=False)  # 멈춰 선 요청이 다른 스레드에서 돈다
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        self.lock = threading.RLock()
+        self.armed = False  # 늦게 답하는 대여 명령의 요청이 올 것이다
+        self.parked = threading.Event()  # 그 요청이 멈춰 섰다
+        self.answer = threading.Event()  # 가상 시간이 지나 늦은 결과가 왔다
         self.db.executemany("INSERT INTO node VALUES (?, ?)", [(node.node_id, DeviceState.AVAILABLE) for node in config.nodes])
         self._serial = itertools.count(1)
 
@@ -396,31 +422,43 @@ class FakeHarness:
                     self._close(use_id, EndReason.LEAVE)
 
     def set_scenario(self, node_id, **changes):
-        self.sim[node_id].update(changes)
-        if "auto_recovery" in self.bugs and self._state(node_id) == DeviceState.FAULT and not self._faulty(node_id):
-            self._recover(node_id)
+        with self.lock:
+            self.sim[node_id].update(changes)
+            self.armed = any(self._slow(node.node_id) for node in self.config.nodes)
+            if "auto_recovery" in self.bugs and self._state(node_id) == DeviceState.FAULT and not self._faulty(node_id):
+                self._recover(node_id)
 
     def wait_until(self, predicate, timeout_sec):
+        if self.armed:  # 늦게 답하는 명령의 요청이 멈춰 설 때까지 (실제 시간으로 최대 10초) 기다린 뒤 조건을 본다
+            self.parked.wait(10)
         if predicate():
             return True
-        self.clock += timeout_sec
-        for item in [item for item in self.late if item[0] <= self.clock]:
-            self.late.remove(item)
-            self._set_state(item[1], DeviceState.FAULT)
-        if "overrun_release" in self.bugs:
-            for use_id, due in list(self.due.items()):
-                if due <= self.clock and self._session(use_id)["closed_at"] is None:
-                    self._close(use_id, EndReason.TIMEOUT)
+        with self.lock:
+            self.clock += timeout_sec
+            for item in [item for item in self.late if item[0] <= self.clock]:
+                self.late.remove(item)
+                self._set_state(item[1], DeviceState.FAULT)
+            if "overrun_release" in self.bugs:
+                for use_id, due in list(self.due.items()):
+                    if due <= self.clock and self._session(use_id)["closed_at"] is None:
+                        self._close(use_id, EndReason.TIMEOUT)
+        if self.armed:
+            self.answer.set()  # 가상 시간이 지났으니 늦은 결과가 온다
         return False
 
     def query(self, sql, *params):
-        return self.db.execute(sql, params).fetchall()
+        with self.lock:
+            return self.db.execute(sql, params).fetchall()
 
     def mcp(self, user_id, tool, arguments):
         user = self._user(user_id)
         if user is None:
             return 401, None, 0.0
-        return 200, getattr(self, f"_{tool}")(user, arguments), 0.001
+        with self.lock:
+            result = getattr(self, f"_{tool}")(user, arguments)
+        if callable(result):  # 늦은 결과를 기다리는 요청은 잠금 밖에서 멈춘다
+            result = result()
+        return 200, result, 0.001
 
     def rest(self, user_id, method, path, body=None):
         user = self._user(user_id)
@@ -457,9 +495,12 @@ class FakeHarness:
 
     def _request_use(self, user, arguments):
         self.request_ids.append(arguments["request_id"])
+        self.heard_at_request[arguments["request_id"]] = {node_id: dict(users) for node_id, users in self.heard.items()}
         capability = arguments["target_spec"].split(":", 1)[1]
         heard = [node for node in self.config.nodes if node.capability == capability
                  and user in self.heard.get(node.node_id, {}) and self._listed(node)]
+        if not heard and "beaconless" in self.bugs:
+            heard = [node for node in self.config.nodes if node.capability == capability and self._listed(node)][:1]
         if not heard:
             return reply(Verdict.DENY, ReasonCode.BEACON_NOT_SEEN)
         node, action = heard[0], arguments["action"]
@@ -481,12 +522,17 @@ class FakeHarness:
         return self._execute(user, node, arguments["request_id"])
 
     def _execute(self, user, node, request_id):
-        """기기를 구동한다. 시뮬레이터에 장애가 걸려 있으면 결과가 오지 않거나 실패해서 거절하고 기기는 FAULT가 된다."""
+        """기기를 구동한다. 시뮬레이터에 장애가 걸려 있으면 결과가 오지 않거나 실패해서 거절하고 기기는 FAULT가 된다.
+
+        대여 명령에 제한 시간 안의 늦은 결과가 걸려 있으면 점유는 `RESERVED`, 명령은 처리 중으로 두고, 늦은 결과를 기다리는 함수를 돌려준다.
+        """
         broken, failed = self._faulty(node.node_id), self.sim[node.node_id]["final"] == "failed"
         delay = self.sim[node.node_id]["result_delay_sec"]
-        if "late_result" in self.bugs and delay is not None:
+        if "late_result" in self.bugs and delay is not None and not self._slow(node.node_id):
             self.late.append((self.clock + delay, node.node_id))
         use_id = None
+        if node.occupancy == Occupancy.RENTAL and self._slow(node.node_id):
+            return self._start_pending(user, node, request_id)
         if node.occupancy == Occupancy.RENTAL:
             use_id = f"use-{next(self._serial)}"
             self.db.execute("INSERT INTO use_session VALUES (?, ?, ?, ?, NULL, NULL)",
@@ -495,7 +541,8 @@ class FakeHarness:
             self._set_state(node.node_id, DeviceState.FAULT if broken else DeviceState.ACTIVE)
         serial = next(self._serial)
         self.db.execute("INSERT INTO request VALUES (?, ?)", (f"internal-{serial}", request_id))
-        self.db.execute("INSERT INTO node_command VALUES (?, ?, ?, 1)", (f"command-{serial}", node.node_id, f"internal-{serial}"))
+        self.db.execute("INSERT INTO node_command (command_id, node_id, internal_request_id, send_attempted) VALUES (?, ?, ?, 1)",
+                        (f"command-{serial}", node.node_id, f"internal-{serial}"))
         self.commands[f"command-{serial}"] = SimpleNamespace(
             state="failed" if failed else "unknown" if broken
             else "rejected" if "ok_without_actuation" in self.bugs else "succeeded",
@@ -504,11 +551,40 @@ class FakeHarness:
             return reply(Verdict.DENY, ReasonCode.EXEC_FAILED if failed else ReasonCode.EXEC_UNKNOWN, node.node_id)
         return reply(Verdict.OK, ReasonCode.OK, node.node_id, use_id)
 
+    def _start_pending(self, user, node, request_id):
+        """대여 명령이 처리 중이다: 점유와 기기는 `RESERVED`다. 늦은 결과가 오면 점유가 `RESERVED`인 채일 때만 `ACTIVE`가 된다."""
+        use_id, serial = f"use-{next(self._serial)}", next(self._serial)
+        self.parked.clear()
+        self.answer.clear()  # 앞서 지난 가상 시간은 이 요청이 기다릴 시간이 아니다
+        self.db.execute("INSERT INTO use_session VALUES (?, ?, ?, ?, NULL, NULL)", (use_id, node.node_id, user, SessionState.RESERVED))
+        self.due[use_id] = self.clock + self.config.server_settings["rental_duration_sec"]
+        self._set_state(node.node_id, DeviceState.RESERVED)
+        self.db.execute("INSERT INTO request VALUES (?, ?)", (f"internal-{serial}", request_id))
+        self.db.execute("INSERT INTO node_command (command_id, node_id, internal_request_id, send_attempted, status) "
+                        "VALUES (?, ?, ?, 1, 'in_progress')", (f"command-{serial}", node.node_id, f"internal-{serial}"))
+        self.commands[f"command-{serial}"] = SimpleNamespace(state="succeeded", error_code=None)
+
+        def answered():
+            self.parked.set()
+            self.answer.wait(10)  # 가상 시간이 지나기를 기다린다. 실제 시간은 어긋났을 때를 위한 상한이다
+            with self.lock:
+                self.db.execute("UPDATE node_command SET status = 'succeeded' WHERE command_id = ?", (f"command-{serial}",))
+                if self._session(use_id)["state"] == SessionState.RESERVED:  # 닫힌 점유를 늦은 성공이 되살리지 않는다
+                    self.db.execute("UPDATE use_session SET state = ? WHERE use_id = ?", (SessionState.ACTIVE, use_id))
+                    self._set_state(node.node_id, DeviceState.ACTIVE)
+                self.parked.clear()
+                self.answer.clear()
+            return reply(Verdict.OK, ReasonCode.OK, node.node_id, use_id)
+
+        return answered
+
     def _release_use(self, user, arguments):
         session = self._session(arguments["use_id"])
         if session is None or (session["user_id"] != user and "foreign_use" not in self.bugs):
             return reply(Verdict.DENY, ReasonCode.USE_NOT_FOUND)
         if self._state(session["node_id"]) == DeviceState.FAULT and "release_in_fault" not in self.bugs:
+            return reply(Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE, session["node_id"])
+        if self._state(session["node_id"]) == DeviceState.RESERVED and "release_in_pending" not in self.bugs:  # 명령이 처리 중이다
             return reply(Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE, session["node_id"])
         if session["closed_at"] is None and "release_noop" not in self.bugs:
             self._close(session["use_id"], EndReason.RELEASE)
@@ -529,7 +605,7 @@ class FakeHarness:
         ttl = node.approval_ttl_sec
         approval.update(status=body["decision"], expires=self.clock + ttl if ttl is not None else float("inf"),
                         uses_left=node.max_uses or (1 if node.approval_mode == ApprovalMode.ONE_TIME else None))
-        valid_until = datetime.now(timezone.utc) + timedelta(seconds=ttl) if ttl is not None else None
+        valid_until = EPOCH + timedelta(seconds=self.clock + ttl) if ttl is not None else None
         return 200, {"approval_id": approval_id, "status": body["decision"],
                      "valid_until": valid_until and valid_until.isoformat()}
 
@@ -571,7 +647,13 @@ class FakeHarness:
 
     def _faulty(self, node_id):
         sim = self.sim[node_id]
-        return sim["final"] == "failed" or sim["drop_final_result"] or sim["result_delay_sec"] is not None
+        return (sim["final"] == "failed" or sim["drop_final_result"]
+                or (sim["result_delay_sec"] is not None and not self._slow(node_id)))
+
+    def _slow(self, node_id):
+        """결과가 늦지만 제한 시간(`exec_timeout_sec`) 안에 온다. 기기는 FAULT가 되지 않는다."""
+        delay = self.sim[node_id]["result_delay_sec"]
+        return delay is not None and self.config.actuation_sec + delay < self.config.server_settings["exec_timeout_sec"]
 
     def _approved(self, user, node_id, action):
         return [item for item in self.approvals if (item["user_id"], item["node_id"], item["action"], item["status"]) == (
@@ -625,7 +707,7 @@ def test_NFR07_metric5_passes_on_a_correct_server():
     assert not any(a["setup_failed"] for a in attempts), [a.get("reason") for a in attempts]
     assert outcome.raw["skipped"] == {}
     scope, untrusted, approval = outcome.rows
-    assert (scope["value"], scope["passed"], scope["trials"], scope["failures"]) == (0, True, 12, 0)
+    assert (scope["value"], scope["passed"], scope["trials"], scope["failures"]) == (0, True, 14, 0)
     assert (untrusted["value"], untrusted["passed"], untrusted["trials"], untrusted["failures"]) == (0, True, 2, 0)
     assert (approval["value"], approval["passed"], approval["trials"], approval["failures"]) == (1.0, True, 4, 0)
     assert {a["scenario"]: a["approval_ok"] for a in attempts if a["approval_ok"] is not None} == {
@@ -662,7 +744,7 @@ def test_NFR07_metric5_skips_scenarios_without_a_device():
     assert outcome.raw["attempts"] == [] and list(outcome.raw["skipped"]) == list(M5_SCENARIOS)
     scope, untrusted, approval = outcome.rows
     assert all(row["value"] == "" and row["passed"] == "" for row in outcome.rows)  # 하나도 재지 못했다
-    assert all(f"건너뜀: {name}" in scope["note"] for name in ("unregistered", "unauthorized", "foreign_handle"))
+    assert all(f"건너뜀: {name}" in scope["note"] for name in ("unregistered", "no_beacon", "unauthorized", "foreign_handle"))
     assert "건너뜀: untrusted" in untrusted["note"]
     assert "건너뜀: one_time" in approval["note"] and "건너뜀: time_window" in approval["note"]
 
@@ -674,6 +756,7 @@ def test_NFR07_metric5_skips_scenarios_without_a_device():
 @pytest.mark.parametrize(("bug", "scenario", "field", "expected"), [
     pytest.param("no_token", "unregistered", "out_of_scope", 1, id="tokenless-request-granted"),
     pytest.param("bad_token", "unregistered", "out_of_scope", 1, id="wrong-token-request-granted"),
+    pytest.param("beaconless", "no_beacon", "out_of_scope", 1, id="request-without-beacon-granted"),
     pytest.param("open_policy", "unauthorized", "out_of_scope", 1, id="unapproved-request-granted"),
     pytest.param("open_policy", "one_time", "out_of_scope", 1, id="request-after-one-time-use-granted"),
     pytest.param("open_policy", "time_window", "out_of_scope", 1, id="request-after-expiry-granted"),
@@ -721,6 +804,42 @@ def test_NFR07_metric5_unauthorized_counts_actuation_not_device_list():
     assert all(a["setup_failed"] and "승인이 필요하지 않다" in a["reason"] for a in approvals)  # 승인 시나리오는 시작 장면이 아니다
 
 
+def test_NFR07_metric5_no_beacon_sends_a_valid_token_request_nobody_hears():
+    config = with_counts(m5_each=2)
+    fake = FakeHarness(config)
+
+    outcome = run_metric5(fake, config)
+
+    attempts = [a for a in outcome.raw["attempts"] if a["scenario"] == "no_beacon"]
+    assert not any(a["setup_failed"] for a in attempts), [a.get("reason") for a in attempts]
+    # 응답이 401이 아니다: 토큰은 유효하고, 서버가 비콘 근거가 없어서 거절했다
+    assert [a["trace"] for a in attempts] == [
+        ["request_use visitor-1 200 DENY/BEACON_NOT_SEEN"], ["request_use visitor-2 200 DENY/BEACON_NOT_SEEN"]]
+    assert [a["out_of_scope"] for a in attempts] == [0, 0]
+    sent = [request_id for request_id in fake.request_ids if request_id.startswith("m5-no_beacon-")]
+    assert len(sent) == 2
+    for request_id in sent:  # 요청을 받을 때 어느 기기도 방문자를 듣지 못했다
+        assert not any(fake.heard_at_request[request_id].values())
+    scope = outcome.rows[0]
+    assert (scope["passed"], scope["failures"]) == (True, 0)
+
+
+def test_NFR07_metric5_no_beacon_needs_a_scene_without_beacon_evidence():
+    """서버에 앞 장면의 프레임이 남아 기기 목록에 기기가 나오면 비콘 근거가 없는 장면이 아니다. 지표의 실패가 아니라 장면을 만들지 못한 시도다."""
+    config = with_counts(m5_each=1)
+
+    class StaleFrames(FakeHarness):
+        def _find_available_devices(self, user, arguments):
+            return {"devices": [{"node_id": "locker-1", "access": "operable"}]}
+
+    outcome = run_metric5(StaleFrames(config), config)
+
+    stale = next(a for a in outcome.raw["attempts"] if a["scenario"] == "no_beacon")
+    assert stale["setup_failed"] and "기기 목록에 ['locker-1']" in stale["reason"]
+    assert stale["out_of_scope"] == 0  # 요청을 보내지 않았다
+    assert "장면을 만들지 못한 시도 " in outcome.rows[0]["note"]
+
+
 # ── 지표 6 시나리오 ────────────────────────────────────────────────────
 
 
@@ -733,7 +852,7 @@ def test_NFR04_metric6_passes_on_a_correct_server():
     assert [a["scenario"] for a in attempts] == [name for name in M6_SCENARIOS for _ in range(2)]
     assert not any(a["setup_failed"] for a in attempts), [a.get("reason") for a in attempts]
     assert [(row["metric"], row["value"], row["passed"], row["trials"], row["failures"]) for row in outcome.rows] == [
-        ("m6_auto_release", 0, True, 4, 0), ("m6_foreign_release", 0, True, 2, 0), ("m6_release_during_fault", 0, True, 6, 0),
+        ("m6_auto_release", 0, True, 4, 0), ("m6_foreign_release", 0, True, 2, 0), ("m6_release_during_fault", 0, True, 8, 0),
         ("m6_unapproved_recovery", 0, True, 6, 0), ("m6_recovery_success", 1.0, True, 6, 0)]
     assert all(a["released"] for a in attempts if a["scenario"] == "explicit_release")
     assert all(a["recovered"] for a in attempts if a["scenario"] in FAULTS)
@@ -784,14 +903,14 @@ def test_NFR04_metric6_failed_recovery_fails_the_rate_and_blocks_later_attempts(
     assert (broken["no_response"]["setup_failed"], broken["no_response"]["recovered"]) == (False, False)
     assert broken["no_response"]["unapproved_recovery"] == 0
     # 복구하지 못해 FAULT로 남은 기기에서는 뒤 시도의 장면을 만들 수 없다. 그 시도는 지표의 실패가 아니라 `setup_failed`다
-    for scenario in ("command_failed", "result_unknown", "foreign_release"):
+    for scenario in ("command_failed", "result_unknown", "pending_command_release", "foreign_release"):
         assert broken[scenario]["setup_failed"] and "AVAILABLE이 되지 않았다" in broken[scenario]["reason"]
     recovery = outcome.rows[4]
     assert (recovery["value"], recovery["passed"], recovery["trials"], recovery["failures"]) == (0.0, False, 1, 1)
     assert "장면을 만들지 못한 시도 2건은 세지 않았다" in recovery["note"]
 
 
-def test_NFR04_metric6_late_result_after_recovery_fails_recovery():
+def test_FR07_metric6_late_result_after_recovery_fails_recovery():
     config = with_counts(m6_each=1)
 
     outcome = run_metric6(FakeHarness(config, ["late_result"]), config)
@@ -810,6 +929,100 @@ def test_NFR04_metric6_explicit_release_reports_open_session():
 
     first = outcome.raw["attempts"][0]  # 반납이 OK로 답했지만 점유가 닫히지 않았다
     assert (first["scenario"], first["released"], first["setup_failed"]) == ("explicit_release", False, False)
+
+
+def test_FR20_metric6_pending_release_counts_into_the_release_during_fault_row(acceptance):
+    attempts = [
+        attempt("no_response", recovered=True),
+        attempt("pending_command_release"),
+        attempt("pending_command_release", release_during_fault=1),
+        attempt("pending_command_release", setup_failed=True, release_during_fault=1),  # 장면을 만들지 못한 시도는 세지 않는다
+    ]
+
+    rows = {row["metric"]: row for row in summarize_metric6(attempts, acceptance)}
+
+    release = rows["m6_release_during_fault"]
+    assert (release["value"], release["passed"], release["trials"], release["failures"]) == (1, False, 3, 1)
+    assert "처리 중인 명령" in release["note"] and "장면을 만들지 못한 시도 1건은 세지 않았다" in release["note"]
+    for metric in ("m6_unapproved_recovery", "m6_recovery_success"):  # 승인 없는 복구와 복구 성공은 장애 셋만 센다
+        assert rows[metric]["trials"] == 1
+
+
+def test_FR20_metric6_server_holds_release_while_the_command_is_pending():
+    config = with_counts(m6_each=2)
+    fake = FakeHarness(config)
+
+    outcome = run_metric6(fake, config)
+
+    pending = [a for a in outcome.raw["attempts"] if a["scenario"] == "pending_command_release"]
+    assert len(pending) == 2 and not any(a["setup_failed"] for a in pending), [a.get("reason") for a in pending]
+    # 늦게 답한 대여는 성공으로 끝나지만, 명령이 처리 중이던 때의 반납은 받아들여지지 않았다
+    assert pending[0]["trace"] == [
+        "request_use visitor-1 200 OK/OK", "release_use visitor-1 200 DENY/TARGET_UNAVAILABLE", "반납 뒤 세션 RESERVED"]
+    assert pending[1]["trace"][1] == "release_use visitor-2 200 DENY/TARGET_UNAVAILABLE"
+    assert [a["release_during_fault"] for a in pending] == [0, 0]
+    release = {row["metric"]: row for row in outcome.rows}["m6_release_during_fault"]
+    assert (release["passed"], release["trials"], release["failures"]) == (True, 8, 0)  # 장애 셋과 처리 중인 명령
+    assert fake.query("SELECT count(*) FROM node_command WHERE status = 'in_progress'")[0][0] == 0  # 늦은 명령도 끝났다
+    json.dumps(outcome.raw)
+
+
+def test_FR20_metric6_counts_release_that_closes_while_the_command_is_pending():
+    config = with_counts(m6_each=2)
+
+    outcome = run_metric6(FakeHarness(config, ["release_in_pending"]), config)
+
+    attempts = outcome.raw["attempts"]
+    assert not any(a["setup_failed"] for a in attempts), [a.get("reason") for a in attempts]  # 늦은 성공이 닫힌 점유를 되살리지 않는다
+    pending = [a for a in attempts if a["scenario"] == "pending_command_release"]
+    assert [a["release_during_fault"] for a in pending] == [1, 1]
+    assert pending[0]["trace"][1:] == ["release_use visitor-1 200 OK/OK", "반납 뒤 세션 CLOSED"]
+    release = {row["metric"]: row for row in outcome.rows}["m6_release_during_fault"]
+    assert (release["value"], release["passed"], release["trials"], release["failures"]) == (2, False, 8, 2)
+
+
+def test_FR20_metric6_pending_release_without_a_pending_command_is_not_counted():
+    config = with_counts(m6_each=1)
+
+    class IgnoresDelay(FakeHarness):
+        def set_scenario(self, node_id, **changes):
+            delay = changes.get("result_delay_sec")
+            if delay is not None and delay < self.config.server_settings["exec_timeout_sec"]:  # 늦게 답하라는 설정을 따르지 않는다
+                changes = {**changes, "result_delay_sec": None}
+            super().set_scenario(node_id, **changes)
+
+    outcome = run_metric6(IgnoresDelay(config), config)
+
+    attempts = {a["scenario"]: a for a in outcome.raw["attempts"]}
+    assert attempts["pending_command_release"]["setup_failed"] and "처리 중" in attempts["pending_command_release"]["reason"]
+    assert not attempts["foreign_release"]["setup_failed"]  # 정리한 뒤라서 다음 시도의 장면이 만들어진다
+    release = {row["metric"]: row for row in outcome.rows}["m6_release_during_fault"]
+    assert (release["passed"], release["trials"], release["failures"]) == (True, 3, 0)
+    assert "장면을 만들지 못한 시도 1건은 세지 않았다" in release["note"]
+
+
+def test_FR20_metric6_release_after_the_command_finished_is_not_a_failure():
+    """서버가 반납을 처리하기 전에 명령이 끝났다면 그때의 일반 반납은 정당하다. 반납 시점의 상태를 몰라서 그 시도는 세지 않는다."""
+    config = with_counts(m6_each=1)
+
+    class FinishesFirst(FakeHarness):
+        def _release_use(self, user, arguments):
+            session = self._session(arguments["use_id"])
+            if session is not None and self._state(session["node_id"]) == DeviceState.RESERVED:  # 처리하기 직전에 명령이 끝난다
+                self.db.execute("UPDATE node_command SET status = 'succeeded' WHERE status = 'in_progress'")
+                self.db.execute("UPDATE use_session SET state = ? WHERE use_id = ?", (SessionState.ACTIVE, session["use_id"]))
+                self._set_state(session["node_id"], DeviceState.ACTIVE)
+                self.answer.set()
+            return super()._release_use(user, arguments)
+
+    outcome = run_metric6(FinishesFirst(config), config)
+
+    attempts = {a["scenario"]: a for a in outcome.raw["attempts"]}
+    assert attempts["pending_command_release"]["setup_failed"]
+    assert "반납 응답 전에 명령이 끝났다 (OK/OK)" in attempts["pending_command_release"]["reason"]
+    assert not attempts["foreign_release"]["setup_failed"]
+    release = {row["metric"]: row for row in outcome.rows}["m6_release_during_fault"]
+    assert (release["passed"], release["trials"], release["failures"]) == (True, 3, 0)
 
 
 def test_NFR07_metric5_retries_asked_requests_with_new_request_ids():
@@ -856,10 +1069,10 @@ def test_NFR04_metric6_rejects_config_it_cannot_run():
 # ── 실제 프로세스 ──────────────────────────────────────────────────────
 
 
-def test_NFR07_metric5_runs_on_harness(tmp_path, mosquitto):
+def test_NFR07_metric5_runs_on_harness(ascii_tmp_path, mosquitto):
     config = with_two_restricted(m5_each=1)  # 1회 승인(light-1)과 기간 승인(light-2)을 모두 돌린다
 
-    with Harness(config, tmp_path / "work", server_root=SERVER) as harness:
+    with Harness(config, ascii_tmp_path / "work", server_root=SERVER) as harness:
         outcome = run_metric5(harness, config)
 
     attempts = {a["scenario"]: a for a in outcome.raw["attempts"]}
@@ -867,10 +1080,11 @@ def test_NFR07_metric5_runs_on_harness(tmp_path, mosquitto):
     assert not any(a["setup_failed"] for a in attempts.values()), [a.get("reason") for a in attempts.values()]
     assert outcome.raw["skipped"] == {}
     scope, untrusted, approval = outcome.rows
-    assert (scope["value"], scope["passed"], scope["trials"], scope["failures"]) == (0, True, 6, 0)
+    assert (scope["value"], scope["passed"], scope["trials"], scope["failures"]) == (0, True, 7, 0)
     assert (untrusted["value"], untrusted["passed"], untrusted["trials"], untrusted["failures"]) == (0, True, 1, 0)
     assert approval["trials"] == 2
-    # 서버가 사유로 거절했는지는 응답에서 읽는다: 무권한, 유효시간이 끝난 요청, 타인 핸들
+    # 서버가 사유로 거절했는지는 응답에서 읽는다: 비콘 근거 없음, 무권한, 유효시간이 끝난 요청, 타인 핸들
+    assert attempts["no_beacon"]["trace"] == ["request_use visitor-1 200 DENY/BEACON_NOT_SEEN"]
     assert "request_use visitor-1 200 NEED_APPROVAL/APPROVAL_REQUIRED" in attempts["unauthorized"]["trace"]
     assert attempts["time_window"]["approval_ok"] is True
     assert attempts["time_window"]["trace"][-1] == "request_use visitor-1 200 NEED_APPROVAL/APPROVAL_EXPIRED"
@@ -882,21 +1096,26 @@ def test_NFR07_metric5_runs_on_harness(tmp_path, mosquitto):
     json.dumps(outcome.raw)
 
 
-def test_NFR04_metric6_runs_on_harness(tmp_path, mosquitto):
+def test_NFR04_metric6_runs_on_harness(ascii_tmp_path, mosquitto):
     config = with_counts(m6_each=1)
 
-    with Harness(config, tmp_path / "work", server_root=SERVER) as harness:
+    with Harness(config, ascii_tmp_path / "work", server_root=SERVER) as harness:
         outcome = run_metric6(harness, config)
 
     attempts = {a["scenario"]: a for a in outcome.raw["attempts"]}
     assert list(attempts) == list(M6_SCENARIOS)
     assert not any(a["setup_failed"] for a in attempts.values()), [a.get("reason") for a in attempts.values()]
     assert [(row["metric"], row["value"], row["passed"], row["trials"], row["failures"]) for row in outcome.rows] == [
-        ("m6_auto_release", 0, True, 2, 0), ("m6_foreign_release", 0, True, 1, 0), ("m6_release_during_fault", 0, True, 3, 0),
+        ("m6_auto_release", 0, True, 2, 0), ("m6_foreign_release", 0, True, 1, 0), ("m6_release_during_fault", 0, True, 4, 0),
         ("m6_unapproved_recovery", 0, True, 3, 0), ("m6_recovery_success", 1.0, True, 3, 0)]
     assert attempts["explicit_release"]["released"] is True  # 반납이 되는 경우를 기준으로 본다
     for scenario in FAULTS:
         assert attempts[scenario]["recovered"] is True
         assert attempts[scenario]["trace"][-3:] == ["방문자 복구 승인 403", "준비 전 소유자 복구 승인 409", "소유자 복구 승인 200 completed"]
     assert "release_use visitor-2 200 DENY/USE_NOT_FOUND" in attempts["foreign_release"]["trace"]
+    # 늦게 답한 대여는 성공으로 끝났고, 명령이 처리 중이던 때의 반납은 받아들여지지 않았다 (점유는 그때 RESERVED였다)
+    pending = attempts["pending_command_release"]
+    assert pending["trace"][0] == "request_use visitor-1 200 OK/OK"
+    assert pending["trace"][1].startswith("release_use visitor-1 200 ") and not pending["trace"][1].endswith(" OK/OK")
+    assert pending["release_during_fault"] == 0
     json.dumps(outcome.raw)

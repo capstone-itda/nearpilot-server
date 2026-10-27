@@ -13,7 +13,6 @@ import json
 import math
 import random
 import threading
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -469,33 +468,24 @@ def test_NFR05_metric4_sends_concurrent_requests_per_round():
 def test_NFR05_metric4_sends_the_round_at_the_same_moment(monkeypatch):
     config = with_counts(m4_each=2)
     fronts = dict(zip(VISITORS, FRONTS))
-    arrivals = []
+    journal = []  # 장벽에 닿은 일("wait")과 서버가 요청을 받은 일("send")을 일어난 순서대로 적는다
+
+    class RecordingBarrier(threading.Barrier):
+        def wait(self, timeout=None):
+            journal.append("wait")  # 장벽이 열리려면 모두 닿아야 해서, 이 기록은 어느 요청보다 앞선다
+            return super().wait(timeout)
 
     def decide(user_id, request_id):
-        arrivals.append(time.monotonic())
+        journal.append("send")
         return "OK", "OK", fronts[user_id]
 
+    monkeypatch.setattr(metric_select, "threading", SimpleNamespace(Barrier=RecordingBarrier))
     harness = FakeHarness(config, decide, lambda user_id: [fronts[user_id]])
-    run_parallel = metric_select._run_parallel
-
-    def staggered(workers, jobs):  # 스레드가 늦게 뜨는 상황: 일이 0.15초 간격으로 시작한다
-        def late(delay, job):
-            def start():
-                time.sleep(delay)
-                return job()
-
-            return start
-
-        return run_parallel(workers, [late(0.15 * index, job) for index, job in enumerate(jobs)])
-
-    monkeypatch.setattr(metric_select, "_run_parallel", staggered)
 
     run_metric4(harness, config)
 
-    # 먼저 뜬 방문자가 나머지를 기다렸다가 셋이 같은 순간에 보낸다
-    assert len(arrivals) == 6
-    for round_start in (0, 3):
-        assert max(arrivals[round_start:round_start + 3]) - min(arrivals[round_start:round_start + 3]) < 0.1
+    # 회차마다 세 방문자가 모두 같은 장벽에 닿은 뒤에야 요청이 나간다. 먼저 닿은 방문자는 나머지를 기다린다
+    assert journal == (["wait"] * 3 + ["send"] * 3) * 2
 
 
 def test_NFR05_metric_select_counts_only_commands_the_simulator_started():
@@ -559,11 +549,11 @@ def test_NFR05_metric_select_fails_when_front_device_never_listed():
 # ── 실제 프로세스 ──────────────────────────────────────────────────────
 
 
-def test_NFR05_metric1_runs_on_harness(tmp_path, mosquitto):
+def test_NFR05_metric1_runs_on_harness(ascii_tmp_path, mosquitto):
     # 서버가 RSSI 프레임을 늦게 넘기는 시점에는 재질문이 잦다. 구동한 발화가 하나는 있도록 넉넉히 보낸다
     config = with_counts(m1_utterances=10)
 
-    with Harness(config, tmp_path / "work", server_root=SERVER) as harness:
+    with Harness(config, ascii_tmp_path / "work", server_root=SERVER) as harness:
         outcome = run_metric1(harness, config)
 
     (row,) = outcome.rows
@@ -578,11 +568,11 @@ def test_NFR05_metric1_runs_on_harness(tmp_path, mosquitto):
     json.dumps(outcome.raw)
 
 
-def test_NFR05_metric4_runs_on_harness(tmp_path, mosquitto):
+def test_NFR05_metric4_runs_on_harness(ascii_tmp_path, mosquitto):
     # 동시 요청 중에는 재질문 비율이 시점에 따라 0~60%로 바뀐다 (위 지표 1 시험의 주석). 구동한 요청이 하나는 있도록 넉넉히 보낸다
     config = with_counts(m4_each=4)
 
-    with Harness(config, tmp_path / "work", server_root=SERVER) as harness:
+    with Harness(config, ascii_tmp_path / "work", server_root=SERVER) as harness:
         outcome = run_metric4(harness, config)
 
     cross, success = outcome.rows

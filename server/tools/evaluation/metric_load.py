@@ -9,6 +9,9 @@
 이전 세션과 겹쳐 보인다. 예약을 확정한 시각은 판정 단계 5의 감사 기록(`audit_log`, outcome `reserved`)이 예약 저장
 직후에 남기는 `created_at`이고, 이전 세션의 `closed_at`은 닫는 저장보다 먼저 읽은 시각이라서 정상 순서에서는 겹치지
 않는다. 명령을 보내기 전에 취소된 세션도 예약을 했으므로 구간이 있다. 감사 기록이 없는 세션은 `reserved_at`을 쓴다.
+
+세션과 명령은 `request_id`가 지표 3의 접두어(`m3-`)로 시작하는 요청의 것만 센다. 같은 서버에서 다른 지표를 먼저 돌려도
+그 지표의 세션과 명령이 섞이지 않고, 겹침도 지표 3의 세션끼리만 본다.
 """
 
 from __future__ import annotations
@@ -31,11 +34,20 @@ from tools.node_sim.store import CommandRecord
 
 _REQUEST = {"target_spec": "nearest:locker", "action": "open"}  # 지표 3과 7이 보내는 요청. request_id만 요청마다 다르다
 _UNMEASURED = "미측정: LLM 호스트 실행 필요"
-# 세션마다 예약을 확정한 시각(단계 5의 감사 기록)과 닫힌 시각. 인자는 단계와 결과 값이다.
+_PREFIX = "m3-"  # 지표 3이 보내는 request_id의 접두어. 재전송은 "m3-rt-"로 시작한다
+# 요청 ID가 지표 3의 접두어로 시작하는 요청의 세션마다 예약을 확정한 시각(단계 5의 감사 기록)과 닫힌 시각.
+# 인자는 단계, 결과 값, 접두어의 길이와 접두어다.
 _SESSIONS = (
     "SELECT s.use_id, s.node_id, COALESCE(a.created_at, s.reserved_at) AS started_at, s.closed_at "
-    "FROM use_session s LEFT JOIN audit_log a ON a.internal_request_id = s.internal_request_id "
-    "AND a.step = ? AND json_extract(a.payload_json, '$.outcome') = ?"
+    "FROM use_session s JOIN request r ON r.internal_request_id = s.internal_request_id "
+    "LEFT JOIN audit_log a ON a.internal_request_id = s.internal_request_id "
+    "AND a.step = ? AND json_extract(a.payload_json, '$.outcome') = ? "
+    "WHERE substr(r.request_id, 1, ?) = ?"
+)
+# 요청 ID가 `?`로 시작하는 요청의 명령. 서버가 스스로 낸 명령은 요청 ID가 없어서 빠진다.
+_COMMANDS = (
+    "SELECT c.command_id, c.internal_request_id, c.node_id FROM node_command c "
+    "JOIN request r ON r.internal_request_id = c.internal_request_id WHERE substr(r.request_id, 1, ?) = ?"
 )
 
 
@@ -54,8 +66,8 @@ def run_metric3(h: Harness, config: EvalConfig, rng: random.Random) -> MetricOut
     _hear(h, config, {node_id: {user_id: near for user_id in visitors} for node_id in lockers})
     _wait_ready(h, config, visitors)
 
-    requests = [(rng.choice(visitors), f"m3-{index}") for index in range(config.counts["m3_requests"])]
-    retransmits = [(rng.choice(visitors), f"m3-rt-{index}") for index in range(config.counts["m3_retransmits"])]
+    requests = [(rng.choice(visitors), f"{_PREFIX}{index}") for index in range(config.counts["m3_requests"])]
+    retransmits = [(rng.choice(visitors), f"{_PREFIX}rt-{index}") for index in range(config.counts["m3_retransmits"])]
     responses = _flatten(_run_parallel(clients, [partial(_exchange, h, config, user_id, request_id)
                                                  for user_id, request_id in requests]))
     for user_id, request_id in retransmits:
@@ -63,7 +75,7 @@ def run_metric3(h: Harness, config: EvalConfig, rng: random.Random) -> MetricOut
         barrier = threading.Barrier(2)  # 짝이 모이면 같은 순간에 보낸다
         responses += _flatten(_run_parallel(2, [partial(_exchange, h, config, user_id, request_id, barrier)] * 2))
 
-    sessions = h.query(_SESSIONS, Step.DEVICE_OCCUPANCY.value, ReserveOutcome.RESERVED.value)
+    sessions = h.query(_SESSIONS, Step.DEVICE_OCCUPANCY.value, ReserveOutcome.RESERVED.value, len(_PREFIX), _PREFIX)
     overlaps = overlapping_sessions(sessions)
     executed = _executed_commands(h)
     tally = _tally(responses)
@@ -252,9 +264,9 @@ def _actuated(record: CommandRecord) -> bool:
 
 
 def _executed_commands(h: Harness) -> dict[str, int]:
-    """원래 요청(`internal_request_id`)마다 시뮬레이터가 구동한 명령 수. 구동한 명령이 없는 요청은 넣지 않는다."""
+    """지표 3의 원래 요청(`internal_request_id`)마다 시뮬레이터가 구동한 명령 수. 구동한 명령이 없는 요청은 넣지 않는다."""
     executed: Counter[str] = Counter()
-    for row in h.query("SELECT command_id, internal_request_id, node_id FROM node_command"):
+    for row in h.query(_COMMANDS, len(_PREFIX), _PREFIX):
         record = h.nodes[row["node_id"]].store.command(row["command_id"])
         if record is not None and _actuated(record):
             executed[row["internal_request_id"]] += 1
