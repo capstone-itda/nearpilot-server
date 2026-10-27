@@ -115,3 +115,23 @@
 | FR-20 | `tests/core/lifecycle/test_shared_light.py` | 밝기 0 `on`의 성공이 유지 대상자를 더한다 |
 | FR-09, FR-19, FR-22 | `tests/integration/test_light_control_flow.py` | MCP → CORE → DB → MQTT 경로, 생략 값 유지, 거부 시 명령 없음, 같은 `request_id` 충돌 |
 | NFR-10, FR-22 | `firmware/test/test_common/test_command.cpp`, `test_executor.cpp` | 펌웨어 검증, 내용 비교, 출력 상한 |
+
+### 실기기 확인 (2026-10-27, light-1, COM9)
+
+- 펌웨어 `esp32dev-light-1`을 올리고 시험 서버(`tools.node_lab`의 Runtime)와 시험 브로커로 확인했다. 요청은 CORE의 `request_use`에 명시 대상 `light-1`로 넣었다. MCP 입력 검사는 통합 테스트로 확인했다.
+- 발표에 `controls {"brightness_max": 64, "color": true}`가 실리고 `node.light_controls`에 저장된다.
+- 서버를 거친 명령의 출력(`COMMAND_HANDLED`의 `rgb`)과 저장한 `node_command.light`:
+
+| 요청 | 판정 | 출력 `rgb` |
+|---|---|---|
+| 밝기 30, `#0000FF` | `OK` | `00001E` |
+| 밝기 65 | `DENY`, `PARAMETER_OUT_OF_RANGE`, 명령 없음 | — |
+| `#FF0000`만 (밝기 생략) | `OK`, 밝기 30 유지 | `1E0000` |
+| 인자 없음 | `OK`, 30·`#FF0000` 유지 | `1E0000` |
+| 밝기 64, `#FFFFFF` | `OK` | `404040` |
+| 밝기 0 | `OK`, 동작 `on` | `000000` |
+| `off` | `OK` | `000000` |
+
+- 서버를 거치지 않은 밝기 65 명령은 펌웨어가 `rejected`, `UNSUPPORTED_PARAMETER`로 거부하고 출력하지 않았다.
+- 재시작하면 링이 꺼진 채 부팅했다(`initial=off`). 실행한 명령 ID에 다른 내용을 보내자 `COMMAND_ID_CONFLICT`로 거부하고 저장 결과 `succeeded`만 다시 보고했다. 재구동은 없었다.
+- 링의 실제 색과 밝기는 눈으로 확인하지 않았다. 전류는 측정하지 않았다.
