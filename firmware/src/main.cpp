@@ -47,7 +47,7 @@ static_assert(NP_RECONNECT_MS <= NP_RETRY_MAX_MS && NP_WIFI_RECONNECT_MS <= NP_R
 static_assert(NP_SERVO_PIN < 0 || NP_SERVO_PIN != NP_OUTPUT_PIN, "servo and GPIO output share a pin");
 static_assert(NP_SERVO_LOCKED_DEG >= 0 && NP_SERVO_LOCKED_DEG <= 180, "servo locked angle");
 static_assert(NP_SERVO_OPEN_DEG >= 0 && NP_SERVO_OPEN_DEG <= 180, "servo open angle");
-static_assert(NP_SERVO_MIN_US < NP_SERVO_MAX_US && NP_SERVO_OPEN_HOLD_MS > 0, "servo pulse range and hold");
+static_assert(NP_SERVO_MIN_US < NP_SERVO_MAX_US, "servo pulse range");
 #ifndef NP_LED_PIN
 #error "config.local.h needs the NP_LED_* values (see config.example.h)"
 #endif
@@ -238,19 +238,11 @@ bool result(JsonDocument& record) {
     return sent;
 }
 
-// ---- Locker servo: open, then relock after NP_SERVO_OPEN_HOLD_MS ----
-
-np::RelockTimer relock(NP_SERVO_OPEN_HOLD_MS);
+// ---- Locker servo: open and close are separate commands; nothing relocks on its own ----
 
 void servoAngle(int degrees) {
     ledcWrite(NP_SERVO_LEDC_CHANNEL, np::servoDuty(np::servoPulseUs(degrees, NP_SERVO_MIN_US, NP_SERVO_MAX_US),
         NP_SERVO_FREQ_HZ, NP_SERVO_LEDC_BITS));
-}
-
-void relockStep() {
-    if (NP_SERVO_PIN < 0 || !relock.due(millis())) return;
-    servoAngle(NP_SERVO_LOCKED_DEG);
-    Serial.printf("SERVO_RELOCKED pin=%d angle=%d\n", NP_SERVO_PIN, NP_SERVO_LOCKED_DEG);
 }
 
 // ---- Occupancy LED stick: shows the server's retained display, never decides it ----
@@ -287,10 +279,9 @@ const char* outputMode() {
 void signalOutput(const np::Actuation& request) {
     bool on = request.action == "on" || request.action == "open";
     if (NP_OUTPUT_PIN >= 0) digitalWrite(NP_OUTPUT_PIN, on == NP_OUTPUT_ACTIVE_HIGH ? HIGH : LOW);
-    if (NP_SERVO_PIN >= 0 && request.action == "open") {
+    if (NP_SERVO_PIN >= 0 && (request.action == "open" || request.action == "close")) {
         // Only starts the pulse train; the angle reached is not observed (FR-07).
-        servoAngle(NP_SERVO_OPEN_DEG);
-        relock.opened(millis());
+        servoAngle(request.action == "open" ? NP_SERVO_OPEN_DEG : NP_SERVO_LOCKED_DEG);
     }
     Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s output_completed=1\n",
         request.commandId.c_str(), request.action.c_str(),
@@ -507,9 +498,8 @@ void setup() {
         ledcSetup(NP_SERVO_LEDC_CHANNEL, NP_SERVO_FREQ_HZ, NP_SERVO_LEDC_BITS);
         servoAngle(NP_SERVO_LOCKED_DEG);
         ledcAttachPin(NP_SERVO_PIN, NP_SERVO_LEDC_CHANNEL);
-        Serial.printf("SERVO_OUTPUT pin=%d locked_deg=%d open_deg=%d hold_ms=%lu pulse_us=%d-%d freq_hz=%d "
-            "initial=locked\n", NP_SERVO_PIN, NP_SERVO_LOCKED_DEG, NP_SERVO_OPEN_DEG,
-            static_cast<unsigned long>(NP_SERVO_OPEN_HOLD_MS), NP_SERVO_MIN_US, NP_SERVO_MAX_US, NP_SERVO_FREQ_HZ);
+        Serial.printf("SERVO_OUTPUT pin=%d locked_deg=%d open_deg=%d pulse_us=%d-%d freq_hz=%d initial=locked\n",
+            NP_SERVO_PIN, NP_SERVO_LOCKED_DEG, NP_SERVO_OPEN_DEG, NP_SERVO_MIN_US, NP_SERVO_MAX_US, NP_SERVO_FREQ_HZ);
     }
 #if NP_LED_PIN >= 0
     ledStick.begin();
@@ -563,7 +553,6 @@ void setup() {
 
 void loop() {
     serialInput();
-    relockStep();
     unsigned long current = millis();
     static unsigned long lastReadyLog = 0;
     static String lastReason = "boot";

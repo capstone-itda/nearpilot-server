@@ -73,7 +73,7 @@ void test_FR06_capability_action_matrix() {
             auto ctx = context();
             ctx.capability = capability;
             const std::string cap = capability, act = action;
-            const bool allowed = cap == "locker" ? act == "open" :
+            const bool allowed = cap == "locker" ? act == "open" || act == "close" :
                 (cap == "light" || cap == "speaker") && (act == "on" || act == "off");
             const char* result = check("action", action, ctx);
             if (allowed) TEST_ASSERT_NULL(result);

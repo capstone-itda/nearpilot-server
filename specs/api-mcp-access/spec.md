@@ -23,7 +23,7 @@
 |---|---|
 | 서비스가 판정을 반환한다 | 판정의 `verdict`, `reason`, `node_id`, `request_id`, `message` |
 | `node_id`나 `request_id`가 비었다 | `DENY` / `INVALID_INPUT`. 서비스를 부르지 않는다 |
-| `action`이 `open`, `on`, `off`가 아니다 | `DENY` / `INVALID_INPUT`. 서비스를 부르지 않는다 |
+| `action`이 `open`, `close`, `on`, `off`가 아니다 | `DENY` / `INVALID_INPUT`. 서비스를 부르지 않는다 |
 | 서비스가 예외를 낸다 | `DENY` / `INTERNAL_ERROR`. 예외 내용이 없다 |
 
 ## 3. 제약

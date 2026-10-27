@@ -129,6 +129,42 @@ def test_FR19_reserve_reoperating(conn, repo):
     assert conn.execute("SELECT COUNT(*) AS c FROM use_session").fetchone()["c"] == 1
 
 
+def test_FR19_close_reoperates_own_active_rental(conn, repo):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="node1", occupancy="rental", device_state="ACTIVE")
+    _seed_request(conn, internal_request_id="rental-req")
+    insert_use_session(conn, use_id="use1", internal_request_id="rental-req", state="ACTIVE")
+    _seed_request(conn, internal_request_id="close-req")
+
+    result = repo.reserve_if_free(_request(internal_request_id="close-req", action=Action.CLOSE))
+
+    assert (result.outcome, result.use_id, result.usage_id) == (ReserveOutcome.REOPERATING, "use1", None)
+    assert conn.execute("SELECT state FROM use_session WHERE use_id = 'use1'").fetchone()["state"] == "ACTIVE"
+
+
+@pytest.mark.parametrize("case", ["free", "foreign", "shared"])
+def test_FR19_close_without_own_rental_is_use_not_found(conn, repo, case):
+    insert_user(conn)
+    insert_user(conn, user_id="u2", token_hash="hash-2")
+    insert_place(conn)
+    occupancy = "shared" if case == "shared" else "rental"
+    state = "ACTIVE" if case == "foreign" else "AVAILABLE"
+    insert_node(conn, node_id="node1", occupancy=occupancy, device_state=state)
+    if case == "foreign":
+        _seed_request(conn, internal_request_id="other-req", user_id="u2")
+        insert_use_session(conn, use_id="other-use", internal_request_id="other-req", user_id="u2", state="ACTIVE")
+    _seed_request(conn, internal_request_id="close-req")
+
+    result = repo.reserve_if_free(_request(internal_request_id="close-req", action=Action.CLOSE))
+
+    # 빈 기기에 대여를 시작하지 않고, 타인 점유를 드러내지 않는다 (FR-21)
+    assert (result.outcome, result.use_id, result.usage_id) == (ReserveOutcome.USE_NOT_FOUND, None, None)
+    sessions = conn.execute("SELECT COUNT(*) AS c FROM use_session WHERE user_id = 'u1'").fetchone()["c"]
+    assert sessions == 0
+    assert conn.execute("SELECT device_state FROM node WHERE node_id = 'node1'").fetchone()["device_state"] == state
+
+
 def test_FR19_reserve_reoperating_without_approval_has_reserved_at(conn, repo):
     insert_user(conn)
     insert_place(conn)

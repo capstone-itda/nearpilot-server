@@ -189,7 +189,7 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
 | 처리 중 같은 명령이 다시 오거나 재접속한다 | 현재 처리를 유지하고 접수 기록을 불명으로 바꾸지 않는다 | `test_NFR03_at_most_once_actuation` |
 | 세 기능이 시리얼·선택 GPIO 출력을 쓴다 | 출력 함수가 끝나면 출력 완료다. 출력 함수가 없으면 불명이다 | `test_NFR10_signal_output_completes` |
 | 사물함 서보 각도를 출력한다 | 각도를 0~180°로 자르고 펄스 폭과 PWM duty로 바꾼다 | `test_NFR10_servo_pulse_for_angle` |
-| 사물함이 열린 뒤 유지 시간이 지난다 | 열림 한 번에 한 번만 잠금 각도로 되돌린다. 새 `open`은 유지 시간을 다시 센다 | `test_FR06_servo_relocks_once_after_hold` |
+| 사물함에 `close`가 온다 | `open`과 같은 검사를 거쳐 허용한다. 조명·스피커의 `close`는 `UNSUPPORTED_ACTION`이다 | `test_FR06_capability_action_matrix` |
 | 점유 표시가 온다 | `AVAILABLE`은 파란색, `RESERVED`·`ACTIVE`·`CLOSING`·`FAULT`는 빨간색이다 | `test_FR19_occupancy_display_colors` |
 | 다른 기기, 다른 버전이나 모르는 상태의 점유 표시가 온다 | 무시하고 마지막 색을 유지한다 | `test_FR19_occupancy_display_ignores_invalid_messages` |
 
@@ -265,11 +265,11 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
   - 부팅할 때 출력 래치를 LOW로 지정한 뒤 출력 모드로 바꾼다. 부팅과 기존 결과 재보고는 이전 `on`을 다시 출력하지 않는다.
   - 서버가 허가한 새 명령의 기존 검사와 저장 경로를 통과한 뒤에만 GPIO 출력을 바꾼다. 출력 함수와 명령 결과 계약은 유지한다.
   - 핀 번호와 켜기·끄기 레벨은 부팅 로그에 남긴다. 실제 전압과 LED 점등은 연결한 기기에서 별도로 확인한다.
-- `locker-1`의 실제 출력은 GPIO13의 서보다 — 담당자가 2026-10-27에 골랐다. 잠금 0°, 열림 90°, 열림 유지 3초다.
-  - 제품 펌웨어의 `esp32dev-locker-1` 빌드 환경에서 `NP_SERVO_PIN=13`을 지정한다. 각도, 유지 시간과 펄스 범위는 `config.example.h`의 `NP_SERVO_*` 값이다.
+- `locker-1`의 실제 출력은 GPIO13의 서보다 — 담당자가 2026-10-27에 골랐다. 잠금 0°, 열림 90°다.
+  - 제품 펌웨어의 `esp32dev-locker-1` 빌드 환경에서 `NP_SERVO_PIN=13`을 지정한다. 각도와 펄스 범위는 `config.example.h`의 `NP_SERVO_*` 값이다.
   - 서보 신호는 LEDC 50Hz, 16비트 duty로 낸다. 0~180°를 500~2,400µs로 바꾼다. 추가 라이브러리는 쓰지 않는다.
-  - 부팅하면 잠금 각도를 낸다. 허가한 새 `open`은 열림 각도 신호를 내고 바로 `Completed`다. 서보가 실제로 도달한 각도는 관측하지 않는다 (FR-07).
-  - 유지 시간이 지나면 loop가 잠금 각도로 되돌린다. 되돌리기는 명령이 아니며 결과를 보고하지 않는다. 재부팅과 기존 결과 재보고는 다시 열지 않는다.
+  - 부팅하면 잠금 각도를 낸다. 허가한 새 `open`은 열림 각도, 새 `close`는 잠금 각도 신호를 내고 바로 `Completed`다. 서보가 실제로 도달한 각도는 관측하지 않는다 (FR-07).
+  - 자동으로 닫지 않는다. 열림 각도는 `close`나 재부팅까지 유지한다 — 담당자가 2026-10-27에 열림 유지 3초의 자동 되돌리기를 없앴다. 재부팅과 기존 결과 재보고는 다시 열지 않는다.
   - 서보 전원은 USB가 아닌 외부 전원으로 공급한다. 외부 전원과 ESP32의 GND를 묶는다.
 - `locker-1`은 GPIO19의 WS2812B LED 스틱 8개로 점유 표시를 보인다 — 담당자가 2026-10-27에 골랐다. 서버 계약도 담당자가 직접 정했다 (architecture.md §5 MQTT 3절).
   - `esp32dev-locker-1` 빌드에서 `NP_LED_PIN=19`를 지정하고 `adafruit/Adafruit NeoPixel@1.12.3`을 쓴다. 개수와 밝기는 `NP_LED_COUNT`, `NP_LED_LEVEL`이다.

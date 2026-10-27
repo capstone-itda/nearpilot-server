@@ -32,7 +32,10 @@ public:
     np::Actuator& actuator() override { return *this; }
     np::OutputResult output(const np::Actuation&) override {
         ++actuations;
-        if (duringOutput) duringOutput();
+        if (duringOutput) {
+            std::function<void()> hook = duringOutput;  // The hook may clear duringOutput; keep its captures alive.
+            hook();
+        }
         return outputResult;
     }
 
@@ -451,9 +454,9 @@ void countSignal(const np::Actuation&) { ++signalCount; }
 void test_NFR10_signal_output_completes() {
     signalCount = 0;
     np::SignalActuator signal(countSignal);
-    for (const char* action : {"open", "on", "off"})
+    for (const char* action : {"open", "close", "on", "off"})
         TEST_ASSERT_TRUE(signal.output({"a", action}) == np::OutputResult::Completed);
-    TEST_ASSERT_EQUAL_INT(3, signalCount);
+    TEST_ASSERT_EQUAL_INT(4, signalCount);
     np::SignalActuator missing(nullptr);
     TEST_ASSERT_TRUE(missing.output({"a", "on"}) == np::OutputResult::Unknown);
 }
@@ -467,26 +470,6 @@ void test_NFR10_servo_pulse_for_angle() {
     // 50 Hz, 16 bits: 1,450 us is 7.25% of the 20 ms period.
     TEST_ASSERT_EQUAL_UINT32(4751, np::servoDuty(1450, 50, 16));
     TEST_ASSERT_EQUAL_UINT32(65535, np::servoDuty(20000, 50, 16));
-}
-
-void test_FR06_servo_relocks_once_after_hold() {
-    np::RelockTimer relock(3000);
-    TEST_ASSERT_FALSE(relock.due(0));
-    relock.opened(1000);
-    TEST_ASSERT_TRUE(relock.pending());
-    TEST_ASSERT_FALSE(relock.due(3999));
-    TEST_ASSERT_TRUE(relock.due(4000));
-    TEST_ASSERT_FALSE(relock.due(9000));
-    // A new open restarts the hold.
-    relock.opened(5000);
-    TEST_ASSERT_FALSE(relock.due(7000));
-    relock.opened(7000);
-    TEST_ASSERT_FALSE(relock.due(9999));
-    TEST_ASSERT_TRUE(relock.due(10000));
-    // millis() wraps after about 49 days.
-    relock.opened(0xFFFFFF00UL);
-    TEST_ASSERT_FALSE(relock.due(0x00000100UL));
-    TEST_ASSERT_TRUE(relock.due(0xFFFFFF00UL + 3000));
 }
 
 std::string occupancyBody(const char* state, const char* node = "locker-1", int version = 2) {
@@ -616,7 +599,6 @@ void runExecutorTests() {
     RUN_TEST(test_NFR03_at_most_once_actuation);
     RUN_TEST(test_NFR10_signal_output_completes);
     RUN_TEST(test_NFR10_servo_pulse_for_angle);
-    RUN_TEST(test_FR06_servo_relocks_once_after_hold);
     RUN_TEST(test_FR19_occupancy_display_colors);
     RUN_TEST(test_FR19_occupancy_display_ignores_invalid_messages);
     RUN_TEST(test_FR06_evicted_command_does_not_actuate);

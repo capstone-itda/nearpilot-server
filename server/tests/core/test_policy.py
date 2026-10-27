@@ -124,6 +124,24 @@ def test_FR14_policy_open_ok():
     assert repo.valid_approval_calls == []  # open이면 승인 조회를 아예 안 한다
 
 
+def test_FR14_close_needs_no_approval_on_restricted_policy():
+    repo = FakePolicyRepository(policy=_restricted_policy(version=2))
+    checker = RepositoryPolicyChecker(repo)
+
+    result = checker.check("u1", "node1", Action.CLOSE, NOW)
+
+    # 승인 사용분을 예약하지 않는다. 본인 대여 확인은 ⑤⑥ 몫이다
+    assert (result.verdict, result.reason, result.policy_version, result.approval_id) == (
+        Verdict.OK, ReasonCode.OK, 2, None)
+    assert repo.valid_approval_calls == []
+
+
+def test_FR14_close_without_policy_denied():
+    result = RepositoryPolicyChecker(FakePolicyRepository(policy=None)).check("u1", "node1", Action.CLOSE, NOW)
+
+    assert (result.verdict, result.reason) == (Verdict.DENY, ReasonCode.POLICY_DENIED)
+
+
 def test_FR14_policy_valid_approval_ok():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=_approval(remaining_uses=2))
     checker = RepositoryPolicyChecker(repo)

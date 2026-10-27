@@ -188,6 +188,7 @@ spec 규칙
   - `decide()`는 `decide_for_execution()`의 판정만 반환한다.
   - `ExecutionContext`는 이번 호출에서 새로 `OK`가 난 요청에만 만든다. 재전송에는 만들지 않는다. 같은 요청의 재인계는 상태 관리가 `internal_request_id`로 처리한다 (#16).
   - 실행 종류는 기기의 점유 방식과 `reserve_if_free()` 결과로 정한다. 공용형은 `SHARED`, 대여형은 `RESERVED`이면 `RENTAL_INITIAL`, `REOPERATING`이면 `RENTAL_REOPERATION`이다. 둘이 맞지 않으면(공용형에 세션이 돌아오는 등) 불변 조건 위반이다. `INTERNAL_ERROR`로 거부한다.
+  - 사물함 `close`는 ①~④를 `open`과 같이 거친다. `reserve_if_free()`가 `REOPERATING`이면 재조작으로 인계하고, `USE_NOT_FOUND`면 `DENY` / `USE_NOT_FOUND`로 멈춘다 — 담당자가 2026-10-27에 정했다. 테스트는 `test_FR19_close는_본인_대여의_재조작으로_인계하고_세션을_유지한다`와 `test_FR19_FR21_본인_대여가_없는_close는_USE_NOT_FOUND이고_인계하지_않는다`다.
   - `execute()`는 이 작업이 부르지 않는다.
 - ④ 정책 검사는 `PolicyChecker.check(..., internal_request_id=내부 요청 ID)`로 부른다. 오류로 거부한 요청의 재판정(#76)이 이전 시도가 확보한 자기 사용분 때문에 `APPROVAL_EXHAUSTED`로 멈추지 않는다. ⑤의 `reserve_if_free()`는 같은 요청의 기존 사용분을 그대로 쓴다 (2026-10-27 팀 결정).
 - `save_decision()`이 충돌(`CONFLICT`)을 반환하면 `OK`가 아니라 `INTERNAL_ERROR`로 거부하고 다시 저장하지 않는다 — 기존 판정 기록을 덮어쓰지 않기 위해서다.

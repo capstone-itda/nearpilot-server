@@ -50,26 +50,4 @@ inline uint32_t servoDuty(unsigned pulseUs, unsigned frequencyHz, unsigned bits)
     return uint32_t(full * pulseUs * frequencyHz / 1000000ULL);
 }
 
-// Returns the locker servo to the locked angle once the open hold passes.
-// A local timer, not a command: reboot and replay never reopen (FR-06).
-class RelockTimer {
-public:
-    explicit RelockTimer(unsigned long holdMs) : holdMs_(holdMs) {}
-    void opened(unsigned long nowMs) {
-        openedAt_ = nowMs;
-        pending_ = true;
-    }
-    // True once per open, when the hold has passed. millis() wrap-safe.
-    bool due(unsigned long nowMs) {
-        if (!pending_ || nowMs - openedAt_ < holdMs_) return false;
-        pending_ = false;
-        return true;
-    }
-    bool pending() const { return pending_; }
-private:
-    unsigned long holdMs_;
-    unsigned long openedAt_ = 0;
-    bool pending_ = false;
-};
-
 }  // namespace np

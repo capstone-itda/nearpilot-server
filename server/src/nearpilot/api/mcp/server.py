@@ -28,7 +28,8 @@ log = logging.getLogger(__name__)
 
 _TOOL_DESCRIPTION = (
     "기기 사용을 요청한다. target_spec 은 nearest:locker, locker-1 형식이고 "
-    "action 은 open, on, off 중 하나다. 같은 요청을 다시 보낼 때는 같은 request_id 를 쓴다."
+    "action 은 open, close, on, off 중 하나다. close 는 본인이 대여 중인 사물함을 닫는다. 반납이 아니다. "
+    "같은 요청을 다시 보낼 때는 같은 request_id 를 쓴다."
 )
 
 _ACCESS_DESCRIPTION = (
