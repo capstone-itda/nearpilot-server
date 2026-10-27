@@ -40,6 +40,13 @@ static_assert(NP_BLE_SCAN_WINDOW_MS <= NP_BLE_SCAN_INTERVAL_MS, "BLE scan window
 static_assert(NP_WATCHDOG_TIMEOUT_SEC * 1000UL > 3000UL + NP_MQTT_IO_TIMEOUT_MS, "watchdog shorter than one wait");
 static_assert(NP_RECONNECT_MS > 0 && NP_WIFI_RECONNECT_MS > 0, "retry interval");
 static_assert(NP_RECONNECT_MS <= NP_RETRY_MAX_MS && NP_WIFI_RECONNECT_MS <= NP_RETRY_MAX_MS, "retry limit");
+#ifndef NP_SERVO_PIN
+#error "config.local.h needs the NP_SERVO_* values (see config.example.h)"
+#endif
+static_assert(NP_SERVO_PIN < 0 || NP_SERVO_PIN != NP_OUTPUT_PIN, "servo and GPIO output share a pin");
+static_assert(NP_SERVO_LOCKED_DEG >= 0 && NP_SERVO_LOCKED_DEG <= 180, "servo locked angle");
+static_assert(NP_SERVO_OPEN_DEG >= 0 && NP_SERVO_OPEN_DEG <= 180, "servo open angle");
+static_assert(NP_SERVO_MIN_US < NP_SERVO_MAX_US && NP_SERVO_OPEN_HOLD_MS > 0, "servo pulse range and hold");
 
 // Per-device values are injected over USB and kept in their own NVS namespace.
 // The command record namespace is never opened for writing by provisioning.
@@ -222,11 +229,36 @@ bool result(JsonDocument& record) {
     return sent;
 }
 
+// ---- Locker servo: open, then relock after NP_SERVO_OPEN_HOLD_MS ----
+
+np::RelockTimer relock(NP_SERVO_OPEN_HOLD_MS);
+
+void servoAngle(int degrees) {
+    ledcWrite(NP_SERVO_LEDC_CHANNEL, np::servoDuty(np::servoPulseUs(degrees, NP_SERVO_MIN_US, NP_SERVO_MAX_US),
+        NP_SERVO_FREQ_HZ, NP_SERVO_LEDC_BITS));
+}
+
+void relockStep() {
+    if (NP_SERVO_PIN < 0 || !relock.due(millis())) return;
+    servoAngle(NP_SERVO_LOCKED_DEG);
+    Serial.printf("SERVO_RELOCKED pin=%d angle=%d\n", NP_SERVO_PIN, NP_SERVO_LOCKED_DEG);
+}
+
+const char* outputMode() {
+    return NP_SERVO_PIN >= 0 ? "servo" : NP_OUTPUT_PIN >= 0 ? "optional_gpio" : "serial_only";
+}
+
 void signalOutput(const np::Actuation& request) {
     bool on = request.action == "on" || request.action == "open";
     if (NP_OUTPUT_PIN >= 0) digitalWrite(NP_OUTPUT_PIN, on == NP_OUTPUT_ACTIVE_HIGH ? HIGH : LOW);
+    if (NP_SERVO_PIN >= 0 && request.action == "open") {
+        // Only starts the pulse train; the angle reached is not observed (FR-07).
+        servoAngle(NP_SERVO_OPEN_DEG);
+        relock.opened(millis());
+    }
     Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s output_completed=1\n",
-        request.commandId.c_str(), request.action.c_str(), NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only");
+        request.commandId.c_str(), request.action.c_str(),
+        NP_SERVO_PIN >= 0 ? "servo" : NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only");
 }
 
 // validateCommand rejects actions the configured capability does not support before output.
@@ -434,9 +466,18 @@ void setup() {
             NP_OUTPUT_PIN, NP_OUTPUT_ACTIVE_HIGH ? HIGH : LOW,
             NP_OUTPUT_ACTIVE_HIGH ? LOW : HIGH, NP_OUTPUT_ACTIVE_HIGH ? LOW : HIGH);
     }
+    if (NP_SERVO_PIN >= 0) {
+        // Boot always holds the locked angle; an open before a reset is never repeated.
+        ledcSetup(NP_SERVO_LEDC_CHANNEL, NP_SERVO_FREQ_HZ, NP_SERVO_LEDC_BITS);
+        servoAngle(NP_SERVO_LOCKED_DEG);
+        ledcAttachPin(NP_SERVO_PIN, NP_SERVO_LEDC_CHANNEL);
+        Serial.printf("SERVO_OUTPUT pin=%d locked_deg=%d open_deg=%d hold_ms=%lu pulse_us=%d-%d freq_hz=%d "
+            "initial=locked\n", NP_SERVO_PIN, NP_SERVO_LOCKED_DEG, NP_SERVO_OPEN_DEG,
+            static_cast<unsigned long>(NP_SERVO_OPEN_HOLD_MS), NP_SERVO_MIN_US, NP_SERVO_MAX_US, NP_SERVO_FREQ_HZ);
+    }
     Serial.printf("NODE_START node=%s config=%s generation=%lu mode=%s storage=%d reset_reason=%s\n",
         configured ? config.nodeId.c_str() : "-", loaded, config.generation,
-        NP_OUTPUT_PIN >= 0 ? "optional_gpio" : "serial_only", storageReady, resetReason());
+        outputMode(), storageReady, resetReason());
     Serial.printf("RECORD_STORE primary=%d legacy=%d slots=%d legacy_slots=%d free_entries=%u\n",
         recordStore.ready(), legacyStore.ready(), NP_MAX_COMMAND_RECORDS, NP_LEGACY_COMMAND_RECORDS,
         unsigned(recordStore.freeEntries()));
@@ -481,6 +522,7 @@ void setup() {
 
 void loop() {
     serialInput();
+    relockStep();
     unsigned long current = millis();
     static unsigned long lastReadyLog = 0;
     static String lastReason = "boot";

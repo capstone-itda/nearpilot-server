@@ -16,7 +16,7 @@
 | `lib/np_command/` | MQTT 버전(`SCHEMA_VERSION=2`), `cmd`의 기능별 동작 검사, 검사 순서와 명령 내용 비교 필드 |
 | `lib/np_ledger/` | 명령 기록, ID 해시 색인과 저장소 인터페이스 `RecordStore` |
 | `lib/np_executor/` | 명령 상태 전이, 결과 저장과 재보고, `status`의 명령 처리 상태 |
-| `lib/np_device/` | 제어 신호 출력 인터페이스와 세 기능이 함께 쓰는 시리얼·선택 GPIO 출력 |
+| `lib/np_device/` | 제어 신호 출력 인터페이스, 세 기능이 함께 쓰는 시리얼·선택 GPIO 출력, 서보 펄스 계산과 재잠금 타이머 |
 | `lib/np_nvs/` | ESP32 NVS로 만든 `RecordStore`. PC 테스트에서는 빌드하지 않는다 |
 | `lib/np_beacon/` | iBeacon 제조사 데이터 해석 |
 | `lib/np_ready/` | 준비 사유 순서와 재시도 간격 |
@@ -62,6 +62,23 @@ pio run -e esp32dev-light-1 -t upload --upload-port COM6
 - 업로드는 USB 연결이 필요하다. 기존 Wi-Fi, MQTT 설정과 명령 기록은 유지한다.
 - 성공 보고는 제어 신호 출력 완료와 결과 저장을 뜻한다. LED 점등이나 핀 전압 측정 결과를 대신하지 않는다.
 
+### locker-1의 GPIO13 서보 출력
+
+`locker-1`은 `esp32dev-locker-1` 환경으로 빌드하고 업로드한다. 아래 명령은 `firmware/`에서 실행한다.
+
+```bash
+pio run -e esp32dev-locker-1
+pio run -e esp32dev-locker-1 -t upload --upload-port COM6
+```
+
+- 서보 신호선은 보드의 `IO13`에 연결한다. 50Hz, 500~2,400µs 펄스로 0~180°를 낸다.
+- 부팅하면 잠금 각도(0°)를 낸다. 허가한 새 `open`은 열림 각도(90°)를 내고, 3초 뒤 잠금 각도로 되돌린다.
+- 각도와 유지 시간은 `config.example.h`의 `NP_SERVO_LOCKED_DEG`, `NP_SERVO_OPEN_DEG`, `NP_SERVO_OPEN_HOLD_MS`다.
+- 기존 결과 재보고와 재부팅은 다시 열지 않는다. 되돌리기는 명령 결과를 보고하지 않는다.
+- 부팅 로그 `SERVO_OUTPUT pin=13 locked_deg=0 open_deg=90 hold_ms=3000 ...`으로 적용한 설정을 확인한다. 되돌릴 때 `SERVO_RELOCKED`가 나온다.
+- 서보 전원(5V)은 외부 전원으로 공급하고 ESP32와 GND를 묶는다. GPIO와 보드의 3.3V 핀으로 서보 전원을 공급하지 않는다.
+- 성공 보고는 열림 각도 신호 출력과 결과 저장을 뜻한다. 문이 실제로 열렸다는 근거가 아니다.
+
 ## 설정과 확인
 
 3단계부터 USB 설정은 기존 11개 키에 `capability`와 `occupancy`를 더한 13개 문자열 키를 요구한다.
@@ -72,7 +89,7 @@ pio run -e esp32dev-light-1 -t upload --upload-port COM6
 현재 `python -m tools.node_lab provision`은 새 키를 전달하지 못한다. 도구 변경은 별도 범위다.
 부팅 확인 도구와 `CONFIG_STATE` 형식은 유지한다 (`server/tools/node_lab/README.md`).
 `announce`는 설정 값을 발표한다. `locker`는 `open`, `light`·`speaker`는 `on`·`off`만 받는다.
-모든 구동은 시리얼·선택 GPIO 신호다. `handle()`은 접수 저장, 재검사, `running` 발행과 출력을 한 번에 처리한다.
+모든 구동은 시리얼·선택 GPIO 신호다. `esp32dev-locker-1`은 서보 신호를 더한다. `handle()`은 접수 저장, 재검사, `running` 발행과 출력을 한 번에 처리한다.
 `Actuator::output()`이 출력을 마치면(`Completed`) 결과를 저장하고 확인 조회한 뒤 `succeeded`를 발행한다.
 출력이 일어나지 않았음을 확인하면 `failed`, 출력 여부를 모르면 `unknown`이다. 처리하는 동안 새 명령은 `DEVICE_BUSY`다.
 결과 저장에 실패하면 결과를 발행하지 않는다. 기록은 `accepted`로 남고 다음 복원에서 `unknown`이 된다. `running`은 저장하지 않는다.
