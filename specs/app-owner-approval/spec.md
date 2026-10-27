@@ -2,7 +2,7 @@
 
 - 담당: eunji719 (앱)
 - 요구사항: FR-03, FR-14, NFR-08, NFR-12
-- 따르는 결정: #183
+- 따르는 결정: #183, 2026-10-26 결정 (FR-03의 알림 수단·AP 밖 동작·방문자 통지. 담당자가 팀 전권으로 정함)
 
 ## 1. 왜
 
@@ -26,15 +26,17 @@
 - 승인 요청 한 건은 `approval_id`, `node_id`, `action`, `status`, `created_at`, `pending_expires_at`, `valid_until`을 담는다. 요청자 정보는 없다 (#183, NFR-08).
 - 같은 결정의 재전송은 `200`과 기존 결과다 (FR-03).
 - 알림은 소유자를 웹이나 AI 호스트 화면으로 보내지 않고 앱의 승인 화면을 연다 (FR-03).
-- 인터넷 없이 독립 AP 안의 서버로만 통신한다. FCM은 쓰지 않는다 (NFR-12, FR-03 미결 항목의 후보 설명).
+- 인터넷 없이 독립 AP 안의 서버로만 통신한다. FCM은 쓰지 않는다 (NFR-12, FR-03).
 
 ## 4. 경계
 
 ### 고치는 곳
 - `app/`
+- `docs/requirements.md` FR-03, `docs/architecture.md` §1·§4·§5 REST "승인"·§7 접근 승인 흐름 (2026-10-26 결정 반영)
+- 알림 수단 미결을 근거로 쓴 머지된 spec의 해당 줄 (`api-rest-approval`, `core-access-request`, `app-beacon-broadcast`)
 
 ### 고치지 않는 곳
-- 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
+- 항상: `docs/`(위 절 제외), `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
 - 이 작업: `server/`
 
 ### 다른 영역과 닿는 곳
@@ -43,7 +45,7 @@
 | `GET /approvals`, `GET /approvals/{approval_id}`, `POST /approvals/{approval_id}/decision` (§5 REST "승인") | 사용 | API (`api/rest/`) |
 
 ### 만들지 않는 것
-- 서버의 승인 REST와 CORE의 승인 조회·결정 인터페이스. `shared` 계약이 필요해서 팀 결정 이슈로 넘긴다.
+- 서버의 승인 REST와 CORE의 승인 조회·결정 인터페이스. `api-rest-approval`과 `core-approval-service`가 맡는다.
 - 승인 이력 화면, 정책 변경 화면. 정책은 시드 스크립트가 쓴다 (FR-12A).
 
 ## 5. 예외 상황
@@ -61,22 +63,24 @@
 | 승인 목록 응답이 배열이거나 `{"approvals": [...]}`다 | 둘 다 읽는다 | `FR03_reads_list_in_both_shapes` |
 | 대기 만료 시각이 지났다 | 목록에서 만료로 표시하고 결정 버튼을 막는다 | `FR03_remaining_time_label` |
 | 알림 권한이나 로컬 네트워크 권한이 없다 | 알림 켜기 전에 요청한다. 거부하면 켜지 않고 이유를 안내한다 | 수동 확인 |
+| 알림을 켠 채로 폰이 재부팅되거나 앱이 갱신됐다 | 앱을 열지 않아도 조회를 다시 시작한다. 알림을 껐으면 시작하지 않는다 | `FR03_restarts_watch_after_boot`, 수동 확인 |
+| 소유자 폰이 AP 밖에 있다 | 연결 오류로 보고 다음 주기에 다시 묻는다. 그동안 결정하지 않은 요청은 서버에서 대기 만료로 끝난다 | `FR03_network_error_keeps_polling` |
 
 ## 6. 결정
 
 - 알림은 포그라운드 서비스의 주기 조회로 받는다 (담당자 선택) — 독립 AP에서 인터넷 없이 동작하고, 앱이 꺼져 있어도 알린다. 대기 만료가 10분이라 WorkManager의 최소 주기(15분)로는 늦다.
-- 조회 주기는 10초다 — 대기 만료 10분 안에 충분히 알리고, 서버 부하가 작다. 앱 상수다.
+- 조회 주기는 10초다 (FR-03 초기 기준) — 대기 만료 10분 안에 충분히 알리고, 서버 부하가 작다. 서버 설정이 앱에 닿지 않으므로 앱 상수 `POLL_INTERVAL_MILLIS`로 둔다.
 - 포그라운드 서비스 유형은 `specialUse`다 — `dataSync`는 Android 15부터 하루 6시간 제한이 있다.
 - 새 요청 알림은 중요도 높음 채널, 조회 중 상시 알림은 중요도 낮음 채널을 쓴다.
 - 이미 알린 승인 ID는 폰에 저장해서 서비스가 다시 시작해도 같은 요청을 다시 알리지 않는다. 대기 목록에서 사라진 ID는 지운다.
 - 화면은 아래 탭 "승인"을 더한다. 계정 화면의 HTTP 처리(`RestClient`)를 계정·승인 API가 함께 쓴다.
 - 동작은 `open`→"열기", `on`→"켜기", `off`→"끄기"로 보여 준다.
+- 재부팅(`BOOT_COMPLETED`)과 앱 갱신(`MY_PACKAGE_REPLACED`)을 받는 `BootReceiver`가 저장한 "승인 알림 받기"가 켜져 있을 때만 조회 서비스를 시작한다 (2026-10-26 담당자 결정). 받을 동작과 설정 값으로 시작 여부를 정하는 판단은 Android API와 분리해 단위 테스트한다.
+- 소유자 폰이 AP 밖에 있을 때 따로 알리지 않고, 방문자에게도 결과를 알리지 않는다 (2026-10-26 담당자 결정, FR-03).
 
 ## 7. 가정
 
-- 서버 승인 REST가 아직 없다 — `shared`의 CORE 승인 조회·결정 인터페이스가 필요하다. 이슈 초안을 담당자에게 넘긴다. 그 전까지 승인 탭은 "서버에 승인 기능이 아직 없어요"를 보여 준다.
 - `GET /approvals`의 목록 응답은 배열 또는 `{"approvals": [...]}`다 — §5 REST는 "승인 요청 목록"이라고만 정했다. 서버 구현에서 정하면 한쪽만 남긴다.
-- 알림 수단은 포그라운드 서비스의 주기 조회다 — FR-03의 미결이다. 다른 수단으로 정해지면 앱 안만 바꾸면 된다.
 
 ## 8. 테스트
 
@@ -90,7 +94,10 @@
 | FR-03 | `FR03_notifies_each_approval_once` | 새 승인 ID만 알리고, 사라진 ID는 잊는다 |
 | FR-03 | `FR03_network_error_keeps_polling` | 연결 오류에도 조회를 계속한다 |
 | FR-03 | `FR03_invalid_token_stops_polling` | 토큰 오류면 조회를 멈춘다 |
+| FR-03 | `FR03_restarts_watch_after_boot` | 재부팅·앱 갱신 때 알림이 켜져 있을 때만 다시 시작하고, 다른 동작은 무시한다 |
 | FR-03 | `FR03_remaining_time_label` | 남은 시간과 만료를 표시한다 |
 | FR-14, NFR-08 | `FR14_approval_item_has_no_requester` | 승인 항목에 요청자 정보가 없다 |
 | FR-03 | 수동: 가짜 승인 서버와 에뮬레이터 | 앱을 닫아도 알림이 뜨고, 누르면 승인 탭에서 그 요청이 강조되고, 승인하면 목록에서 사라진다 (확인함) |
-| FR-03 | 수동: 실제 서버 | 위와 같다 (서버 승인 REST 구현 뒤) |
+| FR-03 | 수동: 실제 서버 | 위와 같다 |
+| FR-03 | 수동: 재부팅 | 알림을 켠 채 폰을 재부팅하면 앱을 열지 않아도 조회 중 알림이 다시 뜬다 |
+| FR-03 | 수동: 앱 갱신 | 알림을 켠 채 앱을 새 버전으로 설치하면 앱을 열지 않아도 조회 중 알림이 다시 뜬다 |
