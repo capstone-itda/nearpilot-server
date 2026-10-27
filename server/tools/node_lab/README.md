@@ -74,10 +74,14 @@ python -m tools.node_lab run
 watch
 on
 off
+open
+release
 quit
 ```
 
 `on`과 `off`는 `nearest:light`를 요청한다. 비콘이 없거나 확률이 낮으면 실행하지 않는다.
+`open`은 `nearest:locker`를 요청한다. 허가되면 대여가 생기고 `decision`에 `use_id`가 나온다.
+`release`는 콘솔에서 마지막으로 연 대여를 반납한다. `release <use_id>`로 지정해도 된다. 반납은 서버의 논리적 점유 해제이며 문 닫힘을 확인하지 않는다.
 `on light-1`처럼 명시 지정도 입력할 수 있다.
 다만 명시 지정 임계값은 미결이므로 기본 설정은 명시 실행을 허가하지 않는다.
 시험 도구가 실행되면서 발표한 기기만 초기 복원 목록에 없으면 실행이 차단된다.
@@ -95,6 +99,7 @@ quit
 python -m tools.node_lab init --mode hardware --dir var/node-lab-hardware --host 192.168.0.10 --node light-1 --node light-2
 ```
 
+   기기 ID의 접두사가 기능을 정한다. `light-`는 공용형 조명, `locker-`는 대여형 사물함이다. 사물함은 제품 펌웨어(`firmware/`의 `esp32dev-locker-1`)를 쓴다.
 3. 실제 비콘의 UUID·major·minor를 `lab.json`에 넣는다. 처음 생성할 때 `--uuid`, `--major`, `--minor`로 지정해도 된다.
 4. 폐쇄망 시각원과 기기별 최대 시각 오차를 실측한다. `server.toml`의 `[delivery.clock_skew_sec]`에 기기별 초 값을 넣는다.
 5. 모든 기기에 같은 펌웨어를 올리고, 아래 "USB 설정 주입"으로 기기마다 ID·접속 정보·네트워크를 넣는다.

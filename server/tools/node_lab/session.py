@@ -19,6 +19,11 @@ from nearpilot.shared.enums import (
     Role, TrustState, Verdict, Visibility,
 )
 from nearpilot.shared.models import BeaconKey, BeaconRegistration, PlaceAssignment, PolicySettings, TargetSpec, UseRequest
+from tools.node_lab.setup import node_kind
+
+# Lab action -> capability it drives. Lockers only open (architecture.md §5 MQTT).
+ACTION_CAPABILITY = {"on": Capability.LIGHT, "off": Capability.LIGHT, "open": Capability.LOCKER}
+USAGE = "watch | on [nearest:light] | off [nearest:light] | open [nearest:locker] | release [use_id] | quit"
 
 
 def now():
@@ -66,6 +71,7 @@ class Lab:
         self._restart_required = False
         self._stop = threading.Event()
         self._watcher = None
+        self.last_use_id = None  # Latest rental use opened from this console, for `release`.
 
     def start(self):
         self.runtime.start()
@@ -93,8 +99,10 @@ class Lab:
         for node in selected:
             if node.node_id in self._configured and node.trust_state == TrustState.TRUSTED and node.place_id == "node-lab":
                 continue
-            if node.capability != Capability.LIGHT or node.occupancy.value != "shared":
-                self.evidence.emit("node_rejected", node_id=node.node_id, reason="expected shared light")
+            capability, occupancy = node_kind(node.node_id)
+            if node.capability.value != capability or node.occupancy.value != occupancy:
+                self.evidence.emit("node_rejected", node_id=node.node_id,
+                                   reason=f"expected {occupancy} {capability}")
                 continue
             self._check(admin.assign_place(owner, PlaceAssignment("node-lab", owner, "연결 시험", (node.node_id,))))
             self._check(admin.set_node_trust(owner, node.node_id, TrustState.TRUSTED))
@@ -149,8 +157,11 @@ class Lab:
                 place_nodes, now(), place_nodes=place_nodes)
             self.evidence.emit("proximity", posteriors=dict(result.posteriors), best=result.best,
                 model_version=result.model_version, calib_version=result.calib_version,
-                threshold=self.config.settings.threshold_light)
+                thresholds={n.capability.value: self.threshold(n.capability) for n in place_nodes})
             return dict(result.posteriors)
+
+    def threshold(self, capability: Capability):
+        return getattr(self.config.settings, f"threshold_{capability.value}")
 
     def report_readiness(self, node, *, ready: bool, blockers, current):
         """Log only changes. FAULT stays visible; this log never clears or overrides it."""
@@ -163,16 +174,17 @@ class Lab:
             self._readiness[node.node_id] = state
             self.evidence.emit("node_readiness", node_id=node.node_id, **state)
 
-    def use(self, action: str, target: str = "nearest:light", *, request_id: str | None = None):
+    def use(self, action: str, target: str | None = None, *, request_id: str | None = None):
         with self._snapshot_lock:
             return self._use(action, target, request_id=request_id)
 
-    def _use(self, action: str, target: str, *, request_id: str | None):
-        if action not in ("on", "off"):
-            raise ValueError("시험 동작은 on 또는 off다")
-        parsed = TargetSpec.parse(target)
-        if parsed.capability != Capability.LIGHT:
-            raise ValueError("시험 대상은 light다")
+    def _use(self, action: str, target: str | None, *, request_id: str | None):
+        if action not in ACTION_CAPABILITY:
+            raise ValueError("시험 동작은 on, off 또는 open이다")
+        capability = ACTION_CAPABILITY[action]
+        parsed = TargetSpec.parse(target or f"nearest:{capability.value}")
+        if parsed.capability != capability:
+            raise ValueError(f"{action}의 시험 대상은 {capability.value}다")
         self.snapshot()
         request = UseRequest(self.options["user_id"], request_id or uuid4().hex,
                              parsed, Action(action), "node-lab", now())
@@ -184,7 +196,21 @@ class Lab:
                 self.evidence.emit("command_result", request_id=request.request_id,
                     command_id=command.command_id, node_id=command.node_id,
                     status=command.status, action=command.action)
+        if decision.use_id:
+            self.last_use_id = decision.use_id
         return decision
+
+    def release(self, use_id: str | None = None):
+        """Logical release of the visitor's rental use (FR-19). The door is not observed."""
+        with self._snapshot_lock:
+            use_id = use_id or self.last_use_id
+            if not use_id:
+                raise ValueError("반납할 use_id가 없다. 먼저 open을 실행한다")
+            decision = self.runtime.core.release_use(self.options["user_id"], use_id)
+            self.evidence.emit("release", **asdict(decision))
+            if decision.verdict == Verdict.OK and use_id == self.last_use_id:
+                self.last_use_id = None
+            return decision
 
     def watch(self):
         while not self._stop.is_set():
@@ -197,7 +223,7 @@ class Lab:
     def console(self):
         self._watcher = threading.Thread(target=self.watch, name="lab-observer", daemon=True)
         self._watcher.start()
-        print("명령: watch | on [nearest:light] | off [nearest:light] | quit", flush=True)
+        print(f"명령: {USAGE}", flush=True)
         while True:
             try:
                 words = input("lab> ").split()
@@ -210,10 +236,12 @@ class Lab:
             try:
                 if words == ["watch"]:
                     self.snapshot()
-                elif words[0] in ("on", "off") and len(words) <= 2:
-                    self.use(words[0], words[1] if len(words) == 2 else "nearest:light")
+                elif words[0] in ACTION_CAPABILITY and len(words) <= 2:
+                    self.use(words[0], words[1] if len(words) == 2 else None)
+                elif words[0] == "release" and len(words) <= 2:
+                    self.release(words[1] if len(words) == 2 else None)
                 else:
-                    print("watch | on [nearest:light] | off [nearest:light] | quit")
+                    print(USAGE)
             except (ValueError, LookupError) as error:
                 self.evidence.emit("input_error", reason=str(error))
 
@@ -243,7 +271,7 @@ def demo(lab: Lab):
     deadline = time.monotonic() + lab.options["observe_timeout_sec"]
     while time.monotonic() < deadline:
         probabilities = lab.snapshot()
-        if probabilities and max(probabilities.values()) >= lab.config.settings.threshold_light:
+        if probabilities and max(probabilities.values()) >= lab.threshold(Capability.LIGHT):
             with lab.runtime.db.scope():
                 ready = all(lab.runtime.services.restore.can_execute(node) for node in lab.options["nodes"])
             if ready and len(probabilities) == len(lab.options["nodes"]):
