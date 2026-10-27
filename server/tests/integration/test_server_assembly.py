@@ -513,3 +513,17 @@ def test_FR08_runtime_mcp_real_app_tools(world):
     text = repr(out)
     for secret in (VISITOR_A, OWNER, "place-a", TOKENS[VISITOR_A], "p_max"):
         assert secret not in text  # 사용자 ID·점유 주체·토큰을 응답에 넣지 않는다 (FR-11, NFR-08)
+
+
+def test_FR19_runtime_open_rental_reoperation_reaches_device(world):
+    w = world()
+    with running(w.runtime):
+        w.ready("locker-1")
+        first = w.use(VISITOR_A, "locker-1", "r-open")
+        assert first.verdict is Verdict.OK
+        wait_until(lambda: query(w.db, "SELECT state FROM use_session WHERE use_id = ?",
+                                 first.use_id)[0]["state"] == "ACTIVE")
+        # 승인 없는 대여의 재조작도 기기에 명령을 보내고 성공한다 (예약 시각이 없어 전송이 막히지 않는다)
+        again = w.use(VISITOR_A, "locker-1", "r-reopen")
+        assert (again.verdict, again.use_id) == (Verdict.OK, first.use_id)
+        wait_until(lambda: [c["status"] for c in w.commands("locker-1")] == ["succeeded", "succeeded"])

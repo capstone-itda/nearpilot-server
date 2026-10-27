@@ -770,9 +770,10 @@ class SqliteRepository:
                 usage_id = self._reserve_usage(req.approval_id, req.internal_request_id, reserved_at_iso)
                 if usage_id is _EXHAUSTED:
                     return ReserveResult(outcome=ReserveOutcome.APPROVAL_EXHAUSTED)
+                # 승인 없는 재조작도 대여형 실행이라 예약 시각이 있어야 전송된다. 명령 행의 예약 시각과 같은 요청 접수 시각이다.
                 return ReserveResult(
                     outcome=ReserveOutcome.REOPERATING, use_id=own_active["use_id"], usage_id=usage_id,
-                    reserved_at=parse_iso(reserved_at_iso) if usage_id is not None else None,
+                    reserved_at=parse_iso(reserved_at_iso),
                 )
 
             if node["occupancy"] == Occupancy.SHARED.value:
