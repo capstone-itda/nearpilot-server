@@ -82,7 +82,7 @@
 | `cleanup()`을 같은 `now`로 두 번 연속 돌린다 | 두 번째 `CleanupReport`는 `cleared_requests`·`deleted_sessions`·`deleted_audit_rows`가 모두 0이다. DB 상태는 첫 번째 호출 뒤와 같다 | `test_FR22_cleanup_is_idempotent` |
 | `cleanup()`을 돌린다 | `rssi_observation`·`collection_run` 행 수는 그대로다 | `test_FR22_cleanup_keeps_collection_observations` |
 | `cleanup()` 중 쓰기 잠금을 얻지 못한다 | 아무것도 지우지 않은 채 `StoreNotApplied`를 올린다. 판정과 실행을 막지 않는다(상태 관리가 다음 주기에 재시도) | `test_NFR03_cleanup_lock_failure_raises_store_not_applied` |
-| 외부 `request_id`가 있는 요청 행 수가 `dedup_entry_limit` 미만이다 | 평소처럼 `request_id`를 넣어 새 행을 만든다. `capacity_exceeded=False` | `test_FR18_link_request_below_limit_is_unaffected` |
+| 중복 방지 항목 수(요청 항목 + 명령 항목)가 `dedup_entry_limit` 미만이다 | 평소처럼 `request_id`를 넣어 새 행을 만든다. `capacity_exceeded=False` | `test_FR18_link_request_below_limit_is_unaffected` |
 | 행 수가 한도 이상이다(새 요청) | `request_id` 없이 행을 만들고 `RequestLink(is_new=True, capacity_exceeded=True)`를 반환한다. 이 행은 다음 집계에서 빠진다 | `test_FR22_link_request_capacity_exceeded_omits_request_id` |
 | 한도 이상이지만 보장기간이 지난 `request_id`가 있다 | 그 ID를 먼저 비우고 다시 센다. 자리가 나면 새 요청을 평소처럼 연결한다 | `test_FR22_link_request_clears_expired_ids_before_capacity_check` |
 | 한도 이상이고 진행 중인 요청만 있다 | 진행 중 요청의 `request_id`는 비우지 않고 `capacity_exceeded=True`를 반환한다 | `test_FR22_link_request_capacity_keeps_unfinished_request_key` |
@@ -122,12 +122,12 @@
 
 - 지금의 "낙관적 단일 `INSERT`, 충돌 시 `IntegrityError`를 잡아 `_link_existing`으로 재조회" 구조를 "`BEGIN IMMEDIATE`로 먼저 기존 행을 조회 → 없으면 한도를 세고 조건부로 `INSERT`" 구조로 바꾼다.
   1. `(user_id, request_id)`로 기존 행을 조회한다. 있으면 기존 `_link_existing`의 digest 비교·재판정 로직을 그대로 쓴다(변경 없음).
-  2. 없으면 `SELECT COUNT(*) FROM request WHERE request_id IS NOT NULL`을 센다. 한도 이상이면 같은 트랜잭션에서 `cleanup()`과 같은 기준으로 만료 `request_id`만 비우고 다시 센다 (FR-22 "한도에 도달하면 ... 비운다"). 세션·감사 행은 지우지 않는다.
+  2. 없으면 중복 방지 항목 수(요청 항목 `SELECT COUNT(*) FROM request WHERE request_id IS NOT NULL` + 아래 명령 항목)를 한 문장으로 센다. 한도 이상이면 같은 트랜잭션에서 `cleanup()`과 같은 기준으로 만료 `request_id`만 비우고 다시 센다 (FR-22 "한도에 도달하면 ... 비운다"). 세션·감사 행은 지우지 않는다.
   3. 한도 미만이면 원래 `request_id`로 `INSERT`하고 `capacity_exceeded=False`를 반환한다.
   4. 한도 이상이면 `request_id = NULL`로 `INSERT`하고 `capacity_exceeded=True`를 반환한다.
 - 외부에 보이는 반환값과 재조작(`REOPERATING`) 경로는 바꾸지 않는다. 내부에서만 "조회 먼저, 그다음 조건부 삽입"으로 바뀐다 — 이유: 한도 세기와 삽입이 같은 트랜잭션 안에 있어야 동시 요청이 한도를 함께 넘지 않는다(#165, NFR-03). 기존처럼 낙관적 `INSERT` 뒤 `IntegrityError`로 분기하면, 그 단일 문장은 자동 커밋이라 한도 세기를 같은 트랜잭션에 넣을 수 없다. 단순한 쪽(항상 `BEGIN IMMEDIATE`)으로 가기로 담당자가 확인했다.
 - 명령 항목(2026-10-27 팀 결정): `node_command` 행 가운데 그 요청의 `request_id`가 `NULL`이 아니거나 `status`가 `pending`·`in_progress`인 행을 센다. 한도 집계는 요청 항목 수 + 명령 항목 수다. 요청의 `request_id`를 비우는 정리(`clear_expired_request_ids`)가 그 요청의 명령 항목도 끝내므로 새 정리 단계는 없다. 요청 완료 조건에 진행 중 명령이 없다는 조건이 있어서, 보통은 진행 중 명령의 요청도 `request_id`를 유지한다. `request_id` 없는 서버 내부 요청의 명령은 진행 중일 때만 센다.
-- 개수 세기가 기존 인덱스를 쓰는지 실제 스키마로 확인했다. `EXPLAIN QUERY PLAN SELECT COUNT(*) FROM request WHERE request_id IS NOT NULL`의 결과는 `SCAN request USING COVERING INDEX request_external_key`다. `request_external_key`는 `(user_id, request_id) WHERE request_id IS NOT NULL` 부분 UNIQUE 인덱스로, 이미 `db-repository` spec이 중복 방지용으로 만들어 뒀다. 새 인덱스 없이 이 커버링 인덱스만으로 테이블 본문을 읽지 않고 개수를 센다 — 요청마다 트랜잭션이 하나 늘어도 개수 세기 자체의 비용은 작다.
+- 개수 세기가 기존 인덱스를 쓰는지 실제 스키마로 확인했다. `EXPLAIN QUERY PLAN SELECT COUNT(*) FROM request WHERE request_id IS NOT NULL`의 결과는 `SCAN request USING COVERING INDEX request_external_key`다. `request_external_key`는 `(user_id, request_id) WHERE request_id IS NOT NULL` 부분 UNIQUE 인덱스로, 이미 `db-repository` spec이 중복 방지용으로 만들어 뒀다. 새 인덱스 없이 이 커버링 인덱스만으로 테이블 본문을 읽지 않고 개수를 센다. 명령 항목 세기는 `node_command`를 훑는다 (진행 중 상태용 인덱스가 없다). 명령 행은 지우지 않으므로 새 요청마다 드는 비용이 명령 수에 비례해 는다. 시연 규모(한도 10만 건)에서는 받아들이고 스키마는 바꾸지 않는다 (2026-10-27 위임 결정).
 
 ## 7. 가정
 
@@ -152,6 +152,7 @@
 | FR-22 | `test_FR22_link_request_capacity_exceeded_omits_request_id` | 한도 이상이면 `request_id` 없이 만들고 플래그를 반환한다 |
 | FR-22 | `test_FR22_link_request_clears_expired_ids_before_capacity_check`, `test_FR22_link_request_capacity_keeps_unfinished_request_key` | 한도에서 만료 ID만 먼저 비운다 |
 | FR-22 | `test_FR22_link_request_counts_command_entries` | 요청 항목과 명령 항목을 각각 세어 더한다 |
+| FR-22 | `test_FR22_link_request_recount_after_clearing_counts_command_entries` | 만료 ID를 비운 뒤 다시 셀 때 그 요청의 끝난 명령 항목도 빠진다 |
 | FR-18 | `test_FR18_link_request_below_limit_is_unaffected`, `test_FR18_link_request_retransmission_ignores_limit` | 한도 미만·재전송 동작이 그대로다 |
 | FR-19 | `test_FR19_link_request_reoperating_path_unaffected` | 재조작 경로가 한도 검사로 바뀌지 않는다 |
 | NFR-03 | `test_NFR03_link_request_concurrent_capacity_check`, `test_NFR03_cleanup_lock_failure_raises_store_not_applied` | 동시성과 잠금 실패 처리 |
