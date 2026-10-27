@@ -115,6 +115,7 @@ spec 규칙
 | 공용형 제한 기기를 요청한다 | `reserve_if_free()`를 호출한다. `use_id`는 `None`이고 `usage_id`는 사용분 ID다 | `test_FR18_공용형_승인_사용분_ID를_점유_요청에_넘기고_인계에_담는다` |
 | 공용형 `open` 기기를 승인 없이 요청한다 | `reserve_if_free()`를 호출한다. DB는 아무것도 쓰지 않고 `RESERVED`를 반환한다 | `test_FR18_FR19_공용형도_reserve_if_free를_호출하고_세션은_없다` |
 | 오류로 거부한 요청을 재판정하는데 이전 시도가 그 승인의 마지막 사용분을 확보해 두었다 | ④는 자기 사용분을 세지 않아 통과한다. ⑤는 같은 사용분을 쓴다. `APPROVAL_EXHAUSTED`가 아니다 | `test_FR14_재판정은_자기_사용분으로_소진되지_않는다` |
+| `any:` 배정 경로가 후보마다 정책을 검사한다 | 후보 검사에도 이번 요청의 `internal_request_id`를 넘긴다 | `test_FR23_any_배정의_정책_검사도_내부_요청_ID를_넘긴다` |
 | 실제 DB에서 `one_time` 승인 요청이 예약 뒤 오류로 끝나고 같은 요청으로 재전송된다 | `OK`로 판정한다. 사용분은 하나다 | `test_FR14_runtime_one_time_retry_after_internal_error_is_ok` (`tests/integration/`) |
 | 같은 `internal_request_id`에 다른 판정을 다시 저장한다 | DB가 충돌로 거부한다. decision은 기존 판정 기록을 덮어쓰지 않는다 | `test_FR22_판정_저장이_충돌하면_OK가_아니고_다시_저장하지_않는다` |
 | 실행 직전 재검사에서 자기 요청의 예약을 만난다 | 타인 점유로 보지 않는다 | `specs/core-recheck/spec.md` |

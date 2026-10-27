@@ -85,7 +85,7 @@
 | 정책이 알 수 없는 판정을 반환한다 | `DENY` / `RECHECK_FAILED` | `test_FR18_재검사_정책의_알_수_없는_판정은_OK가_되지_않는다` |
 | 감사 기록이 실패한다 | `OK`가 되지 않는다 | `test_FR18_재검사_감사_기록이_실패하면_OK가_되지_않는다` |
 | 같은 `ctx`와 같은 상태로 다시 부른다 | 같은 판정을 반환한다 | `test_FR18_재검사는_같은_입력에_같은_판정을_반환한다` |
-| 승인 소진인데 이 요청의 사용분이 있다 | 재검사를 통과시킨다. `usage_id`가 없거나 다른 정책 거부면 멈춘다 | `test_FR19_recheck_ignores_own_reserved_usage`, `test_FR19_재검사_자기_사용분은_승인_소진만_통과시킨다` |
+| 승인 소진인데 이 요청의 사용분이 있다 | ④가 `internal_request_id`를 넘겨 자기 사용분을 세지 않으므로 통과한다. 자기 사용분을 뺀 뒤에도 소진이거나 다른 정책 거부면 그 판정으로 멈춘다 | `test_FR19_recheck_ignores_own_reserved_usage`, `test_FR19_재검사_자기_사용분은_승인_소진만_통과시킨다` |
 
 ## 6. 결정
 
@@ -114,7 +114,7 @@
 | FR-18 | 5절의 테스트 이름 전부 | 재검사의 통과, 정상 거부, 검사 오류 |
 | FR-18 | `test_FR18_재검사는_다른_기기를_고르지_않는다` | 대상이 `ctx.node_id`로 고정된다 |
 | FR-11 | `test_FR11_재검사_Decision에는_사용자_ID가_없다` | 판정에 사용자 ID가 없다 |
-| FR-19 | `test_FR19_recheck_ignores_own_reserved_usage`, `test_FR19_재검사_자기_사용분은_승인_소진만_통과시킨다`, `test_FR19_자기_사용분으로_정책을_통과해도_예약을_검사한다` | 자기 사용분의 소진만 통과시키고, 통과해도 예약을 검사한다 |
+| FR-19 | `test_FR19_recheck_ignores_own_reserved_usage`, `test_FR19_재검사_자기_사용분은_승인_소진만_통과시킨다`, `test_FR19_자기_사용분으로_정책을_통과해도_예약을_검사한다` | 자기 사용분은 남은 횟수에서 빼고, 통과해도 예약을 검사한다 |
 | FR-14 | `tests/integration/test_one_time_approval_runtime.py`의 `test_FR14_*` | 실제 서버 조립에서 1회 승인이 정확히 한 번 구동된다 |
 
 - 구현은 `server/tests/core/test_recheck.py`다.

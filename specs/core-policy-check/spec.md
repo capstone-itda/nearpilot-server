@@ -11,7 +11,7 @@
 
 ## 2. 무엇
 
-- 입력: `user_id`, `node_id`, `Action`, `now`
+- 입력: `user_id`, `node_id`, `Action`, `now`, 선택 키워드 `internal_request_id` (남은 횟수에서 뺄 요청, 기본 `None`)
 - 출력: `PolicyCheckResult` (`verdict`, `reason`, `policy_version`, `approval_id`)
 - 바뀌는 상태: 없음. 저장소를 바꾸지 않는다. 승인 사용분을 예약하지 않는다.
 - 약속:
