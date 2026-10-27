@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 
 from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 
 from nearpilot.api.auth.authenticator import Authenticator
@@ -43,6 +44,10 @@ _DEVICES_DESCRIPTION = (
 )
 _DEVICE_STATE_DESCRIPTION = "기기(node_id)의 상태를 조회한다. 근접 검사는 하지 않는다."
 
+# MCP SDK 가 127.0.0.1 바인딩에 자동으로 켜는 DNS 리바인딩 방어의 기본 허용 목록이다.
+_LOCAL_HOSTS = ("127.0.0.1:*", "localhost:*", "[::1]:*")
+_LOCAL_ORIGINS = ("http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*")
+
 
 def _account_of(ctx: Context) -> Account | None:
     """미들웨어가 검증한 계정. 없으면 None 이다. 기본값은 거부다."""
@@ -50,8 +55,18 @@ def _account_of(ctx: Context) -> Account | None:
     return account if isinstance(account, Account) else None
 
 
+def _transport_security(public_hosts: Sequence[str]) -> TransportSecuritySettings:
+    """localhost 와 공개 Host 만 받는다. 터널로 들어온 요청은 공개 Host 로 온다. 다른 Host 는 421 이다."""
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[*_LOCAL_HOSTS, *public_hosts],
+        allowed_origins=[*_LOCAL_ORIGINS, *(f"https://{h}" for h in public_hosts)],
+    )
+
+
 def build_app(
-    core: CoreService, authenticator: Authenticator, clock: Callable[[], datetime]
+    core: CoreService, authenticator: Authenticator, clock: Callable[[], datetime],
+    *, public_hosts: Sequence[str] = (),
 ) -> Starlette:
     mcp = MCPServer("nearpilot")
 
@@ -149,6 +164,7 @@ def build_app(
             log.exception("get_device_state 도구 처리 중 예외")
             return device_state_denied(ReasonCode.INTERNAL_ERROR)
 
-    app = mcp.streamable_http_app(json_response=True, stateless_http=True)
+    app = mcp.streamable_http_app(json_response=True, stateless_http=True,
+                                 transport_security=_transport_security(public_hosts))
     app.add_middleware(AuthMiddleware, authenticator=authenticator)
     return app

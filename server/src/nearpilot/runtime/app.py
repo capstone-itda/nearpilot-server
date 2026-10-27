@@ -24,7 +24,8 @@ from nearpilot.runtime.assembly import Runtime
 
 def create_app(runtime: Runtime) -> FastAPI:
     mcp_app = None if runtime.collect_only else build_app(
-        runtime.core, runtime.authenticator, runtime.clock)
+        runtime.core, runtime.authenticator, runtime.clock,
+        public_hosts=runtime.config.http.public_hosts)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

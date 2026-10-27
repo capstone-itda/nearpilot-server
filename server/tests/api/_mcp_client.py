@@ -132,12 +132,14 @@ async def asgi_post(app, path: str, headers: dict[str, str], body: bytes) -> Res
 class Client:
     """ASGI 앱에 직접 JSON-RPC 요청을 보낸다. 서버는 stateless + JSON 응답이다."""
 
-    def __init__(self):
+    def __init__(self, public_hosts=()):
         self.accounts, self.core = FakeAccounts(), FakeCore()
+        self.public_hosts = public_hosts
 
     def new_app(self):
         # MCP 세션 매니저는 앱 하나에서 한 번만 시작할 수 있다. 요청마다 새 앱을 만든다.
-        return build_app(self.core, Authenticator(self.accounts), lambda: NOW)
+        return build_app(self.core, Authenticator(self.accounts), lambda: NOW,
+                         public_hosts=self.public_hosts)
 
     async def post(self, method, params=None, token=TOKEN_A, headers=None, id_=1):
         h = {**HEADERS, **(headers or {})}

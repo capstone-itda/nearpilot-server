@@ -54,6 +54,7 @@ class RuntimeSettings:
 class HttpConfig:
     host: str
     port: int
+    public_hosts: tuple[str, ...] = ()  # 터널 같은 공개 주소의 Host. `/mcp` 의 Host 검사가 받는다
 
 
 @dataclass(frozen=True)
@@ -149,13 +150,17 @@ def _runtime(table: Mapping[str, Any]) -> RuntimeSettings:
 
 
 def _http(table: Mapping[str, Any]) -> HttpConfig:
-    _keys(table, "http", required={"host", "port"})
+    _keys(table, "http", required={"host", "port"}, allowed={"host", "port", "public_hosts"})
     host, port = table["host"], table["port"]
     if not isinstance(host, str) or not host.strip():
         raise ConfigError("http.host 는 빈 문자열이 아니어야 한다")
     if type(port) is not int or not 1 <= port <= 65535:
         raise ConfigError("http.port 는 1~65535 정수여야 한다")
-    return HttpConfig(host, port)
+    public_hosts = table.get("public_hosts", [])
+    if not isinstance(public_hosts, list) or not all(
+            isinstance(h, str) and h.strip() and h == h.strip() and "/" not in h for h in public_hosts):
+        raise ConfigError("http.public_hosts 는 Host 문자열(스킴·경로 없음)의 배열이어야 한다")
+    return HttpConfig(host, port, tuple(public_hosts))
 
 
 def _database(table: Mapping[str, Any], base: Path) -> DatabaseConfig:
