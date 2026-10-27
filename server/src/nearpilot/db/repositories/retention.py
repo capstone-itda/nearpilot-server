@@ -1,7 +1,8 @@
 """`RetentionStore` 구현 (specs/db-retention-capacity/spec.md, FR-21, FR-22, #164, #165).
 
-`node_command` 행은 지우지 않는다 — "명령 중복 방지 항목"의 보존기간은 `requirements.md`
-FR-22가 아직 미결로 남겨 뒀다. `use_session`을 지울 때는 그 행을 참조하는
+`node_command` 행은 지우지 않는다 — 명령 중복 방지 항목은 요청과 같은 보장기간을 쓰고
+요청의 `request_id`를 비우면 끝난다. 행은 요청 행처럼 이력으로 남긴다 (FR-22, 2026-10-27
+팀 결정). `use_session`을 지울 때는 그 행을 참조하는
 `node_command.use_id`·완료된 `recovery.use_id`만 `NULL`로 뗀다.
 """
 

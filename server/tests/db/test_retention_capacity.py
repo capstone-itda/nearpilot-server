@@ -439,6 +439,63 @@ def test_FR22_link_request_capacity_keeps_unfinished_request_key(conn):
     assert old["request_id"] == "pending"
 
 
+@pytest.mark.parametrize(
+    ("owner", "status", "limit", "exceeded"),
+    [
+        ("keyed", "succeeded", 2, True),  # 요청 항목 1 + 그 요청의 명령 1 = 2
+        ("cleared", "succeeded", 2, False),  # request_id를 비운 요청의 끝난 명령은 세지 않는다
+        ("cleared", "pending", 2, True),  # 비운 요청이라도 진행 중 명령은 센다
+        ("cleared", "in_progress", 2, True),
+        ("keyed", "pending", 3, False),  # 두 조건을 모두 만족하는 명령은 한 번만 센다
+    ],
+)
+def test_FR22_link_request_counts_command_entries(conn, owner, status, limit, exceeded):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="node1", occupancy="rental")
+    # 판정이 없는 진행 중 요청이라 한도 정리가 request_id를 비우지 않는다
+    insert_request(conn, internal_request_id="keyed", request_id="ext-keyed", input_digest="d")
+    # 정리로 ID를 비운 요청은 판정이 있다 (완료 조건)
+    insert_request(conn, internal_request_id="cleared", request_id=None, input_digest="d", verdict="OK", reason_code="OK")
+    insert_node_command(conn, command_id="cmd1", internal_request_id=owner, node_id="node1", status=status)
+    repo = SqliteRepository(conn, settings=Settings(dedup_entry_limit=limit))
+
+    result = repo.link_request(_use_request(request_id="ext-new"), "digest-new")
+
+    assert result.capacity_exceeded is exceeded
+
+
+def test_FR22_link_request_recount_after_clearing_counts_command_entries(conn):
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="node1", occupancy="rental")
+    insert_request(
+        conn, internal_request_id="expired", request_id="ext-expired", input_digest="d",
+        verdict="DENY", reason_code="BEACON_NOT_SEEN",
+    )
+    insert_audit_log(conn, internal_request_id="expired", created_at="2026-01-01T00:00:00+00:00")
+    insert_node_command(
+        conn, command_id="cmd-expired", internal_request_id="expired", node_id="node1", status="succeeded",
+    )
+    insert_request(conn, internal_request_id="live", request_id="ext-live", input_digest="d")
+    insert_node_command(
+        conn, command_id="cmd-live", internal_request_id="live", node_id="node1", status="in_progress",
+    )
+    # 정리 전 4(두 요청 항목 + 두 명령 항목)라 한도 3에서 정리한다
+    repo = SqliteRepository(conn, settings=Settings(dedup_entry_limit=3, request_dedup_ttl_sec=60))
+    later = replace(_use_request(request_id="new"),
+                    received_at=datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=61))
+
+    result = repo.link_request(later, "new")
+
+    # 만료 요청의 ID를 비우면 그 요청의 끝난 명령 항목도 빠져 진행 중 요청의 항목 1 + 그 명령 1 = 2만 남는다
+    assert result.capacity_exceeded is False
+    expired = conn.execute("SELECT request_id FROM request WHERE internal_request_id = 'expired'").fetchone()
+    assert expired["request_id"] is None
+    live = conn.execute("SELECT request_id FROM request WHERE internal_request_id = 'live'").fetchone()
+    assert live["request_id"] == "ext-live"
+
+
 def test_FR18_link_request_retransmission_ignores_limit(conn):
     insert_user(conn)
     insert_request(

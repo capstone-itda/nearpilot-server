@@ -24,6 +24,7 @@ from nearpilot.shared.enums import (
     Capability,
     DeviceState,
     EndReason,
+    ExecutionStatus,
     Occupancy,
     ReasonCode,
     ReserveOutcome,
@@ -343,14 +344,14 @@ class SqliteRepository:
 
         그래도 한도 이상이면 `request_id` 없이 만든다 (#165).
 
-        이 행은 외부 `request_id`가 있는 요청 수 집계에서 빠지므로 한도를 더 늘리지 않는다.
+        이 행은 외부 `request_id`가 없어 요청 항목으로 세지 않으므로 한도를 더 늘리지 않는다.
         `DENY`·`CAPACITY_EXCEEDED`로 바꾸는 판정은 CORE 가 한다.
         """
-        count = self._keyed_request_count()
+        count = self._dedup_entry_count()
         if count >= self._settings.dedup_entry_limit:
             # 같은 DB 트랜잭션에서 ID만 정리한다. 이력·감사는 지우지 않는다.
             SqliteRetentionStore(self._conn, self._settings).clear_expired_request_ids(req.received_at)
-            count = self._keyed_request_count()
+            count = self._dedup_entry_count()
         capacity_exceeded = count >= self._settings.dedup_entry_limit
         internal_request_id = new_id()
         stored_request_id = None if capacity_exceeded else req.request_id
@@ -369,9 +370,18 @@ class SqliteRepository:
             capacity_exceeded=capacity_exceeded,
         )
 
-    def _keyed_request_count(self) -> int:
+    def _dedup_entry_count(self) -> int:
+        """중복 방지 항목 수: 외부 `request_id`가 있는 요청 행 + 명령 항목 (FR-22).
+
+        명령 항목은 요청의 `request_id`가 남아 있거나 진행 중(`pending`·`in_progress`)인
+        `node_command` 행이다. 한 문장으로 세므로 두 조건을 모두 만족하는 명령도 한 번만 센다.
+        """
         return self._conn.execute(
-            "SELECT COUNT(*) AS n FROM request WHERE request_id IS NOT NULL"
+            "SELECT (SELECT COUNT(*) FROM request WHERE request_id IS NOT NULL) "
+            "+ (SELECT COUNT(*) FROM node_command WHERE status IN (?, ?) "
+            "OR internal_request_id IN "
+            "(SELECT internal_request_id FROM request WHERE request_id IS NOT NULL)) AS n",
+            (ExecutionStatus.PENDING.value, ExecutionStatus.IN_PROGRESS.value),
         ).fetchone()["n"]
 
     def _link_existing_row(self, req: UseRequest, input_digest: str, row: sqlite3.Row) -> RequestLink:
