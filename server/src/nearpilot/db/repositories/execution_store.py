@@ -816,7 +816,7 @@ class SqliteExecutionStore:
         """
         try:
             command_row = self._conn.execute(
-                "SELECT internal_request_id, node_id, use_id, usage_id, execution_kind, reserved_at "
+                "SELECT internal_request_id, node_id, use_id, usage_id, execution_kind, reserved_at, light "
                 "FROM node_command WHERE command_id = ?",
                 (command_id,),
             ).fetchone()
@@ -852,6 +852,7 @@ class SqliteExecutionStore:
                 parse_iso(command_row["reserved_at"])
                 if command_row["reserved_at"] and not no_reservation else None
             ),
+            light=light_from_json(command_row["light"]),
         )
 
     @staticmethod

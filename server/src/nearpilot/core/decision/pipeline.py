@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
@@ -442,8 +442,11 @@ class DecisionPipeline:
     ) -> ExecutionContext | None:
         if decision.verdict is not Verdict.OK or applied.execution_kind is None:
             return None
+        # 방문자의 조명 입력은 판정에서만 쓴다. 실행은 정한 값(`light`)만 쓰고, 결과 인계 때 저장소가
+        # 다시 만드는 문맥과 같아야 하므로 요청에서 뺀다.
         return ExecutionContext(
-            internal_request_id=iid, request=req, node_id=decision.node_id, use_id=decision.use_id,
+            internal_request_id=iid, request=replace(req, light=None), node_id=decision.node_id,
+            use_id=decision.use_id,
             usage_id=applied.usage_id, settings=self._settings, execution_kind=applied.execution_kind,
             reserved_at=applied.reserved_at, light=applied.light)
 

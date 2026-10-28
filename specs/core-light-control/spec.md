@@ -1,6 +1,6 @@
 # 조명의 밝기·색 제어
 
-- 상태: 구현 중
+- 상태: 완료
 - 담당: 작업 지시자 (CORE, API, DB, IOT, 펌웨어 연결 구현)
 - 요구사항: FR-04, FR-06, FR-07, FR-09, FR-18, FR-19, FR-20, FR-22, NFR-07, NFR-10
 - 따르는 결정: 2026-10-27 담당자 결정 (`decision/light-control`). 이슈 없이 담당자가 정했다.
@@ -97,6 +97,7 @@
 - 조명 제어 정보를 발표한 기기의 `on`은 인자가 없어도 정한 값을 명령에 담는다. 그 밖의 기기에는 `parameters`를 보내지 않는다.
 - MCP 입력은 평탄한 선택 인자 `brightness`, `color`다. JSON 스키마에 최소·최대값과 패턴을 쓴다. 엄격한 타입 검사는 도구 함수 안에서 한다 — 거부 응답 형식을 기존 `INVALID_INPUT`과 맞춘다.
 - 펌웨어는 `parameters`가 있을 때만 기록 내용 끝에 붙인다 — 이전 기록과 내용 비교가 그대로다.
+- 판정이 넘기는 실행 문맥의 `request.light`는 비운다. 정한 값은 `ExecutionContext.light`에 담는다. 결과를 인계할 때 저장소가 명령 기록의 `light`로 다시 만드는 문맥과 같아야 한다 — 방문자 입력은 요청 기록에 저장하지 않는다.
 - light-1의 `NP_LIGHT_RING_MAX_LEVEL`은 64다. 인자 없는 `on`은 기존처럼 흰색 64다.
 
 ## 7. 가정
@@ -113,7 +114,8 @@
 | FR-04, FR-09, FR-19 | `tests/db/test_light_store.py` | `link_command` 저장, 마지막 설정 조회, 발표 저장과 감사, 마이그레이션 |
 | FR-04, FR-06 | `tests/iot/test_light_messages.py` | `controls` 해석, `parameters` 인코딩 |
 | FR-20 | `tests/core/lifecycle/test_shared_light.py` | 밝기 0 `on`의 성공이 유지 대상자를 더한다 |
-| FR-09, FR-19, FR-22 | `tests/integration/test_light_control_flow.py` | MCP → CORE → DB → MQTT 경로, 생략 값 유지, 거부 시 명령 없음, 같은 `request_id` 충돌 |
+| FR-09 | `tests/db/test_light_store.py` | 명령 ID로 다시 만든 실행 문맥의 `light` |
+| FR-09, FR-19, FR-22 | `tests/integration/test_light_control_flow.py` | MCP → CORE → DB → MQTT 경로, 결과 인계, 생략 값 유지, 거부 시 명령 없음, 같은 `request_id` 충돌 |
 | NFR-10, FR-22 | `firmware/test/test_common/test_command.cpp`, `test_executor.cpp` | 펌웨어 검증, 내용 비교, 출력 상한 |
 
 ### 실기기 확인 (2026-10-27, light-1, COM9)

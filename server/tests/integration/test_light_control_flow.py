@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 from _runtime import TOKENS, VISITOR_A, McpCaller, query, wait_until
 from test_server_assembly import world  # noqa: F401  (fixture)
@@ -33,7 +34,7 @@ def light_commands(w):
     return [c for c in w.broker.commands() if c["node_id"] == "light-1"]
 
 
-def test_FR09_runtime_light_setting_reaches_device(world):  # noqa: F811
+def test_FR09_runtime_light_setting_reaches_device(world, caplog):  # noqa: F811
     w = world(node_ids=("light-1",))
     app = create_app(w.runtime)
     mcp = McpCaller(app)
@@ -52,6 +53,12 @@ def test_FR09_runtime_light_setting_reaches_device(world):  # noqa: F811
             out["blue"] = await call({"request_id": "blue", "brightness": 30, "color": "#0000ff"})
             await asyncio.to_thread(wait_until, lambda: [c["status"] for c in w.commands("light-1")]
                                     == ["succeeded"])
+            # 저장소가 다시 만든 실행 문맥도 조명 설정을 담아야 결과 인계가 끝나고 뒤 보고가 막히지 않는다.
+            seen = query(w.db, "SELECT last_seen_at FROM node WHERE node_id = 'light-1'")[0]["last_seen_at"]
+            await asyncio.sleep(0.01)
+            w.broker.status("light-1")
+            await asyncio.to_thread(wait_until, lambda: query(
+                w.db, "SELECT last_seen_at FROM node WHERE node_id = 'light-1'")[0]["last_seen_at"] != seen)
             out["above"] = await call({"request_id": "above", "brightness": 65})
             out["bad"] = await call({"request_id": "bad", "brightness": "30"})
             out["keep"] = await call({"request_id": "keep", "brightness": 10})
@@ -61,8 +68,10 @@ def test_FR09_runtime_light_setting_reaches_device(world):  # noqa: F811
             out["repeat"] = await call({"request_id": "blue", "brightness": 30, "color": "#0000FF"})
             return out
 
-    out = asyncio.run(scenario())
+    with caplog.at_level(logging.WARNING):
+        out = asyncio.run(scenario())
 
+    assert "CORE handover failed" not in caplog.text
     light = next(d for d in out["devices"]["devices"] if d["node_id"] == "light-1")
     assert light["controls"] == RING
     assert out["blue"]["verdict"] == "OK"

@@ -16,6 +16,8 @@ from conftest import (
     insert_user,
 )
 
+from nearpilot.db.repositories._common import settings_to_json
+from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import Action, Capability, Occupancy, StoreOutcome
 from nearpilot.shared.models import LightControls, LightSetting, NodeAnnounce
 
@@ -51,6 +53,18 @@ def test_FR19_command_light_round_trip(conn, store):
     assert store.execution("req1").light == blue
     again = store.link_command("req1", "light1", Action.ON, LightSetting(64, "#FFFFFF"))
     assert again.outcome is StoreOutcome.ALREADY_APPLIED and again.command.light == blue
+
+
+def test_FR09_execution_context_keeps_light(conn, store):
+    light_node(conn)
+    shared_request(conn)
+    conn.execute("UPDATE request SET settings_json = ? WHERE internal_request_id = 'req1'",
+                 (settings_to_json(Settings()),))
+    blue = LightSetting(30, "#0000FF")
+    command = store.link_command("req1", "light1", Action.ON, blue).command
+
+    # 기기 결과를 인계할 때 다시 만든 문맥이 판정이 넘긴 조명 설정과 같아야 한다.
+    assert store.execution_context(command.command_id).light == blue
 
 
 def test_FR19_command_without_light_stays_null(conn, store):
