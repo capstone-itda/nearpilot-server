@@ -141,7 +141,8 @@ def ids(listing):
 def test_FR09_조작_가능한_후보를_반환한다():
     svc, *_ = build()
     assert svc.find_available_devices("u1") == [
-        {"node_id": "locker-1", "capability": "locker", "occupancy": "rental", "access": "operable"}]
+        {"node_id": "locker-1", "capability": "locker", "occupancy": "rental", "access": "operable",
+         "controls": None}]
 
 
 def test_FR09_비콘이_없으면_빈_목록():
@@ -257,7 +258,7 @@ def test_FR09_목록은_근접_확률_내림차순이다():
 def test_FR11_목록_항목에_내부_값이_없다():
     svc, *_ = build()
     (item,) = svc.find_available_devices("u1")
-    assert set(item) == {"node_id", "capability", "occupancy", "access"}
+    assert set(item) == {"node_id", "capability", "occupancy", "access", "controls"}
     text = repr(item)
     assert "u1" not in text and "0.97" not in text and "'p'" not in text
 
@@ -269,7 +270,7 @@ def test_FR09_공개_기기_상태를_반환한다():
     svc, *_ = build()
     assert svc.get_device_state("anyone", "locker-1") == {
         "node_id": "locker-1", "capability": "locker", "occupancy": "rental", "state": "available",
-        "online": True, "trusted": True, "access_mode": "open"}
+        "online": True, "trusted": True, "access_mode": "open", "controls": None}
 
 
 def test_FR09_상태_조회는_근접_검사를_하지_않는다():
@@ -289,7 +290,8 @@ def test_FR09_점유_상태는_주체_없이_반환한다(state, expected):
     repo.nodes_list = [node(device_state=state)]
     result = svc.get_device_state("anyone", "locker-1")
     assert result["state"] == expected
-    assert set(result) == {"node_id", "capability", "occupancy", "state", "online", "trusted", "access_mode"}
+    assert set(result) == {"node_id", "capability", "occupancy", "state", "online", "trusted", "access_mode",
+                           "controls"}
 
 
 def test_FR09_오프라인_미신뢰_기기도_상태를_보여_준다():
@@ -323,7 +325,7 @@ def test_FR09_비공개_기기를_점유_중인_본인은_조회한다():
     repo.open_sessions = {("someone", "locker-1")}
     assert svc.get_device_state("someone", "locker-1") == {  # 점유 주체 키가 없다
         "node_id": "locker-1", "capability": "locker", "occupancy": "rental", "state": "occupied",
-        "online": True, "trusted": True, "access_mode": "restricted"}
+        "online": True, "trusted": True, "access_mode": "restricted", "controls": None}
     repo.open_sessions = set()  # 세션이 닫혔다
     assert svc.get_device_state("someone", "locker-1") == {"reason_code": "TARGET_UNAVAILABLE"}
 

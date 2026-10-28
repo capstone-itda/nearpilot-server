@@ -99,7 +99,8 @@ class DeviceQueryService:
                 if access is not None:
                     found.append((p, node.node_id, {
                         "node_id": node.node_id, "capability": node.capability.value,
-                        "occupancy": node.occupancy.value, "access": access}))
+                        "occupancy": node.occupancy.value, "access": access,
+                        "controls": self._controls(node)}))
         found.sort(key=lambda item: (-item[0], item[1]))
         return [item[2] for item in found]
 
@@ -137,7 +138,16 @@ class DeviceQueryService:
             "online": self._online(node, now),
             "trusted": node.trust_state is TrustState.TRUSTED,
             "access_mode": policy.mode.value,
+            "controls": self._controls(node),
         }
+
+    def _controls(self, node: NodeInfo) -> dict[str, Any] | None:
+        """조명 제어 정보. 밝기 상한은 발표 값과 서버 상한 중 작은 값이다 (FR-09). 없으면 None 이다."""
+        controls = node.light_controls
+        if controls is None or node.capability is not Capability.LIGHT:
+            return None
+        return {"brightness_max": min(controls.brightness_max, self._settings.light_brightness_max),
+                "color": controls.color}
 
     def _online(self, node: NodeInfo, now: datetime) -> bool:
         if node.last_seen_at is None:

@@ -53,10 +53,13 @@ pio run -e esp32dev-light-1 -t upload --upload-port COM6
 ```
 
 - WS2812B 원형 LED 16개의 DIN을 보드의 `IO18`(GPIO 번호)에 연결한다. 링의 5V와 GND도 연결하고, GND는 ESP32와 공통으로 둔다.
-- 부팅하면 링을 끈다. 허가한 새 `on`은 16개를 모두 흰색(밝기 64/255)으로 켜고, `off`는 끈다.
+- 부팅하면 링을 끈다. 허가한 새 `on`은 16개를 모두 켜고, `off`는 끈다. `parameters`가 없는 `on`은 흰색(밝기 64/255)이다.
+- `cmd.parameters`의 `brightness`(0~`NP_LIGHT_RING_MAX_LEVEL`)와 `color`(대문자 `#RRGGBB`)를 받는다. 채널 출력은 `색 채널 × brightness ÷ 255`(내림)이다. 밝기 0의 `on`은 꺼진 링을 출력하는 `on`이다.
+- 상한 초과, 형식 오류, 일부 인자는 출력 없이 `UNSUPPORTED_PARAMETER`로 거부한다. 서버 설정과 상관없이 펌웨어 상한을 지킨다. 출력 직전에도 상한을 다시 확인하고, 넘으면 `LIGHT_LIMIT_REFUSED`를 남기고 실패로 보고한다.
+- 발표에 `controls {"brightness_max": NP_LIGHT_RING_MAX_LEVEL, "color": true}`를 넣는다. `COMMAND_HANDLED`의 `rgb`는 출력한 채널 값이다.
 - 기존 결과 재보고는 링을 다시 켜지 않는다. 재부팅 뒤 켜려면 서버가 새 명령을 허가해야 한다.
 - 부팅 로그의 `LIGHT_RING_OUTPUT pin=18 count=16 level=64 initial=off`와 `NODE_START ... mode=light_ring`으로 적용한 설정을 확인한다.
-- 개수와 밝기는 `config.example.h`의 `NP_LIGHT_RING_COUNT`, `NP_LIGHT_RING_LEVEL`이다.
+- 개수, 인자 없는 밝기, 밝기 상한은 `config.example.h`의 `NP_LIGHT_RING_COUNT`, `NP_LIGHT_RING_LEVEL`, `NP_LIGHT_RING_MAX_LEVEL`이다. 상한 64는 보드 5V와 보조배터리 전원에서 흰색 16개 점등을 확인한 값이다. 전류는 측정하지 않았다.
 - 연결할 때 전원을 끈다. 깜빡이거나 색이 틀리면 DIN에 330Ω 저항을 넣고, 그래도 같으면 3.3V→5V 레벨 시프터를 쓴다.
 - `config.local.h`를 따로 쓴다면 `NP_LIGHT_RING_*` 값을 빌드 설정과 충돌하게 다시 정의하지 않는다.
 - 업로드는 USB 연결이 필요하다. 기존 Wi-Fi, MQTT 설정과 명령 기록은 유지한다.

@@ -57,6 +57,9 @@ class ReasonCode(StrEnum):
     # ③
     LOW_CONFIDENCE = "LOW_CONFIDENCE"  # ASK: 사후확률이 임계값 미만
     MOVE_CLOSER = "MOVE_CLOSER"  # ASK: 근접 지정·전역 할당의 실행 직전 대상 확률 부족
+    # ③ 대상 확정 뒤 조명 설정 검사 (FR-09). 판정은 DENY 와 함께 반환한다.
+    UNSUPPORTED_PARAMETER = "UNSUPPORTED_PARAMETER"  # 대상 기기가 받은 인자를 지원하지 않는다
+    PARAMETER_OUT_OF_RANGE = "PARAMETER_OUT_OF_RANGE"  # 밝기가 기기별 상한 k 를 넘는다
     # ④
     APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
     POLICY_DENIED = "POLICY_DENIED"
@@ -227,6 +230,7 @@ class RejectCode(StrEnum):
     INVALID_MESSAGE = "INVALID_MESSAGE"
     STORAGE_ERROR = "STORAGE_ERROR"
     DEVICE_BUSY = "DEVICE_BUSY"  # 다른 구동 명령이 진행 중이다. 이번 명령의 미접수·미실행이다.
+    UNSUPPORTED_PARAMETER = "UNSUPPORTED_PARAMETER"  # 조명 설정을 지원하지 않거나 출력 상한을 넘는다 (FR-09)
 
 
 class CommandState(StrEnum):

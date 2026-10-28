@@ -19,7 +19,7 @@ from nearpilot.shared.enums import (
     Action, Capability, CommandState, DeviceState, NodeResultState, Occupancy, RejectCode,
 )
 from nearpilot.shared.models import (
-    BeaconKey, NodeAnnounce, NodeCommand, NodeResult, NodeStatus, RssiFrame,
+    BeaconKey, LightControls, NodeAnnounce, NodeCommand, NodeResult, NodeStatus, RssiFrame,
 )
 
 __all__ = ["SCHEMA_VERSION", "MessageValidationError", "decode_message", "encode_command",
@@ -107,6 +107,19 @@ def _finite_json(value: object) -> None:
             _finite_json(child)
 
 
+def _controls(data: dict, capability: Capability) -> LightControls | None:
+    """`announce.controls`. `light` 기기만 보낸다. 두 필드가 모두 맞아야 한다 (FR-04, FR-09)."""
+    if "controls" not in data:
+        return None
+    controls = _object(data["controls"], "controls")
+    if capability is not Capability.LIGHT or set(controls) != {"brightness_max", "color"}:
+        _fail("controls")
+    if not isinstance(controls["color"], bool):
+        _fail("controls.color")
+    return LightControls(_integer(controls["brightness_max"], "controls.brightness_max", 1, 255),
+                         controls["color"])
+
+
 def decode_message(
     topic: str, payload: bytes | str, *, received_at: datetime,
 ) -> NodeAnnounce | tuple[RssiFrame, ...] | NodeStatus | NodeResult:
@@ -143,9 +156,10 @@ def decode_message(
         sent_at=_time(data.get("sent_at"), "sent_at"), received_at=received_at,
     )
     if kind == "announce":
-        return NodeAnnounce(**common,
-            capability=_enum(Capability, data.get("capability"), "capability"),
-            occupancy=_enum(Occupancy, data.get("occupancy"), "occupancy"))
+        capability = _enum(Capability, data.get("capability"), "capability")
+        return NodeAnnounce(**common, capability=capability,
+            occupancy=_enum(Occupancy, data.get("occupancy"), "occupancy"),
+            light_controls=_controls(data, capability))
     if kind == "rssi":
         frame_ts = _time(data.get("frame_ts"), "frame_ts")
         observations = data.get("observations")
@@ -203,6 +217,12 @@ def encode_command(command: NodeCommand) -> bytes:
     data = _outbound(command)
     data.update(command_id=_string(command.command_id, "command_id"),
                 action=_enum(Action, command.action, "action").value)
+    light = command.light
+    if light is not None:
+        # 서버가 정한 밝기와 색을 모두 보낸다. 조명 on 에만 담는다 (FR-09).
+        if not light.complete or command.action is not Action.ON:
+            _fail("parameters")
+        data["parameters"] = {"brightness": light.brightness, "color": light.color}
     return json.dumps(data, allow_nan=False).encode("utf-8")
 
 

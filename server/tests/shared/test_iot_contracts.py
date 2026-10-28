@@ -81,7 +81,7 @@ def test_fr07_node_result_state_matches_mqtt_values():
 def test_fr06_reject_codes_include_device_busy_and_differ_from_reason_code():
     assert {c.value for c in RejectCode} == {
         "SESSION_MISMATCH", "COMMAND_EXPIRED", "CLOCK_UNVERIFIED", "UNSUPPORTED_ACTION",
-        "COMMAND_ID_CONFLICT", "INVALID_MESSAGE", "STORAGE_ERROR", "DEVICE_BUSY",
+        "COMMAND_ID_CONFLICT", "INVALID_MESSAGE", "STORAGE_ERROR", "DEVICE_BUSY", "UNSUPPORTED_PARAMETER",
     }
     assert RejectCode.DEVICE_BUSY is not ReasonCode.DEVICE_BUSY
 

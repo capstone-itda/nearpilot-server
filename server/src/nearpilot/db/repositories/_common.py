@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.errors import StoreNotApplied, StoreOutcomeUnknown
+from nearpilot.shared.models import LightControls, LightSetting
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,29 @@ def settings_to_json(settings: Settings) -> str:
 def settings_from_json(value: str) -> Settings:
     """저장한 설정 스냅샷을 그대로 복원한다. 현재 설정으로 채우지 않는다 (#83)."""
     return Settings(**json.loads(value))
+
+
+def light_to_json(light: LightSetting | None) -> str | None:
+    """명령의 조명 설정 열 값. 키 순서를 고정해서 같은 설정은 같은 문자열이다 (FR-09)."""
+    return None if light is None else json.dumps(light.to_json(), sort_keys=True)
+
+
+def light_from_json(value: str | None) -> LightSetting | None:
+    return None if value is None else LightSetting.from_json(json.loads(value))
+
+
+def light_controls_to_json(controls: LightControls | None) -> str | None:
+    """발표한 조명 제어 정보 열 값 (FR-04). 없으면 NULL 이다."""
+    if controls is None:
+        return None
+    return json.dumps({"brightness_max": controls.brightness_max, "color": controls.color}, sort_keys=True)
+
+
+def light_controls_from_json(value: str | None) -> LightControls | None:
+    if value is None:
+        return None
+    data = json.loads(value)
+    return LightControls(data["brightness_max"], data["color"])
 
 
 class _JsonlExporter(Protocol):

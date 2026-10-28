@@ -681,7 +681,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | 종류 | `shared` 모델 | 전달할 정보와 필드 |
 |---|---|---|
 | 기기 보고의 공통 정보 | 아래 모델 모두 | `node_id`, 기기 연결 ID `session_id`, 순번 `seq`, 발행 시각 `sent_at`, 서버 수신 시각 `received_at` |
-| 기능 발표 | `NodeAnnounce` | 공통 정보, `capability`, `occupancy` |
+| 기능 발표 | `NodeAnnounce` | 공통 정보, `capability`, `occupancy`, 조명 제어 정보 `light_controls` (`LightControls`. 없을 수 있다) |
 | RSSI | `RssiFrame` | 공통 정보, 관측 시각 `frame_ts`, `beacon`, `rssi` |
 | 상태 | `NodeStatus` | 공통 정보, 보고 기준 시각 `observed_at`, 펌웨어의 명령 처리 상태. 새 필드 형식은 미결이다. |
 | 실행 결과 | `NodeResult` | 공통 정보, `command_id`, 결과 사건 ID `event_id`, 결과 발생 시각 `occurred_at`, 기기가 보고한 상태 `state` (`NodeResultState`), 오류 근거 `error_code` |
@@ -862,6 +862,23 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - 소유자는 스크립트로 두 경로를 호출한다. 대시보드는 복구 화면을 두지 않는다.
 - 복구 스크립트는 `nearpilot recover`(`src/nearpilot/cli/recover.py`)다. 복구 두 경로만 부르고 DB를 열지 않는다. 복구 경로와 같은 담당이 맡는다.
 
+### 조명 설정의 전달
+
+2026-10-27 담당자 결정이다. 규칙은 `requirements.md` FR-09에 있다.
+
+| 모델 | 정보 | 만드는 영역 |
+|---|---|---|
+| `LightSetting` | `brightness`(정수), `color`(`#RRGGBB` 대문자). 두 값은 각각 없을 수 있다. | API가 입력을 검증해서 만든다. |
+| `LightControls` | 발표한 밝기 상한 `brightness_max`와 색 지원 여부 `color` | IOT가 발표를 검증해서 만든다. |
+| `UseRequest.light` | 방문자가 준 조명 설정. 인자가 없으면 `None`이다. | API |
+| `NodeCommand.light` | 서버가 정한 밝기와 색. 두 값을 모두 담는다. 인자 없는 명령이면 `None`이다. | 상태 관리 |
+
+- API는 자료형, 형식, 대상 기능과 동작을 검사한다. 기기별 지원 여부와 상한은 판정이 ③ 뒤에 검사한다.
+- 판정은 생략한 인자를 정하고 실행 인계에 담는다. 마지막 조명 설정은 DB의 마지막 성공 `on` 명령에서 읽는다.
+- 상태 관리는 인계받은 조명 설정을 `NodeCommand.light`에 담는다. DB는 명령 기록과 함께 저장하고 복원한다.
+- IOT는 `NodeCommand.light`를 `cmd`의 `parameters`로 보낸다. IOT는 값을 바꾸지 않는다.
+- 조회 응답은 조명 제어 정보를 `controls`(`brightness_max`, `color`)로 담는다. `brightness_max`는 발표 값과 `light_brightness_max` 중 작은 값이다.
+
 ### 공동 인터페이스의 후속 반영
 
 이 decision PR은 `docs/`의 계약을 바꾼다. 서버, 펌웨어, 시뮬레이터와 테스트 코드는 바꾸지 않는다.
@@ -922,7 +939,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 |---|---|
 | `RestoreBundle` | `node`, `read_at`, `requests`, `commands`, `sessions`, `approval_usages`, `recoveries` |
 | `PendingRequestRecord` | 내부 요청 ID, 원래 요청, 입력 요약값, 실행 종류, 세션·사용분 연결, 예약 시각, 판정 |
-| `CommandRecord` | 명령·요청·기기·세션·사용분 연결, 동작, 진행 상태, 실행 종류, 예약·전송·결과 시각, 전송 여부, 결과·근거 |
+| `CommandRecord` | 명령·요청·기기·세션·사용분 연결, 동작, 조명 설정 `light` (없을 수 있다), 진행 상태, 실행 종류, 예약·전송·결과 시각, 전송 여부, 결과·근거 |
 | `RestoredSession` | `UseSession`, 소유 계정, 생성 시각, 관련 근거 |
 | `ApprovalUsageRecord` | 사용분·승인·요청·명령 연결과 사용분 상태 |
 | `RecoveryEvidence` | 근거 ID, 기기 연결 ID, 관측 시각, 대조한 명령 결과와 현재 연결의 명령 처리 상태 |
@@ -1040,14 +1057,20 @@ MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_sess
 
 | 종류 | 추가 필드와 타입 | 약속 |
 |---|---|---|
-| `announce` | `capability`: `locker`, `light`, `speaker` 중 하나, `occupancy`: `rental` 또는 `shared` | 연결마다 발표한다. retained 발표만으로 온라인과 현재 연결을 확정하지 않는다. |
+| `announce` | `capability`: `locker`, `light`, `speaker` 중 하나, `occupancy`: `rental` 또는 `shared`, `controls?`: 조명 제어 정보 | 연결마다 발표한다. retained 발표만으로 온라인과 현재 연결을 확정하지 않는다. |
 | `rssi` | `frame_ts`: UTC 시각, `observations`: 배열 | `frame_ts`는 스캔 관측 시각이다. 각 관측은 `uuid`, `major`, `minor`, `rssi`를 담는다. 빈 배열을 허용한다. |
 | `status` | `observed_at`: UTC 시각, 펌웨어의 명령 처리 상태: 필드와 타입은 미결이다 | 처리 대기, 처리 중, 확인 불가를 구분한다. 실제 상태와 센서 고장 값은 담지 않는다. |
 | `result` | `command_id`: 문자열, `event_id`: UUID 문자열, `state`: 아래 상태 값, `occurred_at`: UTC 시각, `error_code?`: 문자열 | 제어 신호 출력 결과다. 재보고 시 사건 ID, 결과와 발생 시각을 유지한다. |
-| `cmd` | `command_id`: 문자열, `action`: `open`·`close`·`on`·`off`, `target_session_id`: 문자열, `issued_at`: UTC 시각, `expires_at`: UTC 시각 | 현재 연결을 지정한다. 사물함은 `open`·`close`, 조명·스피커는 `on`·`off`를 받는다. 사물함은 자동으로 닫지 않는다. |
+| `cmd` | `command_id`: 문자열, `action`: `open`·`close`·`on`·`off`, `target_session_id`: 문자열, `issued_at`: UTC 시각, `expires_at`: UTC 시각, `parameters?`: 조명 설정 | 현재 연결을 지정한다. 사물함은 `open`·`close`, 조명·스피커는 `on`·`off`를 받는다. 사물함은 자동으로 닫지 않는다. |
 | `occupancy` | `device_state`: `AVAILABLE`·`RESERVED`·`ACTIVE`·`CLOSING`·`FAULT` 중 하나, `sent_at`: UTC 시각 | 대여형 기기의 저장된 기기 상태다. 표시에만 쓴다. 구동과 실행 판정의 근거가 아니다. |
 
 - `on`과 `off`는 조명 제어와 스피커 재생·정지의 제어 신호 출력이다. 실제 상태를 증명하지 않는다.
+- 조명 제어 정보 `controls`는 `brightness_max`(1~255의 정수)와 `color`(불리언)를 모두 담는다. `light` 기기만 보낸다. 형식이 틀리면 서버는 발표를 거부한다.
+- `brightness_max`는 펌웨어가 지키는 채널별 출력 상한이다. 서버 설정과 별개로 펌웨어가 정한다.
+- 조명 설정 `parameters`는 `brightness`(0~255의 정수)와 `color`(`#RRGGBB` 대문자 문자열)를 모두 담는다. 서버는 조명 제어 정보를 발표한 `light` 기기의 `on`에만 보낸다.
+- 기기는 채널별 출력을 `색 채널 값 × brightness ÷ 255`(내림)로 정한다. 어떤 색도 채널 출력이 `brightness`를 넘지 않는다.
+- 기기는 `brightness`가 자기 출력 상한을 넘거나, 형식이 틀리거나, 인자를 지원하지 않으면 구동 전에 `UNSUPPORTED_PARAMETER`로 거부한다.
+- `parameters`가 없는 조명의 `on`은 펌웨어 기본 출력을 쓴다. 기존 v2 명령과 같다. `schema_version`은 2를 유지한다.
 - RSSI의 `uuid`는 하이픈을 포함한 소문자 UUID 문자열이다. `major`와 `minor`는 0~65535의 정수다.
 - `rssi`는 dBm 단위의 유한한 수다. 한 프레임은 같은 비콘 조합을 중복으로 담지 않는다.
 - 재보고 시 발행 순번과 발행 시각은 새로 부여한다.
@@ -1073,13 +1096,13 @@ MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_sess
 4. 기기는 버전, 대상 연결, 기능별 동작, 유효 시간을 검사한다.
 5. 검사를 통과하면 기기는 접수 기록을 재시작 뒤에도 남도록 저장한다. 저장을 확인한 뒤 물리 동작을 시작한다.
 
-같은 명령의 내용은 `node_id`, `action`, `target_session_id`, `issued_at`, `expires_at`다. 서버는 재전송할 때 이 내용을 바꾸지 않는다. 중복 조회는 연결·만료 검사보다 먼저 한다. 오래된 중복 명령에도 기존 결과만 반환한다.
+같은 명령의 내용은 `node_id`, `action`, `target_session_id`, `issued_at`, `expires_at`, `parameters`다. `parameters`가 없는 명령과 있는 명령은 내용이 다르다. 서버는 재전송할 때 이 내용을 바꾸지 않는다. 중복 조회는 연결·만료 검사보다 먼저 한다. 오래된 중복 명령에도 기존 결과만 반환한다.
 
 새 명령의 대상 연결이 다르거나 유효 시간이 지났으면 기기는 실행하지 않는다. 시각의 신뢰성을 확인할 수 없어도 실행하지 않는다. 기기는 유효한 명령 ID를 읽을 수 있을 때 `rejected`와 거부 코드를 보고한다.
 
 기기는 물리 동작 시작 직전에도 대상 연결과 유효 시간을 검사한다. 기기는 접수 후의 대기 때문에 만료한 명령을 실행하지 않는다.
 
-거부 코드는 `SESSION_MISMATCH`, `COMMAND_EXPIRED`, `CLOCK_UNVERIFIED`, `UNSUPPORTED_ACTION`, `COMMAND_ID_CONFLICT`, `INVALID_MESSAGE`, `STORAGE_ERROR`, `DEVICE_BUSY`를 사용한다. 명령 기록 충돌 보고는 기존 명령의 정상 결과를 덮어쓰는 근거가 아니다.
+거부 코드는 `SESSION_MISMATCH`, `COMMAND_EXPIRED`, `CLOCK_UNVERIFIED`, `UNSUPPORTED_ACTION`, `COMMAND_ID_CONFLICT`, `INVALID_MESSAGE`, `STORAGE_ERROR`, `DEVICE_BUSY`, `UNSUPPORTED_PARAMETER`를 사용한다. 명령 기록 충돌 보고는 기존 명령의 정상 결과를 덮어쓰는 근거가 아니다.
 
 같은 명령의 재전송을 막는 중복 방지와 다른 새 명령의 동시 구동 제한은 구분한다.
 
@@ -1172,7 +1195,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 폐쇄망 시각 동기화, 기기별 최대 오차, 명령 만료와 연결 변경을 검증한다 (#140).
 - 센서, 물리 완료 증명과 반납 검사 기준의 검증은 범위에서 제외한다.
 
-공용형의 마지막 제어 상태는 저장한 성공 명령의 `on`·`off`로 판단한다.
+공용형의 마지막 제어 상태는 저장한 성공 명령의 `on`·`off`로 판단한다. 밝기 0의 `on`도 `on`이다.
 현재 연결의 신선한 명령 처리 대기 보고와 함께 이탈 꺼짐 조건을 검사한다.
 기록이 없거나 결과가 불명이면 실제 켜짐을 추정해서 새 꺼짐 명령을 보내지 않는다.
 시간에 따른 자동 꺼짐 타이머는 두지 않는다.
@@ -1305,7 +1328,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `user` | PK `user_id`, `name`, UNIQUE `token_hash`, `role` (`visitor`, `owner`). `token_hash`는 토큰의 SHA-256 해시를 소문자 hex 문자열로 쓴 값이다. 토큰 원문은 저장하지 않는다. |
 | `beacon` | PK `beacon_id`, FK `user_id`, `(uuid, major, minor)` 조합 UNIQUE, `is_active` |
 | `place` | PK `place_id`, FK `owner_user_id`, `name` |
-| `node` | TEXT PK `node_id`, FK `place_id`, 대시보드에 보일 이름 `name`(없을 수 있다), `capability`, `occupancy`, `trust_state`, `device_state`, `exclusive_group`, JSON `release_policy`, `last_seen_at`, 현재 기기 연결 ID `session_id`, 그 연결의 첫 수신 시각 `session_first_seen_at` |
+| `node` | TEXT PK `node_id`, FK `place_id`, 대시보드에 보일 이름 `name`(없을 수 있다), `capability`, `occupancy`, `trust_state`, `device_state`, `exclusive_group`, JSON `release_policy`, `last_seen_at`, 현재 기기 연결 ID `session_id`, 그 연결의 첫 수신 시각 `session_first_seen_at`, 발표한 조명 제어 정보 JSON `light_controls`(없을 수 있다) |
 | `access_policy` | PK `policy_id`, UNIQUE FK `node_id` (기기당 하나), `current_version`. 현재 접근 정책 리비전을 참조한다. 정책 변경은 새 리비전 추가와 `current_version` 갱신을 한 트랜잭션에서 한다. |
 | `policy_revision` | 복합 PK `(policy_id, version)`, `visibility` (`public`, `private`), `mode` (`open`, `restricted`), FK `approver_user_id`, `approval_ttl_sec`, `approval_mode` (`one_time`, `time_window`), `max_uses` (기간형의 횟수 한도. 무제한이면 NULL. `one_time`은 이 값과 상관없이 1회). 과거 리비전은 바꾸지 않는다. |
 | `approval` | PK `approval_id`, FK `node_id`, `requester_user_id`, `internal_request_id`, `approved_by_user_id`, `action`, 정책 리비전 참조, `status` (`pending`, `approved`, `denied`), `created_at`, `pending_until`, `valid_until`, `used_count`. 요청 참조는 승인 신청의 출처다. 허용 범위는 요청자, 기기, 동작, 정책 버전으로 검사한다. |
@@ -1313,7 +1336,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `collection_run` | PK `collection_id`, FK `beacon_id`, `label` (기기 1~7 앞 또는 none), `started_at`, nullable `ended_at`. 같은 비콘의 수집 구간은 겹치지 않는다. |
 | `rssi_observation` | PK `obs_id`, FK `node_id`, `beacon_id`, `rssi` (dBm), `frame_ts` (약 1초 프레임), 서버 수신 시각 `received_at`, 발행 시각 `sent_at`, 기기 연결 ID `session_id`, 순번 `seq`, `(node_id, session_id, seq, beacon_id)` UNIQUE, nullable FK `collection_id`. 등록된 활성 비콘의 관측만 저장한다. 라벨은 연결한 수집 회차에서 읽는다. |
 | `request` | TEXT PK `internal_request_id`, FK `user_id`, 외부 `request_id`, UNIQUE `(user_id, request_id)`, 정규화 입력 요약 `input_digest`, nullable FK `parent_internal_request_id`, nullable FK `node_id`, `target_spec`, `action`, `verdict`, `reason_code`, `p_max`, 버전 `model`, `calib`, `policy_ver`, `config_ver`, 실제 설정을 포함한 JSON `decision_context`, `host_kind` |
-| `node_command` | TEXT PK `command_id`, FK `internal_request_id`, `node_id`, 대상 동작과 입력 요약, 전송 시도, 실행 상태, 결과, 시각. 승인 사용분과 연결한다. 결과 불명은 실패, 미전송과 구분한다. 접수·실행 전 거부는 미전송, 실패와 구분한다. 기록은 재시작 뒤에도 보존한다. |
+| `node_command` | TEXT PK `command_id`, FK `internal_request_id`, `node_id`, 대상 동작과 입력 요약, 서버가 정한 조명 설정 JSON `light`(없을 수 있다), 전송 시도, 실행 상태, 결과, 시각. 승인 사용분과 연결한다. 결과 불명은 실패, 미전송과 구분한다. 접수·실행 전 거부는 미전송, 실패와 구분한다. 기록은 재시작 뒤에도 보존한다. |
 | `use_session` | TEXT PK `use_id`, FK `internal_request_id`, `user_id`, `node_id`, `state` (`RESERVED`, `ACTIVE`, `CLOSING`, `CLOSED`), `end_reason` (`release`, `leave`, `timeout`, `fault`, `cancelled`), nullable `rental_due_at` (실행 성공 때 정한다), nullable `closed_at`, 생성 당시 종료 정책. 대여형 요청과 살아 있는(취소되지 않은) 점유 세션은 1:0..1 관계다. 오류 뒤 취소한 요청을 재판정하면(#76, #80) 취소된 세션 옆에 새 세션이 생긴다. |
 | 복구 건 | TEXT PK `recovery_id`, FK `node_id`, 관련 요청·명령·점유 세션 연결, 명령 결과·현재 연결의 명령 처리 상태의 참조와 시각, 복구 승인 계정과 승인 시각, 정산 내용의 요약값, 완료 결과. 같은 복구 건의 대상 연결은 바꾸지 않는다. 엔터티의 코드 이름은 `recovery`다. |
 | `audit_log` | PK `log_id`, UNIQUE `event_id`, nullable FK `internal_request_id`, nullable 명령 참조, `step` (`auth`, ⓪~⑥, `exec`, `close`, `fault`, `announce`, `admin`), JSON `payload_json`. 인증 실패는 요청 참조 없이 기록한다. 같은 `event_id`는 한 번만 저장한다. |

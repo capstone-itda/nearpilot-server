@@ -60,6 +60,11 @@ static_assert(NP_LIGHT_RING_PIN < 0 || (NP_LIGHT_RING_PIN != NP_SERVO_PIN && NP_
     NP_LIGHT_RING_PIN != NP_LED_PIN), "light ring shares a pin");
 static_assert(NP_LIGHT_RING_COUNT > 0 && NP_LIGHT_RING_LEVEL > 0 && NP_LIGHT_RING_LEVEL <= 255,
     "light ring size and level");
+#ifndef NP_LIGHT_RING_MAX_LEVEL
+#error "config.local.h needs NP_LIGHT_RING_MAX_LEVEL (see config.example.h)"
+#endif
+static_assert(NP_LIGHT_RING_MAX_LEVEL > 0 && NP_LIGHT_RING_MAX_LEVEL <= 255 &&
+    NP_LIGHT_RING_LEVEL <= NP_LIGHT_RING_MAX_LEVEL, "light ring output limit");
 #if NP_LED_PIN >= 0 || NP_LIGHT_RING_PIN >= 0
 #include <Adafruit_NeoPixel.h>
 #endif
@@ -140,6 +145,9 @@ bool clockConfigured() { return np::clockConfigured(configured, config); }
 
 bool clockTrusted() { return np::clockTrusted(configured, config, synchronizedClock, lastSync, millis()); }
 
+// Only a light build with the ring takes brightness and color (FR-09).
+bool lightControls() { return NP_LIGHT_RING_PIN >= 0 && config.capability == "light"; }
+
 np::CommandContext liveContext() {
     timeval current;
     gettimeofday(&current, nullptr);
@@ -151,6 +159,10 @@ np::CommandContext liveContext() {
     context.clockTrusted = clockTrusted();
     context.nowSec = current.tv_sec + current.tv_usec / 1e6;
     context.maxErrorSec = config.clockMaxErrorSec;
+    if (lightControls()) {
+        context.lightMaxLevel = NP_LIGHT_RING_MAX_LEVEL;
+        context.lightColor = true;
+    }
     return context;
 }
 
@@ -183,6 +195,11 @@ bool announce() {
     JsonDocument doc;
     common(doc, 0);
     np::announceConfig(doc, config);
+    if (lightControls()) {
+        JsonObject controls = doc["controls"].to<JsonObject>();
+        controls["brightness_max"] = NP_LIGHT_RING_MAX_LEVEL;
+        controls["color"] = true;
+    }
     return report("announce", doc, 1, true);
 }
 
@@ -305,14 +322,20 @@ void occupancyInput(const String& payload) {
 Adafruit_NeoPixel lightRing(NP_LIGHT_RING_COUNT, NP_LIGHT_RING_PIN, NEO_GRB + NEO_KHZ800);
 #endif
 
-void showLight(bool on) {
+// Every lit pixel goes through one of these two paths; neither exceeds NP_LIGHT_RING_MAX_LEVEL per channel.
+void showLight(uint32_t rgb) {
 #if NP_LIGHT_RING_PIN >= 0
-    uint32_t rgb = np::lightRingRgb(on, NP_LIGHT_RING_LEVEL);
     for (int i = 0; i < NP_LIGHT_RING_COUNT; ++i) lightRing.setPixelColor(i, rgb);
     lightRing.show();
 #else
-    (void)on;
+    (void)rgb;
 #endif
+}
+
+uint32_t lightOutput(const np::Actuation& request) {
+    if (request.action != "on") return 0;
+    return request.light ? np::lightRingScaled(request.color, request.brightness)
+                         : np::lightRingRgb(true, NP_LIGHT_RING_LEVEL);
 }
 
 const char* outputMode() {
@@ -327,7 +350,8 @@ void signalOutput(const np::Actuation& request) {
         // Only starts the pulse train; the angle reached is not observed (FR-07).
         servoAngle(request.action == "open" ? NP_SERVO_OPEN_DEG : NP_SERVO_LOCKED_DEG);
     }
-    if (NP_LIGHT_RING_PIN >= 0 && (request.action == "on" || request.action == "off")) showLight(on);
+    uint32_t rgb = lightOutput(request);
+    if (NP_LIGHT_RING_PIN >= 0 && (request.action == "on" || request.action == "off")) showLight(rgb);
     if (NP_SPEAKER_TX_PIN >= 0 && (request.action == "on" || request.action == "off")) {
         // A shared speaker keeps playing when someone else turns it on again.
         if (request.action == "off") speakerSend(np::kDfplayerStop, 0);
@@ -335,14 +359,27 @@ void signalOutput(const np::Actuation& request) {
         else Serial.println("SPEAKER_ALREADY_PLAYING frame_skipped=1");
         speakerPlaying = request.action == "on";
     }
-    Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s output_completed=1\n",
+    Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s rgb=%06lX output_completed=1\n",
         request.commandId.c_str(), request.action.c_str(),
         NP_SERVO_PIN >= 0 ? "servo" : NP_LIGHT_RING_PIN >= 0 ? "light_ring" : NP_SPEAKER_TX_PIN >= 0 ? "speaker"
-        : NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only");
+        : NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only", (unsigned long)rgb);
 }
 
-// validateCommand rejects actions the configured capability does not support before output.
-np::SignalActuator outputSignal(signalOutput);
+// validateCommand rejects actions and parameters the build does not support before output.
+// The board actuator checks the output limit once more, so no path reaches the ring above it.
+class BoardActuator : public np::Actuator {
+public:
+    np::OutputResult output(const np::Actuation& request) override {
+        if (request.light && (!lightControls() || request.brightness > NP_LIGHT_RING_MAX_LEVEL)) {
+            Serial.printf("LIGHT_LIMIT_REFUSED command_id=%s brightness=%u\n",
+                request.commandId.c_str(), unsigned(request.brightness));
+            return np::OutputResult::Failed;
+        }
+        signalOutput(request);
+        return np::OutputResult::Completed;
+    }
+};
+BoardActuator outputSignal;
 
 class BoardCommandPort : public np::CommandPort {
 public:
@@ -572,7 +609,7 @@ void setup() {
 #if NP_LIGHT_RING_PIN >= 0
     // Boot is always dark; an on before a reset is never repeated.
     lightRing.begin();
-    showLight(false);
+    showLight(0);
     Serial.printf("LIGHT_RING_OUTPUT pin=%d count=%d level=%d initial=off\n",
         NP_LIGHT_RING_PIN, NP_LIGHT_RING_COUNT, NP_LIGHT_RING_LEVEL);
 #endif

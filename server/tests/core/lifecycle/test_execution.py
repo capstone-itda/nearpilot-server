@@ -74,7 +74,7 @@ class StoreFake:
                 if c.node_id == node_id and c.status == ExecutionStatus.SUCCEEDED]
         return done[-1] if done else None
 
-    def link_command(self, internal_request_id, node_id, action):
+    def link_command(self, internal_request_id, node_id, action, light=None):
         self.calls.append(("link", internal_request_id))
         failure = self._before("link")
         if self.link_conflict:
@@ -95,7 +95,7 @@ class StoreFake:
         if current is None:
             current = CommandRecord("command:" + internal_request_id, internal_request_id, node_id,
                 action, ExecutionStatus.PENDING, ctx.execution_kind, ctx.use_id, ctx.usage_id,
-                self.reserved_at)
+                self.reserved_at, light=light)
             self.commands[internal_request_id] = current
         return self._after(failure, StoreResult(outcome, command=current))
 

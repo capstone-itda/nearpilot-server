@@ -13,6 +13,11 @@ version = "demo-1"
 threshold_locker = 0.95
 threshold_light = 0.75
 retention_cleanup_interval_sec = 60
+# 조명 밝기 상한 k 의 서버 쪽 값이다. 기기가 발표한 상한과 비교해서 작은 값을 쓴다 (FR-09).
+# 64 는 light-1 의 보드 5V 전원에서 흰색 점등을 확인한 값이다. 전류 측정 전에는 올리지 않는다.
+light_brightness_max = 64
+light_default_brightness = 64
+light_default_color = "#FFFFFF"
 
 # runtime 실행 설정. 모두 선택이며 아래 값이 초기값이다.
 # 호출 주기는 도메인 응답 기한(Settings)과 다른 값이다.

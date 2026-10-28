@@ -7,8 +7,16 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from math import isfinite
+
+_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
+
+
+def is_light_color(value: object) -> bool:
+    """`#RRGGBB` 16진 문자열인가 (FR-09). 대소문자는 구분하지 않는다."""
+    return isinstance(value, str) and _COLOR.fullmatch(value) is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +61,13 @@ class Settings:
     request_dedup_ttl_sec: int = 1200  # 외부 요청의 중복 방지 보장기간: 최종 처리 완료 뒤부터
     dedup_entry_limit: int = 100_000  # 신규 조작 접수 제한: 서버 전체 중복 방지 항목 수
     retention_cleanup_interval_sec: int = 60  # 정리 주기: 서버 조립이 시작할 때와 이 간격마다 부른다 (#164)
+
+    # ── 조명 설정 (FR-09) ──
+    # 서버가 허가하는 밝기 상한. 기기가 발표한 상한과 비교해서 작은 값을 k 로 쓴다.
+    # 64 는 light-1 의 보드 5V 전원에서 흰색 점등을 확인한 값이다.
+    light_brightness_max: int = 64
+    light_default_brightness: int = 64  # 앞선 조명 설정이 없을 때 생략한 밝기
+    light_default_color: str = "#FFFFFF"  # 앞선 조명 설정이 없을 때 생략한 색
 
     def __post_init__(self) -> None:
         for name in (
@@ -119,6 +134,16 @@ class Settings:
             v = getattr(self, name)
             if v <= 0:
                 raise ValueError(f"{name} 는 양수여야 한다: {v}")
+        for name in ("light_brightness_max", "light_default_brightness"):
+            v = getattr(self, name)
+            if isinstance(v, bool) or not isinstance(v, int):
+                raise ValueError(f"{name} 는 정수여야 한다: {v!r}")
+        if not 1 <= self.light_brightness_max <= 255:
+            raise ValueError(f"light_brightness_max 는 1~255 여야 한다: {self.light_brightness_max}")
+        if not 0 <= self.light_default_brightness <= self.light_brightness_max:
+            raise ValueError("light_default_brightness 는 0 이상 light_brightness_max 이하여야 한다")
+        if not is_light_color(self.light_default_color) or self.light_default_color != self.light_default_color.upper():
+            raise ValueError(f"light_default_color 는 대문자 #RRGGBB 여야 한다: {self.light_default_color!r}")
         if self.leave_grace_sec < 0:
             raise ValueError(f"leave_grace_sec 는 0 이상이어야 한다: {self.leave_grace_sec}")
         if self.allocation_window_ms < 0:

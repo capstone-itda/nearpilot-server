@@ -63,7 +63,7 @@ def test_FR11_core_service_mcp_response_allowlist():
         assert _SECRET not in text and "internal-secret" not in text and "p1" not in text
         assert "p_max" not in resp and "holder" not in resp
     assert responses[1]["use_id"] is None  # 승인 요청은 실행 허가가 아니다
-    assert set(responses[2]["devices"][0]) == {"node_id", "capability", "occupancy", "access"}
+    assert set(responses[2]["devices"][0]) == {"node_id", "capability", "occupancy", "access", "controls"}
 
 
 def test_FR09_core_service_exception_reaches_mcp_guard():

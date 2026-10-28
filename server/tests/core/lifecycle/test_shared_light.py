@@ -20,7 +20,7 @@ from nearpilot.shared.enums import (
 from nearpilot.shared.errors import StoreError
 from nearpilot.shared.models import (
     BeaconKey, CommandRecord, ExecutionContext, ExecutionResult, NodeInfo, NodeStatus, PolicyCheckResult, RssiFrame,
-    TargetSpec, UseRequest,
+    LightSetting, TargetSpec, UseRequest,
 )
 
 
@@ -161,6 +161,22 @@ def test_FR20_only_success_adds_holder(env, failed):
     execution(env, status=failed)
     advance(env, 15)
     assert candidates(env) == ("light-1",)
+
+
+def test_FR20_brightness_zero_on_success_adds_holder(env):
+    """밝기 0의 on 도 켜기 요청이다. 성공하면 유지 대상자가 된다 (FR-09)."""
+    now = env.time[0]
+    request = UseRequest("visitor-a", "request-dim", TargetSpec.parse("light-1"), Action.ON, "host", now,
+                         light=LightSetting(0, None))
+    context = ExecutionContext("request-dim", request, "light-1", None, None, env.settings[0],
+                               ExecutionKind.SHARED, light=LightSetting(0, "#FFFFFF"))
+    env.store.last["light-1"] = Action.ON
+    env.service.on_execution_result(
+        context, ExecutionResult("request-dim", ExecutionStatus.SUCCEEDED, "command-dim"))
+    advance(env, 14)
+    observe(env)
+    advance(env, 1)
+    assert candidates(env) == ()
 
 
 def test_FR20_light_stays_on_while_holder_remains(env):
@@ -661,7 +677,7 @@ def test_FR20_internal_off_through_real_execution(env):
         def link_internal_request(self, req):
             self.internal.append(req)
             return StoreResult(StoreOutcome.APPLIED)
-        def link_command(self, internal_request_id, node_id, action):
+        def link_command(self, internal_request_id, node_id, action, light=None):
             req = next(r for r in self.internal if r.internal_request_id == internal_request_id)
             record = CommandRecord("command-1", internal_request_id, node_id, action,
                                    ExecutionStatus.PENDING, ExecutionKind.SERVER_INTERNAL)
