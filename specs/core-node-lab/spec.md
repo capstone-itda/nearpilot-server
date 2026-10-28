@@ -103,6 +103,7 @@
 | 시각 신뢰가 만료된다 | `CLOCK_TRUST_EXPIRED`와 `NODE_NOT_READY`를 기록하고 보고·출력을 차단한다 | 실제 보드 확인 |
 | 서버·시각원 주소가 바뀐다 | USB로 다시 주입하고 재시작한다. 새 시각원은 다시 동기화한 뒤 신뢰한다 | 실제 보드 확인 |
 | 준비 상태가 바뀐다 | 바뀐 때만 `node_readiness`를 기록한다 | `test_FR13_lab_logs_readiness_changes_only` |
+| 주기 관측이 `console_sec`보다 자주 나온다 | 파일에는 모두 쓰고 화면에는 `console_sec`마다 보인다. 값이 없으면 매번 보인다 | `test_FR13_lab_console_thins_periodic_observations_only`, `test_FR13_lab_console_shows_every_sample_without_console_sec`, `test_FR13_lab_hidden_observation_still_written` |
 | 부팅 로그 순서가 계약과 다르다 | 부팅 검사를 실패로 본다 | `test_FR04_boot_check_requires_contract_order` |
 
 ## 6. 결정
@@ -137,6 +138,9 @@
   - 콘솔의 `open [nearest:locker]`는 사물함을, `on`·`off`는 조명을 요청한다. 동작과 다른 기능의 대상은 요청 전에 거부한다.
   - `release [use_id]`는 기존 CORE `release_use`로 방문자의 대여를 논리적으로 반납한다. `use_id`를 빼면 콘솔에서 마지막으로 연 대여를 쓴다. 문 닫힘은 관측하지 않는다 (FR-19, FR-20).
   - 근접 로그는 장소 기기의 기능별 임계값을 남긴다. `demo`는 조명 on/off만 시험한다.
+- 콘솔 화면의 주기 관측(`node_observation`, `proximity`, `proximity_pending`)은 `lab.json`의 `console_sec`마다 한 번 보인다 — 담당자가 2026-10-28에 1초마다 뜨는 출력을 5초 정도로 줄이라고 지시했다. 관측 주기(`sample_sec`)와 `evidence.jsonl` 기록은 그대로다.
+  - `init`은 `console_sec = 5.0`을 쓴다. 값이 없는 기존 시험 폴더는 매 관측을 보인다.
+  - 판정, 명령 결과, 준비 상태 변화와 `watch` 입력의 결과는 항상 보인다.
 
 ## 7. 가정
 

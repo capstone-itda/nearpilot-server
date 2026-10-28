@@ -6,8 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from nearpilot.shared.enums import Action, Capability, DeviceState, Occupancy, ReasonCode, TrustState, Verdict
-from nearpilot.shared.models import Decision, NodeInfo
+from nearpilot.shared.enums import (
+    Action, Capability, DeviceState, Occupancy, ReasonCode, RecoveryOutcome, RecoveryReason, RecoveryStatus,
+    TrustState, Verdict,
+)
+from nearpilot.shared.models import Decision, NodeInfo, RecoveryApprovalResult, RecoveryReadiness
 from tools.node_lab.boot_check import summarize
 from tools.node_lab.session import Lab
 
@@ -74,8 +77,8 @@ class Evidence:
     def __init__(self):
         self.records = []
 
-    def emit(self, event, **data):
-        self.records.append(dict(event=event, **data))
+    def emit(self, event, *, show=True, **data):
+        self.records.append(dict(event=event, show=show, **data))
 
 
 def test_FR13_lab_logs_readiness_changes_only():
@@ -95,6 +98,33 @@ def test_FR13_lab_logs_readiness_changes_only():
                          current=current + timedelta(seconds=20))
     states = [(r["ready"], r["fault"], r["online"]) for r in lab.evidence.records]
     assert states == [(True, False, True), (False, True, True), (False, True, False)]
+
+
+def test_FR13_lab_console_thins_periodic_observations_only():
+    lab = Lab.__new__(Lab)
+    lab._shown_at = None
+    lab.options = {"sample_sec": 1.0, "console_sec": 5.0}
+    shown = [second for second in range(11) if lab.console_due(float(second))]
+    assert shown == [0, 5, 10]  # 표본은 매초, 화면은 5초마다
+
+
+def test_FR13_lab_console_shows_every_sample_without_console_sec():
+    lab = Lab.__new__(Lab)
+    lab._shown_at = None
+    lab.options = {"sample_sec": 1.0}
+    assert all(lab.console_due(float(second)) for second in range(5))
+
+
+def test_FR13_lab_hidden_observation_still_written(tmp_path, capsys):
+    from tools.node_lab.session import Evidence as FileEvidence
+    evidence = FileEvidence(tmp_path / "evidence.jsonl")
+    evidence.emit("node_observation", show=False, node_id="locker-1")
+    evidence.emit("decision", verdict="OK")
+    evidence.close()
+    written = (tmp_path / "evidence.jsonl").read_text(encoding="utf-8").splitlines()
+    assert [line.count('"node_observation"') + line.count('"decision"') for line in written] == [1, 1]
+    printed = capsys.readouterr().out
+    assert "decision" in printed and "node_observation" not in printed
 
 
 class FakeCore:
@@ -133,7 +163,51 @@ def test_FR19_lab_open_targets_nearest_locker_and_release_uses_last_use():
         lab.release()
 
 
-@pytest.mark.parametrize("action,target", [("open", "nearest:light"), ("on", "nearest:locker")])
+def test_FR09_lab_close_targets_nearest_locker_and_keeps_use():
+    lab = console_lab()
+    lab.use("open")
+    lab.use("close")
+    request = lab.runtime.core.requests[-1]
+    assert (request.target.capability, request.action) == (Capability.LOCKER, Action.CLOSE)
+    assert lab.last_use_id is not None  # 닫기는 반납이 아니다
+
+
+class FakeRecovery:
+    def __init__(self, status):
+        self.status, self.calls = status, []
+
+    def readiness(self, user_id, node_id):
+        self.calls.append(("readiness", user_id, node_id))
+        recovery_id = "rec-1" if self.status is not RecoveryStatus.NOT_READY else None
+        return RecoveryReadiness(node_id, recovery_id, self.status, (), (), datetime(2026, 10, 27, tzinfo=timezone.utc))
+
+    def approve(self, user_id, node_id, recovery_id):
+        self.calls.append(("approve", user_id, node_id, recovery_id))
+        readiness = self.readiness(user_id, node_id)
+        return RecoveryApprovalResult(recovery_id, RecoveryOutcome.COMPLETED, RecoveryReason.OK, readiness)
+
+
+def test_FR12A_lab_recover_approves_ready_fault_as_place_owner():
+    lab = console_lab()
+    lab.options["owner_id"] = "lab-owner"
+    lab.runtime.recovery = FakeRecovery(RecoveryStatus.READY)
+    result = lab.recover("locker-1")
+    assert result.outcome is RecoveryOutcome.COMPLETED
+    assert lab.runtime.recovery.calls[:2] == [
+        ("readiness", "lab-owner", "locker-1"), ("approve", "lab-owner", "locker-1", "rec-1")]
+    assert [r["event"] for r in lab.evidence.records] == ["recovery_readiness", "recovery_approval"]
+
+
+def test_FR12A_lab_recover_does_not_approve_when_not_ready():
+    lab = console_lab()
+    lab.options["owner_id"] = "lab-owner"
+    lab.runtime.recovery = FakeRecovery(RecoveryStatus.NOT_READY)
+    readiness = lab.recover("locker-1")
+    assert readiness.status is RecoveryStatus.NOT_READY
+    assert [call[0] for call in lab.runtime.recovery.calls] == ["readiness"]
+
+
+@pytest.mark.parametrize("action,target", [("open", "nearest:light"), ("close", "nearest:light"), ("on", "nearest:locker")])
 def test_FR06_lab_rejects_action_for_other_capability(action, target):
     lab = console_lab()
     with pytest.raises(ValueError, match="시험 대상"):
