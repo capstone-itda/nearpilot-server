@@ -1,0 +1,10 @@
+{
+  "mode": "hardware",
+  "nodes": ["locker-1", "locker-2", "locker-3", "light-1", "light-2", "light-3", "speaker-1"],
+  "beacon": {"uuid": "11111111-2222-3333-4444-555555555555", "major": 1, "minor": 2},
+  "sample_sec": 1.0,
+  "console_sec": 5.0,
+  "observe_timeout_sec": 15.0,
+  "user_id": "demo-visitor",
+  "owner_id": "demo-owner"
+}

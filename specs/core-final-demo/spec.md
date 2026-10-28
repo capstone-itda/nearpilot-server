@@ -38,10 +38,11 @@
 - `server/tests/tools/`, `server/tests/integration/`: 구성 검증과 실제 서버 연결 검증이다.
 - 이 spec이다.
 - `.gitignore`의 시연 생성물 제외 규칙이다.
+- `AGENTS.md`의 Gotchas 절이다.
 
 ### 고치지 않는 곳
 
-- `docs/`, `AGENTS.md`, `server/src/`, DB 스키마, 외부 계약, 기존 `node_lab` 구현이다.
+- `docs/`, `AGENTS.md`의 Gotchas 이외 절, `server/src/`, DB 스키마, 외부 계약, 기존 `node_lab` 구현이다.
 - 기존 시험 DB, 자격정보, 펌웨어와 앱 코드다.
 
 ### 다른 영역과 닿는 곳
@@ -64,8 +65,8 @@
 |---|---|---|
 | 출력 폴더가 있다 | 생성 전에 거부하고 기존 파일을 보존한다 | `test_FR22_final_demo_preserves_existing_directory` |
 | 주소나 포트가 잘못됐다 | 파일을 만들기 전에 거부한다 | `test_NFR12_final_demo_rejects_invalid_network` |
-| 실제 기기의 시각 오차가 없다 | 미설정을 유지한다. 기존 실행 차단을 유지한다 | `test_NFR12_final_demo_clock_and_model` |
-| 시뮬레이터를 고른다 | localhost 주소와 별도 폴더를 쓴다 | `test_NFR12_final_demo_clock_and_model` |
+| 실제 기기의 시각 오차가 없다 | 미설정을 유지한다. 기존 실행 차단을 유지한다 | `test_FR16_FR17_NFR12_final_demo_clock_and_model` |
+| 시뮬레이터를 고른다 | localhost 주소와 별도 폴더를 쓴다 | `test_FR16_FR17_NFR12_final_demo_clock_and_model` |
 | 기기가 발표하지 않았다 | 시드는 기기 항목을 거부한다. 발표 뒤 다시 실행한다 | 실제 연결 검증 |
 | 새 기기를 등록한 뒤 서버가 복원 목록을 읽지 않았다 | 정상 종료하고 다시 시작한다 | 실제 연결 검증 |
 | 스피커를 근접 지정한다 | 미설정 임계값의 기존 차단을 유지한다. 명시 지정은 장소 비콘을 검사한다 | 구성 검증과 실제 연결 검증 |
@@ -86,6 +87,7 @@
 - 스피커 정책의 승인 방식은 개방 정책에서 사용하지 않는 값으로만 넣는다. 기본 승인 방식의 팀 결정을 대신하지 않는다.
 - 비콘은 기존 시험의 UUID와 소유자 minor 1, 방문자 minor 2를 초기값으로 쓴다. 앱의 비콘 등록으로 교체할 수 있다.
 - 합성 좌표는 실행 경로 확인용이다. 최종 근접 품질은 실제 배치의 수집·적합·평가 뒤 확인한다.
+- 기존 시뮬레이터는 사물함 `open`만 지원한다. `close`와 조명 설정 출력은 실기로 확인한다.
 
 ## 8. 테스트
 
@@ -94,7 +96,7 @@
 | FR-01, FR-13, FR-14 | `test_FR01_FR13_FR14_final_demo_seed` | 시드의 계정, 장소와 정책을 기존 파서가 받는다 |
 | FR-04, NFR-10 | `test_FR04_NFR10_final_demo_inventory` | 기기 7대의 기능, 점유 방식과 ACL이 일치한다 |
 | FR-12A | `test_FR12A_final_demo_http` | 대시보드 설정과 LAN MCP Host가 있다 |
-| FR-16, FR-17, NFR-12 | `test_NFR12_final_demo_clock_and_model` | 실기 시각을 만들지 않고 합성 모델과 임계값을 보존한다 |
+| FR-16, FR-17, NFR-12 | `test_FR16_FR17_NFR12_final_demo_clock_and_model` | 실기 시각을 만들지 않고 합성 모델과 임계값을 보존한다 |
 | FR-22 | `test_FR22_final_demo_preserves_existing_directory` | 기존 폴더를 바꾸지 않는다 |
 | NFR-08 | `test_NFR08_final_demo_credentials` | 비밀번호를 분리하고 공개 파일에 노출하지 않는다 |
 

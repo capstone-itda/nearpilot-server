@@ -1,0 +1,56 @@
+# 기존 NearPilot 서버의 최종 시연 구성이다. 상대 경로는 이 파일 기준이다.
+[settings]
+version = "final-demo-1"
+threshold_locker = 0.95
+threshold_light = 0.75
+# threshold_speaker는 미결이다. 근접 지정은 차단하고 명시 지정을 쓴다.
+light_brightness_max = 64
+light_default_brightness = 64
+light_default_color = "#FFFFFF"
+
+[runtime]
+
+[http]
+host = "0.0.0.0"
+port = @HTTP_PORT@
+public_hosts = ["@HOST@:@HTTP_PORT@"]
+
+[database]
+path = "demo.db"
+audit_jsonl = "audit.jsonl"
+
+[proximity]
+model_root = "models"
+
+[proximity.models]
+final-demo = "synthetic-1"
+
+[mqtt]
+host = "@HOST@"
+port = @MQTT_PORT@
+client_id = "nearpilot-final-demo"
+username = "nearpilot-server"
+password_file = ".env.nearpilot-server"
+keepalive_sec = 30
+connect_timeout_sec = 5.0
+start_timeout_sec = 10.0
+stop_timeout_sec = 5.0
+reconnect_min_sec = 1
+reconnect_max_sec = 8
+
+[delivery]
+pending_limit = 1000
+retry_interval_sec = 0.5
+stop_timeout_sec = 5.0
+
+[dashboard]
+queue_max_events = 1000
+batch_max_events = 50
+auth_timeout_sec = 5.0
+audit_limit_max = 200
+weak_rssi_dbm = -80
+tail_interval_sec = 0.5
+
+# 실기용은 비워 둔다. 기기별 실측 최대 오차(초)만 입력한다.
+# 같은 PC의 시뮬레이터용 구성에만 준비 스크립트가 0초를 넣는다.
+[delivery.clock_skew_sec]

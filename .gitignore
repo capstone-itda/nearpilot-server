@@ -34,6 +34,7 @@ Thumbs.db
 
 # Local node lab data and firmware builds
 /server/var/node-lab*/
+/server/var/final-demo*/
 /firmware/node_lab/.pio/
 /firmware/node_lab/include/config.local.h
 /firmware/.pio/
