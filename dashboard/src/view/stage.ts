@@ -66,6 +66,10 @@ export interface StageView {
   signals: { personId: string; x: number; y: number; on: boolean }[];
   rssiOn: boolean;
   rssi: Record<string, string>;
+  /** 신호 세기 아래의 후보 확률 막대 (FR-12B). 확률이 가장 높은 기기는 기준선을 넘으면 ok, 못 넘으면 ask다 */
+  prob: Record<string, { v: number; tone: 'ok' | 'ask' | 'muted' }>;
+  /** 이 요청에 적용한 근접 임계값. 막대의 기준선이다 */
+  threshold?: number;
   /** AI 호스트 → 서버: 도구 호출이 도착했고 아직 응답하지 않음 */
   mcp: boolean;
   /** 서버 → AI 호스트: 방금 도구 호출의 결과를 돌려줌 */
@@ -273,6 +277,13 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
   const rssiPerson = !opt.layoutCheck && inFlight && uplinkHere ? requester : undefined;
   const rssi: Record<string, string> = {};
   if (rssiPerson) for (const [id, v] of Object.entries(rssiPerson.rssi)) rssi[id] = dbm(v);
+  // 후보 확률은 신호 세기와 같은 때 보인다. 명시 지정은 확률을 계산하지 않아 막대가 없다
+  const prob: StageView['prob'] = {};
+  const threshold = rssiPerson ? r!.threshold : undefined;
+  if (threshold !== undefined) {
+    const ranked = Object.entries(r!.posteriors ?? {}).sort((a, b) => b[1] - a[1]);
+    for (const [id, v] of ranked) prob[id] = { v, tone: id !== ranked[0][0] ? 'muted' : v >= threshold ? 'ok' : 'ask' };
+  }
 
   const target = r?.nodeId ?? null;
   // 잠금 중에 다른 장소의 기기에 요청이 오면 그 기기는 주 장소에 없다. 명령 선과 격리 선은 그리지 않는다.
@@ -297,6 +308,8 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     signals,
     rssiOn: !!rssiPerson,
     rssi,
+    prob,
+    threshold,
     mcp: !!r && !opt.layoutCheck && !r.respondedAt,
     reply: !!r && !opt.layoutCheck && !!r.respondedAt && secOf(s.lastReceivedAt) - secOf(r.respondedAt) <= REPLY_SHOW_SEC,
     uplink: scene === 'judging' || scene === 'ask' ? uplinkHere : !!idlePerson,
