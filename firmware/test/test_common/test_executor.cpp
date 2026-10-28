@@ -478,6 +478,20 @@ void test_NFR10_light_ring_color() {
     TEST_ASSERT_EQUAL_HEX32(0, np::lightRingRgb(false, 64));
 }
 
+void test_NFR10_dfplayer_frames() {
+    uint8_t frame[np::kDfplayerFrameBytes];
+    // Reference frames from the DFPlayer Mini manual: volume 30 and stop.
+    const uint8_t volume[] = {0x7E, 0xFF, 0x06, 0x06, 0x00, 0x00, 0x1E, 0xFE, 0xD7, 0xEF};
+    np::dfplayerFrame(np::kDfplayerVolume, 30, frame);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(volume, frame, sizeof(volume));
+    const uint8_t stop[] = {0x7E, 0xFF, 0x06, 0x16, 0x00, 0x00, 0x00, 0xFE, 0xE5, 0xEF};
+    np::dfplayerFrame(np::kDfplayerStop, 0, frame);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(stop, frame, sizeof(stop));
+    const uint8_t loopFolder[] = {0x7E, 0xFF, 0x06, 0x17, 0x00, 0x00, 0x01, 0xFE, 0xE3, 0xEF};
+    np::dfplayerFrame(np::kDfplayerLoopFolder, 1, frame);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(loopFolder, frame, sizeof(loopFolder));
+}
+
 std::string occupancyBody(const char* state, const char* node = "locker-1", int version = 2) {
     return std::string("{\"schema_version\":") + std::to_string(version) + ",\"node_id\":\"" + node
         + "\",\"device_state\":\"" + state + "\",\"sent_at\":\"2026-10-27T07:00:00Z\"}";
@@ -606,6 +620,7 @@ void runExecutorTests() {
     RUN_TEST(test_NFR10_signal_output_completes);
     RUN_TEST(test_NFR10_servo_pulse_for_angle);
     RUN_TEST(test_NFR10_light_ring_color);
+    RUN_TEST(test_NFR10_dfplayer_frames);
     RUN_TEST(test_FR19_occupancy_display_colors);
     RUN_TEST(test_FR19_occupancy_display_ignores_invalid_messages);
     RUN_TEST(test_FR06_evicted_command_does_not_actuate);

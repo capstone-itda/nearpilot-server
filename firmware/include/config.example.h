@@ -41,6 +41,25 @@
 #endif
 #define NP_LIGHT_RING_COUNT 16
 #define NP_LIGHT_RING_LEVEL 64
+// DFPlayer Mini speaker on UART2. The speaker-1 build profile sets TX=17, RX=16; -1 leaves it off.
+// Boot waits for the module, then sets the volume and stops; on loops the SD folder until off.
+#ifndef NP_SPEAKER_TX_PIN
+#define NP_SPEAKER_TX_PIN -1
+#endif
+#ifndef NP_SPEAKER_RX_PIN
+#define NP_SPEAKER_RX_PIN -1
+#endif
+#ifndef NP_SPEAKER_VOLUME
+#define NP_SPEAKER_VOLUME 30
+#endif
+#ifndef NP_SPEAKER_FOLDER
+#define NP_SPEAKER_FOLDER 1
+#endif
+#define NP_SPEAKER_BAUD 9600
+// The module ignores commands while it reads the SD card after power-on.
+#define NP_SPEAKER_BOOT_MS 2000
+// Gap between consecutive frames so the module does not drop the second one.
+#define NP_SPEAKER_FRAME_GAP_MS 100
 #define NP_RSSI_FRAME_MS 1000UL
 #define NP_STATUS_MS 1000UL
 // Retry starts at these minimums, doubles after each failure and stops at NP_RETRY_MAX_MS.

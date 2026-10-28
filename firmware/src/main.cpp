@@ -63,6 +63,16 @@ static_assert(NP_LIGHT_RING_COUNT > 0 && NP_LIGHT_RING_LEVEL > 0 && NP_LIGHT_RIN
 #if NP_LED_PIN >= 0 || NP_LIGHT_RING_PIN >= 0
 #include <Adafruit_NeoPixel.h>
 #endif
+#ifndef NP_SPEAKER_TX_PIN
+#error "config.local.h needs the NP_SPEAKER_* values (see config.example.h)"
+#endif
+static_assert(NP_SPEAKER_TX_PIN < 0 || (NP_SPEAKER_TX_PIN != NP_OUTPUT_PIN && NP_SPEAKER_TX_PIN != NP_SERVO_PIN
+    && NP_SPEAKER_TX_PIN != NP_LED_PIN && NP_SPEAKER_TX_PIN != NP_LIGHT_RING_PIN && NP_SPEAKER_TX_PIN != NP_SPEAKER_RX_PIN),
+    "speaker shares a pin");
+static_assert(NP_SPEAKER_RX_PIN < 0 || (NP_SPEAKER_RX_PIN != NP_OUTPUT_PIN && NP_SPEAKER_RX_PIN != NP_SERVO_PIN
+    && NP_SPEAKER_RX_PIN != NP_LED_PIN && NP_SPEAKER_RX_PIN != NP_LIGHT_RING_PIN), "speaker shares a pin");
+static_assert(NP_SPEAKER_VOLUME >= 0 && NP_SPEAKER_VOLUME <= 30, "DFPlayer volume");
+static_assert(NP_SPEAKER_FOLDER >= 1 && NP_SPEAKER_FOLDER <= 99, "DFPlayer folder");
 
 // Per-device values are injected over USB and kept in their own NVS namespace.
 // The command record namespace is never opened for writing by provisioning.
@@ -252,6 +262,16 @@ void servoAngle(int degrees) {
         NP_SERVO_FREQ_HZ, NP_SERVO_LEDC_BITS));
 }
 
+// ---- Speaker: DFPlayer frames on UART2; the module's replies are never awaited ----
+
+bool speakerPlaying = false;  // RAM only: every boot starts stopped.
+
+void speakerSend(uint8_t command, uint16_t parameter) {
+    uint8_t frame[np::kDfplayerFrameBytes];
+    np::dfplayerFrame(command, parameter, frame);
+    Serial2.write(frame, sizeof(frame));
+}
+
 // ---- Occupancy LED stick: shows the server's retained display, never decides it ----
 
 #if NP_LED_PIN >= 0
@@ -296,7 +316,7 @@ void showLight(bool on) {
 }
 
 const char* outputMode() {
-    return NP_SERVO_PIN >= 0 ? "servo" : NP_LIGHT_RING_PIN >= 0 ? "light_ring"
+    return NP_SERVO_PIN >= 0 ? "servo" : NP_LIGHT_RING_PIN >= 0 ? "light_ring" : NP_SPEAKER_TX_PIN >= 0 ? "speaker"
         : NP_OUTPUT_PIN >= 0 ? "optional_gpio" : "serial_only";
 }
 
@@ -308,9 +328,16 @@ void signalOutput(const np::Actuation& request) {
         servoAngle(request.action == "open" ? NP_SERVO_OPEN_DEG : NP_SERVO_LOCKED_DEG);
     }
     if (NP_LIGHT_RING_PIN >= 0 && (request.action == "on" || request.action == "off")) showLight(on);
+    if (NP_SPEAKER_TX_PIN >= 0 && (request.action == "on" || request.action == "off")) {
+        // A shared speaker keeps playing when someone else turns it on again.
+        if (request.action == "off") speakerSend(np::kDfplayerStop, 0);
+        else if (!speakerPlaying) speakerSend(np::kDfplayerLoopFolder, NP_SPEAKER_FOLDER);
+        else Serial.println("SPEAKER_ALREADY_PLAYING frame_skipped=1");
+        speakerPlaying = request.action == "on";
+    }
     Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s output_completed=1\n",
         request.commandId.c_str(), request.action.c_str(),
-        NP_SERVO_PIN >= 0 ? "servo" : NP_LIGHT_RING_PIN >= 0 ? "light_ring"
+        NP_SERVO_PIN >= 0 ? "servo" : NP_LIGHT_RING_PIN >= 0 ? "light_ring" : NP_SPEAKER_TX_PIN >= 0 ? "speaker"
         : NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only");
 }
 
@@ -526,6 +553,16 @@ void setup() {
         ledcAttachPin(NP_SERVO_PIN, NP_SERVO_LEDC_CHANNEL);
         Serial.printf("SERVO_OUTPUT pin=%d locked_deg=%d open_deg=%d pulse_us=%d-%d freq_hz=%d initial=locked\n",
             NP_SERVO_PIN, NP_SERVO_LOCKED_DEG, NP_SERVO_OPEN_DEG, NP_SERVO_MIN_US, NP_SERVO_MAX_US, NP_SERVO_FREQ_HZ);
+    }
+    if (NP_SPEAKER_TX_PIN >= 0) {
+        // Stops playback left over from before an ESP32-only reset; nothing replays on boot.
+        Serial2.begin(NP_SPEAKER_BAUD, SERIAL_8N1, NP_SPEAKER_RX_PIN, NP_SPEAKER_TX_PIN);
+        delay(NP_SPEAKER_BOOT_MS);
+        speakerSend(np::kDfplayerVolume, NP_SPEAKER_VOLUME);
+        delay(NP_SPEAKER_FRAME_GAP_MS);
+        speakerSend(np::kDfplayerStop, 0);
+        Serial.printf("SPEAKER_OUTPUT tx=%d rx=%d volume=%d folder=%d initial=stopped\n",
+            NP_SPEAKER_TX_PIN, NP_SPEAKER_RX_PIN, NP_SPEAKER_VOLUME, NP_SPEAKER_FOLDER);
     }
 #if NP_LED_PIN >= 0
     ledStick.begin();

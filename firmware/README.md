@@ -16,7 +16,7 @@
 | `lib/np_command/` | MQTT 버전(`SCHEMA_VERSION=2`), `cmd`의 기능별 동작 검사, 검사 순서와 명령 내용 비교 필드 |
 | `lib/np_ledger/` | 명령 기록, ID 해시 색인과 저장소 인터페이스 `RecordStore` |
 | `lib/np_executor/` | 명령 상태 전이, 결과 저장과 재보고, `status`의 명령 처리 상태 |
-| `lib/np_device/` | 제어 신호 출력 인터페이스, 세 기능이 함께 쓰는 시리얼·선택 GPIO 출력, 서보 펄스 계산과 조명 링 색 계산 |
+| `lib/np_device/` | 제어 신호 출력 인터페이스, 세 기능이 함께 쓰는 시리얼·선택 GPIO 출력, 서보 펄스 계산과 조명 링 색 계산, DFPlayer 명령 프레임 |
 | `lib/np_nvs/` | ESP32 NVS로 만든 `RecordStore`. PC 테스트에서는 빌드하지 않는다 |
 | `lib/np_beacon/` | iBeacon 제조사 데이터 해석 |
 | `lib/np_ready/` | 준비 사유 순서와 재시도 간격 |
@@ -90,6 +90,26 @@ pio run -e esp32dev-locker-1 -t upload --upload-port COM6
 - 표시는 서버의 저장 상태를 보여 줄 뿐이다. 명령 접수와 구동에 쓰지 않는다. 서버가 멈춰도 마지막 표시가 남는다.
 - 브로커 ACL은 서버 계정에 `topic write nearpilot/node/+/occupancy`, 기기 계정에 자기 `occupancy` 읽기를 둔다.
 - 성공 보고는 열림·잠금 각도 신호 출력과 결과 저장을 뜻한다. 문이 실제로 열리거나 닫혔다는 근거가 아니다.
+
+### speaker-1의 DFPlayer 출력
+
+`speaker-1`은 `esp32dev-speaker-1` 환경으로 빌드하고 업로드한다. 아래 명령은 `firmware/`에서 실행한다.
+
+```bash
+pio run -e esp32dev-speaker-1
+pio run -e esp32dev-speaker-1 -t upload --upload-port COM6
+```
+
+- 배선은 `IO17 → 1kΩ → DFPlayer RX`, `DFPlayer TX → IO16`, `5V → VCC`, `GND → GND`다. 스피커(3W 8Ω)는 `SPK1`·`SPK2`에만 연결한다.
+- 모듈 VCC와 GND 사이에 1000µF 커패시터를 둔다. 볼륨 30에서 전류가 순간적으로 커진다.
+- microSD는 FAT32로 포맷하고 파일을 `01/001.mp3`, `01/002.mp3`처럼 둔다. 폴더 이름은 두 자리, 파일 이름은 세 자리 번호로 시작한다.
+- 부팅하면 `NP_SPEAKER_BOOT_MS`(2초)를 기다린 뒤 볼륨과 정지를 보낸다. 허가한 새 `on`은 `01/` 폴더를 처음부터 반복 재생하고, `off`는 정지한다.
+- 재생 중에 새 `on`이 오면 명령을 다시 보내지 않는다. 로그 `SPEAKER_ALREADY_PLAYING frame_skipped=1`이 남는다.
+- 연결이 끊겨도 재생을 유지한다. 재부팅과 기존 결과 재보고는 다시 재생하지 않는다.
+- 볼륨과 폴더는 `config.example.h`의 `NP_SPEAKER_VOLUME`(0~30), `NP_SPEAKER_FOLDER`다.
+- 부팅 로그 `SPEAKER_OUTPUT tx=17 rx=16 volume=30 folder=1 initial=stopped`로 적용한 설정을 확인한다.
+- 모듈 응답은 기다리지 않는다. 성공 보고는 명령 프레임 전송과 결과 저장을 뜻한다. 소리가 실제로 났다는 근거가 아니다.
+- 소리가 나지 않으면 시리얼 로그로 범위를 좁힌다. `COMMAND_HANDLED ... output=speaker`가 없으면 서버·MQTT 경로를, 있으면 배선·SD 카드를 본다.
 
 ## 설정과 확인
 
