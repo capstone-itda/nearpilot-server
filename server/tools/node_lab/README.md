@@ -26,6 +26,7 @@ CORE가 허가한 명령만 기존 MQTT 경로로 보낸다.
 ## 화면과 로그 읽기
 
 같은 결과를 화면과 `var/node-lab/evidence.jsonl`에 쓴다.
+관측은 `lab.json`의 `sample_sec`마다 하고 모두 파일에 쓴다. 화면의 `node_observation`, `proximity`, `proximity_pending`은 `console_sec`마다 한 번만 보인다. `console_sec`가 없으면 매 관측을 보인다. 나머지 사건과 `watch` 입력의 결과는 항상 보인다.
 
 | event | 확인한 내용 |
 |---|---|
@@ -75,14 +76,18 @@ watch
 on
 off
 open
+close
 release
+recover locker-1
 quit
 ```
 
 `on`과 `off`는 `nearest:light`를 요청한다. 비콘이 없거나 확률이 낮으면 실행하지 않는다.
 `open`은 `nearest:locker`를 요청한다. 허가되면 대여가 생기고 `decision`에 `use_id`가 나온다.
+`close`는 `nearest:locker`의 잠금 신호를 요청한다. 본인 대여 중일 때만 실행하고 대여는 유지한다. 대여가 없으면 `USE_NOT_FOUND`다.
 `release`는 콘솔에서 마지막으로 연 대여를 반납한다. `release <use_id>`로 지정해도 된다. 반납은 서버의 논리적 점유 해제이며 문 닫힘을 확인하지 않는다.
 `on light-1`처럼 명시 지정도 입력할 수 있다.
+`recover <node_id>`는 시험 장소 소유자(`owner_id`)로 `FAULT` 복구를 승인한다. 운영의 `nearpilot recover`와 같은 복구 서비스를 부른다. 먼저 준비 상태(`recovery_readiness`)를 남기고, `ready`일 때만 승인한 결과(`recovery_approval`)를 남긴다. DB를 직접 고치지 않는다.
 다만 명시 지정 임계값은 미결이므로 기본 설정은 명시 실행을 허가하지 않는다.
 시험 도구가 실행되면서 발표한 기기만 초기 복원 목록에 없으면 실행이 차단된다.
 도구는 첫 발표 후 Runtime을 정상 재시작해서 이 목록을 읽는다. 진행 중인 명령은 종료 절차가 기다린다.

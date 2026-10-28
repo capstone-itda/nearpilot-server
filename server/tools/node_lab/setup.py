@@ -118,7 +118,7 @@ stop_timeout_sec = 5.0
     write_json(root / "synthetic-1.json", model)
     beacon = dict(uuid=beacon_uuid, major=major, minor=minor)
     write_json(folder / "lab.json", dict(mode=mode, nodes=nodes, beacon=beacon,
-        sample_sec=1.0, observe_timeout_sec=15.0, user_id="lab-visitor", owner_id="lab-owner"))
+        sample_sec=1.0, console_sec=5.0, observe_timeout_sec=15.0, user_id="lab-visitor", owner_id="lab-owner"))
     devices = []
     for i, node in enumerate(nodes):
         distance = math.hypot(i * 2.0, 0.5)

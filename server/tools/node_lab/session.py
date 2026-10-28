@@ -16,14 +16,16 @@ from nearpilot.db.repositories.admin_repository import SqliteAdminRepository
 from nearpilot.runtime import Runtime, load_config
 from nearpilot.shared.enums import (
     AccessMode, Action, AdminWriteOutcome, AdminWriteReason, ApprovalMode, Capability, DeviceState,
-    Role, TrustState, Verdict, Visibility,
+    RecoveryStatus, Role, TrustState, Verdict, Visibility,
 )
 from nearpilot.shared.models import BeaconKey, BeaconRegistration, PlaceAssignment, PolicySettings, TargetSpec, UseRequest
 from tools.node_lab.setup import node_kind
 
-# Lab action -> capability it drives. Lockers only open (architecture.md §5 MQTT).
-ACTION_CAPABILITY = {"on": Capability.LIGHT, "off": Capability.LIGHT, "open": Capability.LOCKER}
-USAGE = "watch | on [nearest:light] | off [nearest:light] | open [nearest:locker] | release [use_id] | quit"
+# Lab action -> capability it drives. Lockers open and close (architecture.md §5 MQTT).
+ACTION_CAPABILITY = {"on": Capability.LIGHT, "off": Capability.LIGHT,
+                     "open": Capability.LOCKER, "close": Capability.LOCKER}
+USAGE = ("watch | on [nearest:light] | off [nearest:light] | open [nearest:locker] | close [nearest:locker] "
+         "| release [use_id] | recover <node_id> | quit")
 
 
 def now():
@@ -44,13 +46,14 @@ class Evidence:
         self._lock = threading.Lock()
         self.console = console
 
-    def emit(self, event: str, **data):
+    def emit(self, event: str, *, show: bool = True, **data):
+        """Always writes the file; `show=False` only keeps the line off the console."""
         record = dict(at=now(), event=event, **data)
         line = json.dumps(record, default=json_default, ensure_ascii=False, allow_nan=False)
         with self._lock:
             self._stream.write(line + "\n")
             self._stream.flush()
-            if self.console:
+            if self.console and show:
                 print(line, flush=True)
         return record
 
@@ -71,6 +74,7 @@ class Lab:
         self._restart_required = False
         self._stop = threading.Event()
         self._watcher = None
+        self._shown_at = None  # Monotonic time the periodic observations last reached the console.
         self.last_use_id = None  # Latest rental use opened from this console, for `release`.
 
     def start(self):
@@ -113,9 +117,9 @@ class Lab:
                 self._restart_required = True
             self.evidence.emit("node_configured", node_id=node.node_id)
 
-    def snapshot(self):
+    def snapshot(self, *, show: bool = True):
         with self._snapshot_lock:
-            result = self._snapshot()
+            result = self._snapshot(show)
             if self._restart_required:
                 # Existing RestoreService inventories nodes only on first start.
                 # Rebuild via its normal restart path instead of bypassing readiness.
@@ -127,7 +131,7 @@ class Lab:
                 return {}
             return result
 
-    def _snapshot(self):
+    def _snapshot(self, show: bool):
         with self.runtime.db.scope() as bound:
             self._configure(bound)
             nodes = [n for n in bound.repo.nodes() if n.node_id in self.options["nodes"]]
@@ -142,7 +146,7 @@ class Lab:
                 ready = self.runtime.services.restore.can_execute(node.node_id)
                 blockers = self.runtime.services.restore.blockers(node.node_id)
                 self.report_readiness(node, ready=ready, blockers=blockers, current=now())
-                self.evidence.emit("node_observation", node_id=node.node_id, state=node.device_state,
+                self.evidence.emit("node_observation", show=show, node_id=node.node_id, state=node.device_state,
                     ready=ready, blockers=blockers,
                     rssi=frame.rssi if frame else None, frame_ts=frame.frame_ts if frame else None,
                     received_at=frame.received_at if frame else None,
@@ -151,11 +155,11 @@ class Lab:
                     command_state=status.command_state.value if status else None)
             place_nodes = [n for n in nodes if n.place_id == "node-lab" and n.trust_state == TrustState.TRUSTED]
             if not place_nodes or not latest:
-                self.evidence.emit("proximity_pending", reason="유효한 현재 비콘 관측을 기다린다")
+                self.evidence.emit("proximity_pending", show=show, reason="유효한 현재 비콘 관측을 기다린다")
                 return {}
             result = self.runtime.services.proximity.posterior([BeaconKey(**self.options["beacon"])],
                 place_nodes, now(), place_nodes=place_nodes)
-            self.evidence.emit("proximity", posteriors=dict(result.posteriors), best=result.best,
+            self.evidence.emit("proximity", show=show, posteriors=dict(result.posteriors), best=result.best,
                 model_version=result.model_version, calib_version=result.calib_version,
                 thresholds={n.capability.value: self.threshold(n.capability) for n in place_nodes})
             return dict(result.posteriors)
@@ -180,7 +184,7 @@ class Lab:
 
     def _use(self, action: str, target: str | None, *, request_id: str | None):
         if action not in ACTION_CAPABILITY:
-            raise ValueError("시험 동작은 on, off 또는 open이다")
+            raise ValueError("시험 동작은 on, off, open 또는 close다")
         capability = ACTION_CAPABILITY[action]
         parsed = TargetSpec.parse(target or f"nearest:{capability.value}")
         if parsed.capability != capability:
@@ -212,10 +216,36 @@ class Lab:
                 self.last_use_id = None
             return decision
 
+    def recover(self, node_id: str):
+        """Owner approval of a FAULT recovery through the server's recovery service (FR-12A).
+
+        Same path as `nearpilot recover`: checks readiness, approves only when ready. Never edits the DB.
+        """
+        owner = self.options["owner_id"]
+        with self._snapshot_lock:
+            readiness = self.runtime.recovery.readiness(owner, node_id)
+            self.evidence.emit("recovery_readiness", **asdict(readiness))
+            if readiness.status is not RecoveryStatus.READY or readiness.recovery_id is None:
+                return readiness
+            result = self.runtime.recovery.approve(owner, node_id, readiness.recovery_id)
+            self.evidence.emit("recovery_approval", **asdict(result))
+            return result
+
+    def console_due(self, current: float) -> bool:
+        """True when periodic observations should reach the console again.
+
+        Sampling stays at `sample_sec`; `console_sec` only thins the screen. Without it every sample is shown.
+        """
+        interval = self.options.get("console_sec", self.options["sample_sec"])
+        if self._shown_at is not None and current - self._shown_at < interval:
+            return False
+        self._shown_at = current
+        return True
+
     def watch(self):
         while not self._stop.is_set():
             try:
-                self.snapshot()
+                self.snapshot(show=self.console_due(time.monotonic()))
             except Exception as error:
                 self.evidence.emit("observation_error", error_type=type(error).__name__)
             self._stop.wait(self.options["sample_sec"])
@@ -240,10 +270,12 @@ class Lab:
                     self.use(words[0], words[1] if len(words) == 2 else None)
                 elif words[0] == "release" and len(words) <= 2:
                     self.release(words[1] if len(words) == 2 else None)
+                elif words[0] == "recover" and len(words) == 2:
+                    self.recover(words[1])
                 else:
                     print(USAGE)
-            except (ValueError, LookupError) as error:
-                self.evidence.emit("input_error", reason=str(error))
+            except (ValueError, LookupError, PermissionError) as error:
+                self.evidence.emit("input_error", reason=str(error) or type(error).__name__)
 
     def close(self):
         self._stop.set()
