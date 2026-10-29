@@ -20,6 +20,7 @@ from nearpilot.shared.enums import (
 )
 from nearpilot.shared.models import (
     BeaconKey, LightControls, NodeAnnounce, NodeCommand, NodeResult, NodeStatus, RssiFrame,
+    SpeakerControls,
 )
 
 __all__ = ["SCHEMA_VERSION", "MessageValidationError", "decode_message", "encode_command",
@@ -107,17 +108,23 @@ def _finite_json(value: object) -> None:
             _finite_json(child)
 
 
-def _controls(data: dict, capability: Capability) -> LightControls | None:
-    """`announce.controls`. `light` 기기만 보낸다. 두 필드가 모두 맞아야 한다 (FR-04, FR-09)."""
+def _controls(
+    data: dict, capability: Capability,
+) -> tuple[LightControls | None, SpeakerControls | None]:
+    """`announce.controls`. `light`, `speaker` 기기만 보낸다. 기능마다 정한 키가 모두 맞아야 한다 (FR-04, FR-09)."""
     if "controls" not in data:
-        return None
+        return None, None
     controls = _object(data["controls"], "controls")
+    if capability is Capability.SPEAKER:
+        if set(controls) != {"volume_max"}:
+            _fail("controls")
+        return None, SpeakerControls(_integer(controls["volume_max"], "controls.volume_max", 1, 30))
     if capability is not Capability.LIGHT or set(controls) != {"brightness_max", "color"}:
         _fail("controls")
     if not isinstance(controls["color"], bool):
         _fail("controls.color")
     return LightControls(_integer(controls["brightness_max"], "controls.brightness_max", 1, 255),
-                         controls["color"])
+                         controls["color"]), None
 
 
 def decode_message(
@@ -157,9 +164,10 @@ def decode_message(
     )
     if kind == "announce":
         capability = _enum(Capability, data.get("capability"), "capability")
-        return NodeAnnounce(**common, capability=capability,
-            occupancy=_enum(Occupancy, data.get("occupancy"), "occupancy"),
-            light_controls=_controls(data, capability))
+        occupancy = _enum(Occupancy, data.get("occupancy"), "occupancy")
+        light_controls, speaker_controls = _controls(data, capability)
+        return NodeAnnounce(**common, capability=capability, occupancy=occupancy,
+            light_controls=light_controls, speaker_controls=speaker_controls)
     if kind == "rssi":
         frame_ts = _time(data.get("frame_ts"), "frame_ts")
         observations = data.get("observations")
@@ -218,11 +226,19 @@ def encode_command(command: NodeCommand) -> bytes:
     data.update(command_id=_string(command.command_id, "command_id"),
                 action=_enum(Action, command.action, "action").value)
     light = command.light
+    speaker = command.speaker
+    if light is not None and speaker is not None:
+        _fail("parameters")  # 한 명령에는 기능 하나의 인자만 담는다.
     if light is not None:
         # 서버가 정한 밝기와 색을 모두 보낸다. 조명 on 에만 담는다 (FR-09).
         if not light.complete or command.action is not Action.ON:
             _fail("parameters")
         data["parameters"] = {"brightness": light.brightness, "color": light.color}
+    if speaker is not None:
+        # 서버가 정한 음량을 보낸다. 스피커 on 에만 담는다 (FR-09).
+        if not speaker.complete or command.action is not Action.ON:
+            _fail("parameters")
+        data["parameters"] = {"volume": speaker.volume}
     return json.dumps(data, allow_nan=False).encode("utf-8")
 
 
