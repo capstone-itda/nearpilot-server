@@ -50,7 +50,8 @@ class NodeEventService:
 
     lock_for는 실행·반납·복원·복구와 같은 기기별 재진입 잠금이다.
     context_for는 명령 ID로 원래 ExecutionContext를 조회한다. 재시작 뒤에도
-    원래 설정을 반환해야 한다. 문맥을 찾지 못하면 결과를 전달 완료로 보지 않는다.
+    원래 설정을 반환해야 한다. 조회 실패는 전달 완료로 보지 않는다. 문맥이 없으면 DB에 없는
+    명령이라 경고를 기록하고 인계를 끝낸다.
     """
 
     def __init__(
@@ -174,7 +175,10 @@ class NodeEventService:
         with self._lock_for(result.node_id):
             context = self._context_for(result.command_id)
             if context is None:
-                raise StoreError("명령의 원래 실행 문맥이 없다")
+                # 이 서버가 보낸 명령이 아니다 (DB 교체 전 기록의 재보고). 재인계해도 결과가 같다.
+                _log.warning("DB에 없는 명령의 결과를 인계하지 않는다: node=%s command_id=%s state=%s",
+                             result.node_id, result.command_id, result.state.value)
+                return
             command = self._store.execution(context.internal_request_id)
             if command is None or (
                 command.command_id != result.command_id
