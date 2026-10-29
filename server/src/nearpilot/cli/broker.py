@@ -45,7 +45,7 @@ def _broker(args: argparse.Namespace) -> int:
     except ValueError as error:  # PATH와 Windows 기본 설치 폴더에 없다
         raise CliError(str(error), EXIT_INVALID) from None
     with tempfile.TemporaryDirectory(prefix="np-broker-") as temp:
-        if not str(Path(temp).resolve()).isascii():  # 계정 이름이 한글이면 시스템 임시 폴더도 한글이다
+        if not _ascii(temp):  # 계정 이름이 한글이면 시스템 임시 폴더도 한글이다. Mosquitto에 넘길 경로 그대로 본다
             raise CliError(f"임시 폴더 경로에 영문이 아닌 문자가 있다: {temp}. Mosquitto가 열지 못한다. "
                            "환경 변수 TEMP(macOS·Linux는 TMPDIR)를 영문 경로로 바꾼다", EXIT_INVALID)
         rewritten = prepare_config(conf, base, Path(temp))
@@ -57,6 +57,10 @@ def _broker(args: argparse.Namespace) -> int:
             _stop(process)
     print(f"브로커가 끝났다 (종료 코드 {code})", file=sys.stderr)
     return EXIT_FAILED
+
+
+def _ascii(path: str) -> bool:
+    return path.isascii()
 
 
 def broker_files(config: ServerConfig, folder: str | None) -> tuple[Path, Path]:

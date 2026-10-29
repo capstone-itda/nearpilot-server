@@ -113,6 +113,8 @@ def temp_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "temp-root"
     root.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(root))
+    if not str(root).isascii():  # pytest 임시 폴더가 한글 계정 아래에 있다. ASCII 검사는 따로 시험한다
+        monkeypatch.setattr("nearpilot.cli.broker._ascii", lambda path: True)
     return root
 
 
@@ -256,11 +258,15 @@ def test_NFR12_broker_rejects_non_ascii_temp(server_dir, run_cli, fake_broker, l
     korean = tmp_path / "임시 폴더"  # 계정 이름이 한글인 Windows의 시스템 임시 폴더와 같다
     korean.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(korean))
+    monkeypatch.setattr("nearpilot.cli.broker._ascii", str.isascii)  # temp_root가 바꿨을 수 있다
+    prepared = []
+    monkeypatch.setattr("nearpilot.cli.broker.prepare_config", lambda *args: prepared.append(args))
 
     code, out, err = run_cli(["--dir", LAB_ARG, "broker"], cwd=server_dir)
 
     assert code == EXIT_INVALID and out == ""
     assert err.startswith("임시 폴더 경로에 영문이 아닌 문자가 있다:") and "TEMP" in err
+    assert prepared == []  # 복사하기 전에 멈춘다
     assert fake_broker.launches == [] and fake_broker.events == []  # 브로커를 띄우지 않는다
     assert list(korean.iterdir()) == []  # 복사본을 만들지 않고 임시 폴더도 지운다
 
