@@ -2,8 +2,8 @@
 
 - 상태: 완료
 - 담당: 작업 지시자 (CORE, API, DB, IOT, 펌웨어 연결 구현)
-- 요구사항: FR-04, FR-06, FR-07, FR-09, FR-18, FR-19, FR-20, FR-22, NFR-07, NFR-10
-- 따르는 결정: 2026-10-29 담당자 결정. 이슈 없이 담당자가 정했다. 같은 PR에서 docs에 반영한다.
+- 요구사항: FR-04, FR-06, FR-09, FR-18, FR-19, FR-20, FR-22, NFR-10
+- 따르는 결정: 2026-10-29 담당자 결정. 이슈 없이 담당자가 정했다. 연결된 이슈가 없어서 decision PR을 따로 두지 않고 같은 PR에서 docs에 반영한다 (조명 제어 #227과 같다).
 
 ## 1. 왜
 
@@ -33,7 +33,7 @@
 ### 고치는 곳
 
 - `docs/requirements.md`, `docs/architecture.md`, `docs/glossary.md` — 2026-10-29 담당자 결정 반영
-- `server/src/nearpilot/shared/` — 결정이 정한 `SpeakerSetting`, `SpeakerControls`, `UseRequest.speaker`, `NodeCommand.speaker`, `NodeAnnounce.speaker_controls`, `NodeInfo.speaker_controls`, `ExecutionContext.speaker`, `CommandRecord.speaker`, 설정 2개, `Repository.last_speaker_setting`, `ExecutionStore.link_command`의 `speaker` 인자
+- `server/src/nearpilot/shared/` — 결정이 정한 `SpeakerSetting`, `SpeakerControls`, `UseRequest.speaker`, `NodeCommand.speaker`, `NodeAnnounce.speaker_controls`, `NodeInfo.speaker_controls`, `ExecutionContext.speaker`, `CommandRecord.speaker`, 설정 2개, `Repository.last_speaker_setting`, `ExecutionStore.link_command`의 `speaker` 인자, `enums.py`의 사유·거부 코드 주석
 - `server/src/nearpilot/api/mcp/`, `server/src/nearpilot/runtime/app.py`
 - `server/src/nearpilot/core/decision/`, `server/src/nearpilot/core/lifecycle/execution.py`, `server/src/nearpilot/core/dashboard/text.py`
 - `server/src/nearpilot/db/`
@@ -48,7 +48,7 @@
 ### 고치지 않는 곳
 
 - 항상: `AGENTS.md` (Gotchas 절은 제외), `server/pyproject.toml`, `.github/`
-- 이 작업: REST, WebSocket, 대시보드 응답, 승인 범위(동작 단위 그대로), 조명 설정의 동작, `tools/node_lab`
+- 이 작업: REST, WebSocket, 대시보드 응답 형식(사유 문구 두 개만 바꾼다), 승인 범위(동작 단위 그대로), 조명 설정의 동작, `tools/node_lab`
 
 ### 다른 영역과 닿는 곳
 
@@ -87,9 +87,9 @@
 | `off`나 스피커가 아닌 기기 | `speaker` 없는 명령 | `test_FR09_speaker_off_and_other_devices_keep_plain_commands` |
 | 런타임 MCP 스키마 | `volume` 최대값이 `speaker_volume_max` | `test_FR09_runtime_schema_uses_speaker_volume_max` |
 | 재생 중인 스피커에 새 음량 `on` | 새 명령으로 허가 | `test_FR09_playing_speaker_accepts_new_volume` |
-| 같은 `request_id`에 다른 음량 | `REQUEST_ID_CONFLICT` | `test_FR22_same_request_id_other_volume_conflicts` |
+| 같은 `request_id`에 다른 음량 | `REQUEST_ID_CONFLICT` | `test_FR22_same_request_id_other_volume_conflicts`(digest), `test_FR22_runtime_same_request_id_other_volume_conflicts`(응답) |
 | 인자 없는 요청과 조명 요청의 정규화 입력 | 기존 digest와 같음 | `test_FR22_digest_without_speaker_unchanged` |
-| 저장한 명령 재구성 | DB의 `speaker`로 같은 `NodeCommand` | `test_FR19_command_speaker_round_trip` |
+| 저장한 명령 재구성 | DB의 `speaker`로 같은 `NodeCommand` | `test_FR19_command_speaker_round_trip`(저장), `test_FR19_execution_sends_stored_speaker`(명령) |
 | 명령 ID로 다시 만든 실행 문맥 | `speaker`가 판정이 넘긴 값과 같음 | `test_FR09_restored_context_keeps_speaker` |
 | 발표의 스피커 `controls` 형식 오류, 조명 키를 담은 스피커 발표 | 발표 거부 | `test_FR04_announce_rejects_bad_speaker_controls` |
 | 스피커 `controls`만 바뀜 | 신뢰 유지, 감사 기록 | `test_FR04_speaker_controls_change_keeps_trust` |
@@ -139,6 +139,6 @@
 
 ### 확인 (2026-10-29, macOS)
 
-- 서버 전체 `pytest`: 4,413개 통과, 4개 생략, 1개 예상 실패.
+- 서버 전체 `pytest`: 4,414개 통과, 4개 생략, 1개 예상 실패 (main `9915da5` 위).
 - 펌웨어 `pio test -e native` 63개 통과. `esp32dev`, `esp32dev-light-1`, `esp32dev-locker-1`, `esp32dev-speaker-1` 빌드 성공. speaker-1은 RAM 57,652바이트, Flash 1,104,525바이트다.
 - speaker-1 실기기에는 올리지 않았다. 음량 프레임 순서와 `SPEAKER_LIMIT_REFUSED`는 빌드와 코드 검토로만 확인했다.
