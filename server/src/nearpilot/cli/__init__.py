@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -19,18 +20,23 @@ DEFAULT_CONFIG = "config/server.toml"  # 실행 폴더 기준
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """`--config`를 하위 명령 앞뒤 어디에 써도 되는 파서. 하위 명령은 필수다."""
+    """`--config`와 `--dir`을 하위 명령 앞뒤 어디에 써도 되는 파서. 하위 명령은 필수다."""
     # 하위 명령 모듈이 위의 종료 코드를 가져다 쓰므로 상수를 정한 뒤에 가져온다.
     from nearpilot.cli import collect, evaluate, fit, recover, seed, serve, split
     from nearpilot.cli import eval as eval_cmd  # 모듈 이름이 내장 함수 eval을 가리지 않게 다른 이름으로 가져온다
 
     parser = argparse.ArgumentParser(prog="nearpilot", description="NearPilot 서버를 실행하고 운영한다.")
-    parser.add_argument("--config", metavar="PATH", default=DEFAULT_CONFIG,
+    # 쓰지 않으면 둘 다 None이다. --dir과 함께 쓴 --config를 가려내려고 --config의 기본값은 main이 채운다.
+    parser.add_argument("--config", metavar="PATH", default=None,
                         help=f"서버 TOML 설정 파일 (기본 {DEFAULT_CONFIG}, 실행 폴더 기준)")
-    # 하위 명령 뒤의 --config. 쓰지 않았을 때(SUPPRESS) 앞쪽 값을 덮어쓰지 않는다.
+    parser.add_argument("--dir", metavar="DIR", default=None,
+                        help="시험 폴더. 그 폴더의 server.toml을 설정으로 쓴다 (실행 폴더 기준)")
+    # 하위 명령 뒤의 --config, --dir. 쓰지 않았을 때(SUPPRESS) 앞쪽 값을 덮어쓰지 않는다.
     parent = argparse.ArgumentParser(add_help=False)
     parent.add_argument("--config", metavar="PATH", default=argparse.SUPPRESS,
                         help="서버 TOML 설정 파일. 하위 명령 앞에 써도 된다")
+    parent.add_argument("--dir", metavar="DIR", default=argparse.SUPPRESS,
+                        help="시험 폴더. 그 폴더의 server.toml을 설정으로 쓴다. 하위 명령 앞에 써도 된다")
     subparsers = parser.add_subparsers(dest="command", required=True)
     serve.register(subparsers, parent)
     seed.register(subparsers, parent)
@@ -44,7 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """명령줄을 읽어 하위 명령을 실행하고 종료 코드를 돌려준다. `argv`가 None이면 `sys.argv[1:]`을 읽는다."""
+    """명령줄을 읽어 하위 명령을 실행하고 종료 코드를 돌려준다. `argv`가 None이면 `sys.argv[1:]`을 읽는다.
+
+    하위 명령이 읽는 `args.config`는 여기서 채운다. `--dir`이 있으면 `DIR/server.toml`, 둘 다 없으면 `DEFAULT_CONFIG`다.
+    """
     from nearpilot.cli.common import CliError
 
     try:
@@ -52,6 +61,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SystemExit as exit_request:  # argparse가 --help에는 0으로, 인자 오류에는 2로 끝낸다
         return exit_request.code
     try:
+        if args.dir is not None and args.config is not None:  # 설정 파일을 읽기 전에 막는다
+            raise CliError("--dir와 --config는 함께 쓸 수 없다", EXIT_INVALID)
+        if args.dir is not None:
+            args.config = str(Path(args.dir) / "server.toml")
+        elif args.config is None:
+            args.config = DEFAULT_CONFIG
         return args.handler(args)
     except CliError as error:
         print(error.message, file=sys.stderr)
