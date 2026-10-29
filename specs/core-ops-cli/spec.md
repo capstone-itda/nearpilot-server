@@ -1,6 +1,6 @@
 # 운영 CLI (`nearpilot`)
 
-- 담당: dnnals (근접 추정)
+- 담당: dnnals (근접 추정·대시보드)
 - 요구사항: FR-01, FR-05, FR-06, FR-12A, FR-12B, FR-13, FR-14, FR-16, FR-22, NFR-06, NFR-10, NFR-12, NFR-13
 - 따르는 결정: #29, #30, #40, #41, #88, #131, #138
 - 예외: 담당자가 2026-10-17 대화에서 이 작업에 한해 AGENTS.md의 PR 분리 규칙을 무시하기로 했다. 머지된 spec(서버 조립, 수집 도구)의 동작 변경, `shared` 계약 추가, `docs/` 수정을 이 feat PR 하나에 넣는다.
@@ -14,11 +14,11 @@
 
 ## 2. 무엇
 
-- 입력: 서버 설정 파일, 사람이 쓴 시드·수집 계획·배치·적합 설정 파일, DB의 수집 회차와 관측.
+- 입력: 서버 설정 파일, 사람이 쓴 시드·수집 계획·배치·적합 설정 파일, DB의 수집 회차와 관측. 실행 보조 명령은 시험 폴더(`--dir`), 브로커 설정과 그 설정이 가리키는 비밀번호·ACL 파일, `lab.json`, `fleet.json`, 대시보드 폴더를 읽는다.
 - 출력: `nearpilot` 명령과 하위 명령, 분할 결과 파일, 모델 파일, 평가 보고서(CSV, Markdown).
 - 바뀌는 상태: 관리 쓰기(계정, 비콘, 신뢰, 장소, 정책, 종료 정책)와 수집 회차. 모두 기존 `AdminRepository` 경로와 감사로 저장한다.
 - 약속:
-  - `pip install -e .` 뒤 `nearpilot <하위 명령>`으로 실행한다. 하위 명령은 `serve`, `seed`, `collect run`, `collect list`, `collect close`, `split`, `fit`, `eval`이다.
+  - `pip install -e .` 뒤 `nearpilot <하위 명령>`으로 실행한다. 하위 명령은 `serve`, `seed`, `collect run`, `collect list`, `collect close`, `split`, `fit`, `eval`, `broker`, `sim`, `dashboard`다.
   - `nearpilot serve --collect-only`는 모델 없이 시작하고 RSSI와 기기 보고를 평소처럼 저장한다. MCP 엔드포인트를 열지 않아서 기기 실행 요청을 받지 않는다.
   - 수집 → 분할 → 적합 → 평가 → 서버 재시작으로 실측 모델이 판정에 쓰인다.
   - 시연과 시험에 띄우는 브로커, 가상 기기, 대시보드도 `nearpilot broker`, `nearpilot sim`, `nearpilot dashboard`로 띄운다. 셋은 서버 상태를 바꾸지 않는다.
@@ -136,12 +136,13 @@
 | `config/`의 예시 파일 | 각 형식의 읽기 함수로 읽힌다 | `test_FR16_config_examples_load` |
 | 수집 → 분할 → 적합 → 평가 전체 | 시뮬레이션한 수집 데이터로 모델 파일과 보고서가 생기고, 그 모델로 서버가 시작한다 | `test_FR16_ops_pipeline_end_to_end` |
 | `--dir DIR` | `DIR/server.toml`을 설정으로 쓴다. 하위 명령 앞뒤 어디에 써도 된다 | `test_NFR10_cli_dir_reads_folder_config` |
-| `--dir`과 `--config`를 함께 준다 | 설정을 읽기 전에 종료 코드 2 | `test_NFR10_cli_dir_and_config_conflict` |
+| `--dir`과 `--config`를 함께 준다 | 설정을 읽기 전에 종료 코드 2 | `test_NFR10_cli_dir_and_config_conflict`, `test_NFR10_cli_dir_and_config_conflict_is_checked_before_reading_config` |
 | `--dir`이 있고 `seed`의 `FILE`을 생략한다 | `DIR/seed.toml`을 읽는다. `--dir`이 없으면 종료 코드 2 | `test_NFR10_seed_dir_default_file` |
 | `--dir`이 있는 `broker` | `DIR/broker.conf`로 Mosquitto를 띄운다. Ctrl+C까지 기다린다 | `test_NFR12_broker_uses_folder_broker_conf` |
 | `--dir`이 없는 `broker` | 설정 폴더의 `mosquitto.conf`로 띄운다. 그 안의 경로는 설정 폴더의 부모(`server/`) 기준이다 | `test_NFR12_broker_uses_operational_conf` |
 | `broker`: 브로커 설정, 비밀번호·ACL 파일, `mosquitto` 실행 파일이 없다. `password_file`이나 `acl_file` 줄이 둘 이상이다 | 브로커를 띄우지 않고 종료 코드 2 | `test_NFR12_broker_missing_files_exit_2` |
 | `broker`: Mosquitto가 스스로 끝난다 | 종료 코드 1 | `test_NFR12_broker_exit_fails` |
+| `broker`: 시스템 임시 폴더 경로가 ASCII가 아니다 (계정 이름이 한글인 Windows) | 복사하지 않고 종료 코드 2. `TEMP`를 영문 경로로 바꾸라고 안내한다 | `test_NFR12_broker_rejects_non_ascii_temp` |
 | `sim` | 설정 폴더의 `fleet.json`으로 가상 기기를 띄운다 | `test_NFR10_sim_runs_folder_fleet` |
 | `sim`: `lab.json`이 없거나 `mode`가 `sim`이 아니다, `fleet.json`이 없다 | 기기를 띄우지 않고 종료 코드 2 | `test_NFR10_sim_rejects_hardware_lab` |
 | `dashboard` | `NEARPILOT_SERVER=http://127.0.0.1:<[http].port>`로 `dashboard/`에서 `npm run dev -- --host 0.0.0.0`을 띄운다 | `test_FR12B_dashboard_targets_configured_server` |
@@ -178,17 +179,19 @@
 - 시험 폴더(`tools.node_lab init`이 만드는 폴더)를 쓰던 팀 PowerShell 스크립트를 CLI로 대신한다 — 담당자가 2026-10-29에 정했다. 브로커와 서버를 한 명령으로 함께 띄우는 명령은 두지 않는다. 서버만 재시작해도 브로커와 기기 연결이 유지된다.
 - `--dir DIR`은 `--config`처럼 하위 명령 앞뒤 어디에 써도 된다. 실행 폴더 기준 경로이고, `DIR/server.toml`을 설정으로 쓴다. `--config`와 함께 쓰면 입력 오류(2)다. 나머지 규칙(기본 폴더, 상대 경로)은 그 설정 파일을 기준으로 같다.
 - "설정 폴더"는 설정 파일이 있는 폴더다. `--dir`이면 `DIR`이다.
-- `seed`의 `FILE`은 `--dir`이 있을 때만 생략할 수 있다. 생략하면 `DIR/seed.toml`이다.
+- `seed`의 `FILE`은 `--dir`이 있을 때만 생략할 수 있다. 생략하면 `DIR/seed.toml`이다. `node_lab init`은 `seed.toml`을 만들지 않으므로 사람이 쓴다.
+- `--dir`에서도 `var/`의 규칙(설정 폴더의 부모 기준)은 같다. 시험 폴더로 `collect`·`split`을 쓰면 결과가 `server/var/var/` 아래에 생기고 시험 폴더끼리 함께 쓴다 — 시험 폴더에서 모델을 만드는 일이 드물어 바꾸지 않는다.
 - `nearpilot broker`의 브로커 설정과 그 안의 상대 경로 기준은 둘이다 — 담당자가 2026-10-29에 정했다.
   - `--dir`이 있으면 `DIR/broker.conf`다. `node_lab init`의 형식이고 상대 경로는 `DIR` 기준이다.
   - `--dir`이 없으면 설정 폴더의 `mosquitto.conf`다. 상대 경로는 설정 폴더의 부모 기준이다 — `server/`에서 `mosquitto -c config/mosquitto.conf`로 띄우던 것과 같다. 파일은 고치지 않는다.
 - `broker`는 `password_file`, `acl_file` 줄이 가리키는 파일을 임시 ASCII 폴더에 복사하고, 그 경로로 바꾼 설정을 임시 폴더에 써서 `mosquitto -c`로 띄운다. 작업 폴더는 위의 기준 폴더다 (Windows 비ASCII 경로, AGENTS.md Gotchas). 다른 줄은 바꾸지 않는다. 끝나면 임시 폴더를 지운다. 출력은 터미널에 그대로 둔다.
+- 시스템 임시 폴더 경로가 ASCII가 아니면 복사하지 않고 입력 오류(2)다 — 임시 폴더는 `TEMP` 아래에 생겨서 Windows 계정 이름이 한글이면 우회가 통하지 않는다. 이유를 알 수 없는 브로커 실패 대신 바로 안내한다 (2026-10-29 검토 반영).
 - 같은 키(`password_file`, `acl_file`)의 줄이 둘 이상이면 입력 오류(2)다 — 복사본 이름이 키마다 하나라서 둘째 파일이 첫째를 덮어쓴다. 지금의 두 설정에는 키가 한 번씩만 있다.
 - 브로커를 끝낼 때 `terminate()`와 `kill()` 뒤에 각각 5초까지 기다린다. 모듈 상수다 — 서버의 운영 수치가 아니라 이 명령의 한계다 (`recover`의 요청 제한 시간과 같다).
 - `broker`는 `[mqtt].host`를 검사하지 않는다 — 브로커의 주소는 브로커 설정의 `listener`가 정한다.
 - `broker`의 종료 코드: Ctrl+C 130(Mosquitto를 끝낸 뒤), Mosquitto가 스스로 끝나면 1, 브로커 설정·가리킨 파일·`mosquitto` 실행 파일이 없으면 2. 실행 파일은 `tools.node_lab.setup.executable`로 찾는다(PATH, 다음 Windows 기본 설치 폴더).
 - `nearpilot sim`은 설정 폴더의 `fleet.json`을 `tools.node_sim.__main__.main(["run", "--config", …])`에 넘긴다. 종료 코드는 그 함수의 값이다. 그 함수가 Ctrl+C를 받아 기기를 멈추고 0을 돌려주므로 `sim`은 Ctrl+C도 0이다. 설정 폴더에 `lab.json`이 있고 `mode`가 `sim`일 때만 띄운다. 아니면 입력 오류(2)다 — 팀 스크립트와 같다. 실기기 시험 폴더에서 가상 기기가 같은 기기 ID로 붙지 않게 한다.
-- `nearpilot dashboard`는 대시보드 폴더에서 `npm run dev -- --host 0.0.0.0`을 실행한다. 환경 변수 `NEARPILOT_SERVER=http://127.0.0.1:<[http].port>`를 더하고 다른 환경 변수는 그대로 넘긴다 — 팀 스크립트와 같다 (담당자 2026-10-29). 같은 AP의 다른 기기에서도 대시보드를 연다 (NFR-12).
+- `nearpilot dashboard`는 대시보드 폴더에서 `npm run dev -- --host 0.0.0.0`을 실행한다. 환경 변수 `NEARPILOT_SERVER=http://127.0.0.1:<[http].port>`를 더하고 다른 환경 변수는 그대로 넘긴다 — 팀 스크립트와 같다 (담당자 2026-10-29). 같은 AP의 다른 기기에서도 대시보드를 연다 (NFR-12). 그래서 서버의 `[http].host`가 특정 AP 주소 하나면 대시보드가 서버에 붙지 못한다. `nearpilot dashboard`를 쓰는 설정은 `host`를 `0.0.0.0`이나 `127.0.0.1`로 둔다 (README에 쓴다).
 - 대시보드 폴더는 `--dashboard-dir`로 받는다. 기본은 패키지 위치에서 찾은 저장소의 `dashboard/`다 (`pip install -e`로 설치한 경우). `npm install`은 하지 않는다. `node_modules`가 없으면 `npm install`을 안내하고 2다. `npm`은 `shutil.which`로 찾는다(Windows는 `npm.cmd`).
 - `dashboard`의 종료 코드: Ctrl+C 130, npm이 0이 아닌 값으로 끝나면 1, 폴더·`node_modules`·`npm`이 없으면 2.
 
@@ -251,6 +254,7 @@
 
 ### docs
 
+- `docs/architecture.md`(2026-10-29 fix): §2 디렉터리 표의 `cli/` 명령 목록에 `broker`, `sim`, `dashboard`를 넣는다. §5 MQTT 1절과 `AGENTS.md`의 Mosquitto 기동 방법에 `nearpilot broker`를 더한다. 기존 `mosquitto -c` 방법도 그대로 쓴다.
 - `docs/architecture.md`: 디렉터리 표에 `cli/`, `core/admin/`, `config/` 하위 폴더, 테스트의 `cli/`를 넣는다. 담당 표에 AdminService(근접 추정 담당이 이 작업에서 만듦)를 넣고 "담당을 배정한 뒤 만든다"를 지운다. 진입점 미결을 `nearpilot serve`(`src/nearpilot/cli/`)와 조립 모듈 경로(`src/nearpilot/runtime/`)로 바꾼다. 관리 쓰기 표에 종료 정책 쓰기를 넣는다.
 - `AGENTS.md`: 검증 명령의 서버 실행 진입점 줄을 `nearpilot serve`로 바꾼다.
 
@@ -312,7 +316,9 @@
 | NFR-12 | `test_NFR12_broker_uses_operational_conf` | 운영 설정의 경로를 설정 폴더의 부모 기준으로 푼다 |
 | NFR-12 | `test_NFR12_broker_missing_files_exit_2` | 필요한 파일이 없으면 띄우지 않는다 |
 | NFR-12 | `test_NFR12_broker_exit_fails` | 브로커가 스스로 끝나면 1 |
+| NFR-12 | `test_NFR12_broker_rejects_non_ascii_temp` | 임시 폴더 경로가 ASCII가 아니면 띄우지 않는다 |
 | NFR-10 | `test_NFR10_sim_runs_folder_fleet` | 설정 폴더의 기기 구성으로 가상 기기를 띄운다 |
 | NFR-10 | `test_NFR10_sim_rejects_hardware_lab` | `lab.json`이 없거나 실기기 시험 폴더면 띄우지 않는다 |
 | FR-12B | `test_FR12B_dashboard_targets_configured_server` | 설정의 서버 포트와 `0.0.0.0`으로 npm을 부른다 |
 | FR-12B | `test_FR12B_dashboard_missing_prerequisites_exit_2` | 준비물이 없으면 npm을 부르지 않는다 |
+| FR-12B | `test_FR12B_dashboard_default_dir_is_repository_dashboard` | 기본 대시보드 폴더는 저장소의 `dashboard/`다 |

@@ -5,7 +5,8 @@
 `password_file`·`acl_file`이 가리키는 파일은 임시 ASCII 폴더에 복사하고, 그 경로로 바꾼 설정을 임시 폴더에 써서
 `mosquitto -c`에 넘긴다 (Windows 비ASCII 경로를 Mosquitto가 열지 못한다, AGENTS.md Gotchas). 끝나면 임시 폴더를 지운다.
 출력은 터미널에 그대로 둔다. `[mqtt].host`는 검사하지 않는다 — 브로커의 주소는 브로커 설정의 `listener`가 정한다.
-종료 코드: Ctrl+C 130(Mosquitto를 끝낸 뒤), Mosquitto가 스스로 끝나면 1, 브로커 설정·가리킨 파일·`mosquitto` 실행 파일이 없으면 2.
+시스템 임시 폴더 경로가 ASCII가 아니면 띄우지 않는다.
+종료 코드: Ctrl+C 130(Mosquitto를 끝낸 뒤), Mosquitto가 스스로 끝나면 1, 브로커 설정·가리킨 파일·`mosquitto` 실행 파일이 없거나 임시 폴더 경로가 ASCII가 아니면 2.
 """
 
 from __future__ import annotations
@@ -44,6 +45,9 @@ def _broker(args: argparse.Namespace) -> int:
     except ValueError as error:  # PATH와 Windows 기본 설치 폴더에 없다
         raise CliError(str(error), EXIT_INVALID) from None
     with tempfile.TemporaryDirectory(prefix="np-broker-") as temp:
+        if not str(Path(temp).resolve()).isascii():  # 계정 이름이 한글이면 시스템 임시 폴더도 한글이다
+            raise CliError(f"임시 폴더 경로에 영문이 아닌 문자가 있다: {temp}. Mosquitto가 열지 못한다. "
+                           "환경 변수 TEMP(macOS·Linux는 TMPDIR)를 영문 경로로 바꾼다", EXIT_INVALID)
         rewritten = prepare_config(conf, base, Path(temp))
         process = subprocess.Popen([program, "-c", str(rewritten)], cwd=base)
         try:

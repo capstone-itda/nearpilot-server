@@ -84,8 +84,11 @@ def test_FR12B_dashboard_targets_configured_server(server_dir, write_config, run
     env = call.kwargs["env"]
     assert env["NEARPILOT_SERVER"] == "http://127.0.0.1:8123"
     assert env["NEARPILOT_TEST_KEPT"] == "kept"
-    # 기본 폴더는 저장소의 dashboard/다
-    assert (default_dashboard_dir() / "package.json").is_file()
+
+
+def test_FR12B_dashboard_default_dir_is_repository_dashboard():
+    # 파일을 읽지 않고 위치만 본다: server/tests/cli/ 에서 저장소 루트의 dashboard/
+    assert default_dashboard_dir() == Path(__file__).resolve().parents[3] / "dashboard"
 
 
 @pytest.mark.parametrize(("returncode", "expected"), [

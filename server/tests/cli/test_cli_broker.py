@@ -229,8 +229,15 @@ def _without_mosquitto(lab: Path, fake: FakeBroker) -> str:
     return "mosquitto 실행 파일이 필요하다. PATH에 추가한다.\n"
 
 
+def _with_repeated_key(lab: Path, fake: FakeBroker) -> str:
+    with (lab / "broker.conf").open("a", encoding="utf-8") as stream:
+        stream.write("password_file .env.broker-passwords\n")
+    return f"브로커 설정에 password_file 줄이 둘 이상 있다: {lab / 'broker.conf'}\n"
+
+
 @pytest.mark.parametrize("break_it", [
     pytest.param(_without_conf, id="no-conf"),
+    pytest.param(_with_repeated_key, id="repeated-key"),
     pytest.param(_without_password_file, id="no-password-file"),
     pytest.param(_without_acl_file, id="no-acl-file"),
     pytest.param(_without_mosquitto, id="no-mosquitto"),
@@ -243,6 +250,19 @@ def test_NFR12_broker_missing_files_exit_2(server_dir, run_cli, fake_broker, tem
     assert code == EXIT_INVALID and out == "" and err == expected
     assert fake_broker.launches == [] and fake_broker.events == []  # 브로커를 띄우지 않는다
     assert list(temp_root.iterdir()) == []
+
+
+def test_NFR12_broker_rejects_non_ascii_temp(server_dir, run_cli, fake_broker, lab, tmp_path, monkeypatch):
+    korean = tmp_path / "임시 폴더"  # 계정 이름이 한글인 Windows의 시스템 임시 폴더와 같다
+    korean.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(korean))
+
+    code, out, err = run_cli(["--dir", LAB_ARG, "broker"], cwd=server_dir)
+
+    assert code == EXIT_INVALID and out == ""
+    assert err.startswith("임시 폴더 경로에 영문이 아닌 문자가 있다:") and "TEMP" in err
+    assert fake_broker.launches == [] and fake_broker.events == []  # 브로커를 띄우지 않는다
+    assert list(korean.iterdir()) == []  # 복사본을 만들지 않고 임시 폴더도 지운다
 
 
 @pytest.mark.parametrize("exit_code", [0, 3], ids=["exit-0", "exit-3"])

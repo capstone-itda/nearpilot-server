@@ -73,7 +73,7 @@ nearpilot-server/
 │   │   └── eval/               서버 지표 평가 설정 예시 (횟수, 통과 기준, 시뮬레이터 장면)
 │   ├── src/nearpilot/
 │   │   ├── shared/             계층 간 계약: 도메인 모델, 열거형, 인터페이스, 설정
-│   │   ├── cli/                운영 명령 `nearpilot`: serve, seed, recover, collect, split, fit, eval, evaluate-server, evaluate-reask (FR-16, NFR-13)
+│   │   ├── cli/                운영 명령 `nearpilot`: serve, seed, recover, collect, split, fit, eval, evaluate-server, evaluate-reask, broker, sim, dashboard (FR-12B, FR-16, NFR-10, NFR-12, NFR-13)
 │   │   ├── api/
 │   │   │   ├── mcp/            MCP 엔드포인트와 도구 6개 (FR-08~FR-11)
 │   │   │   ├── auth/           토큰으로 계정 식별, 무효 토큰 거부
@@ -1022,7 +1022,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 
 MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_session=true`로 접속하고 매번 구독한다.
 
-서버와 시뮬레이터는 Mosquitto를 브로커로 쓴다. 구현자는 `server/`에서 `mosquitto -c config/mosquitto.conf`로 브로커를 직접 실행한다. 설정 파일의 경로는 `server/config/mosquitto.conf`다.
+서버와 시뮬레이터는 Mosquitto를 브로커로 쓴다. 구현자는 `server/`에서 `mosquitto -c config/mosquitto.conf`로 브로커를 직접 실행한다. 설정 파일의 경로는 `server/config/mosquitto.conf`다. `nearpilot broker`도 같은 설정으로 띄운다(`--dir`이면 시험 폴더의 `broker.conf`). 이 명령은 설정이 가리키는 비밀번호·ACL 파일을 임시 ASCII 경로에 복사해서 띄우고 설정 파일은 고치지 않는다.
 
 - 서버는 전용 계정으로 접속한다. 기기는 기기마다 다른 계정으로 접속한다. 브로커는 익명 접속을 허용하지 않는다.
 - 브로커는 기기 계정과 `node_id`의 연결에 따라 토픽 접근을 제한한다.
