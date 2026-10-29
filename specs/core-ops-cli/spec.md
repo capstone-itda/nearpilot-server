@@ -140,7 +140,7 @@
 | `--dir`이 있고 `seed`의 `FILE`을 생략한다 | `DIR/seed.toml`을 읽는다. `--dir`이 없으면 종료 코드 2 | `test_NFR10_seed_dir_default_file` |
 | `--dir`이 있는 `broker` | `DIR/broker.conf`로 Mosquitto를 띄운다. Ctrl+C까지 기다린다 | `test_NFR12_broker_uses_folder_broker_conf` |
 | `--dir`이 없는 `broker` | 설정 폴더의 `mosquitto.conf`로 띄운다. 그 안의 경로는 설정 폴더의 부모(`server/`) 기준이다 | `test_NFR12_broker_uses_operational_conf` |
-| `broker`: 브로커 설정, 비밀번호·ACL 파일, `mosquitto` 실행 파일이 없다 | 브로커를 띄우지 않고 종료 코드 2 | `test_NFR12_broker_missing_files_exit_2` |
+| `broker`: 브로커 설정, 비밀번호·ACL 파일, `mosquitto` 실행 파일이 없다. `password_file`이나 `acl_file` 줄이 둘 이상이다 | 브로커를 띄우지 않고 종료 코드 2 | `test_NFR12_broker_missing_files_exit_2` |
 | `broker`: Mosquitto가 스스로 끝난다 | 종료 코드 1 | `test_NFR12_broker_exit_fails` |
 | `sim` | 설정 폴더의 `fleet.json`으로 가상 기기를 띄운다 | `test_NFR10_sim_runs_folder_fleet` |
 | `sim`: `lab.json`이 없거나 `mode`가 `sim`이 아니다, `fleet.json`이 없다 | 기기를 띄우지 않고 종료 코드 2 | `test_NFR10_sim_rejects_hardware_lab` |
@@ -183,9 +183,11 @@
   - `--dir`이 있으면 `DIR/broker.conf`다. `node_lab init`의 형식이고 상대 경로는 `DIR` 기준이다.
   - `--dir`이 없으면 설정 폴더의 `mosquitto.conf`다. 상대 경로는 설정 폴더의 부모 기준이다 — `server/`에서 `mosquitto -c config/mosquitto.conf`로 띄우던 것과 같다. 파일은 고치지 않는다.
 - `broker`는 `password_file`, `acl_file` 줄이 가리키는 파일을 임시 ASCII 폴더에 복사하고, 그 경로로 바꾼 설정을 임시 폴더에 써서 `mosquitto -c`로 띄운다. 작업 폴더는 위의 기준 폴더다 (Windows 비ASCII 경로, AGENTS.md Gotchas). 다른 줄은 바꾸지 않는다. 끝나면 임시 폴더를 지운다. 출력은 터미널에 그대로 둔다.
+- 같은 키(`password_file`, `acl_file`)의 줄이 둘 이상이면 입력 오류(2)다 — 복사본 이름이 키마다 하나라서 둘째 파일이 첫째를 덮어쓴다. 지금의 두 설정에는 키가 한 번씩만 있다.
+- 브로커를 끝낼 때 `terminate()`와 `kill()` 뒤에 각각 5초까지 기다린다. 모듈 상수다 — 서버의 운영 수치가 아니라 이 명령의 한계다 (`recover`의 요청 제한 시간과 같다).
 - `broker`는 `[mqtt].host`를 검사하지 않는다 — 브로커의 주소는 브로커 설정의 `listener`가 정한다.
 - `broker`의 종료 코드: Ctrl+C 130(Mosquitto를 끝낸 뒤), Mosquitto가 스스로 끝나면 1, 브로커 설정·가리킨 파일·`mosquitto` 실행 파일이 없으면 2. 실행 파일은 `tools.node_lab.setup.executable`로 찾는다(PATH, 다음 Windows 기본 설치 폴더).
-- `nearpilot sim`은 설정 폴더의 `fleet.json`을 `tools.node_sim.__main__.main(["run", "--config", …])`에 넘긴다. 종료 코드는 그 함수의 값이다. 설정 폴더에 `lab.json`이 있고 `mode`가 `sim`일 때만 띄운다. 아니면 입력 오류(2)다 — 팀 스크립트와 같다. 실기기 시험 폴더에서 가상 기기가 같은 기기 ID로 붙지 않게 한다.
+- `nearpilot sim`은 설정 폴더의 `fleet.json`을 `tools.node_sim.__main__.main(["run", "--config", …])`에 넘긴다. 종료 코드는 그 함수의 값이다. 그 함수가 Ctrl+C를 받아 기기를 멈추고 0을 돌려주므로 `sim`은 Ctrl+C도 0이다. 설정 폴더에 `lab.json`이 있고 `mode`가 `sim`일 때만 띄운다. 아니면 입력 오류(2)다 — 팀 스크립트와 같다. 실기기 시험 폴더에서 가상 기기가 같은 기기 ID로 붙지 않게 한다.
 - `nearpilot dashboard`는 대시보드 폴더에서 `npm run dev -- --host 0.0.0.0`을 실행한다. 환경 변수 `NEARPILOT_SERVER=http://127.0.0.1:<[http].port>`를 더하고 다른 환경 변수는 그대로 넘긴다 — 팀 스크립트와 같다 (담당자 2026-10-29). 같은 AP의 다른 기기에서도 대시보드를 연다 (NFR-12).
 - 대시보드 폴더는 `--dashboard-dir`로 받는다. 기본은 패키지 위치에서 찾은 저장소의 `dashboard/`다 (`pip install -e`로 설치한 경우). `npm install`은 하지 않는다. `node_modules`가 없으면 `npm install`을 안내하고 2다. `npm`은 `shutil.which`로 찾는다(Windows는 `npm.cmd`).
 - `dashboard`의 종료 코드: Ctrl+C 130, npm이 0이 아닌 값으로 끝나면 1, 폴더·`node_modules`·`npm`이 없으면 2.

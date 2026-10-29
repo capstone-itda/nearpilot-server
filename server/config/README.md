@@ -100,6 +100,21 @@ CLI 호스트도 LLM을 부르려면 호스트를 돌리는 노트북에 인터�
 설정 파일은 `--config`로 고르고 기본은 `config/server.toml`이다 (실행 폴더 기준).
 종료 코드는 0 성공, 1 실행 중 거부·실패(서버 시작 실패 포함), 2 입력 오류, 130 Ctrl+C다. `serve`는 Ctrl+C로 멈춰도 정상 종료라서 0이다.
 
+`--dir <시험 폴더>`를 주면 그 폴더의 `server.toml`을 설정으로 쓴다 (`--config`와 함께 쓰지 않는다). 시험 폴더는 `python -m tools.node_lab init`이 만든다.
+시연·시험에 띄우는 프로세스는 창마다 하나씩 띄운다. 브로커를 먼저 띄운다.
+
+```
+nearpilot --dir var/final-demo broker      # Mosquitto. --dir이 없으면 config/mosquitto.conf
+nearpilot --dir var/final-demo serve       # 서버
+nearpilot --dir var/final-demo seed        # 시드. --dir이 있으면 파일을 생략하고 DIR/seed.toml을 읽는다
+nearpilot --dir var/final-demo dashboard   # 대시보드 개발 서버 (npm run dev)
+nearpilot --dir var/final-demo sim         # 가상 기기. lab.json의 mode가 sim인 폴더에서만
+```
+
+- `broker`는 브로커 설정의 `password_file`, `acl_file`을 임시 ASCII 폴더에 복사해서 띄운다 (Windows 한글 경로). 설정 파일은 고치지 않는다. `--dir`이면 `DIR/broker.conf`의 경로를 `DIR` 기준으로, 아니면 `config/mosquitto.conf`의 경로를 `server/` 기준으로 푼다.
+- `dashboard`는 `NEARPILOT_SERVER=http://127.0.0.1:<[http].port>`로 `npm run dev -- --host 0.0.0.0`을 실행한다. 같은 AP의 다른 기기에서도 열린다. `npm install`은 먼저 직접 한다. 대시보드 폴더는 `--dashboard-dir`로 바꾼다.
+- `sim`은 Ctrl+C나 `quit`으로 끝내도 0이다. `broker`와 `dashboard`는 Ctrl+C면 130이다.
+
 파일 인자에 이름(`/`나 `\`가 없는 값)을 주면 아래 기본 폴더에서 찾고, 경로를 주면 실행 폴더 기준으로 읽는다.
 
 | 폴더 | 파일 | 만드는 쪽 | 읽는 명령 |
