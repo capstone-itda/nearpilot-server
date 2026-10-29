@@ -167,6 +167,57 @@ class LightSetting:
 
 
 @dataclass(frozen=True, slots=True)
+class SpeakerControls:
+    """스피커 기기가 발표한 음량 제어 정보 (FR-04, FR-09).
+
+    volume_max 는 펌웨어가 지키는 음량 상한이다. 30 은 DFPlayer 의 전송 범위다.
+    """
+
+    volume_max: int
+
+    def __post_init__(self) -> None:
+        if isinstance(self.volume_max, bool) or not isinstance(self.volume_max, int):
+            raise ValueError("volume_max 는 정수여야 한다")
+        if not 1 <= self.volume_max <= 30:
+            raise ValueError("volume_max 는 1~30 이어야 한다")
+
+
+@dataclass(frozen=True, slots=True)
+class SpeakerSetting:
+    """스피커 `on` 의 음량 (FR-09). 값은 없을 수 있다.
+
+    방문자 입력(`UseRequest.speaker`)은 받은 값만 담는다. 서버가 정한 값(`NodeCommand.speaker`)은 음량을 담는다.
+    음량은 0~30 정수다. 기기별 상한 검사는 판정이 한다.
+    """
+
+    volume: int | None = None
+
+    def __post_init__(self) -> None:
+        v = self.volume
+        if v is not None and (isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= 30):
+            raise ValueError("volume 은 0~30 정수여야 한다")
+
+    @property
+    def complete(self) -> bool:
+        return self.volume is not None
+
+    def to_json(self) -> dict[str, Any]:
+        """저장과 비교에 쓰는 정규화 값. 없는 값은 넣지 않는다."""
+        out: dict[str, Any] = {}
+        if self.volume is not None:
+            out["volume"] = self.volume
+        return out
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any] | None) -> SpeakerSetting | None:
+        if data is None:
+            return None
+        if not isinstance(data, Mapping) or set(data) - {"volume"}:
+            raise ValueError(f"스피커 설정 형식 오류: {data!r}")
+        return cls(data.get("volume"))
+
+
+@dataclass(frozen=True, slots=True)
 class NodeInfo:
     """판정에 필요한 노드 정보. ONLINE 여부는 저장하지 않고 last_seen_at + TTL 로 계산한다."""
 
@@ -182,6 +233,7 @@ class NodeInfo:
     session_id: str | None = None  # 현재 기기 연결 ID. 확인한 연결이 없으면 None
     session_first_seen_at: datetime | None = None  # 현재 연결의 첫 수신 시각
     light_controls: LightControls | None = None  # 발표한 조명 제어 정보. 없으면 인자를 받지 않는다 (FR-09)
+    speaker_controls: SpeakerControls | None = None  # 발표한 스피커 제어 정보. 없으면 음량을 받지 않는다 (FR-09)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "release_policy", _freeze(self.release_policy))
@@ -281,6 +333,7 @@ class UseRequest:
     received_at: datetime
     parent_internal_request_id: str | None = None  # 재질문·승인 후 재요청 연결
     light: LightSetting | None = None  # 조명 `on` 의 받은 인자. 인자가 없으면 None (FR-09)
+    speaker: SpeakerSetting | None = None  # 스피커 `on` 의 받은 인자. 인자가 없으면 None (FR-09)
 
 
 @dataclass(frozen=True, slots=True)
@@ -452,6 +505,8 @@ class ExecutionContext:
     reserved_at: datetime | None = None
     # 판정이 정한 조명 설정. 조명 제어 정보를 발표한 기기의 `on` 에만 있고 두 값을 모두 담는다 (FR-09).
     light: LightSetting | None = None
+    # 판정이 정한 스피커 음량. 스피커 제어 정보를 발표한 기기의 `on` 에만 있다 (FR-09).
+    speaker: SpeakerSetting | None = None
 
     def __post_init__(self) -> None:
         internal = self.execution_kind == ExecutionKind.SERVER_INTERNAL
@@ -510,6 +565,7 @@ class CommandRecord:
     occurred_at: datetime | None = None
     evidence: Mapping[str, Any] = field(default_factory=dict)
     light: LightSetting | None = None  # 명령에 담을 조명 설정. 재전송과 재시작 뒤에도 같다 (FR-09)
+    speaker: SpeakerSetting | None = None  # 명령에 담을 스피커 음량. 재전송과 재시작 뒤에도 같다 (FR-09)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "evidence", _freeze(self.evidence))
@@ -561,6 +617,7 @@ class NodeAnnounce:
     seq: int
     sent_at: datetime
     light_controls: LightControls | None = None  # 조명 기기만 담는다. 신뢰 상태를 바꾸지 않는다 (FR-04)
+    speaker_controls: SpeakerControls | None = None  # 스피커 기기만 담는다. 신뢰 상태를 바꾸지 않는다 (FR-04)
 
 
 @dataclass(frozen=True, slots=True)
@@ -622,6 +679,7 @@ class NodeCommand:
     issued_at: datetime
     expires_at: datetime  # issued_at + Settings.exec_timeout_sec
     light: LightSetting | None = None  # `cmd.parameters`. 서버가 정한 밝기와 색을 모두 담는다 (FR-09)
+    speaker: SpeakerSetting | None = None  # `cmd.parameters`. 서버가 정한 음량을 담는다 (FR-09)
 
 
 @dataclass(frozen=True, slots=True)

@@ -69,6 +69,11 @@ class Settings:
     light_default_brightness: int = 64  # 앞선 조명 설정이 없을 때 생략한 밝기
     light_default_color: str = "#FFFFFF"  # 앞선 조명 설정이 없을 때 생략한 색
 
+    # ── 스피커 음량 (FR-09) ──
+    # 20 은 커패시터 없는 speaker-1 에서 담당자가 정한 값이다. 커패시터를 달기 전에는 올리지 않는다.
+    speaker_volume_max: int = 20  # 1~30. 기기가 발표한 상한과 비교해서 작은 값을 k 로 쓴다
+    speaker_default_volume: int = 20  # 0 이상 speaker_volume_max 이하. 앞선 음량이 없을 때 쓴다
+
     def __post_init__(self) -> None:
         for name in (
             "threshold_locker", "threshold_light", "rssi_frame_sec",
@@ -144,6 +149,14 @@ class Settings:
             raise ValueError("light_default_brightness 는 0 이상 light_brightness_max 이하여야 한다")
         if not is_light_color(self.light_default_color) or self.light_default_color != self.light_default_color.upper():
             raise ValueError(f"light_default_color 는 대문자 #RRGGBB 여야 한다: {self.light_default_color!r}")
+        for name in ("speaker_volume_max", "speaker_default_volume"):
+            v = getattr(self, name)
+            if isinstance(v, bool) or not isinstance(v, int):
+                raise ValueError(f"{name} 는 정수여야 한다: {v!r}")
+        if not 1 <= self.speaker_volume_max <= 30:
+            raise ValueError(f"speaker_volume_max 는 1~30 이어야 한다: {self.speaker_volume_max}")
+        if not 0 <= self.speaker_default_volume <= self.speaker_volume_max:
+            raise ValueError("speaker_default_volume 은 0 이상 speaker_volume_max 이하여야 한다")
         if self.leave_grace_sec < 0:
             raise ValueError(f"leave_grace_sec 는 0 이상이어야 한다: {self.leave_grace_sec}")
         if self.allocation_window_ms < 0:
