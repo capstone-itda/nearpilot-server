@@ -25,7 +25,7 @@ from nearpilot.api.mcp.response import (
 from nearpilot.shared.config import is_light_color
 from nearpilot.shared.enums import Action, Capability, ReasonCode
 from nearpilot.shared.interfaces import CoreService
-from nearpilot.shared.models import Account, LightSetting, TargetSpec, UseRequest
+from nearpilot.shared.models import Account, LightSetting, SpeakerSetting, TargetSpec, UseRequest
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +37,9 @@ _TOOL_DESCRIPTION = (
     "controls.brightness_max 다. color 는 #RRGGBB 형식이고, controls.color 가 true 인 기기만 받는다. "
     "범위 밖 값과 지원하지 않는 인자는 실행하지 않고 거부한다. 생략한 인자는 그 조명의 마지막 설정을 유지한다. "
     "이미 켜진 조명에도 on 으로 밝기와 색을 바꾼다. 끄려면 brightness 0 대신 off 를 쓴다. "
+    "스피커(speaker-1)의 on 에만 선택 인자 volume 을 쓸 수 있다. "
+    "volume 은 0 이상 k 이하의 정수이고 k 는 controls.volume_max 다. 범위 밖 값은 거부한다. "
+    "생략하면 마지막 음량을 유지한다. 재생 중인 스피커에도 on 으로 음량을 바꾼다. 멈추려면 off 를 쓴다. "
     "같은 요청을 다시 보낼 때는 같은 request_id 와 같은 인자를 쓴다."
 )
 
@@ -89,9 +92,23 @@ def _light_input(target: TargetSpec, action: Action, brightness: Any, color: Any
     return LightSetting(brightness, color)
 
 
+def _speaker_input(target: TargetSpec, action: Action, volume: Any) -> SpeakerSetting | None:
+    """스피커 음량 인자의 자료형, 범위, 대상 기능과 동작을 검사한다 (FR-09). 틀리면 ValueError.
+
+    문자열 숫자, 실수, 불리언을 정수로 바꾸지 않는다. 기기별 지원과 상한은 판정이 검사한다.
+    """
+    if volume is None:
+        return None
+    if target.capability is not Capability.SPEAKER or action is not Action.ON:
+        raise ValueError("스피커 on 이 아닌 요청의 인자")
+    if type(volume) is not int or not 0 <= volume <= 30:
+        raise ValueError("volume 형식 오류")
+    return SpeakerSetting(volume)
+
+
 def build_app(
     core: CoreService, authenticator: Authenticator, clock: Callable[[], datetime],
-    *, public_hosts: Sequence[str] = (), light_brightness_max: int = 255,
+    *, public_hosts: Sequence[str] = (), light_brightness_max: int = 255, speaker_volume_max: int = 30,
 ) -> Starlette:
     mcp = MCPServer("nearpilot")
     # 스키마는 형식만 알린다. 값은 Any 로 받아서 SDK 가 자료형을 바꾸지 않게 하고 직접 검사한다.
@@ -101,10 +118,13 @@ def build_app(
     color_schema = WithJsonSchema({
         "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$",
         "description": "조명 색. #RRGGBB. controls.color 가 true 인 조명의 on 에만 쓴다."})
+    volume_schema = WithJsonSchema({
+        "type": "integer", "minimum": 0, "maximum": speaker_volume_max,
+        "description": "스피커 음량. 0 이상 controls.volume_max 이하의 정수. 스피커 on 에만 쓴다."})
 
     async def request_use(
         target_spec: str, action: str, request_id: str, ctx: Context,
-        brightness: Any = None, color: Any = None,
+        brightness: Any = None, color: Any = None, volume: Any = None,
     ) -> dict:
         try:
             account = _account_of(ctx)
@@ -118,7 +138,8 @@ def build_app(
                     user_id=account.user_id, request_id=request_id,
                     target=target, action=act,
                     host_kind=None, received_at=clock(),
-                    light=_light_input(target, act, brightness, color))
+                    light=_light_input(target, act, brightness, color),
+                    speaker=_speaker_input(target, act, volume))
             except ValueError:
                 return denied_response(ReasonCode.INVALID_INPUT, request_id)
             # 판정과 실행 인계는 동기 함수다. 이벤트 루프를 막지 않는다.
@@ -130,7 +151,8 @@ def build_app(
     # 상한은 설정 값이라 주석 문자열로 쓸 수 없다. 평가한 주석 객체로 바꾼 뒤 도구로 등록한다.
     request_use.__annotations__.update(
         brightness=Annotated[Any, brightness_schema, Field(default=None)],
-        color=Annotated[Any, color_schema, Field(default=None)])
+        color=Annotated[Any, color_schema, Field(default=None)],
+        volume=Annotated[Any, volume_schema, Field(default=None)])
     mcp.tool(name="request_use", description=_TOOL_DESCRIPTION)(request_use)
 
     @mcp.tool(name="request_access", description=_ACCESS_DESCRIPTION)

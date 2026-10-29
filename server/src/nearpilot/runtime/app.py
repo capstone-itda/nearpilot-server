@@ -28,7 +28,8 @@ def create_app(runtime: Runtime) -> FastAPI:
     mcp_app = None if runtime.collect_only else build_app(
         runtime.core, runtime.authenticator, runtime.clock,
         public_hosts=runtime.config.http.public_hosts,
-        light_brightness_max=runtime.config.settings.light_brightness_max)
+        light_brightness_max=runtime.config.settings.light_brightness_max,
+        speaker_volume_max=runtime.config.settings.speaker_volume_max)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
