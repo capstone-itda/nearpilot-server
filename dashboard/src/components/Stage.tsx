@@ -6,7 +6,7 @@ import type { Spot } from '../model/types';
 import { GRID, ROOM, facing, frontOf, snap } from '../view/arrange';
 import { MARK_H, MARK_W, PERSON_R, planIn, type InsetView } from '../view/inset';
 import { ISO_K, ROOM_ISO, iso, kernel, unIso, type Kernel } from '../view/iso';
-import { DEVICE_D, DEVICE_H, DEVICE_LABEL_H, DEVICE_W, HEAD_R, PERSON_Z, SLAB_H, WALL_H, deviceBody, labelBox } from '../view/placement';
+import { DEVICE_D, DEVICE_H, DEVICE_LABEL_H, DEVICE_W, HEAD_R, PERSON_Z, RSSI_W, SLAB_H, WALL_H, deviceBody, labelBox } from '../view/placement';
 import type { StageDeviceView, StageView, StageVisitorView } from '../view/stage';
 import { FIT, ZOOM_MAX, ZOOM_STEP, isFit, panBy, viewBoxOf, zoomAt, type ZoomView } from '../view/zoom';
 import { Icon } from './common';
@@ -320,7 +320,23 @@ function Actors({ v, devices, editFor, calm }: {
       {depth.map((x) => x.el)}
 
       <g className="np-stage__rssi" data-on={b(v.rssiOn)}>
-        {devices.filter((d) => !d.hidden).map((d) => <text key={d.nodeId} className="np-stage__signal-label" x={d.rssiAt.x} y={d.rssiAt.y + 17} data-anchor="middle">{v.rssi[d.nodeId] ?? ''}</text>)}
+        {devices.filter((d) => !d.hidden).map((d) => {
+          const p = v.prob[d.nodeId];
+          // 막대는 신호 세기 칸 안의 아랫단에 둔다. 칸이 커지면 사람 자리와 이름표 배치가 달라진다
+          const x = d.rssiAt.x - RSSI_W / 2, y = d.rssiAt.y + 19;
+          return (
+            <g key={d.nodeId}>
+              <text className="np-stage__signal-label" x={d.rssiAt.x} y={d.rssiAt.y + (p ? 12 : 17)} data-anchor="middle">{v.rssi[d.nodeId] ?? ''}</text>
+              {p && v.threshold !== undefined && (
+                <g className="np-stage__prob" data-component="StageProbBar" data-tone={p.tone}>
+                  <rect className="np-stage__prob-track" x={x} y={y} width={RSSI_W} height="3" />
+                  <rect className="np-stage__prob-fill" x={x} y={y} width={Math.round(p.v * RSSI_W)} height="3" />
+                  <line className="np-stage__prob-threshold" x1={x + v.threshold * RSSI_W} y1={y - 2} x2={x + v.threshold * RSSI_W} y2={y + 3} />
+                </g>
+              )}
+            </g>
+          );
+        })}
       </g>
 
       <g key={`${c.title}|${c.body}`} className="np-stage__callout np-flash" data-component="StageCallout" data-on={b(c.on)} data-tone={c.tone}>

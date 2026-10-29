@@ -77,6 +77,11 @@
 .np-stage__arrow { fill: var(--tone); }
 .np-stage__signal { fill: none; stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; }
 .np-stage__signal-label { font-family: var(--font-mono); font-size: 17px; fill: var(--accent-strong); }
+.np-stage__prob-track { fill: var(--accent-soft); stroke: var(--line-soft); stroke-width: 1; }
+.np-stage__prob-fill { fill: var(--ink-3); }
+.np-stage__prob[data-tone="ok"] .np-stage__prob-fill { fill: var(--ok); }
+.np-stage__prob[data-tone="ask"] .np-stage__prob-fill { fill: var(--ask); }
+.np-stage__prob-threshold { stroke: var(--ink); stroke-width: 1.5; }
 
 /* 흐름 선 위를 이동하는 메시지 점 */
 .np-stage__packet { fill: var(--tone); stroke: var(--bg); stroke-width: 2; filter: var(--glow); }

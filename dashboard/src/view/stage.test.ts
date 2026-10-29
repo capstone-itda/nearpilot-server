@@ -43,6 +43,24 @@ describe('stageView', () => {
     expect(v.visitors.find((x) => x.personId === 'p-b')!.on).toBe(false);
   });
 
+  it('FR12B 요청 중 신호 세기 아래에 후보 확률 막대와 기준선', () => {
+    const ok = stageView(SCENES.flow(), LAYOUT, { panelOpen: false });
+    expect(ok.threshold).toBe(0.95);
+    expect(ok.prob).toEqual({ 'locker-1': { v: 0.97, tone: 'ok' }, 'locker-2': { v: 0.02, tone: 'muted' }, 'locker-3': { v: 0.01, tone: 'muted' } });
+    const ask = stageView(SCENES.ask(), LAYOUT, { panelOpen: false });
+    expect(ask.prob['locker-1']).toEqual({ v: 0.58, tone: 'ask' });
+    expect(ask.prob['locker-2'].tone).toBe('muted');
+  });
+
+  it('FR12B 확률이 없거나 신호 세기를 끄면 막대도 없다', () => {
+    const s = SCENES.flow();
+    s.request = { ...s.request!, posteriors: undefined, threshold: undefined };
+    expect(stageView(s, LAYOUT, { panelOpen: false })).toMatchObject({ rssiOn: true, prob: {} });
+    const done = SCENES.flow();
+    done.request = { ...done.request!, execution: 'succeeded' };
+    expect(stageView(done, LAYOUT, { panelOpen: false })).toMatchObject({ rssiOn: false, prob: {}, threshold: undefined });
+  });
+
   it('FR12B 공용형 OK: 서버 랙의 빈자리 칸은 공용형 생략', () => {
     const s = SCENES.approval();
     s.request = { ...s.request!, verdict: 'OK', reason: 'OK', execution: 'sent', steps: s.request!.steps.map((x, i) => (i < 5 ? { result: 'pass' as const } : x)) };
