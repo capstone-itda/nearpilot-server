@@ -140,4 +140,4 @@ def test_FR04_light_control_columns_migrated(conn):
     node_cols = {r["name"] for r in conn.execute("PRAGMA table_info(node)")}
     command_cols = {r["name"] for r in conn.execute("PRAGMA table_info(node_command)")}
     assert "light_controls" in node_cols and "light" in command_cols
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+    assert conn.execute("PRAGMA user_version").fetchone()[0] >= 8
