@@ -78,6 +78,11 @@ static_assert(NP_SPEAKER_RX_PIN < 0 || (NP_SPEAKER_RX_PIN != NP_OUTPUT_PIN && NP
     && NP_SPEAKER_RX_PIN != NP_LED_PIN && NP_SPEAKER_RX_PIN != NP_LIGHT_RING_PIN), "speaker shares a pin");
 static_assert(NP_SPEAKER_VOLUME >= 0 && NP_SPEAKER_VOLUME <= 30, "DFPlayer volume");
 static_assert(NP_SPEAKER_FOLDER >= 1 && NP_SPEAKER_FOLDER <= 99, "DFPlayer folder");
+#ifndef NP_SPEAKER_MAX_VOLUME
+#error "config.local.h needs NP_SPEAKER_MAX_VOLUME (see config.example.h)"
+#endif
+static_assert(NP_SPEAKER_MAX_VOLUME >= 1 && NP_SPEAKER_MAX_VOLUME <= 30 &&
+    NP_SPEAKER_VOLUME <= NP_SPEAKER_MAX_VOLUME, "speaker output limit");
 
 // Per-device values are injected over USB and kept in their own NVS namespace.
 // The command record namespace is never opened for writing by provisioning.
@@ -148,6 +153,9 @@ bool clockTrusted() { return np::clockTrusted(configured, config, synchronizedCl
 // Only a light build with the ring takes brightness and color (FR-09).
 bool lightControls() { return NP_LIGHT_RING_PIN >= 0 && config.capability == "light"; }
 
+// Only a speaker build with the DFPlayer takes a volume (FR-09).
+bool speakerControls() { return NP_SPEAKER_TX_PIN >= 0 && config.capability == "speaker"; }
+
 np::CommandContext liveContext() {
     timeval current;
     gettimeofday(&current, nullptr);
@@ -163,6 +171,7 @@ np::CommandContext liveContext() {
         context.lightMaxLevel = NP_LIGHT_RING_MAX_LEVEL;
         context.lightColor = true;
     }
+    if (speakerControls()) context.speakerMaxVolume = NP_SPEAKER_MAX_VOLUME;
     return context;
 }
 
@@ -199,6 +208,10 @@ bool announce() {
         JsonObject controls = doc["controls"].to<JsonObject>();
         controls["brightness_max"] = NP_LIGHT_RING_MAX_LEVEL;
         controls["color"] = true;
+    }
+    if (speakerControls()) {
+        JsonObject controls = doc["controls"].to<JsonObject>();
+        controls["volume_max"] = NP_SPEAKER_MAX_VOLUME;
     }
     return report("announce", doc, 1, true);
 }
@@ -353,26 +366,38 @@ void signalOutput(const np::Actuation& request) {
     uint32_t rgb = lightOutput(request);
     if (NP_LIGHT_RING_PIN >= 0 && (request.action == "on" || request.action == "off")) showLight(rgb);
     if (NP_SPEAKER_TX_PIN >= 0 && (request.action == "on" || request.action == "off")) {
-        // A shared speaker keeps playing when someone else turns it on again.
+        // A shared speaker keeps playing when someone else turns it on again; a new volume still applies.
         if (request.action == "off") speakerSend(np::kDfplayerStop, 0);
-        else if (!speakerPlaying) speakerSend(np::kDfplayerLoopFolder, NP_SPEAKER_FOLDER);
-        else Serial.println("SPEAKER_ALREADY_PLAYING frame_skipped=1");
+        else {
+            if (request.speaker) speakerSend(np::kDfplayerVolume, request.volume);
+            if (speakerPlaying) Serial.println("SPEAKER_ALREADY_PLAYING frame_skipped=1");
+            else {
+                if (request.speaker) delay(NP_SPEAKER_FRAME_GAP_MS);  // Consecutive frames need the gap, as at boot.
+                speakerSend(np::kDfplayerLoopFolder, NP_SPEAKER_FOLDER);
+            }
+        }
         speakerPlaying = request.action == "on";
     }
-    Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s rgb=%06lX output_completed=1\n",
+    Serial.printf("COMMAND_HANDLED command_id=%s action=%s output=%s rgb=%06lX volume=%d output_completed=1\n",
         request.commandId.c_str(), request.action.c_str(),
         NP_SERVO_PIN >= 0 ? "servo" : NP_LIGHT_RING_PIN >= 0 ? "light_ring" : NP_SPEAKER_TX_PIN >= 0 ? "speaker"
-        : NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only", (unsigned long)rgb);
+        : NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only", (unsigned long)rgb,
+        request.speaker ? int(request.volume) : -1);
 }
 
 // validateCommand rejects actions and parameters the build does not support before output.
-// The board actuator checks the output limit once more, so no path reaches the ring above it.
+// The board actuator checks the output limits once more, so no path reaches the ring or the speaker above them.
 class BoardActuator : public np::Actuator {
 public:
     np::OutputResult output(const np::Actuation& request) override {
         if (request.light && (!lightControls() || request.brightness > NP_LIGHT_RING_MAX_LEVEL)) {
             Serial.printf("LIGHT_LIMIT_REFUSED command_id=%s brightness=%u\n",
                 request.commandId.c_str(), unsigned(request.brightness));
+            return np::OutputResult::Failed;
+        }
+        if (request.speaker && (!speakerControls() || request.volume > NP_SPEAKER_MAX_VOLUME)) {
+            Serial.printf("SPEAKER_LIMIT_REFUSED command_id=%s volume=%u\n",
+                request.commandId.c_str(), unsigned(request.volume));
             return np::OutputResult::Failed;
         }
         signalOutput(request);

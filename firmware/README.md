@@ -104,13 +104,16 @@ pio run -e esp32dev-speaker-1 -t upload --upload-port COM6
 ```
 
 - 배선은 `IO17 → 1kΩ → DFPlayer RX`, `DFPlayer TX → IO16`, `5V → VCC`, `GND → GND`다. 스피커(3W 8Ω)는 `SPK1`·`SPK2`에만 연결한다.
-- 모듈 VCC와 GND 사이에 1000µF 커패시터를 둔다. 볼륨 30에서 전류가 순간적으로 커진다.
+- 모듈 VCC와 GND 사이에 1000µF 커패시터를 두는 것이 권장이다. 지금 speaker-1에는 없어서 음량 상한을 20으로 둔다. 커패시터를 단 뒤에만 `NP_SPEAKER_MAX_VOLUME`과 서버 `speaker_volume_max`를 올린다.
 - microSD는 FAT32로 포맷하고 파일을 `01/001.mp3`, `01/002.mp3`처럼 둔다. 폴더 이름은 두 자리, 파일 이름은 세 자리 번호로 시작한다.
 - 부팅하면 `NP_SPEAKER_BOOT_MS`(2초)를 기다린 뒤 볼륨과 정지를 보낸다. 허가한 새 `on`은 `01/` 폴더를 처음부터 반복 재생하고, `off`는 정지한다.
-- 재생 중에 새 `on`이 오면 명령을 다시 보내지 않는다. 로그 `SPEAKER_ALREADY_PLAYING frame_skipped=1`이 남는다.
+- `cmd.parameters`의 `volume`(0~`NP_SPEAKER_MAX_VOLUME`의 정수)을 받는다. `volume`이 있는 새 `on`은 음량 프레임을 먼저 보내고, 재생 중이 아니면 `NP_SPEAKER_FRAME_GAP_MS` 뒤에 폴더 반복 프레임을 보낸다. 음량 0의 `on`도 `on`이다. `parameters`가 없는 `on`은 음량 프레임을 보내지 않아서 마지막으로 보낸 음량이 그대로다.
+- 재생 중에 새 `on`이 오면 곡을 이어서 재생한다. `volume`이 있으면 음량 프레임만 보내고, 폴더 반복 프레임은 다시 보내지 않는다. 로그 `SPEAKER_ALREADY_PLAYING frame_skipped=1`이 남는다.
+- 상한 초과, 형식 오류, 일부 인자는 출력 없이 `UNSUPPORTED_PARAMETER`로 거부한다. 서버 설정과 상관없이 펌웨어 상한을 지킨다. 출력 직전에도 상한을 다시 확인하고, 넘으면 `SPEAKER_LIMIT_REFUSED`를 남기고 실패로 보고한다.
+- 발표에 `controls {"volume_max": NP_SPEAKER_MAX_VOLUME}`를 넣는다. `COMMAND_HANDLED`의 `volume`은 보낸 음량이고, 음량 인자가 없는 명령은 -1이다.
 - 연결이 끊겨도 재생을 유지한다. 재부팅과 기존 결과 재보고는 다시 재생하지 않는다.
-- 볼륨과 폴더는 `config.example.h`의 `NP_SPEAKER_VOLUME`(0~30), `NP_SPEAKER_FOLDER`다.
-- 부팅 로그 `SPEAKER_OUTPUT tx=17 rx=16 volume=30 folder=1 initial=stopped`로 적용한 설정을 확인한다.
+- 볼륨, 상한, 폴더는 `config.example.h`의 `NP_SPEAKER_VOLUME`(부팅 음량), `NP_SPEAKER_MAX_VOLUME`(1~30), `NP_SPEAKER_FOLDER`다. 부팅 음량과 상한의 기본값은 모두 20이고, 부팅 음량은 상한 이하여야 한다(빌드 검사). 이전에 만든 `config.local.h`에는 `#define NP_SPEAKER_MAX_VOLUME 20`을 더한다. 없으면 빌드가 멈춘다.
+- 부팅 로그 `SPEAKER_OUTPUT tx=17 rx=16 volume=20 folder=1 initial=stopped`로 적용한 설정을 확인한다.
 - 모듈 응답은 기다리지 않는다. 성공 보고는 명령 프레임 전송과 결과 저장을 뜻한다. 소리가 실제로 났다는 근거가 아니다.
 - 소리가 나지 않으면 시리얼 로그로 범위를 좁힌다. `COMMAND_HANDLED ... output=speaker`가 없으면 서버·MQTT 경로를, 있으면 배선·SD 카드를 본다.
 

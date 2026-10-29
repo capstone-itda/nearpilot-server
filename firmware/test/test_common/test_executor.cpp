@@ -522,6 +522,12 @@ std::string lightCommand(const std::string& id, int brightness, const char* colo
     return base + ",\"parameters\":{\"brightness\":" + std::to_string(brightness) + ",\"color\":\"" + color + "\"}}";
 }
 
+std::string speakerCommand(const std::string& id, int volume) {
+    std::string base = command(id.c_str());
+    base.pop_back();
+    return base + ",\"parameters\":{\"volume\":" + std::to_string(volume) + "}}";
+}
+
 void test_FR09_executor_passes_parameters() {
     FakeStore store;
     RecordingPort port;
@@ -578,6 +584,61 @@ void test_FR22_parameters_record_fits() {
     TEST_ASSERT_EQUAL_STRING("failed:UNSUPPORTED_PARAMETER", port.published.back().c_str());
     TEST_ASSERT_EQUAL_UINT32(1, store.slots.size());
     TEST_ASSERT_TRUE(store.slots.begin()->second.size() <= 512);
+}
+
+void test_NFR10_speaker_actuation_carries_volume() {
+    FakeStore store(4);
+    RecordingPort port;
+    np::Ledger ledger(store);
+    np::Executor executor(ledger, port, 128, 512);
+    executor.handle(speakerCommand("a", 12), false);
+    assertPublished({"accepted", "running", "succeeded"}, port);
+    TEST_ASSERT_TRUE(port.last.speaker);
+    TEST_ASSERT_EQUAL_UINT8(12, port.last.volume);
+    TEST_ASSERT_FALSE(port.last.light);
+    executor.handle(speakerCommand("b", 0), false);  // Zero is a volume, not a missing parameter.
+    TEST_ASSERT_TRUE(port.last.speaker);
+    TEST_ASSERT_EQUAL_UINT8(0, port.last.volume);
+    executor.handle(command("c"), false);  // Without parameters it is neither a speaker nor a light request.
+    TEST_ASSERT_FALSE(port.last.speaker);
+    TEST_ASSERT_FALSE(port.last.light);
+    executor.handle(lightCommand("d", 30, "#0000FF"), false);
+    TEST_ASSERT_TRUE(port.last.light);
+    TEST_ASSERT_FALSE(port.last.speaker);
+    TEST_ASSERT_EQUAL_INT(4, port.actuations);
+}
+
+void test_FR22_speaker_parameters_change_conflicts() {
+    FakeStore store;
+    FakePort port;
+    np::Ledger ledger(store);
+    np::Executor executor(ledger, port, 128, 512);
+    executor.handle(speakerCommand("a", 12), false);
+    executor.handle(speakerCommand("a", 12), false);  // Same content: stored result only.
+    TEST_ASSERT_EQUAL_INT(1, port.actuations);
+    TEST_ASSERT_EQUAL_STRING("succeeded", port.published.back().c_str());
+    executor.handle(speakerCommand("a", 13), false);
+    TEST_ASSERT_EQUAL_STRING("rejected:COMMAND_ID_CONFLICT", port.published.back().c_str());
+    executor.handle(command("a"), false);  // Dropping the parameters is a different content too.
+    TEST_ASSERT_EQUAL_STRING("rejected:COMMAND_ID_CONFLICT", port.published.back().c_str());
+    TEST_ASSERT_EQUAL_INT(1, port.actuations);
+}
+
+void test_FR19_speaker_command_not_rerun_after_restart() {
+    FakeStore store;
+    {
+        FakePort port;
+        np::Ledger ledger(store);
+        np::Executor executor(ledger, port, 128, 512);
+        executor.handle(speakerCommand("a", 12), false);
+    }
+    FakePort port;
+    np::Ledger reopened(store);
+    np::Executor restarted(reopened, port, 128, 512);
+    restarted.replay();
+    restarted.handle(speakerCommand("a", 12), false);
+    TEST_ASSERT_EQUAL_INT(0, port.actuations);
+    TEST_ASSERT_EQUAL_STRING("succeeded", port.published.back().c_str());
 }
 
 std::string occupancyBody(const char* state, const char* node = "locker-1", int version = 2) {
@@ -714,6 +775,9 @@ void runExecutorTests() {
     RUN_TEST(test_FR22_parameters_change_conflicts);
     RUN_TEST(test_FR19_parameters_command_not_rerun_after_restart);
     RUN_TEST(test_FR22_parameters_record_fits);
+    RUN_TEST(test_NFR10_speaker_actuation_carries_volume);
+    RUN_TEST(test_FR22_speaker_parameters_change_conflicts);
+    RUN_TEST(test_FR19_speaker_command_not_rerun_after_restart);
     RUN_TEST(test_FR19_occupancy_display_colors);
     RUN_TEST(test_FR19_occupancy_display_ignores_invalid_messages);
     RUN_TEST(test_FR06_evicted_command_does_not_actuate);

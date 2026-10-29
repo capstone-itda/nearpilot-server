@@ -48,6 +48,7 @@ from nearpilot.shared.models import (
     NodeInfo,
     PolicyCheckResult,
     ReserveRequest,
+    SpeakerSetting,
     UseRequest,
 )
 
@@ -105,6 +106,7 @@ class _Applied:
     reserved_at: datetime | None = None
     reserve_called: bool = False  # reserve_if_free() 를 부르기 직전에 True 가 된다. 오류 뒤 취소 여부를 정한다 (#80)
     light: LightSetting | None = None  # ③ 뒤에 정한 조명 설정. 실행 인계로 넘긴다 (FR-09)
+    speaker: SpeakerSetting | None = None  # ③ 뒤에 정한 스피커 음량. 실행 인계로 넘긴다 (FR-09)
 
 
 class _SaveConflict(Exception):
@@ -281,6 +283,7 @@ class DecisionPipeline:
                 node_id, p = best
         node = by_id[node_id]
         applied.light = self._resolve_light(req, iid, node, p)
+        applied.speaker = self._resolve_speaker(req, iid, node, p)
 
         # ④ 정책 — 확정한 대상만 검사한다. `any:` 요청은 배정 전에 후보마다 검사했다
         if check is None:
@@ -343,6 +346,39 @@ class DecisionPipeline:
     def _light_stop(self, req: UseRequest, iid: str, node: NodeInfo, p: float | None,
                     reason: ReasonCode, detail: Mapping[str, Any]) -> None:
         self._audit_step(Step.PROXIMITY, iid, {"light": {**detail, "result": reason.value}})
+        raise _Stop(Step.PROXIMITY, self._decision(
+            req, iid, Verdict.DENY, reason, node_id=node.node_id, p_max=p))
+
+    def _resolve_speaker(
+        self, req: UseRequest, iid: str, node: NodeInfo, p: float | None
+    ) -> SpeakerSetting | None:
+        """③ 대상 확정 뒤 스피커 음량을 검사하고 생략한 값을 정한다 (FR-09, FR-18).
+
+        지원하지 않는 인자로 다른 기기를 고르지 않는다. 범위 밖 값은 보정하지 않고 거부한다.
+        스피커 제어 정보를 발표하지 않은 기기는 인자가 없을 때 이전처럼 인자 없는 명령을 받는다.
+        """
+        controls = node.speaker_controls
+        given = req.speaker
+        if controls is None or node.capability is not Capability.SPEAKER or req.action is not Action.ON:
+            if given is not None:
+                self._speaker_stop(req, iid, node, p, ReasonCode.UNSUPPORTED_PARAMETER, {"controls": None})
+            return None
+        s = self._settings
+        last = self._repo.last_speaker_setting(node.node_id)
+        volume = next(v for v in (given and given.volume, last and last.volume, s.speaker_default_volume)
+                      if v is not None)
+        k = min(controls.volume_max, s.speaker_volume_max)
+        detail = {"node_id": node.node_id, "given": given.to_json() if given else None,
+                  "last": last.to_json() if last else None, "volume_max": k,
+                  "resolved": {"volume": volume}}
+        if volume > k:
+            self._speaker_stop(req, iid, node, p, ReasonCode.PARAMETER_OUT_OF_RANGE, detail)
+        self._audit_step(Step.PROXIMITY, iid, {"speaker": detail})
+        return SpeakerSetting(volume)
+
+    def _speaker_stop(self, req: UseRequest, iid: str, node: NodeInfo, p: float | None,
+                      reason: ReasonCode, detail: Mapping[str, Any]) -> None:
+        self._audit_step(Step.PROXIMITY, iid, {"speaker": {**detail, "result": reason.value}})
         raise _Stop(Step.PROXIMITY, self._decision(
             req, iid, Verdict.DENY, reason, node_id=node.node_id, p_max=p))
 
@@ -442,13 +478,13 @@ class DecisionPipeline:
     ) -> ExecutionContext | None:
         if decision.verdict is not Verdict.OK or applied.execution_kind is None:
             return None
-        # 방문자의 조명 입력은 판정에서만 쓴다. 실행은 정한 값(`light`)만 쓰고, 결과 인계 때 저장소가
-        # 다시 만드는 문맥과 같아야 하므로 요청에서 뺀다.
+        # 방문자의 조명·음량 입력은 판정에서만 쓴다. 실행은 정한 값(`light`, `speaker`)만 쓰고, 결과 인계 때
+        # 저장소가 다시 만드는 문맥과 같아야 하므로 요청에서 뺀다.
         return ExecutionContext(
-            internal_request_id=iid, request=replace(req, light=None), node_id=decision.node_id,
+            internal_request_id=iid, request=replace(req, light=None, speaker=None), node_id=decision.node_id,
             use_id=decision.use_id,
             usage_id=applied.usage_id, settings=self._settings, execution_kind=applied.execution_kind,
-            reserved_at=applied.reserved_at, light=applied.light)
+            reserved_at=applied.reserved_at, light=applied.light, speaker=applied.speaker)
 
     @staticmethod
     def _reserve_failure(req, iid, node_id, p, outcome: ReserveOutcome) -> Decision:

@@ -28,6 +28,7 @@ from nearpilot.shared.models import (
     PolicyRevision,
     ProximityResult,
     RssiFrame,
+    SpeakerControls,
 )
 
 NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -292,6 +293,21 @@ def test_FR09_점유_상태는_주체_없이_반환한다(state, expected):
     assert result["state"] == expected
     assert set(result) == {"node_id", "capability", "occupancy", "state", "online", "trusted", "access_mode",
                            "controls"}
+
+
+def test_FR09_device_query_speaker_controls():
+    # 스피커의 근접 임계값은 기본이 None 이라 find_available_devices 는 스피커를 빼므로 get_device_state 로 확인한다.
+    capped = Settings(version="v1", speaker_volume_max=10, speaker_default_volume=10)
+    for settings, capability, controls, expected in [
+        (None, Capability.SPEAKER, SpeakerControls(30), {"volume_max": 20}),  # 서버 상한이 더 작다
+        (None, Capability.SPEAKER, SpeakerControls(8), {"volume_max": 8}),  # 발표 상한이 더 작다
+        (capped, Capability.SPEAKER, SpeakerControls(30), {"volume_max": 10}),  # 서버 상한은 설정에서 읽는다
+        (None, Capability.SPEAKER, None, None),  # 제어 정보를 발표하지 않았다
+        (None, Capability.LIGHT, SpeakerControls(30), None),  # 음량 상한은 스피커만 가진다
+    ]:
+        svc, repo, *_ = build(settings=settings)
+        repo.nodes_list = [node("speaker-1", capability, Occupancy.SHARED, speaker_controls=controls)]
+        assert svc.get_device_state("anyone", "speaker-1")["controls"] == expected
 
 
 def test_FR09_오프라인_미신뢰_기기도_상태를_보여_준다():

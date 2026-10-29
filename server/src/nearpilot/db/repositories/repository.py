@@ -14,6 +14,8 @@ from nearpilot.db.repositories.retention import SqliteRetentionStore
 from nearpilot.db.repositories._common import (
     light_controls_from_json,
     light_controls_to_json,
+    speaker_controls_from_json,
+    speaker_controls_to_json,
     from_json, immediate_transaction, iso, new_id, parse_iso, settings_to_json, to_json,
 )
 from nearpilot.shared.enums import (
@@ -62,6 +64,7 @@ from nearpilot.shared.models import (
     ReserveRequest,
     ReserveResult,
     RssiFrame,
+    SpeakerSetting,
     StoreResult,
     TargetSpec,
     UseRequest,
@@ -162,6 +165,7 @@ class SqliteRepository:
                 parse_iso(row["session_first_seen_at"]) if row["session_first_seen_at"] else None
             ),
             light_controls=light_controls_from_json(row["light_controls"]),
+            speaker_controls=speaker_controls_from_json(row["speaker_controls"]),
         )
 
     def last_light_setting(self, node_id: str) -> LightSetting | None:
@@ -174,6 +178,17 @@ class SqliteRepository:
         if row is None or row["light"] is None:
             return None
         return LightSetting.from_json(from_json(row["light"]))
+
+    def last_speaker_setting(self, node_id: str) -> SpeakerSetting | None:
+        row = self._conn.execute(
+            # 순서 기준은 `last_light_setting`과 같다. 서버의 전송 시작 시각이다 (FR-20).
+            "SELECT speaker FROM node_command WHERE node_id = ? AND status = ? AND action = ? "
+            "ORDER BY send_started_at DESC, rowid DESC LIMIT 1",
+            (node_id, ExecutionStatus.SUCCEEDED.value, Action.ON.value),
+        ).fetchone()
+        if row is None or row["speaker"] is None:
+            return None
+        return SpeakerSetting.from_json(from_json(row["speaker"]))
 
     # ── ④ 정책 (FR-14) ──────────────────────────────────────────────
 
@@ -554,18 +569,20 @@ class SqliteRepository:
 
     def upsert_announced_node(self, announce: NodeAnnounce) -> None:
         controls = light_controls_to_json(announce.light_controls)
+        speaker_controls = speaker_controls_to_json(announce.speaker_controls)
         with immediate_transaction(self._conn):
             row = self._conn.execute(
-                "SELECT capability, occupancy, light_controls FROM node WHERE node_id = ?", (announce.node_id,)
+                "SELECT capability, occupancy, light_controls, speaker_controls FROM node WHERE node_id = ?",
+                (announce.node_id,),
             ).fetchone()
             if row is None:
                 self._conn.execute(
                     "INSERT INTO node (node_id, place_id, capability, occupancy, trust_state, "
-                    "device_state, exclusive_group, release_policy, light_controls) "
-                    "VALUES (?, NULL, ?, ?, ?, ?, NULL, '{}', ?)",
+                    "device_state, exclusive_group, release_policy, light_controls, speaker_controls) "
+                    "VALUES (?, NULL, ?, ?, ?, ?, NULL, '{}', ?, ?)",
                     (
                         announce.node_id, announce.capability.value, announce.occupancy.value,
-                        TrustState.DISCOVERED.value, DeviceState.AVAILABLE.value, controls,
+                        TrustState.DISCOVERED.value, DeviceState.AVAILABLE.value, controls, speaker_controls,
                     ),
                 )
                 return
@@ -581,6 +598,21 @@ class SqliteRepository:
                               "previous_light_controls": from_json(row["light_controls"])
                               if row["light_controls"] else None,
                               "light_controls": from_json(controls) if controls else None}),
+                     iso(announce.received_at)),
+                )
+            if row["speaker_controls"] != speaker_controls:
+                # 스피커 제어 정보만의 변경도 신뢰를 되돌리지 않는다. 새 값과 감사를 남긴다 (FR-04).
+                self._conn.execute(
+                    "UPDATE node SET speaker_controls = ? WHERE node_id = ?",
+                    (speaker_controls, announce.node_id))
+                self._conn.execute(
+                    "INSERT INTO audit_log (log_id, event_id, internal_request_id, command_id, step, "
+                    "payload_json, created_at) VALUES (?, ?, NULL, NULL, ?, ?, ?)",
+                    (new_id(), new_id(), Step.ANNOUNCE.value,
+                     to_json({"node_id": announce.node_id,
+                              "previous_speaker_controls": from_json(row["speaker_controls"])
+                              if row["speaker_controls"] else None,
+                              "speaker_controls": from_json(speaker_controls) if speaker_controls else None}),
                      iso(announce.received_at)),
                 )
             if row["capability"] == announce.capability.value and row["occupancy"] == announce.occupancy.value:

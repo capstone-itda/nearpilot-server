@@ -16,7 +16,8 @@ from typing import Any
 
 from nearpilot.db.repositories._common import (
     deferred_transaction, from_json, immediate_transaction, iso, light_controls_from_json,
-    light_from_json, light_to_json, new_id, parse_iso, settings_from_json, settings_to_json, to_json,
+    light_from_json, light_to_json, new_id, parse_iso, settings_from_json, settings_to_json,
+    speaker_controls_from_json, speaker_from_json, speaker_to_json, to_json,
 )
 from nearpilot.shared.enums import (
     Action,
@@ -56,6 +57,7 @@ from nearpilot.shared.models import (
     RecoverySettlement,
     RestoreBundle,
     RestoredSession,
+    SpeakerSetting,
     StoreResult,
     TargetSpec,
     UseRequest,
@@ -90,6 +92,7 @@ class SqliteExecutionStore:
 
     def link_command(
         self, internal_request_id: str, node_id: str, action: Action, light: LightSetting | None = None,
+        speaker: SpeakerSetting | None = None,
     ) -> StoreResult:
         with immediate_transaction(self._conn):
             existing = self._conn.execute(
@@ -133,11 +136,12 @@ class SqliteExecutionStore:
             self._conn.execute(
                 "INSERT INTO node_command (command_id, internal_request_id, node_id, action, status, "
                 "execution_kind, use_id, usage_id, reserved_at, send_started_at, send_attempted, "
-                "outcome, occurred_at, evidence, light) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, NULL, '{}', ?)",
+                "outcome, occurred_at, evidence, light, speaker) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, NULL, '{}', ?, ?)",
                 (
                     command_id, internal_request_id, node_id, action.value, ExecutionStatus.PENDING.value,
                     execution_kind.value, use_id, usage_id, request_row["received_at"], light_to_json(light),
+                    speaker_to_json(speaker),
                 ),
             )
             return StoreResult(
@@ -146,7 +150,7 @@ class SqliteExecutionStore:
                     command_id=command_id, internal_request_id=internal_request_id, node_id=node_id,
                     action=action, status=ExecutionStatus.PENDING, execution_kind=execution_kind,
                     use_id=use_id, usage_id=usage_id, reserved_at=parse_iso(request_row["received_at"]),
-                    light=light,
+                    light=light, speaker=speaker,
                 ),
             )
 
@@ -816,8 +820,8 @@ class SqliteExecutionStore:
         """
         try:
             command_row = self._conn.execute(
-                "SELECT internal_request_id, node_id, use_id, usage_id, execution_kind, reserved_at, light "
-                "FROM node_command WHERE command_id = ?",
+                "SELECT internal_request_id, node_id, use_id, usage_id, execution_kind, reserved_at, light, "
+                "speaker FROM node_command WHERE command_id = ?",
                 (command_id,),
             ).fetchone()
             if command_row is None:
@@ -853,6 +857,7 @@ class SqliteExecutionStore:
                 if command_row["reserved_at"] and not no_reservation else None
             ),
             light=light_from_json(command_row["light"]),
+            speaker=speaker_from_json(command_row["speaker"]),
         )
 
     @staticmethod
@@ -881,6 +886,7 @@ class SqliteExecutionStore:
             occurred_at=parse_iso(row["occurred_at"]) if row["occurred_at"] else None,
             evidence=from_json(row["evidence"]),
             light=light_from_json(row["light"]),
+            speaker=speaker_from_json(row["speaker"]),
         )
 
     # ── 복원 조회 (#17 6단계) ────────────────────────────────────────
@@ -1059,6 +1065,7 @@ class SqliteExecutionStore:
                 parse_iso(row["session_first_seen_at"]) if row["session_first_seen_at"] else None
             ),
             light_controls=light_controls_from_json(row["light_controls"]),
+            speaker_controls=speaker_controls_from_json(row["speaker_controls"]),
         )
 
     @staticmethod

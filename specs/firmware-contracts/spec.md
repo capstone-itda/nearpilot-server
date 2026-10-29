@@ -284,10 +284,10 @@ IOT의 전체 분할은 [구현 계획](../iot-mqtt-gateway/plan.md)을 따른�
   - 제품 펌웨어의 `esp32dev-speaker-1` 빌드 환경에서 `NP_SPEAKER_TX_PIN=17`, `NP_SPEAKER_RX_PIN=16`을 지정한다. TX는 1kΩ을 거쳐 모듈 RX에 연결한다.
   - 라이브러리 없이 DFPlayer 명령 프레임(10바이트, 응답 요청 없음)을 9600bps로 보낸다. 모듈의 응답을 기다리지 않는다. 프레임과 체크섬은 `lib/np_device`가 만든다.
   - 허가한 새 `on`은 SD의 `NP_SPEAKER_FOLDER` 폴더(기본 `01/`)를 반복 재생(`0x17`)하고 바로 `Completed`다. `off`는 정지(`0x16`)다. 실제 소리는 관측하지 않는다 (FR-07).
-  - 재생 중에 새 `on`을 받으면 명령을 다시 보내지 않고 `Completed`다. 듣던 곡을 끊지 않는다. 재생 상태는 RAM에만 두고 부팅하면 정지로 시작한다. `off`는 상태와 관계없이 정지를 보낸다.
-  - 부팅하면 모듈 준비 시간(`NP_SPEAKER_BOOT_MS`)을 기다린 뒤 볼륨(`NP_SPEAKER_VOLUME`, 기본 30)과 정지를 보낸다. ESP32만 재시작해도 이전 재생을 멈춘다. 재부팅과 기존 결과 재보고는 다시 재생하지 않는다.
+  - 재생 중에 새 `on`을 받으면 폴더 반복 명령을 다시 보내지 않고 `Completed`다. 듣던 곡을 끊지 않는다. `parameters.volume`이 있으면 음량 프레임만 보낸다 (`specs/core-speaker-volume`). 재생 상태는 RAM에만 두고 부팅하면 정지로 시작한다. `off`는 상태와 관계없이 정지를 보낸다.
+  - 부팅하면 모듈 준비 시간(`NP_SPEAKER_BOOT_MS`)을 기다린 뒤 볼륨(`NP_SPEAKER_VOLUME`, 기본 20)과 정지를 보낸다. 펌웨어 음량 상한 `NP_SPEAKER_MAX_VOLUME`은 20이다 (`specs/core-speaker-volume`). ESP32만 재시작해도 이전 재생을 멈춘다. 재부팅과 기존 결과 재보고는 다시 재생하지 않는다.
   - MQTT나 Wi-Fi가 끊겨도 재생을 유지한다. 펌웨어는 서버 명령으로만 출력을 바꾼다 (FR-20).
-  - 모듈 전원은 ESP32 5V 핀에서 받고, 모듈 VCC·GND 사이에 1000µF를 둔다. 상태등은 달지 않는다.
+  - 모듈 전원은 ESP32 5V 핀에서 받는다. 모듈 VCC·GND 사이의 1000µF는 권장이고, 지금 speaker-1에는 없어서 음량 상한을 20으로 둔다. 상태등은 달지 않는다.
   - SD 카드는 FAT32이고 파일은 `01/001.mp3`, `002.mp3`처럼 둔다.
 
 ## 7. 가정

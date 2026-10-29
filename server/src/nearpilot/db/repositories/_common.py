@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.errors import StoreNotApplied, StoreOutcomeUnknown
-from nearpilot.shared.models import LightControls, LightSetting
+from nearpilot.shared.models import LightControls, LightSetting, SpeakerControls, SpeakerSetting
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,29 @@ def light_controls_from_json(value: str | None) -> LightControls | None:
         return None
     data = json.loads(value)
     return LightControls(data["brightness_max"], data["color"])
+
+
+def speaker_to_json(speaker: SpeakerSetting | None) -> str | None:
+    """명령의 스피커 음량 열 값. 키 순서를 고정해서 같은 음량은 같은 문자열이다 (FR-09)."""
+    return None if speaker is None else json.dumps(speaker.to_json(), sort_keys=True)
+
+
+def speaker_from_json(value: str | None) -> SpeakerSetting | None:
+    return None if value is None else SpeakerSetting.from_json(json.loads(value))
+
+
+def speaker_controls_to_json(controls: SpeakerControls | None) -> str | None:
+    """발표한 스피커 제어 정보 열 값 (FR-04). 없으면 NULL 이다."""
+    if controls is None:
+        return None
+    return json.dumps({"volume_max": controls.volume_max}, sort_keys=True)
+
+
+def speaker_controls_from_json(value: str | None) -> SpeakerControls | None:
+    if value is None:
+        return None
+    data = json.loads(value)
+    return SpeakerControls(data["volume_max"])
 
 
 class _JsonlExporter(Protocol):

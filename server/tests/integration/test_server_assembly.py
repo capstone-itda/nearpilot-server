@@ -548,11 +548,11 @@ def test_FR19_runtime_reoperation_after_release_is_use_not_found(world, monkeypa
         released = []
         link_command = SqliteExecutionStore.link_command
 
-        def link_after_release(self, internal_request_id, node_id, action, light=None):
+        def link_after_release(self, internal_request_id, node_id, action, light=None, speaker=None):
             # 재조작 판정은 끝났고 명령을 연결하기 전이다. 같은 사용자의 반납이 대여를 닫는다.
             if not released:
                 released.append(w.runtime.core.release_use(VISITOR_A, first.use_id))
-            return link_command(self, internal_request_id, node_id, action, light)
+            return link_command(self, internal_request_id, node_id, action, light, speaker)
 
         monkeypatch.setattr(SqliteExecutionStore, "link_command", link_after_release)
         again = w.use(VISITOR_A, "locker-1", "r-reopen")

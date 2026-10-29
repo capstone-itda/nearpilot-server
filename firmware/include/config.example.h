@@ -47,6 +47,10 @@
 #define NP_LIGHT_RING_MAX_LEVEL 64
 // DFPlayer Mini speaker on UART2. The speaker-1 build profile sets TX=17, RX=16; -1 leaves it off.
 // Boot waits for the module, then sets the volume and stops; on loops the SD folder until off.
+// on with parameters sets the volume first; on without parameters leaves it as it was.
+// MAX_VOLUME is this firmware's own volume limit, announced as controls.volume_max. Parameters above it
+// are rejected whatever the server allows (NFR-10). 20 is the limit chosen for speaker-1, which has no
+// capacitor between the module's VCC and GND; raise it only after adding one.
 #ifndef NP_SPEAKER_TX_PIN
 #define NP_SPEAKER_TX_PIN -1
 #endif
@@ -54,8 +58,9 @@
 #define NP_SPEAKER_RX_PIN -1
 #endif
 #ifndef NP_SPEAKER_VOLUME
-#define NP_SPEAKER_VOLUME 30
+#define NP_SPEAKER_VOLUME 20
 #endif
+#define NP_SPEAKER_MAX_VOLUME 20
 #ifndef NP_SPEAKER_FOLDER
 #define NP_SPEAKER_FOLDER 1
 #endif

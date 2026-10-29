@@ -71,6 +71,8 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 조명 설정 | 조명 `on`의 밝기와 색. 밝기는 0~k의 정수, 색은 `#RRGGBB`다 | `LightSetting`, `cmd.parameters` | |
 | 조명 제어 정보 | 조명 기기가 발표한 밝기 상한과 색 지원 여부 | `LightControls`, `announce.controls` | |
 | 마지막 조명 설정 | 기기에서 마지막으로 성공한 `on` 명령의 조명 설정. 생략한 인자를 정하는 데 쓴다 | | |
+| 스피커 음량 | 스피커 `on`의 음량. 0~k의 정수다 | `SpeakerSetting`, `cmd.parameters` | |
+| 스피커 제어 정보 | 스피커 기기가 발표한 음량 상한 | `SpeakerControls`, `announce.controls` | |
 | 반납 완료 | 본인 반납의 논리적 점유 해제를 서버가 저장한 것. 문 닫힘과 잠금, 물리 안전의 증명이 아니다 | | |
 | 점유 세션 | 대여형 기기를 한 계정이 점유하는 기간의 기록 | `use_session`, `use_id` | 사용 세션 |
 | 신뢰 상태 | 소유자가 정한 기기의 신뢰 여부. `discovered`, `trusted`, `revoked` | `TrustState` | |
@@ -94,7 +96,7 @@ docs/, specs/, 이슈 본문, PR 본문은 이 문서를 따른다.
 | 근접 임계값 | 판정이 근접 지정과 허용 후보 중 배정의 ③에서 사후확률과 비교하는 설정 값. 명시적 지정 요청에는 쓰지 않는다 | `threshold_locker`, `threshold_light`, `threshold_speaker` | |
 | 내부 요청 ID | 서버가 외부 요청 ID에 연결하는 전역 고유 ID | `internal_request_id` | |
 | 명령 ID | 서버가 물리 명령마다 발급하는 고유 ID | `command_id` | |
-| 정규화 입력 | ⓪이 같은 요청인지 대조하는 입력. 대상 지정, 동작, 원 요청 연결 ID와 받은 조명 설정으로 구성한다 | `input_digest` | |
+| 정규화 입력 | ⓪이 같은 요청인지 대조하는 입력. 대상 지정, 동작, 원 요청 연결 ID와 받은 조명 설정, 스피커 음량으로 구성한다 | `input_digest` | |
 | 실행 직전 재검사 | 기기에 명령을 보내기 직전에 허가, 근접, 대상을 다시 검사하는 것 | `DecisionRechecker.recheck` | |
 | 실행 인계 | 판정이 허가와 예약을 마친 요청의 실행을 상태 관리에 넘기는 것 | `ExecutionContext`, `ExecutionService.execute` | |
 | 사건별 저장 | 예약 이후의 사건 하나에 딸린 기록을 한 트랜잭션으로 반영하는 것 | `ExecutionStore` | |
