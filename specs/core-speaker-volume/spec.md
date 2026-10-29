@@ -1,6 +1,6 @@
 # 스피커 음량 제어
 
-- 상태: 진행 중
+- 상태: 완료
 - 담당: 작업 지시자 (CORE, API, DB, IOT, 펌웨어 연결 구현)
 - 요구사항: FR-04, FR-06, FR-07, FR-09, FR-18, FR-19, FR-20, FR-22, NFR-07, NFR-10
 - 따르는 결정: 2026-10-29 담당자 결정. 이슈 없이 담당자가 정했다. 같은 PR에서 docs에 반영한다.
@@ -41,6 +41,8 @@
 - `server/tools/evaluation/db.py` — 마이그레이션 수와 같은 기대 스키마 버전
 - `server/config/`
 - `firmware/`
+- `specs/firmware-contracts/spec.md` — 바뀐 speaker-1 부팅 음량과 재생 중 `on`의 설명
+- `server/tests/integration/test_server_assembly.py` — `link_command`를 감싸는 테스트 래퍼의 인자
 - 각 계층의 테스트
 
 ### 고치지 않는 곳
@@ -80,6 +82,10 @@
 | 인자 생략, 앞선 설정 없음 | 설정 기본값으로 완전한 명령 | `test_FR09_volume_omitted_uses_default` |
 | 인자 생략, 앞선 성공 `on` 있음 | 앞선 값 유지 | `test_FR09_volume_omitted_keeps_last_setting` |
 | 생략으로 정한 기본 음량이 k 초과 | `PARAMETER_OUT_OF_RANGE` | `test_FR09_default_volume_above_device_cap_denies` |
+| 앞선 성공 `on`의 음량이 낮춘 k를 넘고 인자 생략 | `PARAMETER_OUT_OF_RANGE`. 방문자가 k 이하의 음량을 준다 (조명 밝기와 같다) | `test_FR09_default_volume_above_device_cap_denies` |
+| 근접 지정의 가장 가까운 스피커가 음량을 지원하지 않음 | 다른 스피커를 고르지 않고 `UNSUPPORTED_PARAMETER`, 정책 검사 전 | `test_FR18_unsupported_speaker_does_not_pick_another_device` |
+| `off`나 스피커가 아닌 기기 | `speaker` 없는 명령 | `test_FR09_speaker_off_and_other_devices_keep_plain_commands` |
+| 런타임 MCP 스키마 | `volume` 최대값이 `speaker_volume_max` | `test_FR09_runtime_schema_uses_speaker_volume_max` |
 | 재생 중인 스피커에 새 음량 `on` | 새 명령으로 허가 | `test_FR09_playing_speaker_accepts_new_volume` |
 | 같은 `request_id`에 다른 음량 | `REQUEST_ID_CONFLICT` | `test_FR22_same_request_id_other_volume_conflicts` |
 | 인자 없는 요청과 조명 요청의 정규화 입력 | 기존 digest와 같음 | `test_FR22_digest_without_speaker_unchanged` |
@@ -107,7 +113,11 @@
 - 판정이 넘기는 실행 문맥의 `request.speaker`는 비운다. 정한 값은 `ExecutionContext.speaker`에 담는다 — 조명과 같은 이유다.
 - 펌웨어는 재생 중인 스피커의 `on`에 음량 프레임만 보낸다. 재생 중이 아니면 음량 프레임, 간격(`NP_SPEAKER_FRAME_GAP_MS`), 폴더 반복 프레임을 보낸다. `parameters` 없는 `on`은 음량 프레임을 보내지 않는다.
 - 설정 초기값은 `speaker_volume_max` 20, `speaker_default_volume` 20이다. 펌웨어 `NP_SPEAKER_MAX_VOLUME`과 부팅 음량 `NP_SPEAKER_VOLUME`도 20이다 — 담당자가 커패시터 없는 speaker-1의 상한으로 정했다.
-- 대시보드의 `UNSUPPORTED_PARAMETER`·`PARAMETER_OUT_OF_RANGE` 문구는 기능을 가리지 않는 문구로 바꾼다.
+- 대시보드의 `UNSUPPORTED_PARAMETER`·`PARAMETER_OUT_OF_RANGE` 문구는 기능을 가리지 않는 문구로 바꾼다 ("기기가 받은 인자를 지원하지 않음", "인자가 기기의 상한을 넘음").
+- IOT는 `light`와 `speaker`를 함께 담은 명령, 값이 없는 `SpeakerSetting`, `on`이 아닌 명령의 `speaker`를 인코딩하지 않는다 — 한 명령에는 기능 하나의 인자만 담는다.
+- 펌웨어는 `parameters` 검사를 기능으로 나눈다. 스피커 문맥은 `{"volume": n}`만 받고, 내용 비교에는 `[volume]`을 붙인다. 출력 직전에도 상한을 다시 보고 넘으면 `SPEAKER_LIMIT_REFUSED`로 실패한다. `COMMAND_HANDLED` 로그에 `volume`(인자가 없으면 -1)을 더한다.
+- 기존 펌웨어 `config.local.h`에 `NP_SPEAKER_MAX_VOLUME`이 없으면 빌드가 `#error`로 멈춘다. 부팅 음량이 상한을 넘으면 `static_assert`로 멈춘다.
+- 펌웨어 새 주석은 주변 펌웨어 파일처럼 영어로 쓴다.
 
 ## 7. 가정
 
@@ -126,3 +136,9 @@
 | FR-09 | `tests/api/test_mcp_speaker.py` | 입력 스키마, 타입·형식·대상 검사 |
 | FR-09, FR-19, FR-22 | `tests/integration/test_speaker_volume_flow.py` | MCP → CORE → DB → MQTT 경로, 결과 인계, 생략 값 유지, 거부 시 명령 없음 |
 | NFR-10, FR-19, FR-22 | `firmware/test/test_common/test_command.cpp`, `test_executor.cpp` | 펌웨어 검증, 내용 비교, 실행 요청 변환, 재시작 뒤 재구동 없음 |
+
+### 확인 (2026-10-29, macOS)
+
+- 서버 전체 `pytest`: 4,413개 통과, 4개 생략, 1개 예상 실패.
+- 펌웨어 `pio test -e native` 63개 통과. `esp32dev`, `esp32dev-light-1`, `esp32dev-locker-1`, `esp32dev-speaker-1` 빌드 성공. speaker-1은 RAM 57,652바이트, Flash 1,104,525바이트다.
+- speaker-1 실기기에는 올리지 않았다. 음량 프레임 순서와 `SPEAKER_LIMIT_REFUSED`는 빌드와 코드 검토로만 확인했다.

@@ -112,7 +112,7 @@ pio run -e esp32dev-speaker-1 -t upload --upload-port COM6
 - 상한 초과, 형식 오류, 일부 인자는 출력 없이 `UNSUPPORTED_PARAMETER`로 거부한다. 서버 설정과 상관없이 펌웨어 상한을 지킨다. 출력 직전에도 상한을 다시 확인하고, 넘으면 `SPEAKER_LIMIT_REFUSED`를 남기고 실패로 보고한다.
 - 발표에 `controls {"volume_max": NP_SPEAKER_MAX_VOLUME}`를 넣는다. `COMMAND_HANDLED`의 `volume`은 보낸 음량이고, 음량 인자가 없는 명령은 -1이다.
 - 연결이 끊겨도 재생을 유지한다. 재부팅과 기존 결과 재보고는 다시 재생하지 않는다.
-- 볼륨, 상한, 폴더는 `config.example.h`의 `NP_SPEAKER_VOLUME`(부팅 음량), `NP_SPEAKER_MAX_VOLUME`(1~30), `NP_SPEAKER_FOLDER`다. 부팅 음량과 상한의 기본값은 모두 20이고, 부팅 음량은 상한 이하여야 한다(빌드 검사).
+- 볼륨, 상한, 폴더는 `config.example.h`의 `NP_SPEAKER_VOLUME`(부팅 음량), `NP_SPEAKER_MAX_VOLUME`(1~30), `NP_SPEAKER_FOLDER`다. 부팅 음량과 상한의 기본값은 모두 20이고, 부팅 음량은 상한 이하여야 한다(빌드 검사). 이전에 만든 `config.local.h`에는 `#define NP_SPEAKER_MAX_VOLUME 20`을 더한다. 없으면 빌드가 멈춘다.
 - 부팅 로그 `SPEAKER_OUTPUT tx=17 rx=16 volume=20 folder=1 initial=stopped`로 적용한 설정을 확인한다.
 - 모듈 응답은 기다리지 않는다. 성공 보고는 명령 프레임 전송과 결과 저장을 뜻한다. 소리가 실제로 났다는 근거가 아니다.
 - 소리가 나지 않으면 시리얼 로그로 범위를 좁힌다. `COMMAND_HANDLED ... output=speaker`가 없으면 서버·MQTT 경로를, 있으면 배선·SD 카드를 본다.
