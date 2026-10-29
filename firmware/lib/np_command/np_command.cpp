@@ -21,11 +21,22 @@ bool parseColor(JsonVariantConst value, uint32_t& rgb) {
     return true;
 }
 
-// Light parameters are checked against this firmware's own limit, never the server's (NFR-10).
+// Speaker parameters are exactly `{"volume": n}` with an integer n up to the firmware's limit.
+const char* validateSpeakerParameters(JsonObjectConst object, const std::string& action,
+                                      const CommandContext& context) {
+    if (object.isNull() || object.size() != 1 || action != "on" || context.speakerMaxVolume <= 0 ||
+        !object["volume"].is<int>() || object["volume"].is<bool>()) return "UNSUPPORTED_PARAMETER";
+    const int volume = object["volume"].as<int>();
+    if (volume < 0 || volume > context.speakerMaxVolume) return "UNSUPPORTED_PARAMETER";
+    return nullptr;
+}
+
+// Light and speaker parameters are checked against this firmware's own limits, never the server's (NFR-10).
 const char* validateParameters(JsonDocument& doc, const std::string& action, const CommandContext& context) {
     JsonVariantConst parameters = doc["parameters"];
     if (parameters.isNull()) return nullptr;
     JsonObjectConst object = parameters.as<JsonObjectConst>();
+    if (context.capability == "speaker") return validateSpeakerParameters(object, action, context);
     uint32_t rgb = 0;
     if (object.isNull() || object.size() != 2 || action != "on" || context.capability != "light" ||
         context.lightMaxLevel <= 0 || !object["brightness"].is<int>() || object["brightness"].is<bool>() ||
@@ -67,9 +78,13 @@ std::string canonicalContent(JsonDocument& command) {
     JsonVariantConst parameters = command["parameters"];
     if (!parameters.isNull()) {
         // Fixed field order: a retransmission compares equal whatever its key order.
-        JsonArray light = fields.add<JsonArray>();
-        light.add(parameters["brightness"]);
-        light.add(parameters["color"]);
+        JsonArray values = fields.add<JsonArray>();
+        if (!parameters["volume"].isNull()) {
+            values.add(parameters["volume"]);
+        } else {
+            values.add(parameters["brightness"]);
+            values.add(parameters["color"]);
+        }
     }
     std::string content;
     serializeJson(canonical, content);
@@ -79,6 +94,7 @@ std::string canonicalContent(JsonDocument& command) {
 Actuation commandActuation(const std::string& commandId, JsonDocument& command) {
     const std::string action = command["action"].as<std::string>();
     JsonVariantConst parameters = command["parameters"];
+    if (parameters["volume"].is<int>()) return Actuation(commandId, action, uint8_t(parameters["volume"].as<int>()));
     uint32_t rgb = 0;
     if (parameters.isNull() || !parseColor(parameters["color"], rgb)) return Actuation(commandId, action);
     return Actuation(commandId, action, uint8_t(parameters["brightness"].as<int>()), rgb);

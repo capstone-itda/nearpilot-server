@@ -8,16 +8,23 @@ namespace np {
 
 // light is set only for a light `on` that carried validated `parameters` (FR-09):
 // brightness is the per-channel output limit and color is 0xRRGGBB before scaling.
+// speaker is set only for a speaker `on` that carried validated `parameters`: volume is the DFPlayer level.
 struct Actuation {
     Actuation(const std::string& id = "", const std::string& requestedAction = "")
-        : commandId(id), action(requestedAction), light(false), brightness(0), color(0) {}
+        : commandId(id), action(requestedAction), light(false), brightness(0), color(0), speaker(false), volume(0) {}
     Actuation(const std::string& id, const std::string& requestedAction, uint8_t level, uint32_t rgb)
-        : commandId(id), action(requestedAction), light(true), brightness(level), color(rgb) {}
+        : commandId(id), action(requestedAction), light(true), brightness(level), color(rgb), speaker(false),
+          volume(0) {}
+    Actuation(const std::string& id, const std::string& requestedAction, uint8_t speakerVolume)
+        : commandId(id), action(requestedAction), light(false), brightness(0), color(0), speaker(true),
+          volume(speakerVolume) {}
     std::string commandId;
     std::string action;
     bool light;
     uint8_t brightness;
     uint32_t color;
+    bool speaker;
+    uint8_t volume;
 };
 
 enum class OutputResult { Completed, Failed, Unknown };

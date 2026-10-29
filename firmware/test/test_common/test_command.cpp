@@ -112,6 +112,13 @@ np::CommandContext ringContext() {
     return value;
 }
 
+np::CommandContext speakerContext() {
+    np::CommandContext value = context();
+    value.capability = "speaker";
+    value.speakerMaxVolume = 20;
+    return value;
+}
+
 const char* withParameters(const char* parameters, const np::CommandContext& ctx = ringContext(),
                            const char* action = "on") {
     JsonDocument doc;
@@ -166,6 +173,43 @@ void test_NFR10_light_parameters_unsupported() {
     TEST_ASSERT_EQUAL_STRING("CLOCK_UNVERIFIED", withParameters(blue, untrusted));
 }
 
+void test_NFR10_speaker_parameters_boundaries() {
+    TEST_ASSERT_NULL(withParameters("{\"volume\":0}", speakerContext()));
+    TEST_ASSERT_NULL(withParameters("{\"volume\":20}", speakerContext()));
+    // The limit is the context's own, not a fixed number.
+    np::CommandContext lower = speakerContext();
+    lower.speakerMaxVolume = 10;
+    TEST_ASSERT_NULL(withParameters("{\"volume\":10}", lower));
+    TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER", withParameters("{\"volume\":11}", lower));
+}
+
+void test_NFR10_speaker_parameters_above_cap_rejected() {
+    // The firmware limit holds even when a server would allow more; the DFPlayer itself takes up to 30.
+    for (const char* parameters : {"{\"volume\":21}", "{\"volume\":30}", "{\"volume\":-1}"})
+        TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER", withParameters(parameters, speakerContext()));
+}
+
+void test_NFR10_speaker_parameters_bad_shape_rejected() {
+    const char* bad[] = {
+        "{\"volume\":\"12\"}", "{\"volume\":12.5}", "{\"volume\":true}", "{}", "{\"volume\":12,\"extra\":1}",
+        "{\"brightness\":12}", "{\"brightness\":30,\"color\":\"#0000FF\"}", "[12]", "12"};
+    for (const char* parameters : bad)
+        TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER", withParameters(parameters, speakerContext()));
+    const char* twelve = "{\"volume\":12}";
+    TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER", withParameters(twelve, speakerContext(), "off"));
+    np::CommandContext noLimit = speakerContext();
+    noLimit.speakerMaxVolume = 0;  // A build without the DFPlayer announces no limit and takes no parameters.
+    TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER", withParameters("{\"volume\":0}", noLimit));
+    // A light takes no volume, with or without the ring.
+    TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER", withParameters(twelve, ringContext()));
+    TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER", withParameters(twelve, context()));
+    // Parameters are checked before the clock here too: the order is part of the contract.
+    np::CommandContext untrusted = speakerContext();
+    untrusted.clockTrusted = false;
+    TEST_ASSERT_EQUAL_STRING("UNSUPPORTED_PARAMETER", withParameters("{\"volume\":21}", untrusted));
+    TEST_ASSERT_EQUAL_STRING("CLOCK_UNVERIFIED", withParameters(twelve, untrusted));
+}
+
 void test_FR22_parameters_join_content() {
     JsonDocument doc;
     fill(doc);
@@ -185,6 +229,25 @@ void test_FR22_parameters_join_content() {
     swapped["parameters"]["color"] = "#0000FF";
     swapped["parameters"]["brightness"] = 30;
     TEST_ASSERT_EQUAL_STRING(blue.c_str(), np::canonicalContent(swapped).c_str());
+}
+
+void test_FR22_speaker_parameters_join_content() {
+    JsonDocument doc;
+    fill(doc);
+    const std::string plain = np::canonicalContent(doc);  // Unchanged without parameters.
+    TEST_ASSERT_EQUAL_STRING(
+        "[\"light-01\",\"on\",\"session-1\",\"2026-10-23T00:00:00Z\",\"2026-10-23T00:00:30Z\"]", plain.c_str());
+    doc["parameters"]["volume"] = 12;
+    const std::string twelve = np::canonicalContent(doc);
+    TEST_ASSERT_EQUAL_STRING(
+        "[\"light-01\",\"on\",\"session-1\",\"2026-10-23T00:00:00Z\",\"2026-10-23T00:00:30Z\",[12]]",
+        twelve.c_str());
+    doc["parameters"]["volume"] = 13;
+    TEST_ASSERT_FALSE(twelve == np::canonicalContent(doc));
+    doc["parameters"]["volume"] = 0;  // Zero is a volume, not a missing parameter.
+    TEST_ASSERT_EQUAL_STRING(
+        "[\"light-01\",\"on\",\"session-1\",\"2026-10-23T00:00:00Z\",\"2026-10-23T00:00:30Z\",[0]]",
+        np::canonicalContent(doc).c_str());
 }
 
 void test_FR09_command_actuation() {
@@ -211,6 +274,10 @@ void runCommandTests() {
     RUN_TEST(test_NFR10_light_parameters_above_cap_rejected);
     RUN_TEST(test_NFR10_light_parameters_format_rejected);
     RUN_TEST(test_NFR10_light_parameters_unsupported);
+    RUN_TEST(test_NFR10_speaker_parameters_boundaries);
+    RUN_TEST(test_NFR10_speaker_parameters_above_cap_rejected);
+    RUN_TEST(test_NFR10_speaker_parameters_bad_shape_rejected);
     RUN_TEST(test_FR22_parameters_join_content);
+    RUN_TEST(test_FR22_speaker_parameters_join_content);
     RUN_TEST(test_FR09_command_actuation);
 }
