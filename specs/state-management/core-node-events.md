@@ -2,7 +2,7 @@
 
 - 담당: JM-220 (상태 관리)
 - 요구사항: FR-04, FR-05, FR-07, FR-13, NFR-04
-- 따르는 결정: #18, #31, #32, #38, #83, #86, #88, 2026-10-26 센서 기반 물리 검증 제외 (#196)
+- 따르는 결정: #18, #31, #32, #38, #83, #86, #88, 2026-10-26 센서 기반 물리 검증 제외 (#196), 2026-10-29 DB에 없는 명령의 결과
 
 ## 1. 왜
 
@@ -49,7 +49,7 @@
 - 일반 `status`는 반납 종료의 근거가 아니다. 반납은 `core-release`가 논리 조건으로 결정한다 (FR-07, FR-20).
 - 기기별 관측, 장애 반영, 복구는 같은 기기 잠금으로 직렬화한다 (architecture.md §4 "복구 준비 조회와 복구 승인").
 - 저장 함수가 `StoreError`를 던지면 예외를 다시 던진다. 인계 실패를 성공으로 처리하지 않는다 (architecture.md §4 "기기 보고의 인계").
-- 실행 결과의 원래 문맥은 `context_for(command_id)`로 읽는다. 서버 조립은 `ExecutionStore.execution_context`를 연결한다 (#83). 문맥이 없거나 조회가 실패하면 인계 실패로 알린다.
+- 실행 결과의 원래 문맥은 `context_for(command_id)`로 읽는다. 서버 조립은 `ExecutionStore.execution_context`를 연결한다 (#83). 조회가 실패하면 인계 실패로 알린다. 문맥이 없으면 DB에 없는 명령이다. `command_id`와 함께 경고를 기록하고 인계를 끝낸다 (architecture.md §4 "기기 보고의 인계").
 - 서버 내부 요청의 문맥은 `request`가 없다. 저장한 명령의 동작은 `internal_request.action`과 대조한다. 성공한 내부 꺼짐은 `core-shared-light`에 넘겨 유지 대상자를 비운다 (architecture.md §4 "서버 내부 요청").
 
 ## 4. 경계
@@ -93,6 +93,8 @@
 | `observe()`가 예외를 던진다 | 저장한 관측을 유지한다. 실패를 기록한다 | `test_FR05_observe_error_keeps_saved_rssi` |
 | 같은 기기의 `status`와 복구 승인이 동시에 온다 | 같은 기기 잠금으로 하나씩 처리한다 | `test_NFR04_node_events_serialized` |
 | 서버 내부 꺼짐의 결과가 늦게 온다 | 원래 문맥으로 실행 서비스에 넘긴다. 성공이면 공용 조명에 넘긴다 | `test_FR20_internal_off_result_routed` |
+| 기기가 DB에 없는 명령의 결과를 다시 보고한다 | 경고를 기록하고 인계를 끝낸다. 명령과 기기 상태를 바꾸지 않는다 | `test_FR07_unknown_command_result_is_dropped` |
+| 원래 문맥 조회가 `StoreError`를 던진다 | 예외를 다시 던진다. IOT가 다시 인계한다 | `test_FR07_context_lookup_error_propagates` |
 
 ## 6. 결정
 
@@ -108,6 +110,7 @@
 - RSSI 인계는 저장·근접 관측·이탈 관측의 완료를 따로 기억한다 — 재인계는 실패한 소비자만 다시 호출한다. 완료한 프레임은 비콘별 마지막 순번만 남긴다.
 - 실행 결과의 원래 문맥 조회를 필수 함수로 주입한다 — 명령·요청·기기 연결을 저장과 대조한다. 현재 설정으로 원래 문맥을 만들지 않는다.
 - 결과 인계 뒤 저장한 성공만 공용 조명에 넘긴다 — `execute()`를 다시 호출하지 않는다.
+- DB에 없는 명령의 결과는 경고를 기록하고 정상 반환한다 — 담당자가 2026-10-29에 선택했다. 기기는 DB 교체 전의 명령 기록을 재부팅·재접속 때 다시 보고한다. 재인계해도 결과가 같아서 재시도가 끝나지 않았다. `shared` 접점과 IOT는 바꾸지 않는다.
 
 ## 7. 가정
 
@@ -135,7 +138,8 @@
 | FR-04 | `test_FR04_announce_write_failure_keeps_changed_occupied_node_isolated` | 발표 저장 실패와 새 수신 서비스의 재인계에서도 격리와 점유를 보존한다 |
 | FR-05 | `test_FR05_failed_light_handover_retries_only_missing_consumer` | 성공한 근접 관측을 중복 적용하지 않고 이탈 관측만 재시도한다 |
 | FR-05 | `test_FR05_anchor_lock_released_before_light_observation` | 이탈 관측이 앵커 잠금을 다시 기다리는 교착을 막는다 |
-| FR-07 | `test_FR07_missing_original_context_is_failure` | 실행 문맥 부재를 전달 완료로 보지 않는다 |
+| FR-07 | `test_FR07_unknown_command_result_is_dropped` | DB에 없는 명령의 결과는 `command_id`를 경고로 남기고 인계를 끝낸다 |
+| FR-07 | `test_FR07_context_lookup_error_propagates` | 원래 문맥의 조회 실패는 전달 완료로 보지 않는다 |
 | FR-07 | `test_FR07_reports_during_gateway_wait_do_not_deadlock` | 실행 서비스의 전송 대기 중 다른 스레드의 결과 인계를 받는다 |
 | FR-13 | `test_FR13_result_does_not_touch` | 과거 결과로 현재 연결·온라인 시각·물리 관측을 갱신하지 않는다 |
 | FR-20 | `test_FR20_internal_off_result_routed` | 서버 내부 꺼짐의 결과를 실행 서비스와 공용 조명에 넘긴다 |

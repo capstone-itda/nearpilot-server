@@ -508,10 +508,22 @@ def test_FR07_result_store_failure_propagates_and_retries(env):
     assert env.store.commands["request"].status == ExecutionStatus.SUCCEEDED
 
 
-def test_FR07_missing_original_context_is_failure(env):
+def test_FR07_unknown_command_result_is_dropped(env, caplog):
     report = command(env)
-    env.contexts.clear()
-    with pytest.raises(StoreError, match="문맥"):
+    env.contexts.clear()  # 이 DB가 보낸 적 없는 명령이다
+    env.sink.on_result(report)
+    assert env.store.commands["request"].status == ExecutionStatus.IN_PROGRESS
+    assert env.repo.items["locker"].device_state == DeviceState.ACTIVE
+    assert env.store.recoveries == {}
+    assert "command_id=command" in caplog.text
+
+
+def test_FR07_context_lookup_error_propagates(env):
+    report = command(env)
+    def lookup(command_id):
+        raise StoreError("lookup")
+    env.sink._context_for = lookup
+    with pytest.raises(StoreError, match="lookup"):
         env.sink.on_result(report)
     assert env.store.commands["request"].status == ExecutionStatus.IN_PROGRESS
 
