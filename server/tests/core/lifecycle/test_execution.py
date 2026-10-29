@@ -22,7 +22,7 @@ from nearpilot.shared.enums import (
 from nearpilot.shared.errors import StoreError, StoreNotApplied, StoreOutcomeUnknown
 from nearpilot.shared.models import (
     CommandRecord, CommandResult, Decision, ExecutionContext, NodeInfo, NodeResult,
-    NodeStatus, RestoreBundle, StoreResult, TargetSpec, UseRequest,
+    NodeStatus, RestoreBundle, SpeakerSetting, StoreResult, TargetSpec, UseRequest,
 )
 
 
@@ -74,7 +74,7 @@ class StoreFake:
                 if c.node_id == node_id and c.status == ExecutionStatus.SUCCEEDED]
         return done[-1] if done else None
 
-    def link_command(self, internal_request_id, node_id, action, light=None):
+    def link_command(self, internal_request_id, node_id, action, light=None, speaker=None):
         self.calls.append(("link", internal_request_id))
         failure = self._before("link")
         if self.link_conflict:
@@ -265,6 +265,35 @@ def test_FR06_execute_sends_command_after_recheck(env):
     assert timeout == env.ctx.settings.exec_timeout_sec
     assert command.expires_at == command.issued_at + timedelta(seconds=timeout)
     assert not hasattr(command, "user_id")
+
+
+def test_FR19_execution_sends_stored_speaker(env):
+    """인계의 음량은 저장할 때만 쓴다. 보낸 명령의 음량은 저장한 명령 기록의 값이다 (FR-09, FR-19)."""
+    now = env.clock()
+    env.repository.items["speaker-1"] = NodeInfo(
+        "speaker-1", "place-1", Capability.SPEAKER, Occupancy.SHARED, TrustState.TRUSTED,
+        DeviceState.AVAILABLE, None, now, session_id="connection-1")
+    env.locks["speaker-1"], env.restored["speaker-1"] = RLock(), True
+    request = UseRequest("visitor-1", "external-2", TargetSpec.parse("speaker-1"), Action.ON, "test", now)
+    ctx = ExecutionContext("request-2", request, "speaker-1", None, None, Settings(), ExecutionKind.SHARED,
+                           speaker=SpeakerSetting(12))
+    env.store.contexts[ctx.internal_request_id] = ctx
+    link, linked = env.store.link_command, []
+
+    def link_stored(internal_request_id, node_id, action, light=None, speaker=None):
+        linked.append(speaker)
+        result = link(internal_request_id, node_id, action, light, speaker)
+        record = replace(result.command, speaker=SpeakerSetting(7))  # 저장소가 돌려준 기록의 음량이 명령을 정한다
+        env.store.commands[internal_request_id] = record
+        return replace(result, command=record)
+
+    env.store.link_command = link_stored
+    assert env.service.execute(ctx).status == ExecutionStatus.SUCCEEDED
+    assert linked == [SpeakerSetting(12)]
+    assert env.gateway.calls[-1][0].speaker == SpeakerSetting(7)
+    env.store.link_command = link
+    env.service.execute(env.ctx)  # 음량이 없는 명령은 인자 없는 명령으로 보낸다
+    assert env.gateway.calls[-1][0].speaker is None
 
 
 def test_FR19_initial_success_sets_rental_due_at(env):

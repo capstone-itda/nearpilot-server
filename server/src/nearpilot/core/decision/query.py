@@ -142,7 +142,13 @@ class DeviceQueryService:
         }
 
     def _controls(self, node: NodeInfo) -> dict[str, Any] | None:
-        """조명 제어 정보. 밝기 상한은 발표 값과 서버 상한 중 작은 값이다 (FR-09). 없으면 None 이다."""
+        """기기 제어 정보. 조명은 밝기 상한과 색, 스피커는 음량 상한이다.
+
+        상한은 발표 값과 서버 상한 중 작은 값이다 (FR-09). 없으면 None 이다.
+        """
+        speaker = node.speaker_controls
+        if speaker is not None and node.capability is Capability.SPEAKER:
+            return {"volume_max": min(speaker.volume_max, self._settings.speaker_volume_max)}
         controls = node.light_controls
         if controls is None or node.capability is not Capability.LIGHT:
             return None

@@ -190,7 +190,8 @@ class ExecutionService:
             if _internal(ctx) and not self._link_internal(attempt):
                 return None
             try:
-                linked = self._store.link_command(ctx.internal_request_id, ctx.node_id, _action(ctx), ctx.light)
+                linked = self._store.link_command(
+                    ctx.internal_request_id, ctx.node_id, _action(ctx), ctx.light, ctx.speaker)
             except StoreOutcomeUnknown:
                 current = self._store.execution(ctx.internal_request_id)
                 if current is None:
@@ -270,10 +271,11 @@ class ExecutionService:
         attempt.target_session_id = session_id
         attempt.blockers = ()
         now = self._clock()
-        # 조명 설정은 저장한 명령 기록에서 읽는다. 인계 값으로 바꾸지 않는다 (FR-09, FR-19).
+        # 조명 설정과 스피커 음량은 저장한 명령 기록에서 읽는다. 인계 값으로 바꾸지 않는다 (FR-09, FR-19).
         return NodeCommand(current.command_id, ctx.node_id, _action(ctx),
                            attempt.target_session_id, now,
-                           now + timedelta(seconds=ctx.settings.exec_timeout_sec), light=current.light)
+                           now + timedelta(seconds=ctx.settings.exec_timeout_sec),
+                           light=current.light, speaker=current.speaker)
 
     def _link_internal(self, attempt: _Attempt) -> bool:
         """서버 내부 요청은 저장 전에 확인한다. 확인과 전송 시작은 같은 기기 잠금 안에서 잇는다."""

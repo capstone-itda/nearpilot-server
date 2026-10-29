@@ -20,7 +20,7 @@ from nearpilot.shared.enums import (
 from nearpilot.shared.errors import StoreError
 from nearpilot.shared.models import (
     BeaconKey, CommandRecord, ExecutionContext, ExecutionResult, NodeInfo, NodeStatus, PolicyCheckResult, RssiFrame,
-    LightSetting, TargetSpec, UseRequest,
+    LightSetting, SpeakerSetting, TargetSpec, UseRequest,
 )
 
 
@@ -177,6 +177,35 @@ def test_FR20_brightness_zero_on_success_adds_holder(env):
     observe(env)
     advance(env, 1)
     assert candidates(env) == ()
+
+
+def test_FR20_zero_volume_on_is_on(env):
+    """음량 0의 on 도 켜기 요청이다. 성공하면 유지 대상자가 되고, 이탈하면 꺼짐 후보다 (FR-09)."""
+    # 이 파일의 보조 함수는 light-1 만 다룬다. 공용형 기기를 speaker-1 로 바꾸고 상태 보고는 직접 보낸다.
+    env.repository.light = replace(env.repository.light, node_id="speaker-1", capability=Capability.SPEAKER)
+    env.service.resume("speaker-1")
+    now = env.time[0]
+    request = UseRequest("visitor-a", "request-quiet", TargetSpec.parse("speaker-1"), Action.ON, "host", now,
+                         speaker=SpeakerSetting(0))
+    context = ExecutionContext("request-quiet", request, "speaker-1", None, None, env.settings[0],
+                               ExecutionKind.SHARED, speaker=SpeakerSetting(0))
+    env.store.last["speaker-1"] = Action.ON
+    env.service.on_execution_result(
+        context, ExecutionResult("request-quiet", ExecutionStatus.SUCCEEDED, "command-quiet"))
+
+    def tick():
+        env.seq += 1
+        speaker = env.repository.light = replace(env.repository.light, last_seen_at=env.time[0])
+        env.service.on_status(NodeStatus("speaker-1", env.time[0], speaker.session_id, env.seq,
+                                         env.time[0], env.time[0], CommandState.IDLE))
+        return env.service.tick()
+
+    advance(env, 14)
+    observe(env)
+    advance(env, 1)
+    assert tick() == ()
+    advance(env, 14)
+    assert tick() == ("speaker-1",)
 
 
 def test_FR20_light_stays_on_while_holder_remains(env):
@@ -677,7 +706,7 @@ def test_FR20_internal_off_through_real_execution(env):
         def link_internal_request(self, req):
             self.internal.append(req)
             return StoreResult(StoreOutcome.APPLIED)
-        def link_command(self, internal_request_id, node_id, action, light=None):
+        def link_command(self, internal_request_id, node_id, action, light=None, speaker=None):
             req = next(r for r in self.internal if r.internal_request_id == internal_request_id)
             record = CommandRecord("command-1", internal_request_id, node_id, action,
                                    ExecutionStatus.PENDING, ExecutionKind.SERVER_INTERNAL)
