@@ -1,9 +1,9 @@
 # 기존 NearPilot 서버의 최종 시연 구성이다. 상대 경로는 이 파일 기준이다.
 [settings]
-version = "final-demo-1"
-threshold_locker = 0.95
-threshold_light = 0.75
-# threshold_speaker는 미결이다. 근접 지정은 차단하고 명시 지정을 쓴다.
+version = "final-demo-2"
+threshold_locker = 0.8
+threshold_light = 0.8
+threshold_speaker = 0.8
 light_brightness_max = 64
 light_default_brightness = 64
 light_default_color = "#FFFFFF"

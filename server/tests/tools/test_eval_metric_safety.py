@@ -488,6 +488,9 @@ class FakeHarness:
                 devices.append({"node_id": node.node_id, "access": "approval_required" if needs else "operable"})
         return {"devices": devices}
 
+    def proximity_ready(self, user_id, node_id):
+        return True
+
     def _request_access(self, user, arguments):
         self.approvals.append({"approval_id": f"ap-{next(self._serial)}", "user_id": user, "node_id": arguments["node_id"],
                                "action": arguments["action"], "status": "pending", "created_at": next(self._serial)})
@@ -1122,7 +1125,15 @@ def test_NFR04_metric6_runs_on_harness(ascii_tmp_path, mosquitto):
     assert "release_use visitor-2 200 DENY/USE_NOT_FOUND" in attempts["foreign_release"]["trace"]
     # 늦게 답한 대여는 성공으로 끝났고, 명령이 처리 중이던 때의 반납은 받아들여지지 않았다 (점유는 그때 RESERVED였다)
     pending = attempts["pending_command_release"]
-    assert pending["trace"][0] == "request_use visitor-1 200 OK/OK"
-    assert pending["trace"][1].startswith("release_use visitor-1 200 ") and not pending["trace"][1].endswith(" OK/OK")
+    rentals = [entry for entry in pending["trace"] if entry.startswith("request_use ")]
+    assert rentals[-1] == "request_use visitor-1 200 OK/OK"
+    assert all(entry in ("request_use visitor-1 200 ASK/LOW_CONFIDENCE",
+                         "request_use visitor-1 200 ASK/MOVE_CLOSER",
+                         "request_use visitor-1 200 BUSY/DEVICE_BUSY",
+                         "request_use visitor-1 200 BUSY/COMMAND_IN_PROGRESS") for entry in rentals[:-1])
+    releases = [entry for entry in pending["trace"] if entry.startswith("release_use ")]
+    assert len(releases) == 1 and releases[0].startswith("release_use visitor-1 200 ")
+    assert not releases[0].endswith(" OK/OK")
+    assert pending["trace"].index(rentals[-1]) < pending["trace"].index(releases[0])
     assert pending["release_during_fault"] == 0
     json.dumps(outcome.raw)

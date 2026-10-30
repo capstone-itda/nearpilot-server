@@ -51,8 +51,11 @@ _ACCESS_DESCRIPTION = (
 _RELEASE_DESCRIPTION = "본인의 사용(use_id)을 종료한다. 반납 검사를 거쳐 종료한다."
 _STATUS_DESCRIPTION = "본인의 사용(use_id) 상태와 종료 이력을 조회한다."
 _DEVICES_DESCRIPTION = (
-    "주변에서 쓸 수 있는 기기 목록을 조회한다. access 가 operable 이면 바로 요청할 수 있고 "
-    "approval_required 이면 승인이 필요하다."
+    "등록 비콘의 최근 수신으로 확인한 같은 장소의 공개·온라인·미점유 기기를 조회한다. "
+    "기기 이름을 모르면 이 도구로 node_id 와 capability 를 먼저 확인한다. "
+    "기기별 근접 확률은 목록을 제한하지 않는다. 비콘 수신이 없으면 빈 목록이다. "
+    "access 가 operable 이면 사용을 요청할 수 있고 approval_required 이면 승인이 필요하다. "
+    "조회는 실행 허가가 아니다. 실제 실행은 request_use 가 지정 방식에 따라 별도로 판정한다."
 )
 _DEVICE_STATE_DESCRIPTION = "기기(node_id)의 상태를 조회한다. 근접 검사는 하지 않는다."
 

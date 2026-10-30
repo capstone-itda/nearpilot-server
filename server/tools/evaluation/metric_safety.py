@@ -389,7 +389,7 @@ class _Bench:
 
         def listed() -> bool:
             seen[0] = self.access(user_id, node_id)
-            return seen[0] is not None
+            return seen[0] is not None and self.h.proximity_ready(user_id, node_id)
 
         if not self.h.wait_until(listed, self.limit):
             raise _SetupFailed(f"{user_id}의 기기 목록에 {node_id}가 {self.limit:g}초 안에 나오지 않았다")

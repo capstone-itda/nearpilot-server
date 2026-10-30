@@ -130,6 +130,9 @@ class FakeHarness:
     def wait_until(self, predicate, timeout_sec):
         return any(predicate() for _ in range(3))
 
+    def proximity_ready(self, user_id, node_id):
+        return True
+
 
 def request_use_ids(harness):
     return [arguments["request_id"] for _, tool, arguments in harness.calls if tool == "request_use"]

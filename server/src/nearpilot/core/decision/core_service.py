@@ -108,6 +108,6 @@ def build_core_service(
     return DelegatingCoreService(
         use=RequestUseService(pipeline, execution, store),
         access=AccessRequestService(repo, policy, audit, settings, clock, new_id=new_id),
-        query=DeviceQueryService(repo, proximity, policy, settings, clock, readiness),
+        query=DeviceQueryService(repo, policy, settings, clock, readiness),
         release=release,
     )

@@ -99,6 +99,9 @@ class FakeHarness:
     def wait_until(self, predicate, timeout_sec):
         return predicate()
 
+    def proximity_ready(self, user_id, node_id):
+        return True
+
     def _meet(self, request_id):
         with self._lock:
             if request_id.startswith("m3-rt-"):
@@ -459,6 +462,15 @@ def test_NFR01_metric7_collects_only_request_use_latency():
     median, p95 = latency_summary([0.1, 0.4, 0.2])
     assert (outcome.rows[0]["value"], outcome.rows[1]["value"]) == (median, p95)
     json.dumps(outcome.raw)
+
+
+def test_NFR01_metric7_discovery_does_not_replace_proximity_preparation(monkeypatch):
+    config = with_counts(m7_server_requests=1)
+    harness = FakeHarness(config)
+    monkeypatch.setattr(harness, "proximity_ready", lambda user_id, node_id: False)
+    with pytest.raises(HarnessError):
+        run_metric7(harness, config)
+    assert [tool for _, tool, _ in harness.calls] == ["find_available_devices"]
 
 
 # ── 실제 프로세스 ──────────────────────────────────────────────────────

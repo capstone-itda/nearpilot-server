@@ -74,9 +74,10 @@ def test_FR16_FR17_NFR12_final_demo_clock_and_model(prepared):
         assert set(model.nodes) == set(EXPECTED)
         assert model.validation["source"] == "SYNTHETIC_NOT_MEASURED"
         assert model.validation["quality_verified"] is False
-        assert cfg.settings.threshold_speaker is None
-        assert cfg.settings.threshold_locker == 0.95
-        assert cfg.settings.threshold_light == 0.75
+        assert cfg.settings.version == "final-demo-2"
+        assert cfg.settings.threshold_speaker == 0.8
+        assert cfg.settings.threshold_locker == 0.8
+        assert cfg.settings.threshold_light == 0.8
 
 
 def test_FR22_final_demo_preserves_existing_directory(prepared):

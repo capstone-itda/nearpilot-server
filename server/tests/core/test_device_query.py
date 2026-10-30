@@ -1,4 +1,4 @@
-"""FR-09 기기 조회. 저장소, 근접, 정책은 fake 로 대신한다."""
+"""FR-09 기기 조회. 저장소와 정책은 fake 로 대신한다."""
 
 from __future__ import annotations
 
@@ -26,7 +26,6 @@ from nearpilot.shared.models import (
     NodeInfo,
     PolicyCheckResult,
     PolicyRevision,
-    ProximityResult,
     RssiFrame,
     SpeakerControls,
 )
@@ -70,7 +69,7 @@ class FakeRepo:
         return self.beacons
 
     def rssi_since(self, beacons, since):
-        return self.frames
+        return [f for f in self.frames if f.beacon in beacons and f.received_at >= since]
 
     def nodes(self, capability=None):
         return self.nodes_list
@@ -85,16 +84,6 @@ class FakeRepo:
         if self.session_error:
             raise self.session_error
         return (user_id, node_id) in self.open_sessions
-
-
-class FakeProximity:
-    def __init__(self, posteriors):
-        self.posteriors, self.error = posteriors, None
-
-    def posterior(self, beacons, candidates, at, *, place_nodes):
-        if self.error:
-            raise self.error
-        return ProximityResult(self.posteriors, at, at, "m", "c")
 
 
 class FakeReadiness:
@@ -124,12 +113,11 @@ class FakePolicy:
         return self.by_node.get(node_id, self.result)
 
 
-def build(posteriors=None, settings=None, readiness=None):
+def build(settings=None, readiness=None):
     repo, policy_check = FakeRepo(), FakePolicy()
-    prox = FakeProximity({"locker-1": 0.97} if posteriors is None else posteriors)
-    svc = DeviceQueryService(repo, prox, policy_check, settings or Settings(version="v1"), lambda: NOW,
+    svc = DeviceQueryService(repo, policy_check, settings or Settings(version="v1"), lambda: NOW,
                              readiness or FakeReadiness())
-    return svc, repo, prox, policy_check
+    return svc, repo, policy_check
 
 
 def ids(listing):
@@ -158,17 +146,19 @@ def test_FR09_비콘_관측이_없으면_빈_목록():
     assert svc.find_available_devices("u1") == []
 
 
-def test_FR09_근접_확률이_임계값_미만이면_뺀다():
-    svc, *_ = build({"locker-1": 0.9})
-    assert svc.find_available_devices("u1") == []
+def test_FR09_같은_장소의_기기는_기기별_확률_없이_조회한다():
+    svc, repo, *_ = build(settings=Settings(version="v1", threshold_locker=1.0, threshold_light=1.0))
+    repo.nodes_list = [node(), node("locker-2"), node("light-1", Capability.LIGHT, Occupancy.SHARED)]
+    repo.frames = [frame("light-1")]  # 같은 장소의 기기 하나만 비콘을 봐도 된다.
+    assert ids(svc.find_available_devices("u1")) == ["light-1", "locker-1", "locker-2"]
 
 
-def test_FR09_임계값이_없는_기능은_뺀다():
-    svc, repo, *_ = build({"speaker-1": 0.99})
+def test_FR09_임계값이_없는_기능도_조회한다():
+    svc, repo, *_ = build(settings=Settings(version="v1", threshold_speaker=None))
     repo.nodes_list = [node("speaker-1", Capability.SPEAKER, Occupancy.SHARED), node("light-1", Capability.LIGHT,
                                                                                      Occupancy.SHARED)]
     repo.frames = [frame("light-1")]
-    assert ids(svc.find_available_devices("u1")) == []  # 스피커 임계값 None, 조명 확률 없음
+    assert ids(svc.find_available_devices("u1")) == ["light-1", "speaker-1"]
 
 
 @pytest.mark.parametrize("change", [
@@ -183,7 +173,7 @@ def test_FR09_후보_조건을_만족하지_않으면_뺀다(change):
     anchor = node("anchor", Capability.LIGHT, Occupancy.SHARED)
     repo.nodes_list = [anchor, node("locker-1", **change)]
     repo.frames = [frame("anchor")]
-    assert svc.find_available_devices("u1") == []
+    assert ids(svc.find_available_devices("u1")) == ["anchor"]
 
 
 @pytest.mark.parametrize("state", [DeviceState.RESERVED, DeviceState.ACTIVE, DeviceState.CLOSING])
@@ -200,26 +190,25 @@ def test_FR14_비공개_기기는_목록에서_숨긴다():
 
 
 def test_FR09_정책이_허용하면_조작_가능():
-    svc, _, _, pol = build()
+    svc, _, pol = build()
     assert svc.find_available_devices("u1")[0]["access"] == "operable"
     assert pol.calls == [("u1", "locker-1", Action.OPEN)]  # 사물함의 기본 동작
 
 
 def test_FR09_승인이_필요하면_승인_필요():
-    svc, _, _, pol = build()
+    svc, _, pol = build()
     pol.result = PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, 1)
     assert svc.find_available_devices("u1")[0]["access"] == "approval_required"
 
 
 def test_FR09_정책이_거부하면_뺀다():
-    svc, _, _, pol = build()
+    svc, _, pol = build()
     pol.result = PolicyCheckResult(Verdict.DENY, ReasonCode.POLICY_DENIED, 1)
     assert svc.find_available_devices("u1") == []
 
 
 def test_FR09_정책_조회가_실패한_기기만_뺀다():
-    low = replace(Settings(version="v1"), threshold_light=0.3)
-    svc, repo, _, pol = build({"light-1": 0.5, "light-2": 0.4}, low)
+    svc, repo, pol = build()
     repo.nodes_list = [node("light-1", Capability.LIGHT, Occupancy.SHARED),
                        node("light-2", Capability.LIGHT, Occupancy.SHARED)]
     repo.frames = [frame("light-1")]
@@ -229,11 +218,29 @@ def test_FR09_정책_조회가_실패한_기기만_뺀다():
     assert svc.find_available_devices("u1") == []
 
 
-def test_FR09_근접_계산_예외는_올린다():
-    svc, _, prox, _ = build()
-    prox.error = RuntimeError("boom")
-    with pytest.raises(RuntimeError):
-        svc.find_available_devices("u1")
+def test_FR09_최근_비콘_관측이_만료되면_빈_목록():
+    svc, repo, *_ = build()
+    assert ids(svc.find_available_devices("u1")) == ["locker-1"]
+    old = NOW - timedelta(seconds=Settings().beacon_recent_sec + 1)
+    repo.frames = [replace(frame(), frame_ts=old, sent_at=old, received_at=old)]
+    assert svc.find_available_devices("u1") == []
+
+
+@pytest.mark.parametrize("anchor", [
+    node(trust_state=TrustState.DISCOVERED),
+    node(trust_state=TrustState.REVOKED),
+    node("other-node"),
+])
+def test_FR09_신뢰된_등록_기기의_비콘_수신이_필요하다(anchor):
+    svc, repo, *_ = build()
+    repo.nodes_list = [anchor]
+    assert svc.find_available_devices("u1") == []
+
+
+def test_FR09_다른_비콘_수신은_장소를_확인하지_못한다():
+    svc, repo, *_ = build()
+    repo.frames = [replace(frame(), beacon=BeaconKey("other", 1, 1))]
+    assert svc.find_available_devices("u1") == []
 
 
 def test_FR09_비콘_장소_불변_조건_위반은_예외():
@@ -245,11 +252,14 @@ def test_FR09_비콘_장소_불변_조건_위반은_예외():
     repo.nodes_list = [node("locker-1", place_id=None)]
     with pytest.raises(ValueError):
         svc.find_available_devices("u1")
+    repo.nodes_list = [node(), node("light-1", Capability.LIGHT, Occupancy.SHARED, place_id="other")]
+    repo.frames = [frame(), frame("light-1")]
+    with pytest.raises(ValueError):
+        svc.find_available_devices("u1")
 
 
-def test_FR09_목록은_근접_확률_내림차순이다():
-    low = replace(Settings(version="v1"), threshold_light=0.1)
-    svc, repo, *_ = build({"light-1": 0.6, "light-2": 0.3}, low)
+def test_FR09_목록은_기기_ID_순이다():
+    svc, repo, *_ = build()
     repo.nodes_list = [node("light-2", Capability.LIGHT, Occupancy.SHARED),
                        node("light-1", Capability.LIGHT, Occupancy.SHARED)]
     repo.frames = [frame("light-1")]
@@ -275,9 +285,8 @@ def test_FR09_공개_기기_상태를_반환한다():
 
 
 def test_FR09_상태_조회는_근접_검사를_하지_않는다():
-    svc, repo, prox, _ = build()
+    svc, repo, *_ = build()
     repo.beacons = []
-    prox.error = RuntimeError("boom")
     assert svc.get_device_state("anyone", "locker-1")["node_id"] == "locker-1"
     assert "beacons_of" not in repo.calls
 
@@ -370,7 +379,7 @@ def test_FR09_본인_세션_조회_예외는_올린다():
 
 
 def test_FR09_복원_중인_기기는_목록에서_뺀다():
-    svc, repo, prox, _ = build(readiness=FakeReadiness({"locker-1"}))
+    svc, repo, *_ = build(readiness=FakeReadiness({"locker-1"}))
     assert svc.find_available_devices("u1") == []
 
 

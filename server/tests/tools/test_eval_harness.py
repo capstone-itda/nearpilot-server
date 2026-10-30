@@ -154,9 +154,10 @@ def test_NFR13_harness_runs_tool_call(ascii_tmp_path, mosquitto, spawned):
     with Harness(config, ascii_tmp_path / "work", server_root=SERVER) as harness:
         harness.set_rssi("locker-1", {"visitor-1": config.rssi["near"]})
 
-        def listed() -> bool:  # 조회만 한다. 근접 확률이 임계값을 넘으면 기기가 나온다
+        def listed() -> bool:  # 장소의 기기 발견과 근접 지정의 준비를 따로 확인한다.
             _, found, _ = harness.mcp("visitor-1", "find_available_devices", {})
-            return found is not None and [device["node_id"] for device in found["devices"]] == ["locker-1"]
+            return (found is not None and [device["node_id"] for device in found["devices"]] == ["locker-1"]
+                    and harness.proximity_ready("visitor-1", "locker-1"))
 
         assert harness.wait_until(listed, config.startup_timeout_sec)
         status, result, elapsed = harness.mcp("visitor-1", "request_use", {

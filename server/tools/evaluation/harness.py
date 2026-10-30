@@ -24,11 +24,14 @@ import tomllib
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 from nearpilot.core.proximity.model import load_models
+from nearpilot.core.proximity.estimator import HmmProximityEstimator
+from nearpilot.db.repositories.repository import SqliteRepository
 from nearpilot.shared.config import Settings
 from tools.evaluation.db import open_readonly
 from tools.evaluation.server_config import EvalConfig
@@ -220,6 +223,30 @@ class Harness:
         conn = open_readonly(_uri_path(self._db_path))
         try:
             return conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
+
+    def proximity_ready(self, user_id: str, node_id: str) -> bool:
+        """평가 장면의 근접 확률을 저장 관측으로 재현한다. 조회 목록은 임계값 통과를 뜻하지 않는다."""
+        settings = Settings(**tomllib.loads(self._server_toml.read_text(encoding="utf-8"))["settings"])
+        models = load_models(self.config.model_root, {PLACE_ID: self.config.model_version})
+        now = datetime.now(timezone.utc)
+        conn = open_readonly(_uri_path(self._db_path))
+        try:
+            repo = SqliteRepository(conn, settings)  # 읽기 전용 연결이다. 마이그레이션을 실행하지 않는다.
+            beacons, nodes = repo.beacons_of(user_id), repo.nodes()
+            target = next((n for n in nodes if n.node_id == node_id), None)
+            if len(beacons) != 1 or target is None:
+                return False
+            threshold = getattr(settings, f"threshold_{target.capability.value}")
+            if threshold is None:
+                return False
+            place_nodes = [n for n in nodes if n.place_id == target.place_id]
+            estimator = HmmProximityEstimator(models, settings)
+            estimator.restore(repo.rssi_since(
+                beacons, now - timedelta(seconds=models[PLACE_ID].window_sec)), nodes)
+            result = estimator.posterior(beacons, [target], now, place_nodes=place_nodes)
+            return result.posteriors.get(node_id, 0.0) >= threshold
         finally:
             conn.close()
 

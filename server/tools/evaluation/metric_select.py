@@ -9,9 +9,9 @@
 장면은 기기가 듣는 방문자의 RSSI로 만든다. 방문자가 선 사물함은 방문자를 `rssi.near`로 듣고, 같은 장면의 다른 사물함은 `rssi.far`로 듣는다.
 다른 기기는 아무도 듣지 못한다 (값이 없는 앵커는 근접 확률의 증거가 아니다). `rssi.far`는 근접 모델이 이웃 사물함에서 기대하는 값에
 가까워야 한다. 모델 syn-a-1에서 기기 앞 방문자를 이웃 사물함이 듣는 평균은 -60.0(옆)과 -65.3 dBm(둘 건넌)이다. 이웃이 이보다 약하게(-68 이하)
-들으면 모델은 방문자가 사물함 앞이 아니라 다른 자리(조명 앞 등)에 있다고 보고 정면 기기의 사후확률이 임계값 0.95 아래로 내려가서 기기가 목록에 나오지
-않는다 (예시 설정의 -62에서는 사물함 세 대 앞 모두 0.997 이상이다).
-발화마다 정면 기기가 `find_available_devices`에 나올 때까지 기다린 뒤 보낸다. 반납 직후나 장면을 바꾼 직후에 보내면 근접 확률이 아직 낮다.
+들으면 모델은 방문자가 사물함 앞이 아니라 다른 자리(조명 앞 등)에 있다고 보고 정면 기기의 사후확률이 임계값 0.95 아래로 내려가서 준비 확인을 통과하지
+못한다 (예시 설정의 -62에서는 사물함 세 대 앞 모두 0.997 이상이다).
+발화마다 목록에서 정면 기기를 발견하고 저장 관측의 근접 확률이 임계값 이상인지 별도로 확인한다. 반납 직후나 장면을 바꾼 직후에 보내면 근접 확률이 아직 낮다.
 정면 기기가 제한 시간(`startup_timeout_sec`) 안에 나오지 않으면 장면을 만들지 못한 것이라 `HarnessError`다.
 
 `request_use`는 발화마다 한 번만 보낸다. ASK(재질문)와 BUSY는 새 `request_id`로 다시 보내지 않고 첫 응답을 센다. 재질문 자체가 측정 대상이다.
@@ -272,10 +272,11 @@ def _lockers(config: EvalConfig, count: int, metric: str) -> list[str]:
 
 
 def _wait_listed(h: Harness, config: EvalConfig, user_id: str, node_id: str) -> None:
-    """방문자의 `find_available_devices`에 `node_id`가 나올 때까지 기다린다. 제한 시간(`startup_timeout_sec`)이 지나면 `HarnessError`다."""
+    """목록에 기기가 있고 재현 확률이 임계값 이상일 때까지 기다린다. 제한 시간이 지나면 `HarnessError`다."""
     def listed() -> bool:
         _, found, _ = h.mcp(user_id, "find_available_devices", {})
-        return any(device["node_id"] == node_id for device in (found or {}).get("devices", []))
+        return (any(device["node_id"] == node_id for device in (found or {}).get("devices", []))
+                and h.proximity_ready(user_id, node_id))
 
     if not h.wait_until(listed, config.startup_timeout_sec):
         raise HarnessError(f"{user_id}의 기기 목록에 {node_id}가 {config.startup_timeout_sec:g}초 안에 나오지 않았다. 근접 확률이 "

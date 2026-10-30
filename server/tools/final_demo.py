@@ -17,7 +17,7 @@ SERVER = Path(__file__).resolve().parents[1]
 TEMPLATES = SERVER / "config" / "final-demo"
 
 
-def prepare(folder: Path, *, host: str, mode: str = "hardware", mqtt_port: int = 18884,
+def prepare(folder: Path, *, host: str, mode: str = "hardware", mqtt_port: int = 18883,
             http_port: int = 8000) -> Path:
     folder = folder.resolve()
     if folder.exists():
@@ -89,7 +89,7 @@ def main(argv=None) -> int:
     parser.add_argument("--dir", type=Path, default=Path("var/final-demo"))
     parser.add_argument("--host", help="기기가 접속할 서버 PC의 IPv4 주소")
     parser.add_argument("--mode", choices=("hardware", "sim"), default="hardware")
-    parser.add_argument("--mqtt-port", type=int, default=18884)
+    parser.add_argument("--mqtt-port", type=int, default=18883)
     parser.add_argument("--http-port", type=int, default=8000)
     args = parser.parse_args(argv)
     host = args.host or ("127.0.0.1" if args.mode == "sim" else "10.106.106.199")

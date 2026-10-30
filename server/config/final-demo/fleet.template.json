@@ -1,5 +1,5 @@
 {
-  "broker": {"host": "10.106.106.199", "port": 18884, "keepalive_sec": 30, "reconnect_min_sec": 1, "reconnect_max_sec": 8},
+  "broker": {"host": "10.106.106.199", "port": 18883, "keepalive_sec": 30, "reconnect_min_sec": 1, "reconnect_max_sec": 8},
   "settings": {},
   "devices": [
     {"node_id": "locker-1", "place": "final-demo", "capability": "locker", "occupancy": "rental", "username": "locker-1", "scenario": {"actuation_sec": 0.1, "beacons": [{"uuid": "11111111-2222-3333-4444-555555555555", "major": 1, "minor": 2, "rssi": -53.0}]}},

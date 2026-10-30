@@ -1,0 +1,36 @@
+{
+  "kind": "nearpilot-arrangement",
+  "version": 1,
+  "place": "final-demo",
+  "placeName": "최종 시연 공간",
+  "devices": {
+    "locker-1": {
+      "x": 456,
+      "y": 120
+    },
+    "locker-2": {
+      "x": 624,
+      "y": 120
+    },
+    "locker-3": {
+      "x": 792,
+      "y": 120
+    },
+    "light-1": {
+      "x": 456,
+      "y": 276
+    },
+    "light-2": {
+      "x": 624,
+      "y": 276
+    },
+    "light-3": {
+      "x": 792,
+      "y": 276
+    },
+    "speaker-1": {
+      "x": 624,
+      "y": 432
+    }
+  }
+}

@@ -128,8 +128,8 @@ def test_FR01_FR04_FR12A_FR13_FR14_FR16_final_demo_real_broker(tmp_path):
             assert len(mcp("tools/list")["tools"]) == 6
             # Registered beacon observations must reach the real estimator before explicit use.
             wait_until(lambda: bool(call("find_available_devices", {})["devices"]))
-            # The nearby list contains only devices above the confidence threshold, not the inventory.
-            assert "speaker-1" not in {n["node_id"] for n in call("find_available_devices", {})["devices"]}
+            # Beacon reception identifies the place; discovery lists its available public devices.
+            assert {n["node_id"] for n in call("find_available_devices", {})["devices"]} == expected
             for node in expected:
                 state = call("get_device_state", {"node_id": node})
                 assert state["node_id"] == node and state["online"] and state["trusted"], state
