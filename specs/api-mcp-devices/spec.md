@@ -16,6 +16,7 @@
   - `find_available_devices`: `devices`(목록)와 `reason`. 항목은 `node_id`, `capability`, `occupancy`, `access`다. 성공이면 `reason`이 `null`이다. 후보가 없으면 `devices`가 빈 목록이다.
   - `get_device_state`: `node_id`, `capability`, `occupancy`, `state`, `online`, `trusted`, `access_mode`, `reason`. 성공이면 `reason`이 `null`이다. 값이 없으면 `null`이다.
 - 바뀌는 상태: 없음. 조회만 한다.
+- fix/core-device-discovery (2026-10-29 담당자 결정): 도구 설명은 최근 비콘 수신으로 확인한 같은 장소의 기기를 조회한다고 알린다. 기기별 확률은 조회를 제한하지 않는다. 실제 실행은 `request_use`가 별도로 판정한다. 응답 필드와 인증 계약은 유지한다.
 - 약속:
   - 토큰 계정으로 `CoreService`를 부른다. 서비스의 조회 결과를 바꾸지 않는다 (NFR-07).
   - 없는 기기, 비공개 기기, 권한 없는 조회는 같은 응답이다. `reason`이 `TARGET_UNAVAILABLE`이고 나머지는 `null`이다 (FR-14).
