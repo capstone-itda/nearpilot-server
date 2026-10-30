@@ -35,6 +35,7 @@ npx playwright test  # 화면 검사 (시스템 Chrome 사용)
 1. 서버 설정 파일 `server/config/server.toml`에 `[dashboard]` 섹션을 둔다. 키 6개가 모두 필수이고, 섹션이 없으면 서버는 대시보드를 열지 않는다. 키와 예시 값은 `server/config/README.md`의 "서버 실행 설정"과 `server.example.toml`을 본다.
 2. `server/`에서 서버를 켠다: `nearpilot serve` (기본 주소는 설정의 `[http]`, 예시는 `127.0.0.1:8000`).
 3. `dashboard/`에서 `npm run dev`로 연다. 빌드 결과로 보려면 `npm run build` 뒤 `npm run preview`다.
+   `server/`에서 `nearpilot dashboard`(시험 폴더면 `nearpilot --dir <시험 폴더> dashboard`)로 열어도 된다. 설정의 서버 포트를 `NEARPILOT_SERVER`로 넘기고 `--host 0.0.0.0`으로 연다. `npm install`은 먼저 한다.
 4. 브라우저에서 `http://localhost:5173/?source=server`를 연다 (`preview`는 4173).
 5. 소유자 토큰을 넣는다. 소유자 토큰은 `nearpilot seed`가 소유자 계정을 등록할 때 한 번만 화면에 나온다. 명령은 `server/config/README.md`의 "운영 명령"을 본다.
 

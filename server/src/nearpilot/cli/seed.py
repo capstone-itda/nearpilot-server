@@ -380,15 +380,24 @@ def register(subparsers: argparse._SubParsersAction, parent: argparse.ArgumentPa
         "seed", parents=[parent], help="시드 파일로 계정, 비콘, 장소, 기기, 정책을 넣는다",
         description="시드 파일(TOML)을 모두 검사한 뒤 반영한다. 항목이 거부되면 사유를 쓰고 나머지를 계속하며, "
                     "거부가 하나라도 있으면 종료 코드 1이다. 계정 토큰은 발급할 때 한 번만 보여 준다.")
-    parser.add_argument("file", metavar="FILE",
-                        help="시드 파일 이름(설정 파일 옆 seed/ 폴더에서 찾는다) 또는 경로(/ 나 \\ 포함, 실행 폴더 기준)")
+    parser.add_argument("file", metavar="FILE", nargs="?", default=None,
+                        help="시드 파일 이름(설정 파일 옆 seed/ 폴더에서 찾는다) 또는 경로(/ 나 \\ 포함, 실행 폴더 기준). "
+                             "--dir이 있으면 생략할 수 있다(DIR/seed.toml)")
     parser.add_argument("--dry-run", action="store_true", help="DB를 열지 않고 반영할 항목만 쓴다")
     parser.set_defaults(handler=_seed)
 
 
 def _seed(args: argparse.Namespace) -> int:
     config = load_cli_config(args.config)
-    path = resolve_input(args.file, dirs_for(config.source).seed, kind="시드")
+    if args.file is not None:
+        path = resolve_input(args.file, dirs_for(config.source).seed, kind="시드")
+    else:  # FILE을 생략하면 시험 폴더 바로 아래의 seed.toml이다. 기본 폴더(seed/)에서 찾지 않는다
+        folder = getattr(args, "dir", None)
+        if folder is None:
+            raise CliError("시드 파일을 준다. --dir이 있을 때만 생략할 수 있다", EXIT_INVALID)
+        path = (Path(folder) / "seed.toml").resolve()
+        if not path.is_file():
+            raise CliError(f"시드 파일이 없다: {path}", EXIT_INVALID)
     try:
         seed = load_seed_file(path)
     except SeedFileError as error:  # DB를 열기 전에 막는다
