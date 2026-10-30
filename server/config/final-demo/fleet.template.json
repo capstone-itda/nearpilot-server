@@ -1,0 +1,13 @@
+{
+  "broker": {"host": "10.106.106.199", "port": 18883, "keepalive_sec": 30, "reconnect_min_sec": 1, "reconnect_max_sec": 8},
+  "settings": {},
+  "devices": [
+    {"node_id": "locker-1", "place": "final-demo", "capability": "locker", "occupancy": "rental", "username": "locker-1", "scenario": {"actuation_sec": 0.1, "beacons": [{"uuid": "11111111-2222-3333-4444-555555555555", "major": 1, "minor": 2, "rssi": -53.0}]}},
+    {"node_id": "locker-2", "place": "final-demo", "capability": "locker", "occupancy": "rental", "username": "locker-2", "scenario": {"actuation_sec": 0.1, "beacons": [{"uuid": "11111111-2222-3333-4444-555555555555", "major": 1, "minor": 2, "rssi": -65.3}]}},
+    {"node_id": "locker-3", "place": "final-demo", "capability": "locker", "occupancy": "rental", "username": "locker-3", "scenario": {"actuation_sec": 0.1, "beacons": [{"uuid": "11111111-2222-3333-4444-555555555555", "major": 1, "minor": 2, "rssi": -71.1}]}},
+    {"node_id": "light-1", "place": "final-demo", "capability": "light", "occupancy": "shared", "username": "light-1", "scenario": {"actuation_sec": 0.1, "beacons": [{"uuid": "11111111-2222-3333-4444-555555555555", "major": 1, "minor": 2, "rssi": -74.6}]}},
+    {"node_id": "light-2", "place": "final-demo", "capability": "light", "occupancy": "shared", "username": "light-2", "scenario": {"actuation_sec": 0.1, "beacons": [{"uuid": "11111111-2222-3333-4444-555555555555", "major": 1, "minor": 2, "rssi": -77.1}]}},
+    {"node_id": "light-3", "place": "final-demo", "capability": "light", "occupancy": "shared", "username": "light-3", "scenario": {"actuation_sec": 0.1, "beacons": [{"uuid": "11111111-2222-3333-4444-555555555555", "major": 1, "minor": 2, "rssi": -79.0}]}},
+    {"node_id": "speaker-1", "place": "final-demo", "capability": "speaker", "occupancy": "shared", "username": "speaker-1", "scenario": {"actuation_sec": 0.1, "beacons": [{"uuid": "11111111-2222-3333-4444-555555555555", "major": 1, "minor": 2, "rssi": -80.6}]}}
+  ]
+}

@@ -91,8 +91,8 @@ def run_metric7(h: Harness, config: EvalConfig) -> MetricOutcome:
     """한 방문자가 기기 앞에서 `request_use` → 반납을 순서대로 반복하며 `request_use` 왕복 시간을 모은다 (지표 7).
 
     방문자는 첫 trusted 사물함 앞에 선다. 그 사물함만 near RSSI로 듣고 다른 기기는 아무도 듣지 못한다 (값이 없는
-    앵커는 근접 확률의 증거로 쓰이지 않는다). 판정마다 기기가 `find_available_devices`에 다시 나올 때까지 기다린 뒤
-    보낸다. 반납 직후에 보내면 근접 확률이 임계값 아래라서 `LOW_CONFIDENCE`로 거절되는 일이 잦고(기다리지 않은 30회
+    앵커는 근접 확률의 증거로 쓰이지 않는다). 판정마다 목록에서 기기를 발견하고 저장 관측의 근접 확률이 임계값 이상인지
+    별도로 확인한다. 반납 직후에 보내면 근접 확률이 임계값 아래라서 `LOW_CONFIDENCE`로 거절되는 일이 잦고(기다리지 않은 30회
     중 18회), 거절된 판정은 기기를 구동하지 않아서 지연이 짧게 나온다. 지연은 `Harness.mcp`가
     `time.perf_counter()`로 잰 `request_use` 왕복 시간이고 반납과 기다린 시간은 넣지 않는다.
     호스트 쪽 두 지표(발화→안내 지연, 3종 호스트 일치)는 LLM 호스트를 돌려야 해서 행만 두고 미측정으로 쓴다.
@@ -234,15 +234,19 @@ def _hear(h: Harness, config: EvalConfig, heard: Mapping[str, Mapping[str, float
 
 
 def _wait_ready(h: Harness, config: EvalConfig, user_ids: Sequence[str]) -> None:
-    """모든 `user_ids`의 `find_available_devices`에 기기가 하나 이상 나올 때까지 기다린다.
+    """모든 방문자의 목록에 사물함이 있고, 그 사물함의 재현 확률이 임계값 이상일 때까지 기다린다.
 
     새 RSSI가 근접 확률에 반영되기 전에, 또는 앞 사용이 끝나 기기가 비기 전에 요청을 보내면 판정이 거절된다.
     제한 시간(`startup_timeout_sec`) 안에 나오지 않으면 장면이 만들어지지 않은 것이라 `HarnessError`다.
     """
+    lockers = set(_trusted_lockers(config))
+
     def ready() -> bool:
         for user_id in user_ids:
             _, found, _ = h.mcp(user_id, "find_available_devices", {})
-            if not (found or {}).get("devices"):
+            if not any(h.proximity_ready(user_id, node["node_id"])
+                       for node in (found or {}).get("devices", [])
+                       if node["node_id"] in lockers):
                 return False
         return True
 

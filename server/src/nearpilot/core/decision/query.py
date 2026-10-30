@@ -1,7 +1,7 @@
 """FR-09 기기 조회: find_available_devices, get_device_state.
 
-후보 조건은 `request_use` 의 ①②③ 과 같다 (`select_candidates`, `threshold_for`). 목록에 나온 기기가
-요청에서 같은 조건으로 거부되지 않게 한다. 조회만 하고 저장소를 바꾸지 않는다.
+등록 비콘의 최근 수신으로 장소를 확인하고, 같은 장소의 사용 가능한 공개 기기를 조회한다.
+기기별 근접 확률은 실행 판정에서 검사한다. 조회만 하고 저장소를 바꾸지 않는다.
 응답에는 사용자 ID, 점유 주체, 근접 확률, 장소 ID를 넣지 않는다 (FR-11, NFR-08).
 """
 
@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
-from nearpilot.core.decision.pipeline import select_candidates, threshold_for
+from nearpilot.core.decision.pipeline import select_candidates
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
     Action,
@@ -23,7 +23,7 @@ from nearpilot.shared.enums import (
     Verdict,
     Visibility,
 )
-from nearpilot.shared.interfaces import ExecutionReadiness, PolicyChecker, ProximityEstimator, Repository
+from nearpilot.shared.interfaces import ExecutionReadiness, PolicyChecker, Repository
 from nearpilot.shared.models import NodeInfo
 
 log = logging.getLogger(__name__)
@@ -43,14 +43,12 @@ class DeviceQueryService:
     def __init__(
         self,
         repo: Repository,
-        proximity: ProximityEstimator,
         policy: PolicyChecker,
         settings: Settings,
         clock: Callable[[], datetime],
         readiness: ExecutionReadiness,
     ) -> None:
         self._repo = repo
-        self._proximity = proximity
         self._policy = policy
         self._settings = settings
         self._clock = clock
@@ -78,31 +76,21 @@ class DeviceQueryService:
         if len(places) != 1 or None in places:
             raise ValueError("비콘을 본 기기의 장소가 하나로 정해지지 않는다")
         place_id = places.pop()
-        place_nodes = [n for n in all_nodes if n.place_id == place_id]
-
-        found: list[tuple[float, str, dict[str, Any]]] = []
+        found: list[dict[str, Any]] = []
         for capability in Capability:
-            threshold = threshold_for(s, capability)
-            if threshold is None:
-                continue
             candidates = select_candidates(
                 all_nodes, capability, s, now, place_id, self._readiness.can_execute)
-            if not candidates:
-                continue
-            posteriors = dict(self._proximity.posterior(
-                beacons, candidates, now, place_nodes=place_nodes).posteriors)
             for node in candidates:
-                p = posteriors.get(node.node_id, 0.0)
-                if p < threshold or node.device_state is not DeviceState.AVAILABLE:
+                if node.device_state is not DeviceState.AVAILABLE:
                     continue
                 access = self._access(user_id, node, now)
                 if access is not None:
-                    found.append((p, node.node_id, {
+                    found.append({
                         "node_id": node.node_id, "capability": node.capability.value,
                         "occupancy": node.occupancy.value, "access": access,
-                        "controls": self._controls(node)}))
-        found.sort(key=lambda item: (-item[0], item[1]))
-        return [item[2] for item in found]
+                        "controls": self._controls(node)})
+        found.sort(key=lambda item: item["node_id"])
+        return found
 
     def _access(self, user_id: str, node: NodeInfo, now: datetime) -> str | None:
         """조작 가능·승인 필요. 숨길 기기는 None 이다. 한 기기의 오류는 그 기기만 뺀다."""

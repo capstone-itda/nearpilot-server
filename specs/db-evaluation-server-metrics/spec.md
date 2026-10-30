@@ -90,6 +90,7 @@
 
 ## 6. 결정
 
+- fix/core-device-discovery: 주변 목록은 장소의 기기 발견만 뜻한다. 평가 하네스는 읽기 전용 저장소의 최근 관측을 기존 HMM으로 재현한다. 지표 1·3·4·5·6·7의 준비 확인은 기기 발견과 임계값 통과를 별도로 검사한다. 준비 확인은 서버를 바꾸거나 측정용 요청을 미리 보내지 않는다.
 - 하네스는 실제 프로세스를 쓴다: 임시 Mosquitto, `nearpilot serve` 하위 프로세스, 같은 프로세스 안의 `SimDevice`. 시나리오는 시뮬레이터의 `Scenario`를 바꿔 만든다 — 담당자 위임 결정. 테스트 도우미(`tests/`)를 쓰지 않고 운영과 같은 경로를 잰다.
 - 명령은 `nearpilot evaluate-server <설정> [--metrics 1,3,...] [--seed N] [--out NAME] [--force]`와 `nearpilot evaluate-reask <PLACE/VERSION> --split FILE [--ratios 1,2,5,10] [--out NAME] [--force]`다. `<설정>`은 `config/eval/`의 이름이거나 경로다. 이미 있는 보고서와 입력 오류는 종료 코드 2, 측정 실패는 1이다.
 - 도는 순서는 `--metrics`의 순서와 무관하게 서버 없는 지표 9가 먼저, 하네스 하나 안에서 1·4·5·6·7·3이다. 부하를 거는 지표 3을 마지막에 둔다. 지표 사이에 시뮬레이터 기기를 처음 상태로 되돌린다. 보고서의 행은 지표 번호순이고 도는 순서는 `metric_order` 열과 원자료의 `order`에 남는다.

@@ -1,0 +1,110 @@
+# 기기 발표를 받은 뒤 기존 nearpilot seed로 반영한다.
+# 최초 등록의 토큰은 화면에 한 번만 나온다. 이미 있는 계정은 유지한다.
+[[accounts]]
+user_id = "demo-owner"
+name = "시연 소유자"
+role = "owner"
+
+[[accounts]]
+user_id = "demo-visitor"
+name = "시연 방문자"
+role = "visitor"
+
+[[beacons]]
+beacon_id = "demo-owner-beacon"
+user_id = "demo-owner"
+uuid = "11111111-2222-3333-4444-555555555555"
+major = 1
+minor = 1
+
+[[beacons]]
+beacon_id = "demo-visitor-beacon"
+user_id = "demo-visitor"
+uuid = "11111111-2222-3333-4444-555555555555"
+major = 1
+minor = 2
+
+[[places]]
+place_id = "final-demo"
+owner = "demo-owner"
+name = "최종 시연 공간"
+nodes = ["locker-1", "locker-2", "locker-3", "light-1", "light-2", "light-3", "speaker-1"]
+
+[[nodes]]
+node_id = "locker-1"
+name = "사물함 1"
+trust = "trusted"
+
+[[nodes]]
+node_id = "locker-2"
+name = "사물함 2"
+trust = "trusted"
+
+[[nodes]]
+node_id = "locker-3"
+name = "사물함 3"
+trust = "trusted"
+
+[[nodes]]
+node_id = "light-1"
+name = "조명 1"
+trust = "trusted"
+
+[[nodes]]
+node_id = "light-2"
+name = "조명 2"
+trust = "trusted"
+
+[[nodes]]
+node_id = "light-3"
+name = "조명 3"
+trust = "trusted"
+
+[[nodes]]
+node_id = "speaker-1"
+name = "스피커 1"
+trust = "trusted"
+
+# 기본 시연은 공개·개방이다. 승인 시연은 생성한 폴더의 이 파일에서 바꾼다.
+[[policies]]
+node_id = "locker-1"
+visibility = "public"
+mode = "open"
+approval_mode = "one_time"
+
+[[policies]]
+node_id = "locker-2"
+visibility = "public"
+mode = "open"
+approval_mode = "one_time"
+
+[[policies]]
+node_id = "locker-3"
+visibility = "public"
+mode = "open"
+approval_mode = "one_time"
+
+[[policies]]
+node_id = "light-1"
+visibility = "public"
+mode = "open"
+approval_mode = "time_window"
+
+[[policies]]
+node_id = "light-2"
+visibility = "public"
+mode = "open"
+approval_mode = "time_window"
+
+[[policies]]
+node_id = "light-3"
+visibility = "public"
+mode = "open"
+approval_mode = "time_window"
+
+# 개방 정책에서 승인 방식은 사용하지 않는다. 스피커의 기본 승인 방식은 미결이다.
+[[policies]]
+node_id = "speaker-1"
+visibility = "public"
+mode = "open"
+approval_mode = "one_time"
