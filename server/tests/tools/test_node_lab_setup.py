@@ -1,7 +1,7 @@
 """FR-22 lab generation, isolation and hardware clock defaults."""
+import base64
+import hashlib
 import json
-from pathlib import Path
-from subprocess import CompletedProcess
 
 import pytest
 
@@ -10,17 +10,7 @@ from tools.node_lab import setup
 
 
 @pytest.fixture
-def generated(tmp_path, monkeypatch):
-    monkeypatch.setattr(setup, "executable", lambda name: name)
-
-    def hash_passwords(args, **kwargs):
-        path = Path(args[-1])
-        users = [line.split(":")[0] for line in path.read_text(encoding="utf-8").splitlines()]
-        path.write_text("".join(f"{user}:HASHED\n" for user in users), encoding="utf-8")
-        return CompletedProcess(args, 0)
-
-    monkeypatch.setattr(setup.subprocess, "run", hash_passwords)
-
+def generated(tmp_path):
     def generate(mode="sim", **kwargs):
         return setup.initialize(tmp_path / mode, mode=mode, host="127.0.0.1", port=18883,
             nodes=["light-1", "light-2"], beacon_uuid="11111111-2222-3333-4444-555555555555",
@@ -86,3 +76,20 @@ def test_FR04_init_rejects_unsupported_node_ids(tmp_path, generated, nodes):
         setup.initialize(tmp_path / "bad", mode="hardware", host="10.0.0.5", port=18883,
             nodes=nodes, beacon_uuid="11111111-2222-3333-4444-555555555555", major=1, minor=2)
     assert not (tmp_path / "bad").exists()
+
+
+def test_NFR08_broker_hash_matches_mosquitto_format():
+    salt = bytes(range(64))
+    _, version, iterations, encoded_salt, digest = setup.broker_hash("secretpw", salt=salt).split("$")
+    assert (version, iterations, base64.b64decode(encoded_salt)) == ("7", "1000", salt)
+    assert base64.b64decode(digest) == hashlib.pbkdf2_hmac("sha512", b"secretpw", salt, 1000)
+
+
+def test_NFR08_broker_hash_uses_random_salt():
+    first, second = setup.broker_hash("secretpw"), setup.broker_hash("secretpw")
+    assert first != second and "secretpw" not in first
+    for hashed in (first, second):
+        _, _, iterations, salt, digest = hashed.split("$")
+        assert len(base64.b64decode(salt)) == 64
+        assert base64.b64decode(digest) == hashlib.pbkdf2_hmac("sha512", b"secretpw", base64.b64decode(salt),
+                                                               int(iterations))

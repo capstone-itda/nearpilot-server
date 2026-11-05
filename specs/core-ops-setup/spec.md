@@ -76,7 +76,7 @@
 
 ## 6. 결정
 
-- 비밀번호 해시는 PBKDF2-HMAC-SHA512, 반복 101회, 무작위 솔트 12바이트의 `$7$` 형식이다 — `mosquitto_passwd` 기본값과 같은 형식이라 기존 브로커 설정이 그대로 읽는다. 담당자가 2026-11-05에 골랐다.
+- 비밀번호 해시는 PBKDF2-HMAC-SHA512, 반복 1000회, 무작위 솔트 64바이트의 `$7$` 형식이다 — 시연 PC에 설치한 `mosquitto_passwd`(Windows Mosquitto 2.1)가 만드는 값과 같은 형식이라 기존 브로커 설정이 그대로 읽는다. 담당자가 2026-11-05에 골랐다.
 - 방화벽은 실행하지 않고 스크립트를 만든다 — 보안 설정 변경은 사람이 확인하고 실행한다. 규칙은 그룹 `NearPilot`으로 묶고, 스크립트는 그룹의 기존 규칙을 지운 뒤 다시 만든다. `-Remove`는 그룹 규칙을 지우기만 한다.
 - `nearpilot provision`의 `--time-server`를 생략하면 시험 폴더 서버 설정의 `[mqtt].host`를 쓴다 — 시연 구성에서는 브로커와 시각원이 같은 서버 PC다.
 - `nearpilot provision`은 `tools/node_lab/provision.py`의 함수를 부른다. 주입 절차를 두 곳에 두지 않는다.
@@ -89,7 +89,7 @@
 
 | 요구사항 | 테스트 | 확인하는 것 |
 |---|---|---|
-| NFR-08 | `test_NFR08_broker_hash_matches_mosquitto_format` | 알려진 솔트로 만든 해시가 PBKDF2-SHA512 `$7$101$` 형식과 값이 같다 |
+| NFR-08 | `test_NFR08_broker_hash_matches_mosquitto_format` | 알려진 솔트로 만든 해시가 PBKDF2-SHA512 `$7$1000$` 형식과 값이 같다 |
 | NFR-08 | `test_NFR08_broker_hash_uses_random_salt` | 솔트가 매번 다르다 |
 | NFR-08 | `test_NFR08_final_demo_credentials` | 비밀번호 파일에 평문이 없다 |
 | NFR-12 | `test_NFR12_final_demo_without_mosquitto_passwd` | `mosquitto_passwd` 없이 폴더를 만든다 |

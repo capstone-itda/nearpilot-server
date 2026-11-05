@@ -36,9 +36,8 @@ def wait_until(check, timeout=20):
 def test_FR01_FR04_FR12A_FR13_FR14_FR16_final_demo_real_broker(tmp_path):
     try:
         executable("mosquitto")
-        executable("mosquitto_passwd")
     except ValueError:
-        pytest.skip("실제 Mosquitto와 mosquitto_passwd가 필요하다")
+        pytest.skip("실제 Mosquitto가 필요하다")
     mqtt_port, http_port = free_port(), free_port()
     while http_port == mqtt_port:
         http_port = free_port()

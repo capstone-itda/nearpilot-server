@@ -19,9 +19,8 @@ from tools.node_sim.config import build_device, load_config as load_fleet
 def lab_world(tmp_path):
     try:
         executable("mosquitto")
-        executable("mosquitto_passwd")
     except ValueError:
-        pytest.skip("Real Mosquitto and mosquitto_passwd are required")
+        pytest.skip("Real Mosquitto is required")
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]

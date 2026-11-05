@@ -181,6 +181,33 @@ def provision(port, values: dict[str, str], *, timeout: float, emit,
     return state
 
 
+def default_time_server(folder: Path) -> str:
+    """The lab's broker host. Demo folders run the broker and the time source on the same server PC."""
+    with (folder / "server.toml").open("rb") as stream:
+        return str(tomllib.load(stream)["mqtt"]["host"])
+
+
+def run(folder: Path, node: str, port_name: str, values: dict[str, str], *, timeout: float,
+        begin_interval: float, open_port=None) -> bool:
+    """Provision one device over `port_name`, logging to provision.jsonl. False when the device fails."""
+    if open_port is None:
+        import serial  # Optional diagnostic dependency, bundled with PlatformIO.
+        open_port = lambda name: serial.Serial(name, 115200, timeout=0.2)
+    with (folder / "provision.jsonl").open("a", encoding="utf-8") as log, open_port(port_name) as port:
+        def emit(event, **data):
+            record = dict(at=time.time(), event=event, node_id=node, **data)
+            log.write(json.dumps(record, ensure_ascii=False) + "\n")
+            log.flush()
+            print(json.dumps(record, ensure_ascii=False), flush=True)
+        emit("provision_started", port=port_name, values=public_view(values))
+        try:
+            provision(port, values, timeout=timeout, emit=emit, begin_interval=begin_interval)
+        except ValueError as error:
+            emit("provision_failed", reason=str(error))
+            return False
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dir", type=Path, required=True, help="시험 폴더 (lab.json, server.toml, .env.*)")
@@ -196,20 +223,8 @@ def main():
     args = parser.parse_args()
     values = build_values(args.dir, args.node, time_server=args.time_server, trust_sec=args.time_trust_sec,
                           resync_sec=args.time_resync_sec, wifi_file=args.wifi_file)
-    import serial  # Optional diagnostic dependency, bundled with PlatformIO.
-    with (args.dir / "provision.jsonl").open("a", encoding="utf-8") as log, \
-            serial.Serial(args.port, 115200, timeout=0.2) as port:
-        def emit(event, **data):
-            record = dict(at=time.time(), event=event, node_id=args.node, **data)
-            log.write(json.dumps(record, ensure_ascii=False) + "\n")
-            log.flush()
-            print(json.dumps(record, ensure_ascii=False), flush=True)
-        emit("provision_started", port=args.port, values=public_view(values))
-        try:
-            provision(port, values, timeout=args.timeout, emit=emit, begin_interval=args.begin_interval)
-        except ValueError as error:
-            emit("provision_failed", reason=str(error))
-            raise SystemExit(1)
+    if not run(args.dir, args.node, args.port, values, timeout=args.timeout, begin_interval=args.begin_interval):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
