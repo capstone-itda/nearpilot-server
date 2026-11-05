@@ -100,7 +100,7 @@ nearpilot-server/
 │       ├── node_sim/           가상 ESP32 기기 (하드웨어 없이 개발과 부하 시험)
 │       ├── data_collection/    RSSI 라벨 수집 (지표 8)
 │       └── evaluation/         지표 1~9 평가 표와 그래프 생성 (NFR-13)
-├── app/                        Android 앱 (비콘 송출, 알림)
+├── app/                        Android 앱 (비콘 송출, 알림, 기기 BLE 설정)
 ├── dashboard/                  운영 대시보드 (웹)
 └── firmware/                   ESP32 기기 펌웨어
 ```
@@ -909,6 +909,20 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - 재시작은 점유, 명령 기록, 복구 건을 바꾸지 않는다. 재시작 전에 접수한 명령의 처리는 §5 MQTT "명령 접수와 중복 처리"의 재시작 규칙을 따른다.
 - 상태 관리는 요청자, 기기, 결과를 서버 로그에 남긴다.
 
+### 기기 접속 설정 묶음
+
+[#234](https://github.com/capstone-itda/nearpilot-server/issues/234)의 A안이다. 앱은 서버에서 기기 접속 설정 묶음을 받아 BLE로 기기에 넣는다.
+
+| 접점 | 제공 | 사용 | 약속 |
+|---|---|---|---|
+| `ProvisioningSource.bundle(node_id)` | 상태 관리(조립) | 상태 관리 | 서버 설정 `[provisioning]`이 가리키는 기기 목록과 기기별 비밀번호 파일에서 `ProvisioningBundle`을 만든다. 목록에 없거나 파일이 없으면 `None`이다. |
+| `NodeAdminService.provisioning(user_id, node_id)` | 상태 관리 | API | 장소 소유권을 검사한 뒤 묶음을 반환한다. 소유자가 아니면 `PermissionError`, 묶음이 없으면 `LookupError`다. |
+
+- 묶음은 `node_id`, `mqtt_user`, `mqtt_password`, `mqtt_host`, `mqtt_port`, `capability`, `occupancy`다. Wi-Fi 이름과 비밀번호는 담지 않는다. 앱 사용자가 입력한다.
+- `mqtt_host`는 `[provisioning]`의 mDNS 이름에 `.local`을 붙인 값이다. `mqtt_port`는 서버의 `[mqtt].port`다.
+- `[provisioning]`은 선택 섹션이다. 값은 기기 목록 파일(`fleet`), mDNS 이름(`mdns_name`), 알릴 IPv4 주소(`mdns_address`)다. 섹션이 없으면 서버는 mDNS를 알리지 않고 묶음 조회는 `LookupError`다.
+- 묶음은 기기 비밀번호를 담는다. 서버는 묶음을 로그와 감사 기록에 쓰지 않는다 (NFR-08).
+
 ### 공동 인터페이스의 후속 반영
 
 이 decision PR은 `docs/`의 계약을 바꾼다. 서버, 펌웨어, 시뮬레이터와 테스트 코드는 바꾸지 않는다.
@@ -1262,6 +1276,20 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 재시작 뒤 기기는 새 기기 연결 ID로 접속하고 시각을 다시 맞춘 뒤 발표한다. 서버는 새 연결로 재시작을 확인한다.
 - 유효 시간은 실행 응답 제한(`exec_timeout_sec`)이다. 서버는 `expires_at`을 `issued_at`에 이 값을 더해 산출한다.
 
+### BLE 기기 설정
+
+#234의 A안이다. 펌웨어를 구운 뒤의 접속 설정은 USB 대신 앱의 BLE로 넣는다. USB 주입(`nearpilot provision`)도 같은 절차로 유지한다.
+
+- 설정 모드: 설정이 없는 기기는 항상 설정 모드다. 설정이 있는 기기는 실행 중 BOOT 버튼(GPIO0)을 3초 누르면 5분 동안 설정 모드다. 시간과 기간은 펌웨어 빌드 값이다.
+- 설정 모드의 기기는 NearPilot 설정 서비스 UUID를 BLE로 광고한다. 앱은 이 UUID로 기기를 찾는다.
+- 서비스에는 쓰기 특성 `command`와 알림 특성 `reply`가 있다. 줄 하나가 쓰기 하나다.
+- 줄의 형식은 USB 시리얼 주입과 같다: `CONFIG_BEGIN <nonce>`, `CONFIG_SET <키> <UTF-8 값의 16진수>`, `CONFIG_COMMIT <nonce>`, `CONFIG_ABORT`, `CONFIG?`. 응답 줄(`CONFIG_READY`, `CONFIG_STAGED`, `CONFIG_REJECTED`, `CONFIG_SAVED`, `CONFIG_STATE`)은 `reply`로 알린다.
+- 기기는 암호화한 링크(LE Secure Connections)의 쓰기만 받는다. 연결 기기를 저장(bonding)하지 않는다.
+- 기기는 `CONFIG_SAVED`를 알린 뒤 재시작해서 새 설정을 쓴다. 기존 명령 기록과 `node_id` 변경 차단은 USB 주입과 같다.
+- 설정 키는 `node_id`, `mqtt_user`, `mqtt_password`, `wifi_ssid`, `wifi_password`, `mqtt_host`, `mqtt_port`, `capability`, `occupancy`다. 시각 설정은 MQTT 시각 응답으로 받는다 (#236).
+- `mqtt_host`가 `.local`로 끝나면 기기는 MQTT에 접속할 때마다 mDNS로 주소를 찾는다. 서버는 `[provisioning]`의 mDNS 이름과 IPv4 주소를 알린다. 서버 IP가 바뀌어도 기기를 다시 설정하지 않는다.
+- 앱은 소유자 토큰으로 `GET /admin/nodes/{node_id}/provisioning`을 불러 묶음을 받고, 사용자가 입력한 Wi-Fi와 합쳐 기기에 넣는다. 앱은 묶음을 저장하지 않는다.
+
 ### REST
 
 | 그룹 | 사용처 | 요구사항 |
@@ -1270,7 +1298,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | 승인 | 앱: 대기 중인 승인 목록, 알림을 누를 때 승인 요청 한 건 조회, 승인 또는 거부 전달. 권한, 상태, 정책 버전은 CORE가 검증한다. | FR-03, FR-14 |
 | 대시보드 조회 | 대시보드: 현재 상태(기기 목록, 연결, 신뢰), 요청·판정 이력, 판정 단계별 결과, 승인 목록, 감사 로그, 사전 평가 결과. 읽기만 한다. | FR-12A |
 | 복구 | 소유자 스크립트: `FAULT` 복구 준비 조회와 복구 승인 | FR-12A, NFR-04 |
-| 기기 관리 | 소유자 스크립트: 기기 원격 재시작 | FR-12A, NFR-04 |
+| 기기 관리 | 소유자 스크립트: 기기 원격 재시작. 소유자 앱: 기기 접속 설정 묶음 조회 | FR-12A, NFR-04, NFR-12 |
 
 - 복구 준비 조회: `GET /admin/nodes/{node_id}/recovery`
 - 복구 승인: `POST /admin/nodes/{node_id}/recovery/{recovery_id}/approve`
@@ -1280,6 +1308,9 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
   - 발행하면 `202`와 `{"node_id", "restart_id", "expires_at"}`이다. 재시작 완료가 아니다.
   - 장소 소유자가 아니면 `403` `NOT_OWNER`, 현재 연결이 없으면 `409` `NODE_OFFLINE`, 발행하지 못했으면 `503` `NOT_SENT`다.
   - 응답에 기기 연결 세션 ID를 넣지 않는다.
+- 기기 접속 설정 묶음: `GET /admin/nodes/{node_id}/provisioning` (#234). 소유자 앱이 BLE 설정 전에 부른다.
+  - `200`과 묶음(§4 "기기 접속 설정 묶음")이다. `Cache-Control: no-store`를 붙인다.
+  - 장소 소유자가 아니면 `403` `NOT_OWNER`, 묶음이 없으면 `404` `NOT_FOUND`다.
 - 준비 조회 응답은 `node_id`, `recovery_id`, `status`, `blockers`(사유 코드 배열), `evidence`(`observed_at`, `execution_outcome`, `command_idle`), `checked_at`이다. 기기 연결 세션 ID는 넣지 않는다.
 - 승인 응답은 `recovery_id`, `outcome`, `reason_code`, `completed_at`, `readiness`(준비 조회와 같은 형식)다. `completed`는 `200`, `pending`은 `202`다.
 - 승인 거부는 `{"error": "<사유 코드>"}`다. `NOT_OWNER`는 `403`, `RECOVERY_MISMATCH`·`NOT_READY`·`STATE_CONFLICT`는 `409`, `STORE_NOT_APPLIED`는 `503`이다. 준비 조회에서 소유자가 아니면 `403`과 `NOT_OWNER`다. 승인은 요청 본문을 읽지 않는다.
@@ -1531,6 +1562,8 @@ sequenceDiagram
 | 테스트 | pytest | NFR-13 |
 | 평가 그래프 | matplotlib. 선택 의존성 `eval`로 설치한다 (`pip install -e ".[eval]"`). 없으면 그래프만 건너뛴다. | NFR-13, `server/pyproject.toml` |
 | MQTT 브로커 | Mosquitto. 독립 AP 안에서 실행한다. 설정 파일은 `server/config/mosquitto.conf`다. | #19 |
+| mDNS | 서버는 `zeroconf`로 이름을 알리고, 펌웨어는 ESP32 `ESPmDNS`로 찾는다. | #234, `server/pyproject.toml` |
+| 기기 BLE 설정 | 펌웨어는 NimBLE GATT 서버, 앱은 Android BLE GATT 클라이언트 | #234 |
 | 대시보드 | React 18, TypeScript, Vite | `dashboard/package.json` |
 | 대시보드 테스트 | Vitest (단위), Playwright (화면) | `dashboard/package.json` |
 | 대시보드 글꼴 | IBM Plex Sans KR, IBM Plex Mono. 빌드에 넣어 외부 요청 없이 그린다 (NFR-12). | `dashboard/package.json` |
