@@ -15,7 +15,7 @@ struct CommandContext {
     bool connected = false;
     bool clockTrusted = false;
     double nowSec = 0.0;       // UTC seconds from the synchronized wall clock.
-    double maxErrorSec = 0.0;  // Measured per-device bound from provisioning.
+    double maxErrorSec = 0.0;  // Bound from the accepted MQTT time reply (#236).
     int lightMaxLevel = 0;     // Firmware output limit for `parameters.brightness`; 0 accepts no parameters.
     bool lightColor = false;   // Whether `parameters.color` may be other than white.
     int speakerMaxVolume = 0;  // Firmware limit for `parameters.volume`; 0 accepts no speaker parameters.
@@ -24,6 +24,12 @@ struct CommandContext {
 // Returns nullptr when the command may run now, else the rejection code.
 // Order: format, target connection, action, parameters, clock trust, validity window.
 const char* validateCommand(JsonDocument& command, const CommandContext& context);
+
+// MQTT `restart` (#235, architecture.md §5 MQTT 8절). nullptr when the node may restart now, else why not.
+// Same node, current connection, trusted clock and validity window as a command, and a restart_id other
+// than `lastRestartId`. `restartId` receives the id only on success.
+const char* validateRestart(JsonDocument& restart, const CommandContext& context, const std::string& lastRestartId,
+    std::string& restartId);
 
 // Content fields exclude publication/session metadata; their original strings are preserved.
 // `parameters` joins the content only when present, so records without it compare as before.

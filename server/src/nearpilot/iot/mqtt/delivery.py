@@ -110,6 +110,18 @@ class ReportDelivery:
         with self._condition:
             self._listeners.append(listener)
 
+    def current_session(self, node_id: str) -> str | None:
+        """The connection confirmed by a status received within online_ttl_sec, else None (#235)."""
+        ttl = self._settings().online_ttl_sec
+        with self._condition:
+            current = self._sessions.get(node_id)
+            if current is None:
+                return None
+            received = current.status.received_at
+            if (self._clock() - received).total_seconds() > ttl:
+                return None
+            return current.session_id
+
     @property
     def saturated(self) -> bool:
         with self._condition:

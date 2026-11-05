@@ -51,7 +51,7 @@ def broker(tmp_path):
     device = [f"user {NODE}"]
     device += [f"topic write nearpilot/node/{NODE}/{kind}"
                for kind in ("announce", "rssi", "status", "result", "time_request")]
-    device += [f"topic read nearpilot/node/{NODE}/{kind}" for kind in ("cmd", "time")]
+    device += [f"topic read nearpilot/node/{NODE}/{kind}" for kind in ("cmd", "time", "restart")]
     acl.write_text(server_section + "\n".join(device) + "\n", encoding="utf-8")
     text = (SERVER / "config" / "mosquitto.conf").read_text(encoding="utf-8")
     text = text.replace("listener 1883 127.0.0.1", f"listener {port} 127.0.0.1")
@@ -163,6 +163,54 @@ def test_FR07_runtime_answers_time_request_over_real_broker(broker, tmp_path):
             ("rq-1", 0.5, 120, 60)
         server_time = datetime.fromisoformat(body["server_time"].replace("Z", "+00:00"))
         assert before <= server_time <= after
+    finally:
+        client.loop_stop()
+        client.disconnect()
+
+
+def test_NFR04_runtime_restart_reaches_device_over_real_broker(broker, tmp_path):
+    """#235: 소유자의 재시작 요청이 기기 ACL로 현재 연결 ID를 담은 `restart`로 도착한다."""
+    import json
+    import queue
+    import uuid
+
+    import paho.mqtt.client as mqtt
+
+    from _runtime import OWNER
+    from nearpilot.shared.enums import RestartOutcome
+
+    port, server_secret, node_secret, passwords = broker
+    cfg = make_config(tmp_path, mqtt={"port": port, "password_file": str(server_secret)})
+    seed(cfg.database.path, nodes=NODES)
+    session = str(uuid.uuid4())
+    received: queue.Queue = queue.Queue()
+    subscribed = queue.Queue()
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"test-{secrets.token_hex(4)}",
+                         clean_session=True, protocol=mqtt.MQTTv311)
+    client.username_pw_set(NODE, passwords[NODE])
+    client.on_subscribe = lambda *args: subscribed.put(True)
+    client.on_message = lambda c, u, message: received.put((message.topic, message.qos, message.retain,
+                                                            json.loads(message.payload)))
+    client.connect("127.0.0.1", port, keepalive=5)
+    client.loop_start()
+    try:
+        client.subscribe(f"nearpilot/node/{NODE}/restart", qos=1)
+        subscribed.get(timeout=3)
+        runtime = Runtime(cfg, proximity_factory=lambda models, s: FakeProximity({NODE: 0.0}))
+        with running(runtime):
+            assert runtime.nodes.restart(OWNER, NODE).outcome is RestartOutcome.NODE_OFFLINE
+            now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            client.publish(f"nearpilot/node/{NODE}/status", json.dumps(dict(
+                schema_version=2, node_id=NODE, session_id=session, seq=1, sent_at=now, observed_at=now,
+                command_state="idle")), qos=1)
+            wait_until(lambda: runtime.services.delivery.current_session(NODE) == session, timeout=5)
+            assert runtime.nodes.restart(VISITOR_A, NODE).outcome is RestartOutcome.NOT_OWNER
+            result = runtime.nodes.restart(OWNER, NODE)
+            topic, qos, retain, body = received.get(timeout=5)
+        assert result.outcome is RestartOutcome.SENT
+        assert (topic, qos, retain) == (f"nearpilot/node/{NODE}/restart", 1, False)
+        assert (body["restart_id"], body["target_session_id"]) == (result.restart_id, session)
+        assert received.empty()  # 소유자가 아닌 요청과 오프라인 요청은 발행하지 않았다
     finally:
         client.loop_stop()
         client.disconnect()

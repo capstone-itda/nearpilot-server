@@ -16,6 +16,7 @@ from typing import Any
 
 from nearpilot.shared.config import Settings, is_light_color
 from nearpilot.shared.enums import (
+    RestartOutcome,
     ApprovalDecisionReason,
     AdminWriteOutcome,
     AdminWriteReason,
@@ -1183,3 +1184,16 @@ class DashboardBeacon:
     user_id: str
     beacon_id: str
     last_seen_at: datetime | None  # 그 비콘의 rssi_observation.received_at 최댓값. 관측이 없으면 None
+
+
+@dataclass(frozen=True)
+class RestartResult:
+    """`NodeAdminService.restart` 의 결과 (#235). 사용자 ID 와 기기 연결 세션 ID 를 담지 않는다 (NFR-08).
+
+    restart_id 와 expires_at 은 SENT 일 때만 있다. expires_at 은 기기가 받는 만료 시각보다 늦지 않다.
+    """
+
+    node_id: str
+    outcome: RestartOutcome
+    restart_id: str | None = None
+    expires_at: datetime | None = None

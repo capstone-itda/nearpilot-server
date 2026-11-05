@@ -70,6 +70,27 @@ const char* validateCommand(JsonDocument& doc, const CommandContext& context) {
     return nullptr;
 }
 
+const char* validateRestart(JsonDocument& doc, const CommandContext& context, const std::string& lastRestartId,
+    std::string& restartId) {
+    if (!doc["schema_version"].is<int>() || doc["schema_version"].as<int>() != SCHEMA_VERSION ||
+        !doc["node_id"].is<const char*>() || doc["node_id"].as<std::string>() != context.nodeId ||
+        !doc["restart_id"].is<const char*>() || !doc["target_session_id"].is<const char*>() ||
+        !doc["issued_at"].is<const char*>() || !doc["expires_at"].is<const char*>()) return "INVALID_MESSAGE";
+    const std::string id = doc["restart_id"].as<std::string>();
+    if (id.empty() || id.size() > 64) return "INVALID_MESSAGE";
+    if (!context.connected || doc["target_session_id"].as<std::string>() != context.session)
+        return "SESSION_MISMATCH";
+    if (!context.clockTrusted) return "CLOCK_UNVERIFIED";
+    double issued, expires;
+    if (!parseUtc(doc["issued_at"].as<std::string>(), issued) ||
+        !parseUtc(doc["expires_at"].as<std::string>(), expires) || issued >= expires) return "INVALID_MESSAGE";
+    if (issued > context.nowSec + context.maxErrorSec) return "INVALID_MESSAGE";
+    if (context.nowSec + context.maxErrorSec >= expires) return "COMMAND_EXPIRED";
+    if (id == lastRestartId) return "ALREADY_HANDLED";
+    restartId = id;
+    return nullptr;
+}
+
 std::string canonicalContent(JsonDocument& command) {
     JsonDocument canonical;
     JsonArray fields = canonical.to<JsonArray>();

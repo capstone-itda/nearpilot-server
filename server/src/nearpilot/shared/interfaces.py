@@ -23,11 +23,13 @@ from nearpilot.shared.enums import (
     EndReason,
     ExecutionStatus,
     ReasonCode,
+    RestartOutcome,
     Role,
     TrustState,
     Verdict,
 )
 from nearpilot.shared.models import (
+    RestartResult,
     RecoveryRecord,
     RecoverySettlement,
     RestoreBundle,
@@ -894,3 +896,27 @@ class DashboardReadStore(Protocol):
     def ping(self) -> None:
         """SELECT 1. 실패하면 sqlite3.Error 다."""
         ...
+
+
+# ── 기기 원격 재시작 (#235) ──────────────────────────────────────
+
+
+@runtime_checkable
+class NodeRestarter(Protocol):
+    """IOT → 상태 관리. 기기의 현재 연결에 MQTT `restart` 를 발행한다 (architecture.md §4 "기기 원격 재시작").
+
+    현재 연결이 없으면 NODE_OFFLINE, 발행하지 못했으면 NOT_SENT 다. 자동으로 다시 보내지 않는다.
+    """
+
+    def restart(self, node_id: str, restart_id: str) -> RestartOutcome: ...
+
+
+@runtime_checkable
+class NodeAdminService(Protocol):
+    """상태 관리 → API 기기 관리 접점. API 는 인증 계정만 넘긴다.
+
+    장소 소유권을 검사한 뒤 새 restart_id 로 NodeRestarter 를 부른다. 소유자가 아니면 NOT_OWNER 다.
+    판정을 거치지 않는다. MCP 에 열지 않는다.
+    """
+
+    def restart(self, user_id: str, node_id: str) -> RestartResult: ...

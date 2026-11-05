@@ -8,9 +8,10 @@ from .connection import (
 )
 from .delivery import DeliveryConfig, ReportDelivery
 from .occupancy import OccupancyPublisher
+from .restart import MqttNodeRestarter
 
 __all__ = [
     "ConnectionFailure", "DeliveryConfig", "IncomingReport", "MqttCommandGateway", "MqttConfig",
-    "MqttConnection", "NotReady", "OccupancyPublisher", "PublishUncertain", "ReportDelivery",
+    "MqttConnection", "MqttNodeRestarter", "NotReady", "OccupancyPublisher", "PublishUncertain", "ReportDelivery",
     "TimeResponder",
 ]

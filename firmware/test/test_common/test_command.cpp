@@ -1,5 +1,7 @@
 #include <unity.h>
 
+#include <string>
+
 #include "np_command.h"
 
 namespace {
@@ -264,9 +266,58 @@ void test_FR09_command_actuation() {
     TEST_ASSERT_EQUAL_HEX32(0x0000FF, blue.color);
 }
 
+const char* restartCheck(const char* key, const char* value, const np::CommandContext& ctx = context(),
+    const std::string& last = "") {
+    JsonDocument doc;
+    doc["schema_version"] = 2;
+    doc["node_id"] = "light-01";
+    doc["restart_id"] = "restart-1";
+    doc["target_session_id"] = "session-1";
+    doc["issued_at"] = "2026-10-23T00:00:00Z";
+    doc["expires_at"] = "2026-10-23T00:00:30Z";
+    if (key) {
+        if (value) doc[key] = value;
+        else doc.remove(key);
+    }
+    std::string id;
+    const char* rejection = np::validateRestart(doc, ctx, last, id);
+    TEST_ASSERT_EQUAL_STRING(rejection ? "" : "restart-1", id.c_str());  // The id is set only on success.
+    return rejection;
+}
+
+void test_NFR04_restart_rejects_other_session() {
+    TEST_ASSERT_NULL(restartCheck(nullptr, nullptr));
+    TEST_ASSERT_EQUAL_STRING("INVALID_MESSAGE", restartCheck("node_id", "light-02"));
+    TEST_ASSERT_EQUAL_STRING("INVALID_MESSAGE", restartCheck("restart_id", ""));
+    TEST_ASSERT_EQUAL_STRING("INVALID_MESSAGE", restartCheck("restart_id", nullptr));
+    TEST_ASSERT_EQUAL_STRING("INVALID_MESSAGE", restartCheck("schema_version", "1"));
+    TEST_ASSERT_EQUAL_STRING("SESSION_MISMATCH", restartCheck("target_session_id", "session-0"));
+    np::CommandContext offline = context();
+    offline.connected = false;
+    TEST_ASSERT_EQUAL_STRING("SESSION_MISMATCH", restartCheck(nullptr, nullptr, offline));
+}
+
+void test_NFR04_restart_requires_valid_window() {
+    np::CommandContext untrusted = context();
+    untrusted.clockTrusted = false;
+    TEST_ASSERT_EQUAL_STRING("CLOCK_UNVERIFIED", restartCheck(nullptr, nullptr, untrusted));
+    TEST_ASSERT_EQUAL_STRING("INVALID_MESSAGE", restartCheck("expires_at", "2026-10-23T00:00:00Z"));
+    TEST_ASSERT_EQUAL_STRING("INVALID_MESSAGE", restartCheck("issued_at", "2026-10-23T00:00:11Z"));
+    TEST_ASSERT_EQUAL_STRING("COMMAND_EXPIRED", restartCheck("expires_at", "2026-10-23T00:00:10.5Z"));
+    TEST_ASSERT_NULL(restartCheck("expires_at", "2026-10-23T00:00:10.6Z"));
+}
+
+void test_NFR04_restart_ignores_handled_id() {
+    TEST_ASSERT_EQUAL_STRING("ALREADY_HANDLED", restartCheck(nullptr, nullptr, context(), "restart-1"));
+    TEST_ASSERT_NULL(restartCheck(nullptr, nullptr, context(), "restart-0"));
+}
+
 }  // namespace
 
 void runCommandTests() {
+    RUN_TEST(test_NFR04_restart_rejects_other_session);
+    RUN_TEST(test_NFR04_restart_requires_valid_window);
+    RUN_TEST(test_NFR04_restart_ignores_handled_id);
     RUN_TEST(test_FR06_validate_order);
     RUN_TEST(test_FR06_capability_action_matrix);
     RUN_TEST(test_FR06_canonical_content_fields);

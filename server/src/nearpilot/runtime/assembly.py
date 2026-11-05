@@ -26,6 +26,7 @@ from nearpilot.core.decision.core_service import build_core_service
 from nearpilot.core.decision.recheck import Rechecker
 from nearpilot.core.lifecycle.execution import ExecutionService
 from nearpilot.core.lifecycle.fault_recovery import FaultRecoveryService
+from nearpilot.core.lifecycle.node_admin import NodeAdminService
 from nearpilot.core.lifecycle.node_events import NodeEventService
 from nearpilot.core.lifecycle.release import ReleaseService
 from nearpilot.core.lifecycle.restore import RestoreService
@@ -35,8 +36,8 @@ from nearpilot.core.proximity.estimator import HmmProximityEstimator
 from nearpilot.core.proximity.model import ProximityModel, load_models
 from nearpilot.db.repositories import SqliteDashboardReads
 from nearpilot.iot.mqtt import (
-    ConnectionFailure, MqttCommandGateway, MqttConnection, OccupancyPublisher, ReportDelivery,
-    TimeResponder,
+    ConnectionFailure, MqttCommandGateway, MqttConnection, MqttNodeRestarter, OccupancyPublisher,
+    ReportDelivery, TimeResponder,
 )
 from nearpilot.runtime.auth_audit import AuditedAuthenticator
 from nearpilot.runtime.config import DashboardConfig, ServerConfig
@@ -47,6 +48,7 @@ from nearpilot.shared.enums import Action, ExecutionStatus
 from nearpilot.shared.interfaces import (
     AdminService, ApprovalService, CoreService, ProximityEstimator, RecoveryService, RetentionStore,
 )
+from nearpilot.shared.interfaces import NodeAdminService as NodeAdminApi
 from nearpilot.shared.models import Decision, ExecutionContext, ExecutionResult, UseRequest
 
 log = logging.getLogger(__name__)
@@ -254,6 +256,9 @@ class Runtime:
         # 복구 서비스는 시작할 때 `_build` 가 만든다. 라우터는 그 전에 붙으므로 늦게 연결하는 래퍼를 넘긴다.
         self._late_recovery = _LateRestService("recovery", self.gate, self.db)
         self.recovery = cast(RecoveryService, self._late_recovery)
+        # 기기 원격 재시작도 MQTT 연결을 쓰므로 시작할 때 만든다 (#235).
+        self._late_nodes = _LateRestService("nodes", self.gate, self.db)
+        self.nodes = cast(NodeAdminApi, self._late_nodes)
         self.services: Services | None = None
         self.tasks: list[PeriodicTask] = []
         self._started: list[str] = []
@@ -380,6 +385,10 @@ class Runtime:
         recovery = FaultRecoveryService(repository=repo, store=store, clock=clock, lock_for=locks,
                                         settings=settings)
         self._late_recovery.bind(recovery)
+        # 기기 관리. 판정을 거치지 않고 소유권만 검사한다 (#235).
+        restarter = MqttNodeRestarter(connection, delivery, settings=settings, clock=clock)
+        self._late_nodes.bind(NodeAdminService(repository=repo, restarter=restarter, clock=clock,
+                                               settings=settings))
         release = ReleaseService(repository=repo, store=store, settings=settings, clock=clock,
                                  lock_for=locks)
         execute_off = Late("shared_light_execute")
