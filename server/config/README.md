@@ -23,6 +23,7 @@
 
 브로커의 암호화된 비밀번호 파일은 `mosquitto_passwd -c config/.env.mosquitto-passwords nearpilot-server`로 만들고,
 기기 계정은 `-c` 없이 같은 파일에 추가한다. 비밀번호는 대화형 입력으로 받는다.
+시험·시연 폴더 도구(`tools.node_lab init`, `tools.final_demo`)는 `mosquitto_passwd` 없이 같은 형식(`$7$`, PBKDF2-SHA512)의 파일을 직접 만든다.
 이 파일과 서버 접속용 원문 비밀번호 파일(`.env.mqtt-password` 등)은 기존 `.env.*` ignore 규칙을 따른다.
 둘은 서로 다른 파일이다. 실제 비밀번호 파일은 커밋하지 않는다.
 
@@ -109,6 +110,7 @@ nearpilot --dir var/final-demo serve       # 서버
 nearpilot --dir var/final-demo seed        # 시드. --dir이 있으면 파일을 생략하고 DIR/seed.toml을 읽는다
 nearpilot --dir var/final-demo dashboard   # 대시보드 개발 서버 (npm run dev)
 nearpilot --dir var/final-demo sim         # 가상 기기. lab.json의 mode가 sim인 폴더에서만
+nearpilot --dir var/final-demo provision --node locker-1 --port COM6 --time-trust-sec 120 --time-resync-sec 60   # USB 주입
 ```
 
 - `broker`는 브로커 설정의 `password_file`, `acl_file`을 임시 ASCII 폴더에 복사해서 띄운다 (Windows 한글 경로). 설정 파일은 고치지 않는다. `--dir`이면 `DIR/broker.conf`의 경로를 `DIR` 기준으로, 아니면 `config/mosquitto.conf`의 경로를 `server/` 기준으로 푼다.
@@ -117,6 +119,7 @@ nearpilot --dir var/final-demo sim         # 가상 기기. lab.json의 mode가 
 - `broker`는 시스템 임시 폴더(`TEMP`) 경로에 한글이 있으면(Windows 계정 이름이 한글) 띄우지 않는다. `TEMP`를 영문 경로(예: `C:\temp`)로 바꾼다.
 - `seed`의 `DIR/seed.toml`은 `node_lab init`이 만들지 않는다. 직접 쓴다 (형식은 `config/seed/example.toml`).
 - `sim`은 Ctrl+C나 `quit`으로 끝내도 0이다. `broker`와 `dashboard`는 Ctrl+C면 130이다.
+- `provision`은 `tools/node_lab/provision.py`와 같은 주입을 한다. pyserial이 필요하다(`pip install pyserial`). `--time-server`를 생략하면 `[mqtt].host`다. 주입 성공 0, 기기 거부·응답 없음·다시 읽은 값 불일치 1, `--dir` 없음·시험 폴더 값 오류·pyserial 없음 2다.
 
 파일 인자에 이름(`/`나 `\`가 없는 값)을 주면 아래 기본 폴더에서 찾고, 경로를 주면 실행 폴더 기준으로 읽는다.
 

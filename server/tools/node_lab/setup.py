@@ -1,6 +1,8 @@
 """Create an isolated lab. Never overwrite existing data or invent clock trust."""
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import math
 import os
@@ -24,6 +26,25 @@ def executable(name: str) -> str:
     if fallback.is_file():
         return str(fallback)
     raise ValueError(f"{name} 실행 파일이 필요하다. PATH에 추가한다.")
+
+
+# Same `$7$` values as mosquitto_passwd of Windows Mosquitto 2.1 (specs/core-ops-setup 6절).
+BROKER_HASH_ITERATIONS = 1000
+BROKER_SALT_BYTES = 64
+
+
+def broker_hash(password: str, *, salt: bytes | None = None) -> str:
+    """Mosquitto password-file hash: PBKDF2-HMAC-SHA512 with a random salt, so mosquitto_passwd is not needed."""
+    salt = secrets.token_bytes(BROKER_SALT_BYTES) if salt is None else salt
+    digest = hashlib.pbkdf2_hmac("sha512", password.encode("utf-8"), salt, BROKER_HASH_ITERATIONS)
+    encode = lambda value: base64.b64encode(value).decode("ascii")
+    return f"$7${BROKER_HASH_ITERATIONS}${encode(salt)}${encode(digest)}"
+
+
+def write_broker_passwords(path: Path, credentials: dict[str, str]) -> None:
+    """Write the broker's password file; plain passwords never reach it."""
+    path.write_text("".join(f"{name}:{broker_hash(password)}\n" for name, password in credentials.items()),
+                    encoding="utf-8")
 
 
 # Device ID prefix -> (capability, occupancy). Lockers are rental, lights shared (requirements.md).
@@ -58,18 +79,12 @@ def initialize(folder: Path, *, mode: str, host: str, port: int, nodes: list[str
     beacon_uuid = str(UUID(beacon_uuid))
     if not 0 <= major <= 65535 or not 0 <= minor <= 65535:
         raise ValueError("major와 minor는 0~65535다")
-    passwd = executable("mosquitto_passwd")  # Validate dependency before creating files.
     folder.mkdir(parents=True)
     credentials = {name: secrets.token_hex(24) for name in ("nearpilot-server", *nodes)}
     for name, password in credentials.items():
         (folder / f".env.{name}").write_text(password + "\n", encoding="utf-8")
-    password_path = folder / ".env.broker-passwords"
-    password_path.write_text("".join(f"{k}:{v}\n" for k, v in credentials.items()), encoding="utf-8")
-    result = subprocess.run([passwd, "-U", str(password_path)], capture_output=True)
-    if result.returncode:
-        password_path.unlink(missing_ok=True)
-        raise ValueError("시험 비밀번호 파일을 암호화하지 못했다. 다른 시험 폴더에서 다시 준비한다.")
-    q = lambda value: json.dumps(value, ensure_ascii=False)
+    write_broker_passwords(folder / ".env.broker-passwords", credentials)
+    q =lambda value: json.dumps(value, ensure_ascii=False)
     skew = "\n".join(f"{q(node)} = 0.0" for node in nodes) if mode == "sim" else ""
     (folder / "server.toml").write_text(f'''# Generated lab configuration, not a deployment model.
 [settings]

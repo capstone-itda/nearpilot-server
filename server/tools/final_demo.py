@@ -7,14 +7,20 @@ import json
 from pathlib import Path
 import secrets
 import shutil
-import subprocess
 
 from nearpilot.runtime import load_config
-from tools.node_lab.setup import executable, write_json
+from tools.node_lab.setup import write_broker_passwords, write_json
 from tools.node_sim.config import acl_sections, load_config as load_fleet
 
 SERVER = Path(__file__).resolve().parents[1]
 TEMPLATES = SERVER / "config" / "final-demo"
+NTP_PORT = 123  # The time source the firmware syncs with (#140 A안); not a tuning value
+
+
+def firewall_rules(*, mode: str, mqtt_port: int, http_port: int) -> list[tuple[str, str, int]]:
+    """(name, protocol, port) to open. Simulated devices share the server PC's clock, so sim has no NTP rule."""
+    rules = [("HTTP", "TCP", http_port), ("MQTT", "TCP", mqtt_port)]
+    return rules + [("NTP", "UDP", NTP_PORT)] if mode == "hardware" else rules
 
 
 def prepare(folder: Path, *, host: str, mode: str = "hardware", mqtt_port: int = 18883,
@@ -33,8 +39,7 @@ def prepare(folder: Path, *, host: str, mode: str = "hardware", mqtt_port: int =
         raise ValueError("포트는 1~65535의 정수여야 한다")
     if mqtt_port == http_port:
         raise ValueError("MQTT와 HTTP 포트는 달라야 한다")
-    passwd = executable("mosquitto_passwd")
-    fleet = json.loads((TEMPLATES / "fleet.template.json").read_text(encoding="utf-8"))
+    fleet =json.loads((TEMPLATES / "fleet.template.json").read_text(encoding="utf-8"))
     options = json.loads((TEMPLATES / "lab.template.json").read_text(encoding="utf-8"))
     config = (TEMPLATES / "server.template.toml").read_text(encoding="utf-8")
     script = (TEMPLATES / "run.template.ps1").read_text(encoding="utf-8")
@@ -48,29 +53,24 @@ def prepare(folder: Path, *, host: str, mode: str = "hardware", mqtt_port: int =
     for device in fleet["devices"]:
         device["password_file"] = str(folder / f'.env.{device["node_id"]}')
         device["store"] = str(folder / f'sim-{device["node_id"]}.sqlite3')
-    # Read templates and resolve the required executable before creating the output directory.
+    # Read every template before creating the output directory.
     script = script.replace("@SERVER_ROOT@", str(SERVER).replace("'", "''"))
+    firewall = (TEMPLATES / "firewall.template.ps1").read_text(encoding="utf-8").replace("@RULES@", ",\n".join(
+        f"    @{{Name='{name}'; Protocol='{protocol}'; Port={port}}}"
+        for name, protocol, port in firewall_rules(mode=mode, mqtt_port=mqtt_port, http_port=http_port)))
     folder.mkdir(parents=True)
     for name in ("seed.toml", "README.md"):
         shutil.copyfile(TEMPLATES / name, folder / name)
     shutil.copytree(TEMPLATES / "models", folder / "models")
     (folder / "server.toml").write_text(config, encoding="utf-8")
     (folder / "run.ps1").write_text(script, encoding="utf-8-sig")
+    (folder / "firewall.ps1").write_text(firewall, encoding="utf-8-sig")
     write_json(folder / "fleet.json", fleet)
     write_json(folder / "lab.json", options)
     credentials = {name: secrets.token_hex(24) for name in ("nearpilot-server", *options["nodes"])}
     for name, password in credentials.items():
         (folder / f".env.{name}").write_text(password + "\n", encoding="utf-8")
-    password_file = folder / ".env.broker-passwords"
-    password_file.write_text("".join(f"{name}:{value}\n" for name, value in credentials.items()), encoding="utf-8")
-    try:
-        result = subprocess.run([passwd, "-U", str(password_file)], capture_output=True)
-    except OSError:
-        password_file.unlink(missing_ok=True)
-        raise
-    if result.returncode:
-        password_file.unlink(missing_ok=True)
-        raise ValueError("브로커 비밀번호 암호화에 실패했다. 다른 시연 폴더에서 다시 준비한다")
+    write_broker_passwords(folder / ".env.broker-passwords", credentials)
     server_acl = "user nearpilot-server\n" + "\n".join(
         [f"topic read nearpilot/node/+/{kind}" for kind in ("announce", "rssi", "status", "result")]
         + [f"topic write nearpilot/node/+/{kind}" for kind in ("cmd", "occupancy")]) + "\n\n"
@@ -100,6 +100,7 @@ def main(argv=None) -> int:
         return 2
     print(f"시연 구성: {folder}\n앱: http://{host}:{args.http_port}\nMCP: http://{host}:{args.http_port}/mcp")
     print(f"MQTT: {host}:{args.mqtt_port}\n실행 절차: {folder / 'README.md'}")
+    print(f"방화벽: 관리자 PowerShell에서 {folder / 'firewall.ps1'}")
     return 0
 
 

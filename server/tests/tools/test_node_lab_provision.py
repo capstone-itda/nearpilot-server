@@ -174,3 +174,27 @@ def test_FR13_provision_resends_begin_while_board_boots(lab):
     assert sum(line.startswith("CONFIG_BEGIN") for line in device.written) == 3
     with pytest.raises(ValueError, match="CONFIG_READY"):  # A board that never answers still fails.
         run(FakeDevice(booting=1000), prepared, begin_interval=0.05)
+
+
+def test_NFR12_provision_run_opens_port_and_logs(lab, capsys):
+    from contextlib import nullcontext
+    opened = []
+
+    def open_port(name, device=None):
+        opened.append(name)
+        return nullcontext(device)
+
+    good, bad = FakeDevice(), FakeDevice(reject="mqtt_host")
+    assert provision.run(lab, "light-1", "COM9", values(lab), timeout=0.5, begin_interval=0.1,
+                         open_port=lambda name: open_port(name, good))
+    assert not provision.run(lab, "light-1", "COM9", values(lab), timeout=0.5, begin_interval=0.1,
+                             open_port=lambda name: open_port(name, bad))
+    assert opened == ["COM9", "COM9"]
+    events = [json.loads(line)["event"] for line in (lab / "provision.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert events[0] == "provision_started" and "provisioned" in events and events[-1] == "provision_failed"
+    logged = (lab / "provision.jsonl").read_text(encoding="utf-8") + capsys.readouterr().out
+    assert MQTT_SECRET not in logged and WIFI_SECRET not in logged
+
+
+def test_NFR12_provision_default_time_server_is_broker_host(lab):
+    assert provision.default_time_server(lab) == "10.0.0.5"

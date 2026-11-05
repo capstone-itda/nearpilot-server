@@ -19,6 +19,7 @@
 ## 1. 구성 만들기
 
 Python 3.12 이상, 서버 의존성, Mosquitto와 PowerShell 7이 필요하다.
+`mosquitto_passwd`는 필요 없다. 도구가 브로커 비밀번호 파일을 직접 암호화한다.
 대시보드는 Node.js와 `dashboard/`의 npm 의존성이 필요하다.
 저장소의 `server/`에서 실행한다.
 
@@ -37,6 +38,7 @@ python -m tools.final_demo
 | `.env.*` | 새 MQTT 비밀번호와 암호화한 브로커 비밀번호 파일 |
 | `models/final-demo/synthetic-1.json` | 기기 7대의 합성 초기 모델 |
 | `run.ps1` | 기존 브로커, 서버, 시드, 가상 기기와 대시보드를 실행하는 스크립트 |
+| `firewall.ps1` | HTTP·MQTT 포트(실제 기기 구성은 NTP UDP `123`도)를 로컬 서브넷에만 여는 방화벽 규칙 |
 
 다른 주소나 포트를 쓰려면 새 구성 폴더를 만든다.
 
@@ -58,17 +60,19 @@ python -m tools.final_demo --dir var/final-demo-2 --host 192.168.0.10 --mqtt-por
 사물함은 `esp32dev-locker-1`, 조명은 `esp32dev-light-1`, 스피커는 `esp32dev-speaker-1`이다.
 같은 종류의 기기는 같은 펌웨어를 쓰고 주입하는 `--node`를 바꾼다. 플래시를 지우지 않는다.
 
-아래 주입 예시는 저장소 루트에서 실행한다. COM 포트와 시각 신뢰 기간은 검증한 값으로 바꾼다.
+주입은 `server/`에서 `nearpilot provision`으로 한다. pyserial이 필요하다(`pip install pyserial`). PlatformIO 가상환경의 Python은 필요 없다.
+COM 포트와 시각 신뢰 기간은 검증한 값으로 바꾼다. `--time-server`를 생략하면 `server.toml`의 `[mqtt].host`를 시각원으로 쓴다.
 
 ```powershell
-.\firmware\node_lab\.venv\Scripts\python.exe server/tools/node_lab/provision.py --dir server/var/final-demo --node locker-1 --port COM6 --time-server 10.106.106.199 --time-trust-sec 120 --time-resync-sec 60
+nearpilot --dir var/final-demo provision --node locker-1 --port COM6 --time-trust-sec 120 --time-resync-sec 60
 ```
 
 시각 오차는 다른 기기의 값을 빌려 쓰지 않는다.
 미설정 기기는 미검증 값 `-1`을 주입받고 시각을 신뢰하지 않는다.
 시각 실측은 `server/tools/node_lab/README.md`의 USB 시각 실측 절차를 따른다.
 PC의 NTP 응답과 ESP32의 `CLOCK_SYNCED`를 확인한다.
-AP에서 서버 PC의 TCP `8000`, `18883`에 접근할 수 있어야 한다.
+AP에서 서버 PC의 TCP `8000`, `18883`과 UDP `123`(NTP)에 접근할 수 있어야 한다.
+관리자 PowerShell에서 시연 폴더의 `firewall.ps1`을 한 번 실행하면 이 포트를 로컬 서브넷에만 연다. 다시 실행하면 규칙을 바꾸고, `-Remove`를 붙이면 지운다.
 다른 PC에서 대시보드를 열면 TCP `5173`도 사용한다.
 
 ## 3. 최초 등록과 실행

@@ -1,7 +1,7 @@
 """Final demo configuration: seven devices, isolation, credentials and existing parsers."""
 import json
-from pathlib import Path
-from subprocess import CompletedProcess
+import re
+import shutil
 
 import pytest
 
@@ -19,17 +19,7 @@ EXPECTED = {"locker-1": ("locker", "rental"), "locker-2": ("locker", "rental"),
 
 
 @pytest.fixture
-def prepared(tmp_path, monkeypatch):
-    monkeypatch.setattr(final_demo, "executable", lambda name: name)
-
-    def hash_passwords(args, **kwargs):
-        path = Path(args[-1])
-        names = [line.split(":")[0] for line in path.read_text(encoding="utf-8").splitlines()]
-        path.write_text("".join(f"{name}:HASHED\n" for name in names), encoding="utf-8")
-        return CompletedProcess(args, 0)
-
-    monkeypatch.setattr(final_demo.subprocess, "run", hash_passwords)
-
+def prepared(tmp_path):
     def generate(mode="hardware"):
         return final_demo.prepare(tmp_path / mode, host="127.0.0.1" if mode == "sim" else "10.106.106.199", mode=mode)
     return generate
@@ -98,6 +88,29 @@ def test_NFR08_final_demo_credentials(prepared):
     assert all(password not in public for password in passwords)
     hashed = (folder / ".env.broker-passwords").read_text(encoding="utf-8")
     assert all(password not in hashed for password in passwords)
+    assert [line.split(":")[1].startswith("$7$") for line in hashed.splitlines()] == [True] * 8
+
+
+def test_NFR12_final_demo_without_mosquitto_passwd(tmp_path, monkeypatch):
+    real_which = shutil.which
+    monkeypatch.setattr(shutil, "which", lambda name, *a, **k: None if "mosquitto" in name else real_which(name, *a, **k))
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "no-programs"))
+    folder = final_demo.prepare(tmp_path / "demo", host="10.106.106.199")
+    users = [line.split(":")[0] for line in (folder / ".env.broker-passwords").read_text(encoding="utf-8").splitlines()]
+    assert users == ["nearpilot-server", *EXPECTED]
+
+
+@pytest.mark.parametrize("mode,expected", [
+    ("hardware", {("HTTP", "TCP", 8000), ("MQTT", "TCP", 18883), ("NTP", "UDP", 123)}),
+    ("sim", {("HTTP", "TCP", 8000), ("MQTT", "TCP", 18883)}),
+])
+def test_NFR12_final_demo_firewall_rules(prepared, mode, expected):
+    script = (prepared(mode) / "firewall.ps1").read_text(encoding="utf-8-sig")
+    assert "-RemoteAddress LocalSubnet" in script and "@RULES@" not in script
+    assert "#Requires -RunAsAdministrator" in script
+    rules = {(name, protocol, int(port)) for name, protocol, port in
+             re.findall(r"@\{Name='(\w+)'; Protocol='(\w+)'; Port=(\d+)\}", script)}
+    assert rules == expected
 
 
 @pytest.mark.parametrize("host,mode,mqtt_port,http_port", [

@@ -117,7 +117,7 @@ python -m tools.node_lab init --mode hardware --dir var/node-lab-hardware --host
 실제 기기의 시각 오차 설정은 기본으로 비어 있다. 미측정 값을 0으로 채우지 않는다.
 시각이 검증되지 않으면 서버는 보고를 거부하고 펌웨어는 새 출력을 차단한다.
 실제 기기가 없으므로 이 저장소는 신뢰할 시각 오차 값을 제공하지 않는다.
-AP 안의 NTP 서버 운영과 Windows 방화벽의 MQTT 포트 허용은 환경에서 준비한다.
+AP 안의 NTP 서버 운영과 Windows 방화벽의 MQTT 포트 허용은 환경에서 준비한다. 최종 시연 구성(`tools.final_demo`)은 방화벽 규칙 스크립트 `firewall.ps1`을 함께 만든다.
 
 합성 모델은 `models/node-lab/synthetic-1.json`이다. 좌표와 파라미터는 초기 예시다.
 실측 모델을 쓸 때는 `server.toml`의 모델 루트와 장소별 버전을 바꾼다.
@@ -130,11 +130,13 @@ AP 안의 NTP 서버 운영과 Windows 방화벽의 MQTT 포트 허용은 환경
 `erase_flash`는 명령 기록도 지우므로 쓰지 않는다.
 
 1. 시험 폴더에 `.env.wifi.json`을 만든다. 내용은 `{"ssid": "...", "password": "..."}`다. Git에서 제외된다.
-2. 저장소 루트에서 PlatformIO의 Python으로 실행한다. 시리얼 모니터와 함께 포트를 열지 않는다.
+2. `server/`에서 `nearpilot provision`으로 실행한다. pyserial이 필요하다(`pip install pyserial`). 시리얼 모니터와 함께 포트를 열지 않는다.
 
 ```powershell
-.\firmware\node_lab\.venv\Scripts\python.exe server/tools/node_lab/provision.py --dir server/var/node-lab-hardware --node light-1 --port COM6 --time-server 192.168.0.10 --time-trust-sec 120 --time-resync-sec 60
+nearpilot --dir var/node-lab-hardware provision --node light-1 --port COM6 --time-server 192.168.0.10 --time-trust-sec 120 --time-resync-sec 60
 ```
+
+   `--time-server`를 생략하면 `server.toml`의 `[mqtt].host`다. 기존 `server/tools/node_lab/provision.py`도 같은 인자로 쓸 수 있다.
 
 | 값 | 읽는 곳 |
 |---|---|
@@ -143,7 +145,7 @@ AP 안의 NTP 서버 운영과 Windows 방화벽의 MQTT 포트 허용은 환경
 | Wi-Fi | `.env.wifi.json` 또는 `--wifi-file` |
 | MQTT 주소·포트 | `server.toml`의 `[mqtt]` |
 | 최대 시각 오차 | `server.toml`의 `[delivery.clock_skew_sec]`. 없으면 `-1`(미검증)을 넣는다 |
-| 시각원, 신뢰 기간, 재동기화 간격 | 명령 인자. 검증한 값을 넣는다 |
+| 시각원, 신뢰 기간, 재동기화 간격 | 명령 인자. 검증한 값을 넣는다. `nearpilot provision`은 시각원을 생략하면 `[mqtt].host`를 쓴다 |
 | 기기 기능, 점유 방식 | 시험 폴더 `fleet.json`에서 그 기기의 `capability`·`occupancy`. 서버가 등록한 값과 같다 |
 
 - 제품 펌웨어(`firmware/`)는 기능과 점유 방식을 필수로 받는다. node_lab 펌웨어는 두 키를 `unknown_key`로 거부하므로 도구가 빼고 계속한다(`key_unsupported` 기록).
