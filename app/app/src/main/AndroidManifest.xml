@@ -15,6 +15,16 @@
         android:maxSdkVersion="30" />
     <!-- Android 12 이상의 BLE 광고 권한 -->
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <!-- 앱 BLE 기기 설정 (#234): 설정 서비스를 알리는 기기를 찾고 연결한다. 위치를 추정하지 않는다 -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Android 11 이하에서 BLE 검색에 필요하다 -->
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />

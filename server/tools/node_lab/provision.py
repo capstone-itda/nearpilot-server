@@ -48,10 +48,13 @@ def build_values(folder: Path, node: str, *, wifi_file: Path | None = None) -> d
     if not isinstance(wifi.get("ssid"), str) or not isinstance(wifi.get("password"), str):
         raise ValueError("Wi-Fi 파일은 ssid와 password 문자열을 담는다")
     mqtt = server["mqtt"]
+    # With [provisioning] the device finds the broker by mDNS, the same host the app's BLE setup injects (#234).
+    provisioning = server.get("provisioning")
+    host = f'{provisioning["mdns_name"]}.local' if isinstance(provisioning, dict) else str(mqtt["host"])
     return dict(node_id=node, mqtt_user=node,
                 mqtt_password=password_path.read_text(encoding="utf-8").strip(),
                 wifi_ssid=wifi["ssid"], wifi_password=wifi["password"],
-                mqtt_host=str(mqtt["host"]), mqtt_port=str(int(mqtt["port"])),
+                mqtt_host=host, mqtt_port=str(int(mqtt["port"])),
                 capability=device["capability"], occupancy=device["occupancy"])
 
 

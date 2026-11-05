@@ -29,6 +29,7 @@ from nearpilot.shared.enums import (
     Verdict,
 )
 from nearpilot.shared.models import (
+    ProvisioningBundle,
     RestartResult,
     RecoveryRecord,
     RecoverySettlement,
@@ -920,3 +921,17 @@ class NodeAdminService(Protocol):
     """
 
     def restart(self, user_id: str, node_id: str) -> RestartResult: ...
+
+    def provisioning(self, user_id: str, node_id: str) -> ProvisioningBundle:
+        """기기 접속 설정 묶음 (#234). 소유자가 아니면 PermissionError, 묶음이 없으면 LookupError 다."""
+        ...
+
+
+@runtime_checkable
+class ProvisioningSource(Protocol):
+    """조립 → 상태 관리. 서버 설정 `[provisioning]` 의 기기 목록과 비밀번호 파일에서 묶음을 만든다 (#234).
+
+    목록에 없거나 파일이 없으면 None 이다. 묶음을 로그에 쓰지 않는다.
+    """
+
+    def bundle(self, node_id: str) -> ProvisioningBundle | None: ...

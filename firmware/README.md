@@ -129,6 +129,18 @@ SNTP를 쓰지 않는다. MQTT 연결 뒤 `nearpilot/node/{id}/time_request`(QoS
 - 준비 사유 순서: `config_missing`, `storage_unavailable`, `wifi_disconnected`, `mqtt_disconnected`, `clock_unverified`·`clock_trust_expired`, `announce_pending`.
 - 이전에 만든 `config.local.h`에는 `config.example.h`의 `NP_CLOCK_DRIFT_PPM`, `NP_CLOCK_RETRY_MS`를 더한다. 없으면 빌드가 멈춘다.
 
+## BLE 기기 설정과 mDNS (#234)
+
+USB 주입과 같은 줄(`CONFIG_BEGIN`, `CONFIG_SET`, `CONFIG_COMMIT`, `CONFIG_ABORT`, `CONFIG?`)을 BLE로도 받는다. 앱의 기기 설정 화면이 쓴다.
+
+- 설정 모드: 설정이 없는 기기는 항상. 설정이 있는 기기는 BOOT 버튼(GPIO0)을 `NP_SETUP_HOLD_MS`(3초) 누르면 `NP_SETUP_WINDOW_MS`(5분) 동안. 로그 `SETUP_MODE_ON`, `SETUP_MODE_OFF`.
+  - BOOT 버튼은 전원을 넣거나 리셋하는 순간에 누르고 있을 때만 다운로드 모드가 된다. 실행 중에 누르면 펌웨어가 읽는 보통 입력이고, 코드를 지우지 않는다.
+- 설정 모드에서만 설정 서비스(`NP_SETUP_SERVICE_UUID`)를 광고한다. 이름은 `NP-<node_id>`, 설정이 없으면 `NP-setup`이다.
+- `command`(쓰기, 암호화 필요) 쓰기 하나가 줄 하나다. 응답 줄은 `reply`(알림)로 `NP_SETUP_CHUNK_BYTES`씩 나눠 보내고 줄바꿈으로 끝낸다. 같은 줄을 시리얼에도 쓴다.
+- LE Secure Connections(Just Works)로 암호화하고 연결 기기를 저장하지 않는다.
+- `mqtt_host`가 `.local`로 끝나면 MQTT 접속 직전마다 `MDNS.queryHost`(`NP_MDNS_TIMEOUT_MS`)로 찾는다. 로그 `MQTT_HOST_RESOLVED`, 못 찾으면 `MQTT_HOST_UNRESOLVED`와 재시도 간격 증가.
+- 이전에 만든 `config.local.h`에는 `config.example.h`의 `NP_SETUP_*`, `NP_MDNS_TIMEOUT_MS`를 더한다. 없으면 빌드가 멈춘다.
+
 ## 원격 재시작 (#235)
 
 `nearpilot/node/{id}/restart`(QoS 1)를 구독한다. 서버의 `nearpilot restart`가 보낸다.

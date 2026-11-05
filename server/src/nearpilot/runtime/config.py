@@ -8,7 +8,9 @@
 
 from __future__ import annotations
 
+import ipaddress
 import math
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
@@ -71,6 +73,15 @@ class ProximityConfig:
 
 
 @dataclass(frozen=True)
+class ProvisioningConfig:
+    """선택 섹션 `[provisioning]` (#234). 기기 접속 설정 묶음과 mDNS 알림. 없으면 둘 다 하지 않는다."""
+
+    fleet: Path  # 기기 목록 파일 (fleet.json)
+    mdns_name: str  # `<mdns_name>.local`
+    mdns_address: str  # 알릴 IPv4 주소
+
+
+@dataclass(frozen=True)
 class DashboardConfig:
     """선택 섹션 `[dashboard]`. 없으면 대시보드를 열지 않는다."""
 
@@ -91,10 +102,13 @@ class ServerConfig:
     mqtt: MqttConfig
     delivery: DeliveryConfig
     dashboard: DashboardConfig | None = None  # [dashboard] 가 없으면 None
+    provisioning: ProvisioningConfig | None = None  # [provisioning] 이 없으면 None (#234)
 
 
-_SECTIONS = {"settings", "runtime", "http", "database", "proximity", "mqtt", "delivery", "dashboard"}
-_REQUIRED_SECTIONS = _SECTIONS - {"runtime", "dashboard"}
+_SECTIONS = {"settings", "runtime", "http", "database", "proximity", "mqtt", "delivery", "dashboard", "provisioning"}
+_REQUIRED_SECTIONS = _SECTIONS - {"runtime", "dashboard", "provisioning"}
+# mDNS 이름 하나(DNS 라벨). `.local` 은 붙이지 않는다.
+_MDNS_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 
 
 def load_config(path: str | Path, *, require_models: bool = True) -> ServerConfig:
@@ -126,6 +140,7 @@ def parse_config(raw: Mapping[str, Any], *, base: Path, source: Path | None = No
             mqtt=_mqtt(_table(raw, "mqtt"), base),
             delivery=_delivery(_table(raw, "delivery")),
             dashboard=_dashboard(_table(raw, "dashboard"), base) if "dashboard" in raw else None,
+            provisioning=_provisioning(_table(raw, "provisioning"), base) if "provisioning" in raw else None,
         )
     except ConfigError:
         raise
@@ -203,6 +218,23 @@ def _delivery(table: Mapping[str, Any]) -> DeliveryConfig:
     except ValueError as error:  # 값은 쓰지 않고 키 이름만 알린다
         name = str(error).rsplit(": ", 1)[-1]
         raise ConfigError(f"delivery.{name} 가 허용 범위 밖이다") from None
+
+
+def _provisioning(table: Mapping[str, Any], base: Path) -> ProvisioningConfig:
+    _keys(table, "provisioning", required={"fleet", "mdns_name", "mdns_address"})
+    fleet = _path(table, "provisioning", "fleet", base)
+    if not fleet.is_file():
+        raise ConfigError(f"provisioning.fleet 파일이 없다: {fleet}")
+    name = table["mdns_name"]
+    if not isinstance(name, str) or not _MDNS_NAME.fullmatch(name):
+        raise ConfigError("provisioning.mdns_name 은 영문 소문자·숫자·하이픈의 이름 하나다 (.local 없이)")
+    try:
+        address = ipaddress.IPv4Address(table["mdns_address"])
+    except (ValueError, TypeError):
+        raise ConfigError("provisioning.mdns_address 는 IPv4 주소 문자열이어야 한다") from None
+    if not isinstance(table["mdns_address"], str) or address.is_unspecified or address.is_multicast:
+        raise ConfigError("provisioning.mdns_address 는 기기가 접속할 IPv4 주소여야 한다")
+    return ProvisioningConfig(fleet, name, str(address))
 
 
 def _dashboard(table: Mapping[str, Any], base: Path) -> DashboardConfig:

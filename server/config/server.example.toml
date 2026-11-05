@@ -85,3 +85,12 @@ auth_timeout_sec = 5.0   # 연결한 뒤 인증 메시지를 기다리는 시간
 audit_limit_max = 200    # 감사 조회 한 번의 최대 행 수
 weak_rssi_dbm = -80      # 장소 목록의 weakRssiDbm. 대시보드 배치 화면이 이보다 약한 수신을 약한 신호로 그린다
 tail_interval_sec = 0.5  # 따라 읽기 간격. 사건이 화면에 보이기까지 최대 이만큼 늦다
+
+# 기기 접속 설정 (선택, #234). 이 섹션이 있으면 소유자 앱이 GET /admin/nodes/{node_id}/provisioning 으로
+# 기기 접속 설정 묶음을 받아 BLE로 기기에 넣고, 서버는 <mdns_name>.local 을 mdns_address 로 알린다.
+# 없으면 둘 다 하지 않는다. 기기 비밀번호는 기기 목록 옆의 .env.<node_id> 파일(또는 목록의 password_file)이다.
+# [provisioning]
+# fleet = "fleet.json"            # 기기 목록 파일 (nearpilot provision 과 같은 형식)
+# mdns_name = "nearpilot"         # 기기는 nearpilot.local 로 접속한다
+# mdns_address = "192.168.0.10"   # 기기가 접속할 이 PC의 IPv4 주소
+

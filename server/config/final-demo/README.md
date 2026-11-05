@@ -69,8 +69,11 @@ COM 포트는 기기를 꽂은 포트로 바꾼다.
 nearpilot --dir var/final-demo provision --node locker-1 --port COM6
 ```
 
+USB 대신 앱의 기기 설정 화면에서 BLE로 넣어도 된다 (#234). 설정이 있는 기기는 BOOT 버튼을 3초 눌러 설정 모드로 바꾼다.
+hardware 구성의 `server.toml`에는 `[provisioning]`이 있어 기기는 서버를 `nearpilot.local`로 찾는다. 서버 PC의 IP가 바뀌면 `mdns_address`만 고친다.
+
 주입 뒤 시리얼 로그에서 `CLOCK_SYNCED rtt_ms=... error_ms=...`와 `NODE_READY`를 확인한다.
-AP에서 서버 PC의 TCP `8000`, `18883`에 접근할 수 있어야 한다.
+AP에서 서버 PC의 TCP `8000`, `18883`과 UDP `5353`(mDNS)에 접근할 수 있어야 한다.
 관리자 PowerShell에서 시연 폴더의 `firewall.ps1`을 한 번 실행하면 이 포트를 로컬 서브넷에만 연다. 다시 실행하면 규칙을 바꾸고, `-Remove`를 붙이면 지운다.
 다른 PC에서 대시보드를 열면 TCP `5173`도 사용한다.
 

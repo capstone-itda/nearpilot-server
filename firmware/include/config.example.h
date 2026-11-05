@@ -1,7 +1,7 @@
 #pragma once
 // Build-time tuning shared by every device. Copy to config.local.h only to change it.
-// Device ID, MQTT account, Wi-Fi and server address are NOT here (the clock comes over MQTT, #236):
-// they are injected over USB (`python -m tools.node_lab provision`) and kept in NVS.
+// Device ID, MQTT account, Wi-Fi and server address are NOT here (the clock comes over MQTT, #236);
+// they are injected over USB (`nearpilot provision`) or by the app over BLE (#234) and kept in NVS.
 // Optional plain GPIO output for any device. No build profile sets it.
 // No extra board is required. Leave OUTPUT_PIN=-1 for serial-only verification.
 #ifndef NP_OUTPUT_PIN
@@ -98,6 +98,18 @@
 #define NP_MAX_COMMAND_BYTES 2048
 #define NP_MAX_COMMAND_ID_BYTES 128
 #define NP_SERIAL_BAUD 115200
+// BLE setup (#234). Unconfigured nodes always advertise the setup service; a configured node does so for
+// NP_SETUP_WINDOW_MS after BOOT (GPIO0) is held NP_SETUP_HOLD_MS. The app finds nodes by the service UUID.
+#define NP_SETUP_BUTTON_PIN 0
+#define NP_SETUP_HOLD_MS 3000UL
+#define NP_SETUP_WINDOW_MS 300000UL
+#define NP_SETUP_SERVICE_UUID "6e9d0001-5a3c-4b8e-9f1d-4e5050494c54"
+#define NP_SETUP_COMMAND_UUID "6e9d0002-5a3c-4b8e-9f1d-4e5050494c54"
+#define NP_SETUP_REPLY_UUID "6e9d0003-5a3c-4b8e-9f1d-4e5050494c54"
+// Reply lines are notified in pieces this size, so any ATT MTU carries them; the app joins them at '\n'.
+#define NP_SETUP_CHUNK_BYTES 20
+// mDNS lookup of a `.local` broker before each MQTT connect.
+#define NP_MDNS_TIMEOUT_MS 2000
 // Wi-Fi and BLE share one radio. A 90 ms window starved MQTT; 30 ms removed the -9 disconnects (spec 7단계).
 #define NP_BLE_SCAN_INTERVAL_MS 100
 #define NP_BLE_SCAN_WINDOW_MS 30

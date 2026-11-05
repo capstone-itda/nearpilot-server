@@ -3,6 +3,7 @@
 // Success means the control signal was emitted and stored, not an observed physical state.
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <ESPmDNS.h>
 #include <MQTT.h>
 #include <NimBLEDevice.h>
 #include <Preferences.h>
@@ -12,6 +13,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <string>
+#include <mutex>
 #include <vector>
 
 #include "np_beacon.h"
@@ -30,6 +32,9 @@
 #endif
 #if !defined(NP_CLOCK_DRIFT_PPM) || !defined(NP_CLOCK_RETRY_MS)
 #error "config.local.h predates #236: copy NP_CLOCK_DRIFT_PPM and NP_CLOCK_RETRY_MS from config.example.h"
+#endif
+#if !defined(NP_SETUP_SERVICE_UUID) || !defined(NP_SETUP_HOLD_MS) || !defined(NP_MDNS_TIMEOUT_MS)
+#error "config.local.h predates #234: copy the NP_SETUP_* and NP_MDNS_TIMEOUT_MS values from config.example.h"
 #endif
 
 static_assert(NP_MAX_COMMAND_RECORDS > 0 && NP_MAX_COMMAND_RECORDS < 10000, "NVS slot limit");
@@ -508,6 +513,8 @@ void replayStep() {
 
 JsonDocument staged;
 String stagingNonce;
+// Where config replies go: USB serial, or the BLE setup service while a BLE line runs (#234).
+Print* reply = &Serial;
 
 const char* loadConfig() {
     if (!settingsReady) return "storage_unavailable";
@@ -521,7 +528,7 @@ const char* loadConfig() {
 }
 
 void configState() {
-    Serial.printf("CONFIG_STATE configured=%d generation=%lu node=%s mqtt_user=%s mqtt_host=%s mqtt_port=%u "
+    reply->printf("CONFIG_STATE configured=%d generation=%lu node=%s mqtt_user=%s mqtt_host=%s mqtt_port=%u "
         "wifi_ssid_bytes=%u wifi_password_set=%d mqtt_password_set=%d\n", configured, config.generation,
         config.nodeId.c_str(), config.mqttUser.c_str(), config.mqttHost.c_str(), config.mqttPort,
         unsigned(config.wifiSsid.size()), !config.wifiPassword.empty(), !config.mqttPassword.empty());
@@ -530,7 +537,7 @@ void configState() {
 bool hexValid(const String& value) { return np::hexValid(value.c_str()); }
 
 void configReject(const char* reason) {
-    Serial.printf("CONFIG_REJECTED reason=%s\n", reason);
+    reply->printf("CONFIG_REJECTED reason=%s\n", reason);
 }
 
 void commitConfig(const String& nonce) {
@@ -539,7 +546,7 @@ void commitConfig(const String& nonce) {
     np::NodeConfig candidate;
     const char* invalid = np::decodeConfig(staged, candidate);
     if (invalid) {
-        Serial.printf("CONFIG_REJECTED reason=invalid key=%s\n", invalid);
+        reply->printf("CONFIG_REJECTED reason=invalid key=%s\n", invalid);
         staged.clear();
         return;
     }
@@ -555,10 +562,10 @@ void commitConfig(const String& nonce) {
     // One key, one write: a power cut leaves either the old or the new configuration.
     if (settings.putString("cfg", body) != body.length() || settings.getString("cfg") != body)
         return configReject("write_failed");
-    Serial.printf("CONFIG_SAVED generation=%lu node=%s restarting=1\n", config.generation + 1,
+    reply->printf("CONFIG_SAVED generation=%lu node=%s restarting=1\n", config.generation + 1,
         candidate.nodeId.c_str());
     Serial.flush();
-    delay(100);
+    delay(reply == &Serial ? 100 : 500);  // A BLE notification needs a connection event to leave.
     ESP.restart();  // Apply from a clean boot: the clock starts unverified until the server answers.
 }
 
@@ -567,7 +574,7 @@ void serialCommand(const String& line) {
         // Read-only diagnostic. It never changes clock trust or authorizes output.
         timeval stamp;
         gettimeofday(&stamp, nullptr);
-        Serial.printf("CLOCK_SAMPLE nonce=%s unix_us=%lld synced=%d age_ms=%lu uptime_ms=%lu\n",
+        reply->printf("CLOCK_SAMPLE nonce=%s unix_us=%lld synced=%d age_ms=%lu uptime_ms=%lu\n",
             line.substring(7).c_str(), static_cast<long long>(stamp.tv_sec) * 1000000 + stamp.tv_usec,
             clockState.synchronized, clockAgeMs(), millis());
     } else if (line == "CONFIG?") {
@@ -575,7 +582,7 @@ void serialCommand(const String& line) {
     } else if (line.startsWith("CONFIG_BEGIN ") && line.length() == 45 && hexValid(line.substring(13))) {
         staged.clear();
         stagingNonce = line.substring(13);
-        Serial.printf("CONFIG_READY nonce=%s\n", stagingNonce.c_str());
+        reply->printf("CONFIG_READY nonce=%s\n", stagingNonce.c_str());
     } else if (line.startsWith("CONFIG_SET ")) {
         if (!stagingNonce.length()) return configReject("no_session");
         String rest = line.substring(11);
@@ -586,13 +593,13 @@ void serialCommand(const String& line) {
         if (!np::fromHex(split < 0 ? "" : rest.substring(split + 1).c_str(), value))
             return configReject("bad_value");
         staged[key] = value;
-        Serial.printf("CONFIG_STAGED key=%s bytes=%u\n", key.c_str(), unsigned(value.size()));
+        reply->printf("CONFIG_STAGED key=%s bytes=%u\n", key.c_str(), unsigned(value.size()));
     } else if (line.startsWith("CONFIG_COMMIT ")) {
         commitConfig(line.substring(14));
     } else if (line == "CONFIG_ABORT") {
         staged.clear();
         stagingNonce = "";
-        Serial.println("CONFIG_ABORTED");
+        reply->println("CONFIG_ABORTED");
     }
 }
 
@@ -612,6 +619,117 @@ void serialInput() {
         else serialCommand(line);
         line = "";
         overflow = false;
+    }
+}
+
+// ---- BLE setup (#234, architecture.md §5 "BLE 기기 설정") ----
+// Unconfigured nodes are always in setup mode. A configured node enters it for NP_SETUP_WINDOW_MS after
+// BOOT (GPIO0) is held NP_SETUP_HOLD_MS. Writes need an encrypted LE Secure Connections link; no bonding.
+
+NimBLECharacteristic* setupReply = nullptr;
+volatile bool setupWindow = false;   // Configured node: BOOT window open.
+volatile bool setupLinked = false;
+std::mutex setupLock;
+std::vector<String> setupLines;      // Filled by the NimBLE host task, drained by loop().
+
+bool setupMode() { return !configured || setupWindow; }
+
+// Each reply line is also written to serial, then notified in NP_SETUP_CHUNK_BYTES pieces ending in '\n'.
+class SetupReply : public Print {
+  public:
+    size_t write(uint8_t ch) override {
+        Serial.write(ch);
+        line_ += char(ch);
+        if (ch == '\n') {
+            if (setupReply && setupLinked)
+                for (size_t at = 0; at < line_.length(); at += NP_SETUP_CHUNK_BYTES)
+                    setupReply->notify(reinterpret_cast<const uint8_t*>(line_.c_str()) + at,
+                        std::min<size_t>(NP_SETUP_CHUNK_BYTES, line_.length() - at));
+            line_ = "";
+        }
+        return 1;
+    }
+
+  private:
+    String line_;
+};
+SetupReply setupOut;
+
+class SetupCommand : public NimBLECharacteristicCallbacks {
+    void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo& info) override {
+        if (!info.isEncrypted() || !setupMode()) return;  // WRITE_ENC already requires encryption.
+        std::string value = characteristic->getValue();
+        while (!value.empty() && (value.back() == '\n' || value.back() == '\r')) value.pop_back();
+        std::lock_guard<std::mutex> guard(setupLock);
+        if (setupLines.size() < 8) setupLines.push_back(String(value.c_str()));
+    }
+};
+SetupCommand setupCommand;
+
+class SetupServer : public NimBLEServerCallbacks {
+    void onConnect(NimBLEServer*, NimBLEConnInfo&) override { setupLinked = true; }
+    void onDisconnect(NimBLEServer*, NimBLEConnInfo&, int) override {
+        setupLinked = false;
+        if (setupMode()) NimBLEDevice::startAdvertising();
+    }
+};
+SetupServer setupServer;
+
+void setupBegin() {
+    NimBLEDevice::init(configured ? (std::string("NP-") + config.nodeId) : std::string("NP-setup"));
+    NimBLEDevice::setSecurityAuth(false, false, true);  // No bonding, Just Works, LE Secure Connections.
+    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
+    NimBLEServer* server = NimBLEDevice::createServer();
+    server->setCallbacks(&setupServer);
+    NimBLEService* service = server->createService(NP_SETUP_SERVICE_UUID);
+    service->createCharacteristic(NP_SETUP_COMMAND_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC)
+        ->setCallbacks(&setupCommand);
+    setupReply = service->createCharacteristic(NP_SETUP_REPLY_UUID, NIMBLE_PROPERTY::NOTIFY);
+    service->start();
+    // Register the GATT table now. NimBLE otherwise registers it on the first advertising start, and a
+    // configured node is scanning beacons by then: the GATT reset fails busy and ble_svc_gap_init asserts.
+    server->start();
+    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+    advertising->addServiceUUID(NP_SETUP_SERVICE_UUID);
+    advertising->setName(configured ? (std::string("NP-") + config.nodeId) : std::string("NP-setup"));
+    pinMode(NP_SETUP_BUTTON_PIN, INPUT_PULLUP);
+    if (!configured) {
+        NimBLEDevice::startAdvertising();
+        Serial.println("SETUP_MODE_ON reason=config_missing");
+    }
+}
+
+// BOOT button, window expiry and queued BLE lines. Runs on the loop task like serialInput().
+void setupStep() {
+    static unsigned long pressedAt = 0, openedAt = 0;
+    const unsigned long now = millis();
+    if (digitalRead(NP_SETUP_BUTTON_PIN) == LOW) {
+        if (!pressedAt) pressedAt = now ? now : 1;
+        else if (configured && !setupWindow && now - pressedAt >= NP_SETUP_HOLD_MS) {
+            setupWindow = true;
+            openedAt = now;
+            NimBLEDevice::startAdvertising();
+            Serial.printf("SETUP_MODE_ON reason=button window_ms=%lu\n", static_cast<unsigned long>(NP_SETUP_WINDOW_MS));
+        }
+    } else pressedAt = 0;
+    if (configured && setupWindow && now - openedAt >= NP_SETUP_WINDOW_MS) {
+        setupWindow = false;
+        NimBLEDevice::stopAdvertising();
+        NimBLEServer* server = NimBLEDevice::getServer();
+        if (server) for (uint16_t handle : server->getPeerDevices()) server->disconnect(handle);
+        Serial.println("SETUP_MODE_OFF reason=window_expired");
+    }
+    std::vector<String> lines;
+    {
+        std::lock_guard<std::mutex> guard(setupLock);
+        lines.swap(setupLines);
+    }
+    for (const String& line : lines) {
+        if (!setupMode()) break;
+        reply = &setupOut;
+        if (line.length() > 200) configReject("line_too_long");
+        else serialCommand(line);
+        reply = &Serial;
     }
 }
 
@@ -639,6 +757,22 @@ void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
 }
 
 unsigned long backoff(unsigned long current) { return np::backoff(current, NP_RETRY_MAX_MS); }
+
+// A `.local` broker is looked up by mDNS before every connect, so a new server IP needs no reconfiguration (#234).
+bool resolveBroker() {
+    const String host = config.mqttHost.c_str();
+    if (!host.endsWith(".local")) return true;
+    static bool started = false;
+    if (!started) started = MDNS.begin((String("np-") + config.nodeId.c_str()).c_str());
+    const IPAddress address = MDNS.queryHost(host.substring(0, host.length() - 6), NP_MDNS_TIMEOUT_MS);
+    feedWatchdog();
+    if (address == IPAddress()) return false;
+    static IPAddress last;
+    if (address != last) Serial.printf("MQTT_HOST_RESOLVED host=%s ip=%s\n", host.c_str(), address.toString().c_str());
+    last = address;
+    mqtt.setHost(address, config.mqttPort);
+    return true;
+}
 
 // Checks a `restart` (architecture.md §5 MQTT 8절), stores its id, then waits for the current command.
 void restartInput(const String& payload) {
@@ -739,6 +873,7 @@ void setup() {
     watchdogArmed = esp_task_wdt_init(NP_WATCHDOG_TIMEOUT_SEC, true) == ESP_OK;
     if (watchdogArmed) enableLoopWDT();
     Serial.printf("WATCHDOG timeout_sec=%d armed=%d\n", NP_WATCHDOG_TIMEOUT_SEC, watchdogArmed);
+    setupBegin();
     if (!configured) {
         Serial.println("CONFIG_MISSING usb_provisioning_required network_not_started");
         return;
@@ -766,7 +901,6 @@ void setup() {
             inbox.push_back({topic, payload, executor.busy()});
         else Serial.println("COMMAND_QUEUE_REJECTED capacity_or_size");
     });
-    NimBLEDevice::init("");
     NimBLEScan* scan = NimBLEDevice::getScan();
     scan->setScanCallbacks(&scanCallbacks, true);
     scan->setActiveScan(false);
@@ -778,6 +912,7 @@ void setup() {
 
 void loop() {
     serialInput();
+    setupStep();
     unsigned long current = millis();
     static unsigned long lastReadyLog = 0;
     static String lastReason = "boot";
@@ -814,7 +949,10 @@ void loop() {
         session = newUuid();
         memset(seq, 0, sizeof(seq));
         announced = deferredLogged = false;
-        if (mqtt.connect((String("np-") + config.nodeId.c_str()).c_str(), config.mqttUser.c_str(),
+        if (!resolveBroker()) {
+            mqttDelay = backoff(mqttDelay);
+            Serial.printf("MQTT_HOST_UNRESOLVED host=%s next_retry_ms=%lu\n", config.mqttHost.c_str(), mqttDelay);
+        } else if (mqtt.connect((String("np-") + config.nodeId.c_str()).c_str(), config.mqttUser.c_str(),
                          config.mqttPassword.c_str())) {
             feedWatchdog();
             String base = String("nearpilot/node/") + config.nodeId.c_str();
