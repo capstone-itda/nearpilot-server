@@ -1197,3 +1197,20 @@ class RestartResult:
     outcome: RestartOutcome
     restart_id: str | None = None
     expires_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class ProvisioningBundle:
+    """기기 접속 설정 묶음 (#234, architecture.md §4). Wi-Fi 는 담지 않는다. 앱 사용자가 입력한다.
+
+    mqtt_password 는 비밀이다. repr 에서 빼고, 로그·감사 기록에 쓰지 않는다 (NFR-08).
+    """
+
+    node_id: str
+    mqtt_user: str
+    mqtt_password: str = field(repr=False)
+    mqtt_host: str
+    mqtt_port: int
+    capability: Capability
+    occupancy: Occupancy
+

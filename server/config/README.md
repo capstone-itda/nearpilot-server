@@ -164,6 +164,25 @@ nearpilot serve
 - `fit` 출력의 `place-a = "v1"` 줄을 `config/server.toml`의 `[proximity.models]`에 쓴다.
   수집 전용 서버를 끈 뒤 `nearpilot serve`를 실행한다. 모델 표가 없으면 일반 `serve`는 시작하지 않는다 (종료 코드 2).
 
+# 앱 BLE 기기 설정과 mDNS
+
+`[provisioning]`이 있으면 펌웨어를 구운 기기의 접속 설정을 USB 대신 앱의 BLE로 넣는다 (#234).
+
+- 서버는 `<mdns_name>.local`을 `mdns_address`로 알린다(mDNS, UDP 5353). 기기는 이 이름으로 MQTT에 접속하므로 서버 IP가 바뀌면 `mdns_address`만 고친다.
+- 앱(소유자 계정)은 `GET /admin/nodes/{node_id}/provisioning`으로 기기 ID, MQTT 계정·비밀번호, `mqtt_host`(`.local`), 포트, 기능, 점유 방식을 받는다. Wi-Fi는 앱에서 입력한다.
+- 기기 목록은 `fleet`의 `devices`(`node_id`, `capability`, `occupancy`, 선택 `username`·`password_file`)다. 비밀번호는 기본으로 목록 옆의 `.env.<node_id>`다.
+- `nearpilot provision`(USB)도 `[provisioning]`이 있으면 `mqtt_host`를 `<mdns_name>.local`로 넣는다.
+- mDNS를 시작하지 못하면 서버 로그에 오류를 남기고 계속한다. 그때 `.local`로 설정한 기기는 접속하지 못한다.
+- 방화벽에서 UDP 5353 수신을 허용한다. 최종 시연 구성의 `firewall.ps1`(hardware)이 연다.
+
+기기 설정 모드: 설정이 없는 기기는 항상, 설정이 있는 기기는 BOOT 버튼을 3초 누른 뒤 5분 동안 설정 서비스를 BLE로 광고한다.
+앱의 기기 설정 화면에서 기기 ID와 Wi-Fi를 입력하고 기기를 고르면 설정을 넣는다. 기기는 저장한 뒤 재시작한다.
+
+| 사유 | 뜻 |
+|---|---|
+| `NOT_OWNER` (403) | 토큰의 계정이 그 기기 장소의 소유자가 아니다. |
+| `NOT_FOUND` (404) | `[provisioning]`이 없거나, 목록에 없는 기기거나, 비밀번호 파일이 없다. |
+
 # 기기 원격 재시작
 
 장소 소유자는 `nearpilot restart`로 기기를 재시작한다 (#235). `nearpilot serve`가 떠 있어야 한다.

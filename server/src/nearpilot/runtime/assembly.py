@@ -42,6 +42,7 @@ from nearpilot.iot.mqtt import (
 from nearpilot.runtime.auth_audit import AuditedAuthenticator
 from nearpilot.runtime.config import DashboardConfig, ServerConfig
 from nearpilot.runtime.database import ThreadDatabase
+from nearpilot.runtime.provisioning import FleetProvisioningSource, MdnsAdvertiser
 from nearpilot.runtime.tasks import CallGate, Late, NodeLocks, NotAccepting, PeriodicTask
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import Action, ExecutionStatus
@@ -235,6 +236,7 @@ class Runtime:
         proximity_factory: ProximityFactory = HmmProximityEstimator,
         monotonic: Callable[[], float] = time.monotonic,
         collect_only: bool = False,
+        mdns_factory: Callable[..., Any] = MdnsAdvertiser,
     ) -> None:
         self.config = config
         self.settings = config.settings
@@ -259,6 +261,11 @@ class Runtime:
         # 기기 원격 재시작도 MQTT 연결을 쓰므로 시작할 때 만든다 (#235).
         self._late_nodes = _LateRestService("nodes", self.gate, self.db)
         self.nodes = cast(NodeAdminApi, self._late_nodes)
+        # 기기 접속 설정 묶음과 mDNS 알림. `[provisioning]` 이 없으면 둘 다 없다 (#234).
+        provisioning = config.provisioning
+        self._provisioning = (None if provisioning is None
+                              else FleetProvisioningSource(provisioning, config.mqtt.port))
+        self.mdns = None if provisioning is None else mdns_factory(provisioning, config.mqtt.port)
         self.services: Services | None = None
         self.tasks: list[PeriodicTask] = []
         self._started: list[str] = []
@@ -335,7 +342,11 @@ class Runtime:
         svc.delivery.start()
         for task in self.tasks:
             task.start()
-        # 9. 요청 접수
+        # 9. mDNS 알림. 실패해도 계속한다 (#234)
+        if self.mdns is not None:
+            self._started.append("mdns")
+            self.mdns.start()
+        # 10. 요청 접수
         self.gate.open()
 
     def _restore_proximity(self, proximity: ProximityEstimator, models: Mapping[str, ProximityModel]) -> None:
@@ -388,7 +399,7 @@ class Runtime:
         # 기기 관리. 판정을 거치지 않고 소유권만 검사한다 (#235).
         restarter = MqttNodeRestarter(connection, delivery, settings=settings, clock=clock)
         self._late_nodes.bind(NodeAdminService(repository=repo, restarter=restarter, clock=clock,
-                                               settings=settings))
+                                               settings=settings, provisioning=self._provisioning))
         release = ReleaseService(repository=repo, store=store, settings=settings, clock=clock,
                                  lock_for=locks)
         execute_off = Late("shared_light_execute")
@@ -512,6 +523,8 @@ class Runtime:
                 svc.delivery.stop()
             except RuntimeError:
                 problems.append("보고 인계 작업 종료")
+        if self.mdns is not None and "mdns" in self._started:
+            self.mdns.stop()
         # 5. 각 연결은 소유 스레드가 닫는다. 남은 범위는 강제로 닫지 않는다
         if "db" in self._started:
             self.db.export_jsonl()

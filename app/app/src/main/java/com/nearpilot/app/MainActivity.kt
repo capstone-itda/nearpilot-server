@@ -58,6 +58,13 @@ import com.nearpilot.app.ble.BeaconBroadcastService
 import com.nearpilot.app.ble.BeaconPermissions
 import com.nearpilot.app.ble.BroadcastStatus
 import com.nearpilot.app.ui.BeaconScreen
+import com.nearpilot.app.ui.ProvisionScreen
+import com.nearpilot.app.ui.ProvisionUiState
+import com.nearpilot.app.provision.BleProvisioner
+import com.nearpilot.app.provision.ConfigLines
+import com.nearpilot.app.provision.ProvisionOutcome
+import com.nearpilot.app.provision.ProvisioningApi
+import com.nearpilot.app.provision.SetupNode
 import com.nearpilot.app.ui.theme.NearPilotTheme
 
 class MainActivity : ComponentActivity() {
@@ -73,11 +80,14 @@ class MainActivity : ComponentActivity() {
         BEACON("비콘", "📡"),
         ACCOUNT("계정", "👤"),
         APPROVAL("승인", "✅"),
+        PROVISION("설정", "🔧"),
     }
 
     private val tab = mutableStateOf(Tab.BEACON)
     private lateinit var approvalStore: ApprovalStore
     private val approvalState = mutableStateOf(ApprovalUiState(connected = false, watching = false))
+    private val provisionState = mutableStateOf(ProvisionUiState(connected = false))
+    private lateinit var provisioner: BleProvisioner
 
     private lateinit var store: IdentifierStore
     private lateinit var accounts: AccountStore
@@ -122,11 +132,21 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+    private val provisionPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            if (BleProvisioner.hasPermissions(this)) startSetupScan()
+            else provisionMessage(
+                "근처 기기를 찾으려면 '근처 기기' 권한이 필요해요. 설정 > 앱 > NearPilot > 권한에서 허용해 주세요.",
+                isError = true,
+            )
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = IdentifierStore(this)
         accounts = AccountStore(this)
         approvalStore = ApprovalStore(this)
+        provisioner = BleProvisioner(this, provisionListener)
         identifier.value = store.loadOrCreate()
         showIntro.value = !store.introSeen
         refreshAccount()
@@ -147,8 +167,10 @@ class MainActivity : ComponentActivity() {
                                 NavigationBarItem(
                                     selected = tab == item,
                                     onClick = {
+                                        if (tab == Tab.PROVISION && item != Tab.PROVISION) leaveProvision()
                                         tab = item
                                         if (item == Tab.APPROVAL) loadApprovals()
+                                        if (item == Tab.PROVISION) refreshProvision()
                                     },
                                     icon = { Text(item.icon) },
                                     label = { Text(item.label) },
@@ -189,6 +211,17 @@ class MainActivity : ComponentActivity() {
                             onRefresh = ::loadApprovals,
                             onDecide = ::decide,
                             onGoToAccount = { tab = Tab.ACCOUNT },
+                            modifier = contentModifier,
+                        )
+                        Tab.PROVISION -> ProvisionScreen(
+                            state = provisionState.value,
+                            onScan = ::requestSetupScan,
+                            onProvision = ::provisionNode,
+                            onCancel = ::cancelProvision,
+                            onGoToAccount = {
+                                leaveProvision()
+                                tab = Tab.ACCOUNT
+                            },
                             modifier = contentModifier,
                         )
                     }
@@ -428,6 +461,105 @@ class MainActivity : ComponentActivity() {
     private fun clearToken() {
         accounts.token = null
         refreshAccount("토큰을 지웠어요.")
+    }
+
+    // ── 기기 설정 (#234) ─────────────────────────────────────────────
+
+    private val provisionListener = object : BleProvisioner.Listener {
+        override fun onFound(node: SetupNode) {
+            val nodes = provisionState.value.nodes.filter { it.address != node.address } + node
+            provisionState.value = provisionState.value.copy(nodes = nodes.sortedByDescending { it.rssi })
+        }
+
+        override fun onScanFailed(message: String) {
+            provisionState.value = provisionState.value.copy(scanning = false)
+            provisionMessage(message, isError = true)
+        }
+
+        override fun onProgress(done: Int, total: Int, label: String) {
+            provisionState.value = provisionState.value.copy(progress = done.toFloat() / total)
+        }
+
+        override fun onFinished(outcome: ProvisionOutcome) {
+            provisionState.value = provisionState.value.copy(busy = false, progress = null, nodes = emptyList())
+            when (outcome) {
+                is ProvisionOutcome.Saved -> provisionMessage(
+                    "${outcome.nodeId} 설정을 저장했어요. 기기가 다시 시작해서 Wi-Fi와 서버에 접속해요.")
+                is ProvisionOutcome.Failed -> provisionMessage(outcome.message, isError = true)
+            }
+        }
+    }
+
+    private fun refreshProvision() {
+        provisionState.value = provisionState.value.copy(
+            connected = accounts.serverUrl != null && accounts.token != null)
+    }
+
+    private fun provisionMessage(message: String?, isError: Boolean = false) {
+        provisionState.value = provisionState.value.copy(message = message, messageIsError = isError)
+    }
+
+    private fun requestSetupScan() {
+        if (BleProvisioner.hasPermissions(this)) startSetupScan()
+        else provisionPermissionLauncher.launch(BleProvisioner.permissions())
+    }
+
+    private fun startSetupScan() {
+        provisionState.value = provisionState.value.copy(nodes = emptyList(), message = null)
+        provisioner.stopScan()
+        if (provisioner.startScan()) provisionState.value = provisionState.value.copy(scanning = true)
+        else provisionMessage("블루투스를 켜 주세요.", isError = true)
+    }
+
+    private fun provisionNode(address: String, nodeId: String, ssid: String, password: String) {
+        val server = accounts.serverUrl ?: return
+        val token = accounts.token ?: return
+        ConfigLines.wifiProblem(ssid, password)?.let { return provisionMessage(it, isError = true) }
+        provisioner.stopScan()
+        provisionState.value = provisionState.value.copy(
+            scanning = false, busy = true, progress = 0f,
+            message = "서버에서 접속 정보를 받는 중이에요…", messageIsError = false,
+        )
+        withLocalNetwork(onDenied = {
+            provisionState.value = provisionState.value.copy(busy = false, progress = null)
+            provisionMessage(it, isError = true)
+        }) {
+            lifecycleScope.launch {
+                val api = ProvisioningApi(server, UrlConnectionTransport())
+                when (val result = withContext(Dispatchers.IO) { api.bundle(token, nodeId) }) {
+                    is ApiResult.Success -> {
+                        // 묶음은 이 계획 안에만 있다. 저장하지 않는다 (NFR-08).
+                        val plan = ConfigLines.plan(result.value, ssid, password, ConfigLines.newNonce())
+                        provisionMessage("기기에 쓰는 중이에요. 페어링 요청이 뜨면 허용해 주세요.")
+                        provisioner.provision(address, result.value.nodeId, plan)
+                    }
+                    else -> {
+                        provisionState.value = provisionState.value.copy(busy = false, progress = null)
+                        provisionMessage(ProvisioningApi.failureText(result), isError = true)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun cancelProvision() {
+        provisioner.close()
+        provisionState.value = provisionState.value.copy(busy = false, progress = null)
+        provisionMessage("설정을 취소했어요.")
+    }
+
+    private fun leaveProvision() {
+        provisioner.stopScan()
+        provisioner.close()
+        provisionState.value = ProvisionUiState(connected = provisionState.value.connected)
+    }
+
+    override fun onDestroy() {
+        if (::provisioner.isInitialized) {
+            provisioner.stopScan()
+            provisioner.close()
+        }
+        super.onDestroy()
     }
 
     private fun copy(label: String, text: String) {

@@ -186,3 +186,11 @@ def test_NFR12_provision_run_opens_port_and_logs(lab, capsys):
     logged = (lab / "provision.jsonl").read_text(encoding="utf-8") + capsys.readouterr().out
     assert MQTT_SECRET not in logged and WIFI_SECRET not in logged
 
+
+
+def test_NFR12_provision_uses_mdns_name_when_configured(lab):
+    """#234: [provisioning]이 있으면 USB 주입도 앱 BLE 설정과 같은 nearpilot.local을 넣는다."""
+    toml = lab / "server.toml"
+    toml.write_text(toml.read_text(encoding="utf-8") + '[provisioning]\nfleet = "fleet.json"\n'
+                    'mdns_name = "nearpilot"\nmdns_address = "10.0.0.5"\n', encoding="utf-8")
+    assert values(lab)["mqtt_host"] == "nearpilot.local"

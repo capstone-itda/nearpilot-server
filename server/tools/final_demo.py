@@ -14,12 +14,23 @@ from tools.node_sim.config import acl_sections, load_config as load_fleet, serve
 
 SERVER = Path(__file__).resolve().parents[1]
 TEMPLATES = SERVER / "config" / "final-demo"
+# Hardware mode only: the app's BLE setup and USB provisioning inject nearpilot.local (#234).
+PROVISIONING = """
+
+[provisioning]
+fleet = "fleet.json"
+mdns_name = "nearpilot"
+mdns_address = "@HOST@"
+"""
 
 
 def firewall_rules(*, mode: str, mqtt_port: int, http_port: int) -> list[tuple[str, str, int]]:
-    """(name, protocol, port) to open. Devices take the time over MQTT, so no NTP rule (#236)."""
-    del mode  # Same rules for real devices and simulators.
-    return [("HTTP", "TCP", http_port), ("MQTT", "TCP", mqtt_port)]
+    """(name, protocol, port) to open. Devices take the time over MQTT, so no NTP rule (#236).
+
+    Hardware mode advertises nearpilot.local, so devices' mDNS queries (UDP 5353) must reach the server (#234).
+    """
+    rules = [("HTTP", "TCP", http_port), ("MQTT", "TCP", mqtt_port)]
+    return rules + [("mDNS", "UDP", 5353)] if mode == "hardware" else rules
 
 
 def prepare(folder: Path, *, host: str, mode: str = "hardware", mqtt_port: int = 18883,
@@ -45,6 +56,9 @@ def prepare(folder: Path, *, host: str, mode: str = "hardware", mqtt_port: int =
     replacements = {"@HOST@": host, "@HTTP_PORT@": str(http_port), "@MQTT_PORT@": str(mqtt_port)}
     for old, new in replacements.items():
         config = config.replace(old, new)
+    if mode == "hardware":
+        # Devices set up by the app over BLE find the server as nearpilot.local (#234).
+        config = config.rstrip("\n") + PROVISIONING.replace("@HOST@", host)
     options["mode"] = mode
     fleet["broker"].update(host=host, port=mqtt_port)
     for device in fleet["devices"]:

@@ -10,6 +10,7 @@ dependencies = [
     "paho-mqtt>=2",
     "numpy",
     "scipy",
+    "zeroconf",
 ]
 
 [project.optional-dependencies]

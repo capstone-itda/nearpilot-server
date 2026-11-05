@@ -108,7 +108,8 @@ def test_NFR12_final_demo_without_mosquitto_passwd(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("mode,expected", [
-    ("hardware", {("HTTP", "TCP", 8000), ("MQTT", "TCP", 18883)}),  # 기기는 MQTT로 시각을 맞춘다 (#236)
+    # 기기는 MQTT로 시각을 맞춘다 (#236). 실제 기기는 nearpilot.local을 mDNS로 찾는다 (#234)
+    ("hardware", {("HTTP", "TCP", 8000), ("MQTT", "TCP", 18883), ("mDNS", "UDP", 5353)}),
     ("sim", {("HTTP", "TCP", 8000), ("MQTT", "TCP", 18883)}),
 ])
 def test_NFR12_final_demo_firewall_rules(prepared, mode, expected):
@@ -130,3 +131,16 @@ def test_NFR12_final_demo_rejects_invalid_network(tmp_path, host, mode, mqtt_por
     with pytest.raises(ValueError):
         final_demo.prepare(folder, host=host, mode=mode, mqtt_port=mqtt_port, http_port=http_port)
     assert not folder.exists()
+
+
+@pytest.mark.parametrize("mode", ["hardware", "sim"])
+def test_NFR12_final_demo_provisioning_only_for_hardware(prepared, mode):
+    """#234: 실제 기기 구성만 nearpilot.local을 알리고 묶음을 준다. sim은 같은 PC라 알리지 않는다."""
+    folder = prepared(mode)
+    config = load_config(folder / "server.toml")
+    if mode == "sim":
+        assert config.provisioning is None
+        return
+    assert (config.provisioning.fleet, config.provisioning.mdns_name, config.provisioning.mdns_address) == (
+        folder / "fleet.json", "nearpilot", "10.106.106.199")
+
