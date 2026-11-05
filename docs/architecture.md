@@ -73,7 +73,7 @@ nearpilot-server/
 │   │   └── eval/               서버 지표 평가 설정 예시 (횟수, 통과 기준, 시뮬레이터 장면)
 │   ├── src/nearpilot/
 │   │   ├── shared/             계층 간 계약: 도메인 모델, 열거형, 인터페이스, 설정
-│   │   ├── cli/                운영 명령 `nearpilot`: serve, seed, recover, collect, split, fit, eval, evaluate-server, evaluate-reask, broker, sim, dashboard (FR-12B, FR-16, NFR-10, NFR-12, NFR-13)
+│   │   ├── cli/                운영 명령 `nearpilot`: serve, seed, recover, restart, collect, split, fit, eval, evaluate-server, evaluate-reask, broker, sim, dashboard, provision (FR-12A, FR-12B, FR-16, NFR-10, NFR-12, NFR-13)
 │   │   ├── api/
 │   │   │   ├── mcp/            MCP 엔드포인트와 도구 6개 (FR-08~FR-11)
 │   │   │   ├── auth/           토큰으로 계정 식별, 무효 토큰 거부
@@ -85,7 +85,7 @@ nearpilot-server/
 │   │   │   ├── proximity/      관측 모델, HMM, 재질문 임계값 (FR-16, FR-17)
 │   │   │   ├── policy/         접근 정책과 승인 검사 (FR-14)
 │   │   │   ├── allocation/     전역 할당 (FR-23)
-│   │   │   └── lifecycle/      상태 머신, 명시적 해제, 초과시간 계산, FAULT 복구 (FR-19, FR-20, NFR-04)
+│   │   │   └── lifecycle/      상태 머신, 명시적 해제, 초과시간 계산, FAULT 복구, 기기 원격 재시작 (FR-12A, FR-19, FR-20, NFR-04)
 │   │   ├── db/
 │   │   │   ├── schema/         DDL과 마이그레이션
 │   │   │   ├── repositories/   테이블별 저장소와 원자적 점유
@@ -895,6 +895,20 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - IOT는 `NodeCommand.speaker`를 `cmd`의 `parameters`로 보낸다. IOT는 값을 바꾸지 않는다.
 - 조회 응답은 스피커 제어 정보를 `controls`(`volume_max`)로 담는다. `volume_max`는 발표 값과 `speaker_volume_max` 중 작은 값이다.
 
+### 기기 원격 재시작
+
+[#235](https://github.com/capstone-itda/nearpilot-server/issues/235)의 A안이다. 재시작은 실행 명령이 아니므로 판정 ⓪~⑥을 거치지 않는다. 관리 기능으로만 열고 MCP에는 열지 않는다.
+
+| 접점 | 제공 | 사용 | 약속 |
+|---|---|---|---|
+| `NodeRestarter.restart(node_id, restart_id)` | IOT | 상태 관리 | 현재 연결에 `restart`를 발행하고 `RestartOutcome`을 반환한다. 현재 연결이 없으면 `NODE_OFFLINE`, 발행하지 못했으면 `NOT_SENT`다. |
+| `NodeAdminService.restart(user_id, node_id)` | 상태 관리 | API | 장소 소유권을 검사한 뒤 새 `restart_id`로 `NodeRestarter`를 부른다. 소유자가 아니면 `NOT_OWNER`다. |
+
+- `SENT`는 브로커에 발행했다는 뜻이다. 기기의 재시작 완료를 뜻하지 않는다. 재시작 뒤 기기는 새 기기 연결 ID로 발표한다.
+- 서버는 재시작 요청을 자동으로 다시 보내지 않는다. 같은 요청의 재전송은 같은 `restart_id`를 쓴다.
+- 재시작은 점유, 명령 기록, 복구 건을 바꾸지 않는다. 재시작 전에 접수한 명령의 처리는 §5 MQTT "명령 접수와 중복 처리"의 재시작 규칙을 따른다.
+- 상태 관리는 요청자, 기기, 결과를 서버 로그에 남긴다.
+
 ### 공동 인터페이스의 후속 반영
 
 이 decision PR은 `docs/`의 계약을 바꾼다. 서버, 펌웨어, 시뮬레이터와 테스트 코드는 바꾸지 않는다.
@@ -1042,12 +1056,13 @@ MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_sess
 | `occupancy` | 서버 → 기기 | 1 | true |
 | `time_request` | 기기 → 서버 | 0 | false |
 | `time` | 서버 → 기기 | 0 | false |
+| `restart` | 서버 → 기기 | 1 | false |
 
 - MQTT의 전송 확인은 제어 신호 출력 완료를 뜻하지 않는다. 서버는 `result`의 명령 결과를 확인한다.
 - `clean_session`은 브로커의 이전 세션을 지운다. retained 기능 발표는 연결이 끝나도 남을 수 있다.
 - 클라이언트가 전송 중인 메시지를 다시 발행할 수 있다. 서버와 기기는 아래 명령 ID·기기 연결 ID·만료 검사로 대응한다.
-- 기기는 자기 `announce`, `rssi`, `status`, `result`, `time_request`만 발행한다. 기기는 자기 `cmd`, `occupancy`, `time`만 구독한다.
-- 서버는 기기 보고와 시각 요청을 구독한다. 실행 명령, 점유 표시와 시각 응답은 서버만 발행한다.
+- 기기는 자기 `announce`, `rssi`, `status`, `result`, `time_request`만 발행한다. 기기는 자기 `cmd`, `occupancy`, `time`, `restart`만 구독한다.
+- 서버는 기기 보고와 시각 요청을 구독한다. 실행 명령, 점유 표시, 시각 응답과 재시작 요청은 서버만 발행한다.
 - 서버는 기기별 자격정보, 토픽의 `node_id`, 본문의 `node_id`를 대조한다. 기기의 발표는 신뢰 부여가 아니다.
 
 전달 동작의 근거는 [MQTT 3.1.1 규격](https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/mqtt-v3.1.1.html)과 [Paho 클라이언트 문서](https://eclipse.dev/paho/files/paho.mqtt.python/html/client.html)다.
@@ -1085,6 +1100,7 @@ MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_sess
 | `occupancy` | `device_state`: `AVAILABLE`·`RESERVED`·`ACTIVE`·`CLOSING`·`FAULT` 중 하나, `sent_at`: UTC 시각 | 대여형 기기의 저장된 기기 상태다. 표시에만 쓴다. 구동과 실행 판정의 근거가 아니다. |
 | `time_request` | `request_id`: 문자열 | 기기가 시각을 요청한다. 기기는 보낸 순간의 자기 단조 시계 값 t0을 보관한다. |
 | `time` | `request_id`: 문자열, `server_time`: UTC 시각, `max_error_sec`: 수, `trust_sec`: 정수, `resync_sec`: 정수 | 서버의 시각 응답이다. `request_id`는 요청의 값을 그대로 담는다. |
+| `restart` | `restart_id`: 문자열, `target_session_id`: 문자열, `issued_at`: UTC 시각, `expires_at`: UTC 시각 | 관리자의 재시작 요청이다. 현재 연결을 지정한다. 아래 8절을 따른다. |
 
 - `on`과 `off`는 조명 제어와 스피커 재생·정지의 제어 신호 출력이다. 실제 상태를 증명하지 않는다.
 - 조명 제어 정보 `controls`는 `brightness_max`(1~255의 정수)와 `color`(불리언)를 모두 담는다. `light` 기기만 보낸다. 형식이 틀리면 서버는 발표를 거부한다.
@@ -1232,6 +1248,20 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 기록이 없거나 결과가 불명이면 실제 켜짐을 추정해서 새 꺼짐 명령을 보내지 않는다.
 시간에 따른 자동 꺼짐 타이머는 두지 않는다.
 
+#### 8. 원격 재시작
+
+기기는 `restart`를 받으면 아래를 모두 확인한 뒤에만 소프트웨어 재시작(`ESP.restart()`)을 한다 (#235).
+
+1. 본문의 `node_id`가 자기 ID이고 `target_session_id`가 현재 연결이다.
+2. 시각을 신뢰하고, 최대 오차를 고려해 `issued_at < expires_at`이고 만료 전이다. 명령의 만료 검사와 같다.
+3. `restart_id`가 마지막으로 처리한 재시작 ID와 다르다.
+
+- 기기는 처리할 `restart_id`를 재시작 뒤에도 남도록 저장한 뒤 재시작한다. 같은 ID의 재전송으로 다시 재시작하지 않는다.
+- 처리 중인 명령은 결과 저장과 보고를 마친 뒤 재시작한다. 재시작 요청은 진행 중인 명령을 끊지 않는다.
+- 검사를 통과하지 못한 요청은 무시하고 시리얼 로그에만 남긴다. 기기는 재시작 결과를 MQTT로 보고하지 않는다.
+- 재시작 뒤 기기는 새 기기 연결 ID로 접속하고 시각을 다시 맞춘 뒤 발표한다. 서버는 새 연결로 재시작을 확인한다.
+- 유효 시간은 실행 응답 제한(`exec_timeout_sec`)이다. 서버는 `expires_at`을 `issued_at`에 이 값을 더해 산출한다.
+
 ### REST
 
 | 그룹 | 사용처 | 요구사항 |
@@ -1240,11 +1270,16 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | 승인 | 앱: 대기 중인 승인 목록, 알림을 누를 때 승인 요청 한 건 조회, 승인 또는 거부 전달. 권한, 상태, 정책 버전은 CORE가 검증한다. | FR-03, FR-14 |
 | 대시보드 조회 | 대시보드: 현재 상태(기기 목록, 연결, 신뢰), 요청·판정 이력, 판정 단계별 결과, 승인 목록, 감사 로그, 사전 평가 결과. 읽기만 한다. | FR-12A |
 | 복구 | 소유자 스크립트: `FAULT` 복구 준비 조회와 복구 승인 | FR-12A, NFR-04 |
+| 기기 관리 | 소유자 스크립트: 기기 원격 재시작 | FR-12A, NFR-04 |
 
 - 복구 준비 조회: `GET /admin/nodes/{node_id}/recovery`
 - 복구 승인: `POST /admin/nodes/{node_id}/recovery/{recovery_id}/approve`
 - 두 복구 경로에는 인증과 장소 소유권 검사를 적용한다. 약속은 §4 "복구 준비 조회와 복구 승인"에 있다.
 - 두 복구 경로는 근접 추정·대시보드 담당이 구현한다 (2026-10-26 팀 결정).
+- 원격 재시작: `POST /admin/nodes/{node_id}/restart` (#235). 본문을 읽지 않는다. 소유자 스크립트 `nearpilot restart`가 부른다.
+  - 발행하면 `202`와 `{"node_id", "restart_id", "expires_at"}`이다. 재시작 완료가 아니다.
+  - 장소 소유자가 아니면 `403` `NOT_OWNER`, 현재 연결이 없으면 `409` `NODE_OFFLINE`, 발행하지 못했으면 `503` `NOT_SENT`다.
+  - 응답에 기기 연결 세션 ID를 넣지 않는다.
 - 준비 조회 응답은 `node_id`, `recovery_id`, `status`, `blockers`(사유 코드 배열), `evidence`(`observed_at`, `execution_outcome`, `command_idle`), `checked_at`이다. 기기 연결 세션 ID는 넣지 않는다.
 - 승인 응답은 `recovery_id`, `outcome`, `reason_code`, `completed_at`, `readiness`(준비 조회와 같은 형식)다. `completed`는 `200`, `pending`은 `202`다.
 - 승인 거부는 `{"error": "<사유 코드>"}`다. `NOT_OWNER`는 `403`, `RECOVERY_MISMATCH`·`NOT_READY`·`STATE_CONFLICT`는 `409`, `STORE_NOT_APPLIED`는 `503`이다. 준비 조회에서 소유자가 아니면 `403`과 `NOT_OWNER`다. 승인은 요청 본문을 읽지 않는다.
