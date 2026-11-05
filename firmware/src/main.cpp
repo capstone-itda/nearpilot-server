@@ -686,6 +686,9 @@ void setupBegin() {
         ->setCallbacks(&setupCommand);
     setupReply = service->createCharacteristic(NP_SETUP_REPLY_UUID, NIMBLE_PROPERTY::NOTIFY);
     service->start();
+    // Register the GATT table now. NimBLE otherwise registers it on the first advertising start, and a
+    // configured node is scanning beacons by then: the GATT reset fails busy and ble_svc_gap_init asserts.
+    server->start();
     NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
     advertising->addServiceUUID(NP_SETUP_SERVICE_UUID);
     advertising->setName(configured ? (std::string("NP-") + config.nodeId) : std::string("NP-setup"));

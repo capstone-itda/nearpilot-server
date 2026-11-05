@@ -98,6 +98,7 @@
   - 설정 서비스와 두 특성의 UUID는 `config.example.h`의 고정 값이다. 광고 이름은 `NP-<node_id>`, 설정이 없으면 `NP-setup`이다.
   - 쓰기 하나를 줄 하나로 본다(끝의 줄바꿈은 지운다). 200바이트를 넘으면 `CONFIG_REJECTED reason=line_too_long`이다.
   - BLE 콜백은 줄을 큐에 넣기만 하고, loop가 USB와 같은 함수로 처리한다.
+  - GATT 표는 부팅 때 비콘 검색을 시작하기 전에 등록한다 — NimBLE는 첫 광고 때 등록하는데, 설정이 있는 기기는 그때 검색 중이라 등록이 거부되고 assert로 멈춘다.
   - 응답 줄은 20바이트씩 나눠 알리고 줄바꿈으로 끝낸다 — MTU와 상관없이 앱이 줄을 다시 잇는다. 같은 줄을 시리얼에도 쓴다.
   - 설정 모드가 끝나면 광고를 멈추고 연결을 끊는다.
 - 펌웨어 mDNS: Wi-Fi 연결 뒤 `MDNS.begin("np-<node_id>")`, MQTT 접속 직전 `MDNS.queryHost`(2초)로 찾고 `mqtt.setHost(IP)`로 접속한다.
