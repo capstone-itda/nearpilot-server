@@ -193,11 +193,16 @@ def _mqtt(table: Mapping[str, Any], base: Path) -> MqttConfig:
 
 
 def _delivery(table: Mapping[str, Any]) -> DeliveryConfig:
+    if "clock_skew_sec" in table:  # #236 이전 설정. 기기별 실측 오차 표는 없어졌다
+        raise ConfigError("delivery.clock_skew_sec 는 없어졌다 (#236). "
+                          "delivery.clock_max_error_sec, clock_trust_sec, clock_resync_sec 를 쓴다")
     names = {f.name for f in fields(DeliveryConfig)}
     _keys(table, "delivery", required=names)
-    if not isinstance(table["clock_skew_sec"], Mapping):
-        raise ConfigError("delivery.clock_skew_sec 는 기기별 표여야 한다")
-    return DeliveryConfig(**table)
+    try:
+        return DeliveryConfig(**table)
+    except ValueError as error:  # 값은 쓰지 않고 키 이름만 알린다
+        name = str(error).rsplit(": ", 1)[-1]
+        raise ConfigError(f"delivery.{name} 가 허용 범위 밖이다") from None
 
 
 def _dashboard(table: Mapping[str, Any], base: Path) -> DashboardConfig:

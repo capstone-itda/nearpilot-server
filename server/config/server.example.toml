@@ -67,16 +67,13 @@ reconnect_max_sec = 8
 
 # 보고 검증·인계. 모든 키가 필수이고 기본값이 없다.
 [delivery]
+# 실제 기기는 MQTT 시각 요청·응답으로 서버 시각에 맞춘다 (#236). 모든 기기와 시뮬레이터에 같은 값을 쓴다.
+clock_max_error_sec = 0.5  # 최대 시각 오차(초). 기기는 왕복 시간의 절반이 이보다 크면 응답을 버린다
+clock_trust_sec = 120      # 기기가 동기화 뒤 시각을 신뢰하는 기간(초). 15~86400
+clock_resync_sec = 60      # 기기가 다시 맞추는 간격(초). 5 이상, clock_trust_sec 이하
 pending_limit = 1000
 retry_interval_sec = 0.5
 stop_timeout_sec = 5.0
-
-# 기기별 검증된 최대 시각 오차(초). 없는 기기의 관측·검사는 쓰지 않는다 (#140).
-# 0 은 같은 PC 에서 도는 시뮬레이터에만 쓴다. 실제 ESP32 는 담당 검증 뒤에 채운다.
-[delivery.clock_skew_sec]
-locker-1 = 0.0
-locker-2 = 0.0
-light-1 = 0.0
 
 # 대시보드 (선택). 이 섹션이 있으면 소유자 토큰으로 모니터링 WebSocket(/dashboard/stream)과
 # 조회 REST(/dashboard/...)를 연다. 없으면 대시보드를 열지 않고 서버의 다른 동작은 같다.

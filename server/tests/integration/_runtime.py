@@ -33,7 +33,7 @@ from nearpilot.shared.models import ProximityResult  # noqa: E402
 from nearpilot.shared.tokens import hash_token  # noqa: E402
 
 MODEL_ROOT = SERVER / "tests" / "core" / "proximity" / "fixtures" / "models"
-GRANTED = [1, 0, 1, 1]
+GRANTED = [1, 0, 1, 1, 0]  # announce, rssi, status, result, time_request (#236)
 OWNER, VISITOR_A, VISITOR_B = "owner", "visitor-a", "visitor-b"
 TOKENS = {OWNER: "tok-owner", VISITOR_A: "tok-a", VISITOR_B: "tok-b"}
 UUID = "11111111-2222-3333-4444-555555555555"
@@ -81,7 +81,7 @@ def make_config(tmp: Path, *, settings: Mapping[str, Any] | None = None,
                  "username": "nearpilot-server", "password_file": secret.name, "keepalive_sec": 30,
                  "connect_timeout_sec": 1.0, "start_timeout_sec": 2.0, "stop_timeout_sec": 2.0,
                  "reconnect_min_sec": 1, "reconnect_max_sec": 2, **(mqtt or {})},
-        "delivery": {"clock_skew_sec": {node_id: 0.0 for node_id in NODES}, "pending_limit": 1000,
+        "delivery": {"clock_max_error_sec": 0.0, "clock_trust_sec": 120, "clock_resync_sec": 60, "pending_limit": 1000,
                      "retry_interval_sec": 0.05, "stop_timeout_sec": 2.0, **(delivery or {})},
     }
     return parse_config(raw, base=tmp)

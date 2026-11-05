@@ -1,4 +1,4 @@
-"""FR-13 FR-22 NFR-08 NFR-12 USB provisioning of the common node_lab firmware."""
+"""FR-13 FR-22 NFR-08 NFR-12 USB provisioning of the product firmware (9 keys, no clock values since #236)."""
 import json
 
 import pytest
@@ -16,7 +16,7 @@ def lab(tmp_path):
     folder.mkdir()
     (folder / "lab.json").write_text(json.dumps({"nodes": ["light-1"]}), encoding="utf-8")
     (folder / "server.toml").write_text(
-        '[mqtt]\nhost = "10.0.0.5"\nport = 18883\n[delivery.clock_skew_sec]\n"light-1" = 1.0\n', encoding="utf-8")
+        '[mqtt]\nhost = "10.0.0.5"\nport = 18883\n', encoding="utf-8")
     (folder / "fleet.json").write_text(json.dumps({"devices": [
         {"node_id": "light-1", "capability": "light", "occupancy": "shared"}]}), encoding="utf-8")
     (folder / ".env.light-1").write_text(MQTT_SECRET + "\n", encoding="utf-8")
@@ -25,8 +25,7 @@ def lab(tmp_path):
     return folder
 
 
-def values(folder, **overrides):
-    options = dict(time_server="10.0.0.5", trust_sec=120, resync_sec=60) | overrides
+def values(folder, **options):
     return provision.build_values(folder, "light-1", **options)
 
 
@@ -36,7 +35,7 @@ class FakeDevice:
     def __init__(self, *, reject=None, report=None, unknown=(), booting=0):
         self.reject = reject
         self.booting = booting  # CONFIG_BEGIN lines lost while the board restarts after the port opens.
-        self.unknown = set(unknown)  # Keys this firmware does not know, like node_lab's device keys.
+        self.unknown = set(unknown)  # Keys this firmware does not know, like the old clock keys.
         self.report = report or {}
         self.staged = {}
         self.out = [b"BLE_BEACON uuid=x major=1 minor=2 rssi=-60.0 samples=3\n"]
@@ -69,9 +68,8 @@ class FakeDevice:
             s = self.staged | self.report
             self.out.append((
                 f"CONFIG_STATE configured=1 generation=1 node={s['node_id']} mqtt_user={s['mqtt_user']} "
-                f"mqtt_host={s['mqtt_host']} mqtt_port={s['mqtt_port']} time_server={s['time_server']} "
-                f"clock_max_error_sec={float(s['clock_max_error_sec']):.6f} time_trust_ms={s['time_trust_ms']} "
-                f"time_resync_ms={s['time_resync_ms']} wifi_ssid_bytes={len(s['wifi_ssid'].encode())} "
+                f"mqtt_host={s['mqtt_host']} mqtt_port={s['mqtt_port']} "
+                f"wifi_ssid_bytes={len(s['wifi_ssid'].encode())} "
                 f"wifi_password_set={int(bool(s['wifi_password']))} mqtt_password_set=1\n").encode())
 
     def readline(self):
@@ -87,7 +85,7 @@ def run(device, prepared, **options):
 
 def test_FR13_provision_rejects_unlisted_node(lab):
     with pytest.raises(ValueError, match="시험 목록"):
-        provision.build_values(lab, "light-9", time_server="10.0.0.5", trust_sec=120, resync_sec=60)
+        provision.build_values(lab, "light-9")
 
 
 def test_NFR08_provision_requires_password_files(lab):
@@ -96,23 +94,19 @@ def test_NFR08_provision_requires_password_files(lab):
         values(lab)
 
 
-def test_NFR12_provision_uses_server_clock_bound(lab):
-    assert values(lab)["clock_max_error_sec"] == "1.0"
-    (lab / "server.toml").write_text('[mqtt]\nhost = "10.0.0.5"\nport = 18883\n', encoding="utf-8")
-    assert values(lab)["clock_max_error_sec"] == "-1"
-
-
-@pytest.mark.parametrize("trust,resync", [(10, 10), (60, 120), (float("nan"), 60)])
-def test_NFR12_provision_rejects_invalid_trust_window(lab, trust, resync):
-    with pytest.raises(ValueError):
-        values(lab, trust_sec=trust, resync_sec=resync)
+def test_NFR12_provision_sends_no_clock_values(lab):
+    """#236: the firmware takes its clock over MQTT, so only the nine connection keys are injected."""
+    prepared = values(lab)
+    assert tuple(prepared) == provision.KEYS and len(provision.KEYS) == 9
+    assert not {"time_server", "clock_max_error_sec", "time_trust_ms", "time_resync_ms"} & set(prepared)
+    assert (prepared["mqtt_host"], prepared["mqtt_port"]) == ("10.0.0.5", "18883")
 
 
 def test_FR22_provision_roundtrip_verifies_readback(lab):
     prepared = values(lab)
     device = FakeDevice()
     state, events = run(device, prepared)
-    assert state["node_id"] == "light-1" and state["time_trust_ms"] == 120000
+    assert state["node_id"] == "light-1" and state["mqtt_port"] == 18883
     assert device.staged == prepared
     assert events[-1]["event"] == "provisioned"
 
@@ -153,17 +147,14 @@ def test_FR04_provision_uses_fleet_capability(lab):
             values(lab)
 
 
-def test_FR04_provision_skips_keys_unknown_to_node_lab(lab):
+def test_FR04_provision_fails_on_unknown_key(lab):
+    """A firmware that does not know a key (node_lab, an old build) fails instead of being half-configured."""
     prepared = values(lab)
-    device = FakeDevice(unknown=provision.DEVICE_KEYS)
-    state, events = run(device, prepared)
-    assert state["node_id"] == "light-1"
-    assert "capability" not in device.staged and "occupancy" not in device.staged
-    assert [event["key"] for event in events if event["event"] == "key_unsupported"] == list(provision.DEVICE_KEYS)
-    with pytest.raises(ValueError, match="거부"):  # Any other rejection of a device key still fails.
-        run(FakeDevice(reject="capability"), prepared)
-    with pytest.raises(ValueError, match="거부"):  # unknown_key is tolerated only for the device keys.
-        run(FakeDevice(unknown={"mqtt_host"}), prepared)
+    for key in ("capability", "mqtt_host"):
+        device = FakeDevice(unknown={key})
+        with pytest.raises(ValueError, match="거부"):
+            run(device, prepared)
+        assert not any(line.startswith("CONFIG_COMMIT") for line in device.written)
 
 
 def test_FR13_provision_resends_begin_while_board_boots(lab):
@@ -195,6 +186,3 @@ def test_NFR12_provision_run_opens_port_and_logs(lab, capsys):
     logged = (lab / "provision.jsonl").read_text(encoding="utf-8") + capsys.readouterr().out
     assert MQTT_SECRET not in logged and WIFI_SECRET not in logged
 
-
-def test_NFR12_provision_default_time_server_is_broker_host(lab):
-    assert provision.default_time_server(lab) == "10.0.0.5"

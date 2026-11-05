@@ -85,7 +85,7 @@ class Harness:
         self.now = T0 + sec(1)
         self.delivery = ReportDelivery(
             self.sink, settings=Settings,
-            config=DeliveryConfig({"locker-1": 0.0} if skew is None else skew, limit, 1.0, 2.0),
+            config=DeliveryConfig(0.0 if skew is None else skew, 120, 60, limit, 1.0, 2.0),
             clock=lambda: self.now)
 
     def feed(self, *reports):
@@ -175,21 +175,23 @@ def test_FR13_session_tie_keeps_current(h):
     (T0, T0 + sec(0.6), False),                 # future send time
 ])
 def test_FR13_stale_or_future_status_rejected(observed, sent, accepted):
-    h = Harness(skew={"locker-1": 0.4})
+    h = Harness(skew=0.4)
     report = incoming("status", at=sent, received=T0 + sec(0.1), observed_at=iso(observed))
     h.feed(report)
     assert len(h.sink.of("on_status")) == (1 if accepted else 0)
 
 
-def test_FR13_unverified_freshness_not_live():
-    h = Harness(skew={})
-    h.feed(incoming("announce"), incoming("status"), incoming("rssi"), incoming("result"))
-    assert [name for name, _ in h.sink.calls] == ["on_announce", "on_result"]
-    with pytest.raises(ValueError):
-        DeliveryConfig({"locker-1": -1.0}, 1, 1.0, 1.0)
+def test_FR07_delivery_clock_settings_validated():
+    """#236: one clock bound for every node replaces the per-node measured table."""
+    assert DeliveryConfig(0.5, 120, 60, 1, 1.0, 1.0).clock_max_error_sec == 0.5
+    for error, trust, resync in ((-0.1, 120, 60), (60.5, 120, 60), (float("nan"), 120, 60), ({}, 120, 60),
+                                 (0.5, 14, 5), (0.5, 86401, 60), (0.5, 120.0, 60), (0.5, 120, 4),
+                                 (0.5, 60, 61), (0.5, 120, True)):
+        with pytest.raises(ValueError):
+            DeliveryConfig(error, trust, resync, 1, 1.0, 1.0)
     for limit, retry in ((0, 1.0), (1, 0), (True, 1.0), (1, float("nan"))):
         with pytest.raises(ValueError):
-            DeliveryConfig({}, limit, retry, 1.0)
+            DeliveryConfig(0.5, 120, 60, limit, retry, 1.0)
 
 
 def test_FR07_old_session_result_forwarded(h):
@@ -242,7 +244,7 @@ def test_FR07_waiter_not_blocked_by_sink():
 
     sink = BlockingSink()
     delivery = ReportDelivery(sink, settings=Settings,
-                              config=DeliveryConfig({"locker-1": 0.0}, 100, 0.05, 2.0))
+                              config=DeliveryConfig(0.0, 120, 60, 100, 0.05, 2.0))
     waiter = threading.Event()
 
     def listener(result):
@@ -289,7 +291,7 @@ def test_FR07_restart_does_not_claim_delivery():
 
     sink._call = call
     delivery = ReportDelivery(sink, settings=Settings,
-                              config=DeliveryConfig({"locker-1": 0.0}, 100, 0.05, 2.0))
+                              config=DeliveryConfig(0.0, 120, 60, 100, 0.05, 2.0))
     delivery.start()
     report = incoming("result")
     delivery.submit(report)

@@ -26,11 +26,13 @@ def test_FR22_init_refuses_existing_directory(generated):
     assert (folder / ".env.nearpilot-server").read_bytes() == before
 
 
-def test_FR07_hardware_has_no_default_clock_skew(generated):
-    hardware = load_config(generated("hardware") / "server.toml")
-    assert not hardware.delivery.clock_skew_sec
-    simulator = load_config(generated("sim") / "server.toml")
-    assert dict(simulator.delivery.clock_skew_sec) == {"light-1": 0.0, "light-2": 0.0}
+def test_FR07_lab_uses_one_clock_bound(generated):
+    """#236: 실기와 시뮬레이터 모두 같은 시각 오차 상한을 쓰고 기기별 표가 없다."""
+    for mode in ("hardware", "sim"):
+        folder = generated(mode)
+        delivery = load_config(folder / "server.toml").delivery
+        assert (delivery.clock_max_error_sec, delivery.clock_trust_sec, delivery.clock_resync_sec) == (0.5, 120, 60)
+        assert "clock_skew_sec" not in (folder / "server.toml").read_text(encoding="utf-8")
 
 
 def test_FR16_lab_model_is_marked_synthetic_and_beacon_matches(generated):

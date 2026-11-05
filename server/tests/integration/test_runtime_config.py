@@ -30,8 +30,8 @@ def _raw(tmp: Path) -> dict:
                  "password_file": ".env.mqtt-password", "keepalive_sec": 30, "connect_timeout_sec": 1.0,
                  "start_timeout_sec": 1.0, "stop_timeout_sec": 1.0, "reconnect_min_sec": 1,
                  "reconnect_max_sec": 2},
-        "delivery": {"clock_skew_sec": {}, "pending_limit": 10, "retry_interval_sec": 0.1,
-                     "stop_timeout_sec": 1.0},
+        "delivery": {"clock_max_error_sec": 0.0, "clock_trust_sec": 120, "clock_resync_sec": 60,
+                     "pending_limit": 10, "retry_interval_sec": 0.1, "stop_timeout_sec": 1.0},
     }
 
 
@@ -61,6 +61,28 @@ def test_FR22_runtime_example_config_loads():
 def test_FR22_runtime_invalid_config_stops_startup(tmp_path, change, key):
     raw = _raw(tmp_path)
     change(raw)
+    with pytest.raises(ConfigError, match=key.replace(".", r"\.")):
+        parse_config(raw, base=tmp_path)
+
+
+def test_FR07_config_rejects_old_clock_skew_table(tmp_path):
+    """#236 이전 설정의 기기별 오차 표는 바뀐 설정 이름을 알리고 시작하지 않는다."""
+    raw = _raw(tmp_path)
+    raw["delivery"]["clock_skew_sec"] = {"locker-1": 0.0}
+    with pytest.raises(ConfigError, match="clock_max_error_sec"):
+        parse_config(raw, base=tmp_path)
+
+
+@pytest.mark.parametrize("change, key", [
+    (lambda d: d.pop("clock_max_error_sec"), "delivery.clock_max_error_sec"),  # 기본값이 없다
+    (lambda d: d.pop("clock_trust_sec"), "delivery.clock_trust_sec"),
+    (lambda d: d.update(clock_max_error_sec=-0.5), "delivery.clock_max_error_sec"),
+    (lambda d: d.update(clock_trust_sec=10), "delivery.clock_trust_sec"),
+    (lambda d: d.update(clock_resync_sec=121), "delivery.clock_resync_sec"),
+])
+def test_FR07_delivery_clock_settings_stop_startup(tmp_path, change, key):
+    raw = _raw(tmp_path)
+    change(raw["delivery"])
     with pytest.raises(ConfigError, match=key.replace(".", r"\.")):
         parse_config(raw, base=tmp_path)
 

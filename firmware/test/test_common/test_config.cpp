@@ -1,6 +1,5 @@
 #include <unity.h>
 
-#include <cmath>
 #include <string>
 
 #include "np_config.h"
@@ -17,10 +16,6 @@ void fill(JsonDocument& doc) {
     doc["wifi_password"] = "";
     doc["mqtt_host"] = "10.0.0.2";
     doc["mqtt_port"] = "18883";
-    doc["time_server"] = "10.0.0.2";
-    doc["clock_max_error_sec"] = "0.25";
-    doc["time_trust_ms"] = "120000";
-    doc["time_resync_ms"] = "60000";
 }
 
 const char* decodeWith(const char* key, const char* value) {
@@ -40,21 +35,30 @@ void test_NFR08_config_accepts_valid_values() {
     TEST_ASSERT_EQUAL_STRING("light-01", out.nodeId.c_str());
     TEST_ASSERT_EQUAL_STRING("lab ap", out.wifiSsid.c_str());
     TEST_ASSERT_EQUAL_UINT16(18883, out.mqttPort);
-    TEST_ASSERT_TRUE(std::fabs(out.clockMaxErrorSec - 0.25) < 1e-9);
-    TEST_ASSERT_EQUAL_UINT32(120000, out.timeTrustMs);
-    TEST_ASSERT_EQUAL_UINT32(60000, out.timeResyncMs);
     TEST_ASSERT_EQUAL_UINT32(0, out.generation);
-    // Unmeasured bound and disabled trust are valid settings; they only keep the clock untrusted.
-    doc["clock_max_error_sec"] = "-1";
-    doc["time_trust_ms"] = "0";
-    doc["time_resync_ms"] = "0";
-    doc["time_server"] = "";
     doc["generation"] = 7;
     TEST_ASSERT_NULL(np::decodeConfig(doc, out));
-    TEST_ASSERT_TRUE(out.clockMaxErrorSec < 0.0);
     TEST_ASSERT_EQUAL_UINT32(7, out.generation);
     TEST_ASSERT_TRUE(np::isConfigKey("mqtt_password"));
     TEST_ASSERT_FALSE(np::isConfigKey("generation"));
+}
+
+void test_FR07_config_has_no_clock_keys() {
+    TEST_ASSERT_EQUAL_UINT32(9, np::CONFIG_KEY_COUNT);
+    for (const char* key : {"time_server", "clock_max_error_sec", "time_trust_ms", "time_resync_ms"})
+        TEST_ASSERT_FALSE_MESSAGE(np::isConfigKey(key), key);  // CONFIG_SET answers unknown_key.
+    // A configuration stored before #236 still loads; its clock keys are ignored.
+    JsonDocument doc;
+    fill(doc);
+    doc["time_server"] = "10.0.0.2";
+    doc["clock_max_error_sec"] = "-1";
+    doc["time_trust_ms"] = "120000";
+    doc["time_resync_ms"] = "60000";
+    doc["generation"] = 3;
+    np::NodeConfig out;
+    TEST_ASSERT_NULL(np::decodeConfig(doc, out));
+    TEST_ASSERT_EQUAL_STRING("light-01", out.nodeId.c_str());
+    TEST_ASSERT_EQUAL_UINT32(3, out.generation);
 }
 
 void test_NFR08_config_rejects_invalid_values() {
@@ -70,17 +74,9 @@ void test_NFR08_config_rejects_invalid_values() {
         {"wifi_ssid", longSsid.c_str(), "wifi_ssid"},
         {"wifi_password", "line\nbreak", "wifi_password"},
         {"mqtt_host", "host:1883", "mqtt_host"},
-        {"time_server", "pool ntp", "time_server"},
         {"mqtt_port", "0", "mqtt_port"},
         {"mqtt_port", "65536", "mqtt_port"},
         {"mqtt_port", "18a83", "mqtt_port"},
-        {"clock_max_error_sec", "", "clock_max_error_sec"},
-        {"clock_max_error_sec", "-0.5", "clock_max_error_sec"},
-        {"clock_max_error_sec", "3600", "clock_max_error_sec"},
-        {"clock_max_error_sec", "0.5s", "clock_max_error_sec"},
-        {"time_trust_ms", "14999", "time_trust_ms"},
-        {"time_trust_ms", "86400001", "time_trust_ms"},
-        {"time_resync_ms", "130000", "time_resync_ms"},  // Resync must not exceed trust.
     };
     for (const Case& item : cases) {
         const char* rejected = decodeWith(item.key, item.value);
@@ -143,6 +139,7 @@ void test_NFR08_config_hex_rejects_nul() {
 void runConfigTests() {
     RUN_TEST(test_NFR08_config_accepts_valid_values);
     RUN_TEST(test_NFR08_config_rejects_invalid_values);
+    RUN_TEST(test_FR07_config_has_no_clock_keys);
     RUN_TEST(test_FR04_announce_uses_configured_capability);
     RUN_TEST(test_NFR08_config_rejects_invalid_capability);
     RUN_TEST(test_NFR08_config_rejects_invalid_occupancy);

@@ -21,7 +21,7 @@ class FakeClient:
         self.publications = []
         self.mid = 0
         self.auth_reason = 0
-        self.granted = [1, 0, 1, 1]
+        self.granted = [1, 0, 1, 1, 0]  # announce, rssi, status, result, time_request
         self.subscribe_rc = 0
         self.publish_rc = 0
         self.publish_exception = None
@@ -88,7 +88,7 @@ def setup_connection(tmp_path):
     secret.write_text("test-private-password\n", encoding="utf-8")
     config = MqttConfig("localhost", 1883, "test-server", "nearpilot-server", secret,
                         30, 1, 1, 1, 1, 4)
-    reports, losses, clients = [], [], []
+    reports, losses, clients, times = [], [], [], []
     def factory(**kwargs):
         client = FakeClient(**kwargs)
         clients.append(client)
@@ -96,7 +96,9 @@ def setup_connection(tmp_path):
     stamp = datetime(2026, 10, 16, tzinfo=timezone.utc)
     connection = MqttConnection(config, on_report=reports.append,
                                 on_connection_lost=lambda: losses.append("lost"),
+                                on_time_request=lambda topic, payload: times.append((topic, payload)),
                                 client_factory=factory, clock=lambda: stamp)
+    connection.time_requests = times  # Test-only handle on the clock handoff.
     yield connection, clients[0], reports, losses, stamp
     clients[0].close_gate.set()
     connection.stop()
@@ -122,6 +124,19 @@ def test_NFR11_mqtt_version_qos_retain(setup_connection):
     assert client.publications[-1] == ("nearpilot/node/node-a/occupancy", b"{}", 1, True)
     with pytest.raises(ValueError):
         connection.publish_request("node-a", "safety_check", b"{}")  # 반납 검사 토픽은 없다 (FR-20).
+    connection.publish_request("node-a", "time", b"{}")  # 시각 응답은 QoS 0, retained가 아니다 (#236).
+    assert client.publications[-1] == ("nearpilot/node/node-a/time", b"{}", 0, False)
+    assert ("nearpilot/node/+/time_request", 0) in SUBSCRIPTIONS
+
+
+def test_FR07_time_request_bypasses_report_delivery(setup_connection):
+    """#236: the clock request goes straight to the responder, never to report delivery."""
+    connection, client, reports, *_ = setup_connection
+    connection.start()
+    client.on_message(client, None, SimpleNamespace(topic="nearpilot/node/node-a/time_request",
+                                                   payload=b"{}", qos=0, retain=False, dup=False))
+    assert reports == []
+    assert connection.time_requests == [("nearpilot/node/node-a/time_request", b"{}")]
 
 
 def test_FR13_readiness_waits_for_suback(setup_connection):
@@ -331,7 +346,8 @@ def test_NFR11_invalid_runtime_settings(setup_connection, field, value):
 
 
 @pytest.mark.parametrize("node,kind", [("node/+", "cmd"), ("#", "cmd"), ("", "cmd"),
-                                      ("node-a", "status"), ("node-a", "announce")])
+                                      ("node-a", "status"), ("node-a", "announce"),
+                                      ("node-a", "time_request")])
 def test_FR06_transport_restricts_outgoing_topics(setup_connection, node, kind):
     connection, client, *_ = setup_connection
     connection.start()

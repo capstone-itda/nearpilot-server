@@ -36,7 +36,7 @@ def _config_without_models(tmp: Path) -> ServerConfig:
                  "username": "nearpilot-server", "password_file": secret.name, "keepalive_sec": 30,
                  "connect_timeout_sec": 1.0, "start_timeout_sec": 2.0, "stop_timeout_sec": 2.0,
                  "reconnect_min_sec": 1, "reconnect_max_sec": 2},
-        "delivery": {"clock_skew_sec": {node_id: 0.0 for node_id in NODES}, "pending_limit": 1000,
+        "delivery": {"clock_max_error_sec": 0.0, "clock_trust_sec": 120, "clock_resync_sec": 60, "pending_limit": 1000,
                      "retry_interval_sec": 0.05, "stop_timeout_sec": 2.0},
     }
     return parse_config(raw, base=tmp, require_models=False)

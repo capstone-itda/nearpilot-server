@@ -44,7 +44,7 @@ BASE_SECTIONS: dict[str, dict[str, Any]] = {
              "connect_timeout_sec": 5.0, "start_timeout_sec": 10.0, "stop_timeout_sec": 5.0,
              "reconnect_min_sec": 1, "reconnect_max_sec": 8},
     "delivery": {"pending_limit": 1000, "retry_interval_sec": 0.5, "stop_timeout_sec": 5.0,
-                 "clock_skew_sec": {"locker-1": 0.0}},
+                 "clock_max_error_sec": 0.0, "clock_trust_sec": 120, "clock_resync_sec": 60},
 }
 
 

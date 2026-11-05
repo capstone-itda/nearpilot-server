@@ -50,8 +50,8 @@ def broker(tmp_path):
     server_section = example[example.index("user nearpilot-server"):example.index("user node-a")]
     device = [f"user {NODE}"]
     device += [f"topic write nearpilot/node/{NODE}/{kind}"
-               for kind in ("announce", "rssi", "status", "result")]
-    device += [f"topic read nearpilot/node/{NODE}/cmd"]
+               for kind in ("announce", "rssi", "status", "result", "time_request")]
+    device += [f"topic read nearpilot/node/{NODE}/{kind}" for kind in ("cmd", "time")]
     acl.write_text(server_section + "\n".join(device) + "\n", encoding="utf-8")
     text = (SERVER / "config" / "mosquitto.conf").read_text(encoding="utf-8")
     text = text.replace("listener 1883 127.0.0.1", f"listener {port} 127.0.0.1")
@@ -91,7 +91,7 @@ def test_NFR12_runtime_real_broker_restart(broker, tmp_path, caplog):
     port, server_secret, node_secret, passwords = broker
     cfg = make_config(tmp_path, settings={"threshold_explicit_locker": 0.5},
                       mqtt={"port": port, "password_file": str(server_secret)},
-                      delivery={"clock_skew_sec": {NODE: 0.0}})  # 같은 PC 의 시뮬레이터
+                      delivery={"clock_max_error_sec": 0.0})  # 같은 PC 의 시뮬레이터
     seed(cfg.database.path, nodes=NODES)
     proximity = FakeProximity({NODE: 0.97})
     node = SimNode(NODE, "locker", "rental", CommandStore(tmp_path / "node-a.sqlite3"),
@@ -124,3 +124,45 @@ def test_NFR12_runtime_real_broker_restart(broker, tmp_path, caplog):
     finally:
         device.stop()
         node.store.close()
+
+
+def test_FR07_runtime_answers_time_request_over_real_broker(broker, tmp_path):
+    """#236: 기기 계정이 보낸 time_request에 서버가 같은 request_id와 서버 시각으로 답한다."""
+    import json
+    import queue
+    import uuid
+
+    import paho.mqtt.client as mqtt
+
+    port, server_secret, node_secret, passwords = broker
+    cfg = make_config(tmp_path, mqtt={"port": port, "password_file": str(server_secret)},
+                      delivery={"clock_max_error_sec": 0.5, "clock_trust_sec": 120, "clock_resync_sec": 60})
+    seed(cfg.database.path, nodes=NODES)
+    replies: queue.Queue = queue.Queue()
+    subscribed = queue.Queue()
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"test-{secrets.token_hex(4)}",
+                         clean_session=True, protocol=mqtt.MQTTv311)
+    client.username_pw_set(NODE, passwords[NODE])
+    client.on_subscribe = lambda *args: subscribed.put(True)
+    client.on_message = lambda c, u, message: replies.put((message.topic, message.qos, message.retain,
+                                                           json.loads(message.payload)))
+    client.connect("127.0.0.1", port, keepalive=5)
+    client.loop_start()
+    try:
+        client.subscribe(f"nearpilot/node/{NODE}/time", qos=0)
+        subscribed.get(timeout=3)
+        runtime = Runtime(cfg, proximity_factory=lambda models, s: FakeProximity({NODE: 0.0}))
+        with running(runtime):
+            before = datetime.now(timezone.utc)
+            client.publish(f"nearpilot/node/{NODE}/time_request", json.dumps(dict(
+                schema_version=2, node_id=NODE, session_id=str(uuid.uuid4()), request_id="rq-1")), qos=0)
+            topic, qos, retain, body = replies.get(timeout=5)
+            after = datetime.now(timezone.utc)
+        assert (topic, qos, retain) == (f"nearpilot/node/{NODE}/time", 0, False)
+        assert (body["request_id"], body["max_error_sec"], body["trust_sec"], body["resync_sec"]) == \
+            ("rq-1", 0.5, 120, 60)
+        server_time = datetime.fromisoformat(body["server_time"].replace("Z", "+00:00"))
+        assert before <= server_time <= after
+    finally:
+        client.loop_stop()
+        client.disconnect()

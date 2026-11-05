@@ -106,7 +106,7 @@ python -m tools.node_lab init --mode hardware --dir var/node-lab-hardware --host
 
    기기 ID의 접두사가 기능을 정한다. `light-`는 공용형 조명, `locker-`는 대여형 사물함이다. 사물함은 제품 펌웨어(`firmware/`의 `esp32dev-locker-1`)를 쓴다.
 3. 실제 비콘의 UUID·major·minor를 `lab.json`에 넣는다. 처음 생성할 때 `--uuid`, `--major`, `--minor`로 지정해도 된다.
-4. 폐쇄망 시각원과 기기별 최대 시각 오차를 실측한다. `server.toml`의 `[delivery.clock_skew_sec]`에 기기별 초 값을 넣는다.
+4. 시각은 기기가 MQTT로 서버에 맞춘다 (#236). `server.toml`의 `[delivery]` 시각 값(오차 0.5초, 신뢰 120초, 재동기화 60초)을 확인한다.
 5. 모든 기기에 같은 펌웨어를 올리고, 아래 "USB 설정 주입"으로 기기마다 ID·접속 정보·네트워크를 넣는다.
 6. 첫 터미널에서 `broker --dir var/node-lab-hardware`, 두 번째에서 `run --dir var/node-lab-hardware`를 실행한다.
 7. iBeacon을 송출하고 ESP32 시리얼의 `BLE_BEACON`과 서버의 `node_observation`을 비교한다.
@@ -114,10 +114,9 @@ python -m tools.node_lab init --mode hardware --dir var/node-lab-hardware --host
 8. 위치를 바꾸면서 `proximity`의 확률 변화를 본다. 기기 간 선택에는 앵커 2대 이상을 쓴다.
 9. 콘솔에서 `on`을 입력한다. `decision=OK`, ESP32의 `COMMAND_RECEIVED`·`COMMAND_HANDLED`, 서버의 `command_result`를 같은 명령 ID로 연결한다.
 
-실제 기기의 시각 오차 설정은 기본으로 비어 있다. 미측정 값을 0으로 채우지 않는다.
-시각이 검증되지 않으면 서버는 보고를 거부하고 펌웨어는 새 출력을 차단한다.
-실제 기기가 없으므로 이 저장소는 신뢰할 시각 오차 값을 제공하지 않는다.
-AP 안의 NTP 서버 운영과 Windows 방화벽의 MQTT 포트 허용은 환경에서 준비한다. 최종 시연 구성(`tools.final_demo`)은 방화벽 규칙 스크립트 `firewall.ps1`을 함께 만든다.
+기기는 `time_request`를 보내고 서버의 `time` 응답으로 시각을 맞춘다. 왕복 시간의 절반이 오차 상한이다.
+오차 상한을 넘는 응답은 버리고, 시각을 신뢰하기 전에는 보고를 보내지 않고 새 출력을 차단한다.
+NTP 서버와 기기별 오차 실측은 필요 없다. Windows 방화벽의 MQTT 포트 허용은 환경에서 준비한다. 최종 시연 구성(`tools.final_demo`)은 방화벽 규칙 스크립트 `firewall.ps1`을 함께 만든다.
 
 합성 모델은 `models/node-lab/synthetic-1.json`이다. 좌표와 파라미터는 초기 예시다.
 실측 모델을 쓸 때는 `server.toml`의 모델 루트와 장소별 버전을 바꾼다.
@@ -125,7 +124,7 @@ AP 안의 NTP 서버 운영과 Windows 방화벽의 MQTT 포트 허용은 환경
 
 ## USB 설정 주입
 
-모든 기기에 같은 펌웨어를 쓴다. 기기 ID, MQTT 계정, Wi-Fi, 서버·시각원 주소와 시각 신뢰 값은 USB로 한 번 넣는다.
+모든 기기에 같은 펌웨어를 쓴다. 기기 ID, MQTT 계정, Wi-Fi, 서버 주소, 기능과 점유 방식(키 9개)은 USB로 한 번 넣는다. 시각 값은 넣지 않는다 (#236).
 기기는 이 값을 명령 기록과 다른 NVS 영역에 보존한다. 재부팅과 펌웨어 재업로드 뒤에도 남는다.
 `erase_flash`는 명령 기록도 지우므로 쓰지 않는다.
 
@@ -133,10 +132,10 @@ AP 안의 NTP 서버 운영과 Windows 방화벽의 MQTT 포트 허용은 환경
 2. `server/`에서 `nearpilot provision`으로 실행한다. pyserial이 필요하다(`pip install pyserial`). 시리얼 모니터와 함께 포트를 열지 않는다.
 
 ```powershell
-nearpilot --dir var/node-lab-hardware provision --node light-1 --port COM6 --time-server 192.168.0.10 --time-trust-sec 120 --time-resync-sec 60
+nearpilot --dir var/node-lab-hardware provision --node light-1 --port COM6
 ```
 
-   `--time-server`를 생략하면 `server.toml`의 `[mqtt].host`다. 기존 `server/tools/node_lab/provision.py`도 같은 인자로 쓸 수 있다.
+   기존 `server/tools/node_lab/provision.py`도 같은 인자로 쓸 수 있다.
 
 | 값 | 읽는 곳 |
 |---|---|
@@ -144,17 +143,16 @@ nearpilot --dir var/node-lab-hardware provision --node light-1 --port COM6 --tim
 | MQTT 비밀번호 | 시험 폴더의 `.env.<기기 ID>` |
 | Wi-Fi | `.env.wifi.json` 또는 `--wifi-file` |
 | MQTT 주소·포트 | `server.toml`의 `[mqtt]` |
-| 최대 시각 오차 | `server.toml`의 `[delivery.clock_skew_sec]`. 없으면 `-1`(미검증)을 넣는다 |
-| 시각원, 신뢰 기간, 재동기화 간격 | 명령 인자. 검증한 값을 넣는다. `nearpilot provision`은 시각원을 생략하면 `[mqtt].host`를 쓴다 |
 | 기기 기능, 점유 방식 | 시험 폴더 `fleet.json`에서 그 기기의 `capability`·`occupancy`. 서버가 등록한 값과 같다 |
 
-- 제품 펌웨어(`firmware/`)는 기능과 점유 방식을 필수로 받는다. node_lab 펌웨어는 두 키를 `unknown_key`로 거부하므로 도구가 빼고 계속한다(`key_unsupported` 기록).
-- `CONFIG_STATE`에는 두 키가 없다. 두 키는 저장 성공과 재시작으로만 확인하고, 실제 값은 연결 뒤 `announce`에서 본다.
+- 제품 펌웨어(`firmware/`)만 지원한다. node_lab 펌웨어는 옛 시각 키를 요구하므로 이 도구로 주입하지 않는다.
+- 기기가 모르는 키를 `unknown_key`로 거부하면 저장하지 않고 실패한다.
+- `CONFIG_STATE`에는 기능과 점유 방식이 없다. 두 키는 저장 성공과 재시작으로만 확인하고, 실제 값은 연결 뒤 `announce`에서 본다.
 
 - 비밀번호는 명령 인자로 받지 않는다. `provision.jsonl`과 화면에는 비밀값과 SSID의 바이트 수만 쓴다.
 - 기기는 값을 검사한 뒤 한 번에 저장하고 다시 읽어 확인한다. 그다음 재시작한다. 도구는 `CONFIG?` 응답으로 저장 값을 대조한다.
 - 명령 기록이 있는 기기의 ID를 바꾸면 기기가 거부한다(`node_id_change_with_records`). 기록을 지워서 우회하지 않는다.
-- 서버나 시각원 주소가 바뀌면 같은 명령으로 다시 주입한다. 재시작한 기기는 새 시각원과 다시 동기화한 뒤에만 시각을 신뢰한다.
+- 서버 주소가 바뀌면 같은 명령으로 다시 주입한다. 재시작한 기기는 새 연결에서 시각을 다시 맞춘 뒤에만 시각을 신뢰한다.
 - 이 인증은 기기별 MQTT 계정이다. 앱·호스트 토큰과 다르다. 새 토큰을 만들지 않는다.
 
 ## 부팅과 준비 확인
@@ -168,8 +166,8 @@ nearpilot --dir var/node-lab-hardware provision --node light-1 --port COM6 --tim
 
 1. `NODE_START` (설정 상태, 재시작 원인)
 2. `WIFI_CONNECTED`
-3. `CLOCK_SYNCED` → `CLOCK_TRUSTED`
-4. `MQTT_CONNECTED` (시각 신뢰와 순서 무관, 새 연결 ID와 구독)
+3. `MQTT_CONNECTED` (새 연결 ID와 구독)
+4. `CLOCK_SYNCED` → `CLOCK_TRUSTED` (MQTT 시각 응답. 제품 펌웨어는 MQTT 연결 뒤에 맞춘다)
 5. `ANNOUNCED` (그 연결에서 시각 신뢰 뒤)
 6. `NODE_READY`
 
@@ -193,11 +191,8 @@ Arduino 시리얼 모니터와 함께 포트를 열지 않는다. 저장소 루�
 도구는 서버나 펌웨어 설정을 자동으로 바꾸지 않는다.
 예시 간격과 여유는 진단용 입력이다. 운영용 검증 값이 아니다.
 같은 조건의 짧은 연결 시험과 운영용 장시간 검증을 구분한다.
-실측한 파일은 시험 폴더에 보존하고 최대 시각 오차를 양쪽 설정에 맞춘다.
-
-Windows 시간 서비스를 재시작하면 미동기화 상태를 확인한다.
-관리자 PowerShell에서 `w32tm /resync /rediscover` 뒤 실제 NTP 응답과 `CLOCK_SYNCED`를 확인한다.
-로컬 `stripchart`의 오프셋만으로 ESP32 시각 오차를 확정하지 않는다.
+실측한 파일은 시험 폴더에 보존한다.
+제품 펌웨어는 MQTT 시각 응답의 왕복 시간으로 오차 상한을 정한다 (#236). 이 실측은 그 상한이 실제 오차를 덮는지 확인하는 진단이다.
 
 ## 펌웨어의 실행 결과
 
@@ -213,6 +208,6 @@ v1 시험에서 `unknown`으로 격리된 시험 DB는 새 `--dir`로 별도 시
 - 등록한 `light-*` 기기만 시험 장소에 배치한다. 다른 기기는 자동 신뢰하지 않는다.
 - 시험 계정·비콘은 내부 데이터다. 앱 인증과 외부 토큰 전달을 생략한다.
 - MQTT 접속 인증은 유지한다. 비밀번호 원문은 `.env.*`에만 쓴다.
-- 같은 PC 시뮬레이터에만 검증된 시각 오차 0을 지정한다.
+- 시뮬레이터는 서버와 같은 PC의 시계를 쓴다. 시각 요청을 보내지 않는다.
 - `demo`는 설정의 브로커가 이미 사용 중이면 실패한다. 기존 브로커를 종료하지 않는다.
 - 시험 도구는 프로덕션 서버와 같은 DB로 실행하지 않는다.

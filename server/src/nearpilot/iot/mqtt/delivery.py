@@ -9,13 +9,12 @@ delivered, and nothing here survives a server restart (iot-event-delivery spec).
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 import logging
 import math
 import threading
-from types import MappingProxyType
 
 from nearpilot.iot.messages import MessageValidationError, decode_message
 from nearpilot.iot.mqtt.connection import IncomingReport
@@ -31,26 +30,27 @@ def _utc_now() -> datetime:
 
 @dataclass(frozen=True)
 class DeliveryConfig:
-    """IOT runtime settings with no defaults (S1·S4 A, #140).
+    """IOT runtime settings with no defaults (S1·S4 A, #236).
 
-    clock_skew_sec maps node_id to its verified maximum clock error. A node
-    without an entry is unverified: its observations are not used.
+    Every node and simulator shares one clock bound. The `time` reply sends the
+    same bound, trust and resync windows to the firmware (architecture.md §5 MQTT 6절).
     """
 
-    clock_skew_sec: Mapping[str, float]
+    clock_max_error_sec: float
+    clock_trust_sec: int
+    clock_resync_sec: int
     pending_limit: int
     retry_interval_sec: float
     stop_timeout_sec: float
 
     def __post_init__(self):
-        if not isinstance(self.clock_skew_sec, Mapping):
-            raise ValueError("Invalid delivery setting: clock_skew_sec")
-        skews = dict(self.clock_skew_sec)
-        for node_id, skew in skews.items():
-            if (not isinstance(node_id, str) or not node_id or type(skew) not in (int, float)
-                    or not math.isfinite(skew) or skew < 0):
-                raise ValueError("Invalid delivery setting: clock_skew_sec")
-        object.__setattr__(self, "clock_skew_sec", MappingProxyType(skews))
+        error = self.clock_max_error_sec
+        if type(error) not in (int, float) or not math.isfinite(error) or not 0 <= error <= 60:
+            raise ValueError("Invalid delivery setting: clock_max_error_sec")
+        if type(self.clock_trust_sec) is not int or not 15 <= self.clock_trust_sec <= 86400:
+            raise ValueError("Invalid delivery setting: clock_trust_sec")
+        if type(self.clock_resync_sec) is not int or not 5 <= self.clock_resync_sec <= self.clock_trust_sec:
+            raise ValueError("Invalid delivery setting: clock_resync_sec")
         if type(self.pending_limit) is not int or self.pending_limit < 1:
             raise ValueError("Invalid delivery setting: pending_limit")
         for name in ("retry_interval_sec", "stop_timeout_sec"):
@@ -177,10 +177,7 @@ class ReportDelivery:
 
     def _accept_status(self, status: NodeStatus, settings: Settings) -> None:
         node_id = status.node_id
-        skew = self.config.clock_skew_sec.get(node_id)
-        if skew is None:
-            self._reject(node_id, "status", "clock skew unverified")
-            return
+        skew = self.config.clock_max_error_sec
         reason = self._stale_or_future(status.received_at, status.observed_at,
                                        (status.observed_at, status.sent_at),
                                        settings.online_ttl_sec, skew)
@@ -217,10 +214,7 @@ class ReportDelivery:
         if not frames:
             return  # A valid empty scan has no beacon observation to hand over.
         first = frames[0]
-        skew = self.config.clock_skew_sec.get(node_id)
-        if skew is None:
-            self._reject(node_id, "rssi", "clock skew unverified")
-            return
+        skew = self.config.clock_max_error_sec
         reason = self._stale_or_future(first.received_at, first.frame_ts,
                                        (first.frame_ts, first.sent_at),
                                        settings.beacon_recent_sec, skew)

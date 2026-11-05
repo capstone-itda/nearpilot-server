@@ -7,7 +7,6 @@
 #include <NimBLEDevice.h>
 #include <Preferences.h>
 #include <WiFi.h>
-#include <esp_sntp.h>
 #include <esp_system.h>
 #include <esp_task_wdt.h>
 #include <sys/time.h>
@@ -28,6 +27,9 @@
 #include "config.local.h"
 #else
 #include "config.example.h"
+#endif
+#if !defined(NP_CLOCK_DRIFT_PPM) || !defined(NP_CLOCK_RETRY_MS)
+#error "config.local.h predates #236: copy NP_CLOCK_DRIFT_PPM and NP_CLOCK_RETRY_MS from config.example.h"
 #endif
 
 static_assert(NP_MAX_COMMAND_RECORDS > 0 && NP_MAX_COMMAND_RECORDS < 10000, "NVS slot limit");
@@ -107,8 +109,15 @@ void feedWatchdog() {
     if (watchdogArmed) esp_task_wdt_reset();
 }
 unsigned long seq[4] = {};  // announce, status, rssi, result
-volatile bool synchronizedClock = false;
-volatile unsigned long lastSync = 0;
+// MQTT clock sync (#236). Everything runs on the loop task: onMessage fires inside mqtt.loop()/publish.
+np::ClockState clockState;
+String timeRequestId;            // The only request whose reply is accepted.
+unsigned long timeRequestUs = 0;  // micros() just before that request was published.
+unsigned long lastTimeRequest = 0;
+bool timeRequestPending = false;
+String timeReply;                // Latest `time` body and its arrival micros(), taken in the callback.
+unsigned long timeReplyUs = 0;
+bool timeReplyWaiting = false;
 
 struct Observation {
     char uuid[37] = {};
@@ -146,9 +155,9 @@ String utcNow() {
     return String(stamp) + tail;
 }
 
-bool clockConfigured() { return np::clockConfigured(configured, config); }
+bool clockTrusted() { return configured && np::clockTrusted(clockState, millis()); }
 
-bool clockTrusted() { return np::clockTrusted(configured, config, synchronizedClock, lastSync, millis()); }
+unsigned long clockAgeMs() { return clockState.synchronized ? millis() - clockState.syncedMs : 0; }
 
 // Only a light build with the ring takes brightness and color (FR-09).
 bool lightControls() { return NP_LIGHT_RING_PIN >= 0 && config.capability == "light"; }
@@ -166,7 +175,7 @@ np::CommandContext liveContext() {
     context.connected = mqtt.connected();
     context.clockTrusted = clockTrusted();
     context.nowSec = current.tv_sec + current.tv_usec / 1e6;
-    context.maxErrorSec = config.clockMaxErrorSec;
+    context.maxErrorSec = clockState.maxErrorSec;
     if (lightControls()) {
         context.lightMaxLevel = NP_LIGHT_RING_MAX_LEVEL;
         context.lightColor = true;
@@ -175,10 +184,62 @@ np::CommandContext liveContext() {
     return context;
 }
 
-void onSync(timeval*) {
-    lastSync = millis();
-    synchronizedClock = true;
-    Serial.printf("CLOCK_SYNCED utc=%s\n", utcNow().c_str());
+String nodeTopic(const char* kind) { return String("nearpilot/node/") + config.nodeId.c_str() + "/" + kind; }
+
+// Asks the server for its time. Only the newest request's reply is accepted.
+void requestTime() {
+    JsonDocument doc;
+    timeRequestId = newUuid();
+    doc["schema_version"] = np::SCHEMA_VERSION;
+    doc["node_id"] = config.nodeId;
+    doc["session_id"] = session;
+    doc["request_id"] = timeRequestId;
+    String body;
+    serializeJson(doc, body);
+    lastTimeRequest = millis();
+    timeRequestUs = micros();
+    timeRequestPending = mqtt.publish(nodeTopic("time_request"), body, false, 0);
+    feedWatchdog();
+    if (!timeRequestPending) Serial.printf("CLOCK_REQUEST_FAILED error=%d\n", mqtt.lastError());
+}
+
+// Sets the clock to T + r/2 only when r/2 plus drift over the trust window stays within the server's bound.
+void applyTimeReply() {
+    if (!timeReplyWaiting) return;
+    timeReplyWaiting = false;
+    if (!timeRequestPending) return;
+    np::TimeOffer offer;
+    const char* invalid = np::decodeTimeReply(timeReply.c_str(), timeReply.length(), config.nodeId,
+        timeRequestId.c_str(), offer);
+    if (invalid) {
+        Serial.printf("CLOCK_REPLY_IGNORED reason=%s\n", invalid);
+        return;
+    }
+    timeRequestPending = false;  // One reply per request; a duplicate is ignored as request_id.
+    const unsigned long roundTripUs = timeReplyUs - timeRequestUs;
+    const double error = np::offerErrorSec(offer, roundTripUs, NP_CLOCK_DRIFT_PPM);
+    if (error > offer.maxErrorSec) {
+        Serial.printf("CLOCK_SYNC_REJECTED rtt_ms=%.1f error_ms=%.1f max_error_ms=%.1f\n",
+            roundTripUs / 1000.0, error * 1000.0, offer.maxErrorSec * 1000.0);
+        return;
+    }
+    // Received at timeReplyUs; the time since then is added so a slow loop does not shift the clock.
+    const double wall = np::offerTime(offer, roundTripUs) + (micros() - timeReplyUs) / 1e6;
+    timeval value;
+    value.tv_sec = static_cast<time_t>(wall);
+    value.tv_usec = static_cast<suseconds_t>((wall - double(value.tv_sec)) * 1e6);
+    settimeofday(&value, nullptr);
+    np::recordSync(clockState, offer, millis());
+    Serial.printf("CLOCK_SYNCED rtt_ms=%.1f error_ms=%.1f trust_ms=%lu resync_ms=%lu utc=%s\n",
+        roundTripUs / 1000.0, error * 1000.0, offer.trustMs, offer.resyncMs, utcNow().c_str());
+}
+
+// Requests while the clock is unsynchronized or due, at most every NP_CLOCK_RETRY_MS.
+void clockStep() {
+    applyTimeReply();
+    if (!mqtt.connected() || !np::resyncDue(clockState, millis())) return;
+    if (timeRequestPending && millis() - lastTimeRequest < NP_CLOCK_RETRY_MS) return;
+    requestTime();
 }
 
 void common(JsonDocument& doc, int channel) {
@@ -193,7 +254,7 @@ bool report(const char* kind, JsonDocument& doc, int qos, bool retained = false)
     String body;
     serializeJson(doc, body);
     unsigned long started = millis();
-    bool sent = mqtt.publish(String("nearpilot/node/") + config.nodeId.c_str() + "/" + kind, body, retained, qos);
+    bool sent = mqtt.publish(nodeTopic(kind), body, retained, qos);
     feedWatchdog();
     Serial.printf("MQTT_REPORT kind=%s seq=%lu published=%d ms=%lu\n", kind,
         doc["seq"].as<unsigned long>(), sent, millis() - started);
@@ -459,10 +520,8 @@ const char* loadConfig() {
 
 void configState() {
     Serial.printf("CONFIG_STATE configured=%d generation=%lu node=%s mqtt_user=%s mqtt_host=%s mqtt_port=%u "
-        "time_server=%s clock_max_error_sec=%.6f time_trust_ms=%lu time_resync_ms=%lu wifi_ssid_bytes=%u "
-        "wifi_password_set=%d mqtt_password_set=%d\n", configured, config.generation,
+        "wifi_ssid_bytes=%u wifi_password_set=%d mqtt_password_set=%d\n", configured, config.generation,
         config.nodeId.c_str(), config.mqttUser.c_str(), config.mqttHost.c_str(), config.mqttPort,
-        config.timeServer.c_str(), config.clockMaxErrorSec, config.timeTrustMs, config.timeResyncMs,
         unsigned(config.wifiSsid.size()), !config.wifiPassword.empty(), !config.mqttPassword.empty());
 }
 
@@ -498,7 +557,7 @@ void commitConfig(const String& nonce) {
         candidate.nodeId.c_str());
     Serial.flush();
     delay(100);
-    ESP.restart();  // Apply from a clean boot: a new clock source starts unverified.
+    ESP.restart();  // Apply from a clean boot: the clock starts unverified until the server answers.
 }
 
 void serialCommand(const String& line) {
@@ -508,7 +567,7 @@ void serialCommand(const String& line) {
         gettimeofday(&stamp, nullptr);
         Serial.printf("CLOCK_SAMPLE nonce=%s unix_us=%lld synced=%d age_ms=%lu uptime_ms=%lu\n",
             line.substring(7).c_str(), static_cast<long long>(stamp.tv_sec) * 1000000 + stamp.tv_usec,
-            synchronizedClock, millis() - lastSync, millis());
+            clockState.synchronized, clockAgeMs(), millis());
     } else if (line == "CONFIG?") {
         configState();
     } else if (line.startsWith("CONFIG_BEGIN ") && line.length() == 45 && hexValid(line.substring(13))) {
@@ -584,10 +643,9 @@ const char* notReadyReason(bool trusted) {
     in.configured = configured;
     in.storageReady = ledger.ready();
     in.wifiUp = WiFi.status() == WL_CONNECTED;
-    in.clockConfigured = clockConfigured();
-    in.trusted = trusted;
-    in.everSynchronized = synchronizedClock;
     in.mqttConnected = mqtt.connected();
+    in.trusted = trusted;
+    in.everSynchronized = clockState.synchronized;
     in.announced = announced;
     return np::notReadyReason(in);
 }
@@ -658,17 +716,19 @@ void setup() {
     WiFi.setAutoReconnect(false);  // loop() owns retries so every attempt is logged.
     Serial.printf("WIFI_CONNECTING ssid_bytes=%u\n", unsigned(config.wifiSsid.size()));
     WiFi.begin(config.wifiSsid.c_str(), config.wifiPassword.c_str());
-    sntp_set_time_sync_notification_cb(onSync);
-    if (clockConfigured()) {
-        sntp_set_sync_interval(config.timeResyncMs);
-        configTime(0, 0, config.timeServer.c_str());
-        Serial.printf("CLOCK_SOURCE server=%s resync_ms=%lu trust_ms=%lu max_error_sec=%.3f\n",
-            config.timeServer.c_str(), config.timeResyncMs, config.timeTrustMs, config.clockMaxErrorSec);
-    } else Serial.println("CLOCK_SOURCE_UNSET clock_trust_disabled");
+    Serial.printf("CLOCK_SOURCE mqtt drift_ppm=%d retry_ms=%lu\n", NP_CLOCK_DRIFT_PPM,
+        static_cast<unsigned long>(NP_CLOCK_RETRY_MS));
     mqtt.begin(config.mqttHost.c_str(), config.mqttPort, network);
     mqtt.setOptions(NP_MQTT_KEEPALIVE_SEC, true, NP_MQTT_IO_TIMEOUT_MS);
     mqtt.onMessage(+[](String& topic, String& payload) {
         // QoS1 publish can call this callback; never publish/actuate recursively here.
+        if (topic.endsWith("/time")) {
+            // t1 is taken here so loop work after mqtt.loop() never inflates the round trip.
+            timeReplyUs = micros();
+            timeReply = payload;
+            timeReplyWaiting = true;
+            return;
+        }
         if (payload.length() <= NP_MAX_COMMAND_BYTES && inbox.size() < 4)
             inbox.push_back({topic, payload, executor.busy()});
         else Serial.println("COMMAND_QUEUE_REJECTED capacity_or_size");
@@ -727,6 +787,10 @@ void loop() {
             String base = String("nearpilot/node/") + config.nodeId.c_str();
             bool subscribed = mqtt.subscribe(base + "/cmd", 1);
             feedWatchdog();
+            if (subscribed) {
+                subscribed = mqtt.subscribe(base + "/time", 0);
+                feedWatchdog();
+            }
             if (subscribed && NP_LED_PIN >= 0) {
                 subscribed = mqtt.subscribe(base + "/occupancy", 1);
                 feedWatchdog();
@@ -739,7 +803,8 @@ void loop() {
                 mqttDelay = NP_RECONNECT_MS;
                 wasConnected = true;
                 Serial.printf("MQTT_CONNECTED session_id=%s subscribed=%s\n", session.c_str(),
-                    NP_LED_PIN >= 0 ? "cmd,occupancy" : "cmd");
+                    NP_LED_PIN >= 0 ? "cmd,time,occupancy" : "cmd,time");
+                timeRequestPending = false;  // A reply from the old connection is never matched.
             }
         } else {
             mqttDelay = backoff(mqttDelay);
@@ -751,17 +816,12 @@ void loop() {
     mqtt.loop();
     feedWatchdog();
     noteDisconnect();
+    clockStep();
+    noteDisconnect();
     bool trusted = clockTrusted();
-    static unsigned long lastClockRetry = 0;
-    if (!trusted && wifiUp && clockConfigured() && current - lastClockRetry >= NP_RETRY_MAX_MS) {
-        // lwIP backs off after failed polls; ask again now instead of waiting minutes.
-        lastClockRetry = current;
-        if (current >= NP_RETRY_MAX_MS) Serial.printf("CLOCK_RETRY server=%s restarted=%d\n",
-            config.timeServer.c_str(), sntp_restart());
-    }
-    if (trusted && !previouslyTrusted) Serial.printf("CLOCK_TRUSTED age_ms=%lu\n", millis() - lastSync);
+    if (trusted && !previouslyTrusted) Serial.printf("CLOCK_TRUSTED age_ms=%lu\n", clockAgeMs());
     if (!trusted && previouslyTrusted)
-        Serial.printf("CLOCK_TRUST_EXPIRED age_ms=%lu trust_ms=%lu\n", millis() - lastSync, config.timeTrustMs);
+        Serial.printf("CLOCK_TRUST_EXPIRED age_ms=%lu trust_ms=%lu\n", clockAgeMs(), clockState.trustMs);
     if (mqtt.connected() && !announced) {
         // Announce once per connection with a trusted sent_at; status and replay follow it.
         if (trusted && current - lastAnnounce >= NP_STATUS_MS) {
@@ -798,7 +858,7 @@ void loop() {
         lastReason = state;
         if (reason) Serial.printf("NODE_NOT_READY reason=%s uptime_ms=%lu\n", reason, current);
         else Serial.printf("NODE_READY session_id=%s clock_age_ms=%lu uptime_ms=%lu\n",
-            session.c_str(), millis() - lastSync, current);
+            session.c_str(), clockAgeMs(), current);
     }
     delay(1);
 }

@@ -23,10 +23,11 @@ from nearpilot.shared.models import (
     SpeakerControls,
 )
 
-__all__ = ["SCHEMA_VERSION", "MessageValidationError", "decode_message", "encode_command",
-           "encode_occupancy"]
+__all__ = ["SCHEMA_VERSION", "MessageValidationError", "decode_message", "decode_time_request",
+           "encode_command", "encode_occupancy", "encode_time"]
 
 SCHEMA_VERSION = 2
+REQUEST_ID_MAX = 64  # time_request.request_id 의 최대 길이 (iot-mqtt-time-sync spec 5절)
 
 
 class MessageValidationError(ValueError):
@@ -127,24 +128,17 @@ def _controls(
                          controls["color"]), None
 
 
-def decode_message(
-    topic: str, payload: bytes | str, *, received_at: datetime,
-) -> NodeAnnounce | tuple[RssiFrame, ...] | NodeStatus | NodeResult:
-    """Validate a complete report before returning shared models.
-
-    RSSI returns a tuple, including an empty tuple for an empty batch. The caller
-    supplies the first reception time; a payload cannot override that time.
-    """
+def _topic(topic: object) -> tuple[str, str]:
     if not isinstance(topic, str):
         _fail("topic")
     parts = topic.split("/")
     if len(parts) != 4 or parts[:2] != ["nearpilot", "node"] or not parts[2] or any(c in parts[2] for c in "+#\x00"):
         _fail("topic")
-    node_id, kind = parts[2:]
-    if kind not in ("announce", "rssi", "status", "result"):
-        _fail("topic")
-    if not isinstance(received_at, datetime) or received_at.utcoffset() != timedelta(0):
-        _fail("received_at")
+    return parts[2], parts[3]
+
+
+def _load(payload: object, node_id: str) -> dict:
+    """JSON object with the v2 version and the topic's node_id."""
     if not isinstance(payload, (bytes, str)):
         _fail("payload")
     try:
@@ -157,6 +151,48 @@ def decode_message(
         _fail("schema_version")
     if _string(data.get("node_id"), "node_id") != node_id:
         _fail("node_id")
+    return data
+
+
+def decode_time_request(topic: str, payload: bytes | str) -> tuple[str, str]:
+    """`time_request` → (node_id, request_id). It has no seq or sent_at: the clock is not set yet (#236)."""
+    node_id, kind = _topic(topic)
+    if kind != "time_request":
+        _fail("topic")
+    data = _load(payload, node_id)
+    _uuid(data.get("session_id"), "session_id")
+    request_id = _string(data.get("request_id"), "request_id")
+    if len(request_id) > REQUEST_ID_MAX or any(c < " " or c == "\x7f" for c in request_id):
+        _fail("request_id")
+    return node_id, request_id
+
+
+def encode_time(node_id: str, request_id: str, server_time: datetime, *, max_error_sec: float,
+                trust_sec: int, resync_sec: int) -> bytes:
+    """`time` reply. server_time is the server UTC clock right before publishing (#236)."""
+    node_id = _string(node_id, "node_id")
+    if any(c in node_id for c in "/+#\x00"):
+        _fail("node_id")
+    return json.dumps(dict(schema_version=SCHEMA_VERSION, node_id=node_id,
+        request_id=_string(request_id, "request_id"), server_time=_wire_time(server_time, "server_time"),
+        max_error_sec=max_error_sec, trust_sec=trust_sec, resync_sec=resync_sec),
+        allow_nan=False).encode("utf-8")
+
+
+def decode_message(
+    topic: str, payload: bytes | str, *, received_at: datetime,
+) -> NodeAnnounce | tuple[RssiFrame, ...] | NodeStatus | NodeResult:
+    """Validate a complete report before returning shared models.
+
+    RSSI returns a tuple, including an empty tuple for an empty batch. The caller
+    supplies the first reception time; a payload cannot override that time.
+    """
+    node_id, kind = _topic(topic)
+    if kind not in ("announce", "rssi", "status", "result"):
+        _fail("topic")
+    if not isinstance(received_at, datetime) or received_at.utcoffset() != timedelta(0):
+        _fail("received_at")
+    data = _load(payload, node_id)
     common = dict(
         node_id=node_id, session_id=_uuid(data.get("session_id"), "session_id"),
         seq=_integer(data.get("seq"), "seq", 1),

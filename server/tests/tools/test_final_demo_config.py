@@ -36,7 +36,12 @@ def test_FR04_NFR10_final_demo_inventory(prepared):
         block = acl.split(f"user {node}\n")[1].split("\n\n")[0]
         assert f"topic write nearpilot/node/{node}/announce" in block
         assert f"topic read nearpilot/node/{node}/cmd" in block
+        assert f"topic write nearpilot/node/{node}/time_request" in block  # #236
+        assert f"topic read nearpilot/node/{node}/time" in block
         assert "+" not in block and "#" not in block
+    server = acl.split("user nearpilot-server\n")[1].split("\n\n")[0]
+    assert "topic read nearpilot/node/+/time_request" in server
+    assert "topic write nearpilot/node/+/time" in server
 
 
 def test_FR01_FR13_FR14_final_demo_seed(prepared):
@@ -59,7 +64,9 @@ def test_FR12A_final_demo_http(prepared):
 def test_FR16_FR17_NFR12_final_demo_clock_and_model(prepared):
     for mode in ("hardware", "sim"):
         cfg = load_config(prepared(mode) / "server.toml")
-        assert dict(cfg.delivery.clock_skew_sec) == (dict.fromkeys(EXPECTED, 0.0) if mode == "sim" else {})
+        # 모든 기기에 같은 시각 오차 상한을 쓴다. 기기별 실측 표는 없다 (#236)
+        assert (cfg.delivery.clock_max_error_sec, cfg.delivery.clock_trust_sec,
+                cfg.delivery.clock_resync_sec) == (0.5, 120, 60)
         model = load_models(cfg.proximity.model_root, cfg.proximity.versions)["final-demo"]
         assert set(model.nodes) == set(EXPECTED)
         assert model.validation["source"] == "SYNTHETIC_NOT_MEASURED"
@@ -101,7 +108,7 @@ def test_NFR12_final_demo_without_mosquitto_passwd(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("mode,expected", [
-    ("hardware", {("HTTP", "TCP", 8000), ("MQTT", "TCP", 18883), ("NTP", "UDP", 123)}),
+    ("hardware", {("HTTP", "TCP", 8000), ("MQTT", "TCP", 18883)}),  # 기기는 MQTT로 시각을 맞춘다 (#236)
     ("sim", {("HTTP", "TCP", 8000), ("MQTT", "TCP", 18883)}),
 ])
 def test_NFR12_final_demo_firewall_rules(prepared, mode, expected):

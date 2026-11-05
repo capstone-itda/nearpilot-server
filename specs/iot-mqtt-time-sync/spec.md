@@ -39,7 +39,7 @@
 - `server/src/nearpilot/iot/` (`messages/`, `mqtt/connection.py`, `mqtt/delivery.py`, `mqtt/clock.py` 추가)
 - `server/src/nearpilot/runtime/` (`config.py`, `assembly.py`)
 - `server/src/nearpilot/cli/provision.py`
-- `server/tools/final_demo.py`, `server/tools/node_lab/`, `server/tools/evaluation/harness.py`, `server/demo/run_demo.py`
+- `server/tools/final_demo.py`, `server/tools/node_lab/`, `server/tools/evaluation/harness.py`, `server/tools/node_sim/config.py` (브로커 ACL만)
 - `server/config/` (`server.example.toml`, `README.md`, `final-demo/`)
 - `firmware/` (`lib/np_config/`, `lib/np_clock/`, `lib/np_ready/`, `src/main.cpp`, `include/config.example.h`, `test/test_common/`, `README.md`)
 - `specs/core-ops-setup/spec.md` (NTP 규칙과 시각 인자를 지운 현재 동작으로 맞춘다)
@@ -48,7 +48,7 @@
 ### 고치지 않는 곳
 
 - 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
-- 이 작업: `firmware/node_lab/` (연결 시험용 별도 펌웨어. SNTP를 그대로 쓴다), `app/`, `dashboard/`, `server/tools/node_sim/` (서버와 같은 PC 시계를 쓴다)
+- 이 작업: `firmware/node_lab/` (연결 시험용 별도 펌웨어. SNTP를 그대로 쓴다), `app/`, `dashboard/`, 시뮬레이터 동작 (서버와 같은 PC 시계를 쓴다)
 
 ### 다른 영역과 닿는 곳
 
@@ -71,9 +71,9 @@
 | 요청 본문이 틀렸다 (버전, `node_id` 불일치, `request_id` 없음·64자 초과) | 서버가 답하지 않고 경고만 남긴다 | `test_FR07_time_request_rejects_invalid` |
 | 구독 준비 전 요청 | 발행하지 않는다. 기기가 다시 요청한다 | `test_FR07_time_responder_skips_when_not_ready` |
 | 응답 발행 실패 | 예외를 밖으로 내지 않고 경고만 남긴다 | `test_FR07_time_responder_survives_publish_failure` |
-| 기기가 받은 응답의 `request_id`가 마지막 요청과 다르다 | 시각을 바꾸지 않는다 | 펌웨어 `test_reply_wrong_request` |
-| 왕복 시간이 길어 오차 상한을 넘는다 | 응답을 버리고 다시 요청한다 | 펌웨어 `test_offer_rejects_slow_round_trip` |
-| 신뢰 기간이 지났다 | `clock_trust_expired`, 새 명령 `CLOCK_UNVERIFIED`, 보고 중단 | 펌웨어 `test_clock_trust_expires` |
+| 기기가 받은 응답의 `request_id`가 마지막 요청과 다르다 | 시각을 바꾸지 않는다 | 펌웨어 `test_FR07_reply_wrong_request` |
+| 왕복 시간이 길어 오차 상한을 넘는다 | 응답을 버리고 다시 요청한다 | 펌웨어 `test_FR07_offer_rejects_slow_round_trip` |
+| 신뢰 기간이 지났다 | `clock_trust_expired`, 새 명령 `CLOCK_UNVERIFIED`, 보고 중단 | 펌웨어 `test_FR07_clock_trust_expires` |
 | 옛 설정 파일에 `[delivery.clock_skew_sec]`가 있다 | 시작하지 않고 바뀐 설정 이름을 알린다 | `test_FR07_config_rejects_old_clock_skew_table` |
 | 세 설정이 없거나 범위 밖이다 | 시작하지 않는다 | `test_FR07_delivery_clock_settings_validated` |
 
@@ -81,7 +81,7 @@
 
 - 시각 응답은 새 모듈 `iot/mqtt/clock.py`의 `TimeResponder`가 Paho 수신 콜백에서 바로 발행한다 — 처리 큐를 거치면 왕복 시간이 늘어난다.
 - `time_request`·`time`은 QoS 0이다. 잃으면 기기가 다시 요청한다 — 재전송된 옛 응답은 요청 ID가 달라 버려진다.
-- 설정 범위: `clock_max_error_sec`는 0 초과 60 이하의 수, `clock_trust_sec`는 15~86400의 정수, `clock_resync_sec`는 5 이상 `clock_trust_sec` 이하의 정수 — 펌웨어의 신뢰 기간 범위(15초~1일)를 따른다.
+- 설정 범위: `clock_max_error_sec`는 0 이상 60 이하의 수(0은 같은 PC의 시뮬레이터만), `clock_trust_sec`는 15~86400의 정수, `clock_resync_sec`는 5 이상 `clock_trust_sec` 이하의 정수 — 펌웨어의 신뢰 기간 범위(15초~1일)를 따른다.
 - 최종 시연 구성의 값: 오차 0.5초, 신뢰 120초, 재동기화 60초 — 이전 주입 값(신뢰 120초, 재동기화 60초)을 잇고, 0.5초는 Wi-Fi·BLE 공존에서도 왕복 1초 안의 응답을 받는다.
 - 펌웨어의 표류 상한은 빌드 값 `NP_CLOCK_DRIFT_PPM`(100ppm), 미동기 재요청 간격은 `NP_CLOCK_RETRY_MS`(2초)다 — ESP32 수정 발진기의 허용 오차보다 넉넉하다.
 - 펌웨어는 응답을 받은 시각 t1을 MQTT 수신 콜백에서 `micros()`로 잡는다 — loop의 다른 처리 시간이 왕복 시간에 들어가지 않는다.

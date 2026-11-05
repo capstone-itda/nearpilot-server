@@ -12,7 +12,7 @@
 | 경로 | 내용 |
 |---|---|
 | `lib/np_config/` | USB로 주입한 기기 설정의 검사와 16진수 값 변환 |
-| `lib/np_clock/` | 시각 신뢰 판정과 서버 UTC 시각 해석 |
+| `lib/np_clock/` | MQTT 시각 응답 해석, 오차 상한·신뢰 판정, 서버 UTC 시각 해석 |
 | `lib/np_command/` | MQTT 버전(`SCHEMA_VERSION=2`), `cmd`의 기능별 동작 검사, 검사 순서와 명령 내용 비교 필드 |
 | `lib/np_ledger/` | 명령 기록, ID 해시 색인과 저장소 인터페이스 `RecordStore` |
 | `lib/np_executor/` | 명령 상태 전이, 결과 저장과 재보고, `status`의 명령 처리 상태 |
@@ -117,14 +117,27 @@ pio run -e esp32dev-speaker-1 -t upload --upload-port COM6
 - 모듈 응답은 기다리지 않는다. 성공 보고는 명령 프레임 전송과 결과 저장을 뜻한다. 소리가 실제로 났다는 근거가 아니다.
 - 소리가 나지 않으면 시리얼 로그로 범위를 좁힌다. `COMMAND_HANDLED ... output=speaker`가 없으면 서버·MQTT 경로를, 있으면 배선·SD 카드를 본다.
 
+## 시각 동기화 (#236)
+
+SNTP를 쓰지 않는다. MQTT 연결 뒤 `nearpilot/node/{id}/time_request`(QoS 0)로 서버 시각을 묻고 `time`(QoS 0)으로 받는다.
+
+- 요청마다 새 `request_id`를 쓰고 마지막 요청의 응답만 받는다. 응답이 없으면 `NP_CLOCK_RETRY_MS`(2초)마다 새로 묻는다.
+- 응답 도착 시각은 MQTT 수신 콜백에서 `micros()`로 잡는다. 시각을 `server_time + 왕복/2`로 맞춘다.
+- `왕복/2 + NP_CLOCK_DRIFT_PPM(100) × trust_sec`이 서버의 `max_error_sec`를 넘으면 버리고(`CLOCK_SYNC_REJECTED`) 다시 묻는다.
+- 받은 응답의 `trust_sec` 동안 시각을 신뢰하고, `resync_sec`마다 다시 맞춘다. 명령 시각 검사는 응답의 `max_error_sec`를 쓴다.
+- 로그: `CLOCK_SOURCE mqtt ...`, `CLOCK_SYNCED rtt_ms=... error_ms=...`, `CLOCK_TRUSTED`, `CLOCK_TRUST_EXPIRED`.
+- 준비 사유 순서: `config_missing`, `storage_unavailable`, `wifi_disconnected`, `mqtt_disconnected`, `clock_unverified`·`clock_trust_expired`, `announce_pending`.
+- 이전에 만든 `config.local.h`에는 `config.example.h`의 `NP_CLOCK_DRIFT_PPM`, `NP_CLOCK_RETRY_MS`를 더한다. 없으면 빌드가 멈춘다.
+
 ## 설정과 확인
 
-3단계부터 USB 설정은 기존 11개 키에 `capability`와 `occupancy`를 더한 13개 문자열 키를 요구한다.
+USB 설정은 문자열 키 9개다: `node_id`, `mqtt_user`, `mqtt_password`, `wifi_ssid`, `wifi_password`, `mqtt_host`, `mqtt_port`, `capability`, `occupancy`.
+#236부터 시각 키 4개(`time_server`, `clock_max_error_sec`, `time_trust_ms`, `time_resync_ms`)는 없다. `CONFIG_SET`은 이 키를 `unknown_key`로 거부한다. 저장된 옛 설정(키 13개)은 시각 키를 무시하고 그대로 읽는다.
 `capability`는 `locker`·`light`·`speaker`, `occupancy`는 `rental`·`shared`다. 조합을 추가로 제한하지 않는다.
 `CONFIG_BEGIN` → `CONFIG_SET <key> <UTF-8 값의 16진수>` → `CONFIG_COMMIT` 절차를 유지한다.
 새 키가 없거나 허용 값이 아니면 키 이름으로 거부한다. 기존 설정에는 기본값을 채우지 않는다.
 기존 generation 1 설정은 재주입 전 부팅 시 `config=invalid`, `configured=0`이다. 저장된 설정과 기록은 지우지 않는다.
-현재 `python -m tools.node_lab provision`은 새 키를 전달하지 못한다. 도구 변경은 별도 범위다.
+주입 도구는 `nearpilot provision` 또는 `python -m tools.node_lab.provision`이다.
 부팅 확인 도구와 `CONFIG_STATE` 형식은 유지한다 (`server/tools/node_lab/README.md`).
 `announce`는 설정 값을 발표한다. `locker`는 `open`·`close`, `light`·`speaker`는 `on`·`off`만 받는다.
 모든 구동은 시리얼·선택 GPIO 신호다. `esp32dev-locker-1`은 서보 신호를, `esp32dev-light-1`은 원형 LED 신호를 더한다. `handle()`은 접수 저장, 재검사, `running` 발행과 출력을 한 번에 처리한다.

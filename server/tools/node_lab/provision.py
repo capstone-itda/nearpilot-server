@@ -1,6 +1,7 @@
-"""Inject one device's identity and network settings into the node firmware over USB.
+"""Inject one device's identity and network settings into the product firmware (firmware/) over USB.
 
-Works with the product firmware (firmware/) and the node_lab firmware (firmware/node_lab/).
+The firmware takes its clock from the server over MQTT (#236), so no clock value is injected.
+The node_lab firmware (firmware/node_lab/) still needs the old clock keys and is not supported.
 
 Run with PlatformIO's Python (pyserial). Secrets are read from the lab folder's .env files,
 sent hex-encoded to the device and never written to the log or the console.
@@ -9,33 +10,25 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from pathlib import Path
 import re
 import time
 import tomllib
 from uuid import uuid4
 
-KEYS = ("node_id", "mqtt_user", "mqtt_password", "wifi_ssid", "wifi_password",
-        "mqtt_host", "mqtt_port", "time_server", "clock_max_error_sec", "time_trust_ms", "time_resync_ms")
-# Required by the product firmware (firmware/); node_lab firmware answers unknown_key and goes on without them.
-DEVICE_KEYS = ("capability", "occupancy")
-UNKNOWN_KEY = "CONFIG_REJECTED reason=unknown_key"
+KEYS = ("node_id", "mqtt_user", "mqtt_password", "wifi_ssid", "wifi_password", "mqtt_host", "mqtt_port",
+        "capability", "occupancy")
 # MQTT v1 announce values (architecture.md §5 MQTT 3절); this script runs without the server package.
 CAPABILITIES = frozenset({"locker", "light", "speaker"})
 OCCUPANCIES = frozenset({"rental", "shared"})
 SECRETS = frozenset({"mqtt_password", "wifi_password"})
 STATE = re.compile(
     r"CONFIG_STATE configured=([01]) generation=(\d+) node=(\S*) mqtt_user=(\S*) mqtt_host=(\S*) "
-    r"mqtt_port=(\d+) time_server=(\S*) clock_max_error_sec=(-?[\d.]+) time_trust_ms=(\d+) "
-    r"time_resync_ms=(\d+) wifi_ssid_bytes=(\d+) wifi_password_set=([01]) mqtt_password_set=([01])")
-# lwIP SNTP polls no faster than 15 s; the firmware applies the same window.
-TRUST_WINDOW_MS = (15_000, 86_400_000)
+    r"mqtt_port=(\d+) wifi_ssid_bytes=(\d+) wifi_password_set=([01]) mqtt_password_set=([01])")
 
 
-def build_values(folder: Path, node: str, *, time_server: str, trust_sec: float, resync_sec: float,
-                 wifi_file: Path | None = None) -> dict[str, str]:
-    """Collect values from the lab folder so server and device share the same clock bound."""
+def build_values(folder: Path, node: str, *, wifi_file: Path | None = None) -> dict[str, str]:
+    """Collect values from the lab folder: the server's broker address, the device's account and Wi-Fi."""
     folder = folder.resolve()
     options = json.loads((folder / "lab.json").read_text(encoding="utf-8"))
     if node not in options["nodes"]:
@@ -54,25 +47,11 @@ def build_values(folder: Path, node: str, *, time_server: str, trust_sec: float,
     wifi = json.loads(wifi_path.read_text(encoding="utf-8"))
     if not isinstance(wifi.get("ssid"), str) or not isinstance(wifi.get("password"), str):
         raise ValueError("Wi-Fi 파일은 ssid와 password 문자열을 담는다")
-    if not re.fullmatch(r"[A-Za-z0-9.-]{1,64}", time_server):
-        raise ValueError("시각원 주소가 올바르지 않다")
-    windows = []
-    for value in (trust_sec, resync_sec):
-        millis = round(value * 1000)
-        if not math.isfinite(value) or not TRUST_WINDOW_MS[0] <= millis <= TRUST_WINDOW_MS[1]:
-            raise ValueError("시각 신뢰 기간과 재동기화 간격은 15초~1일이다")
-        windows.append(millis)
-    if windows[1] > windows[0]:
-        raise ValueError("재동기화 간격은 시각 신뢰 기간보다 길 수 없다")
-    skew = server.get("delivery", {}).get("clock_skew_sec", {}).get(node)
     mqtt = server["mqtt"]
     return dict(node_id=node, mqtt_user=node,
                 mqtt_password=password_path.read_text(encoding="utf-8").strip(),
                 wifi_ssid=wifi["ssid"], wifi_password=wifi["password"],
-                mqtt_host=str(mqtt["host"]), mqtt_port=str(int(mqtt["port"])), time_server=time_server,
-                # Unmeasured devices get -1: the firmware then never trusts its clock.
-                clock_max_error_sec="-1" if skew is None else repr(float(skew)),
-                time_trust_ms=str(windows[0]), time_resync_ms=str(windows[1]),
+                mqtt_host=str(mqtt["host"]), mqtt_port=str(int(mqtt["port"])),
                 capability=device["capability"], occupancy=device["occupancy"])
 
 
@@ -85,25 +64,19 @@ def parse_state(line: str) -> dict[str, object] | None:
     match = STATE.fullmatch(line)
     if not match:
         return None
-    names = ("configured", "generation", "node_id", "mqtt_user", "mqtt_host", "mqtt_port", "time_server",
-             "clock_max_error_sec", "time_trust_ms", "time_resync_ms", "wifi_ssid_bytes",
+    names = ("configured", "generation", "node_id", "mqtt_user", "mqtt_host", "mqtt_port", "wifi_ssid_bytes",
              "wifi_password_set", "mqtt_password_set")
     raw = dict(zip(names, match.groups()))
-    return {key: (float(value) if key == "clock_max_error_sec" else
-                  value if key in ("node_id", "mqtt_user", "mqtt_host", "time_server") else int(value))
+    return {key: (value if key in ("node_id", "mqtt_user", "mqtt_host") else int(value))
             for key, value in raw.items()}
 
 
 def mismatches(values: dict[str, str], state: dict[str, object]) -> list[str]:
     expected = dict(configured=1, node_id=values["node_id"], mqtt_user=values["mqtt_user"],
-        mqtt_host=values["mqtt_host"], mqtt_port=int(values["mqtt_port"]), time_server=values["time_server"],
-        time_trust_ms=int(values["time_trust_ms"]), time_resync_ms=int(values["time_resync_ms"]),
+        mqtt_host=values["mqtt_host"], mqtt_port=int(values["mqtt_port"]),
         wifi_ssid_bytes=len(values["wifi_ssid"].encode("utf-8")),
         wifi_password_set=int(bool(values["wifi_password"])), mqtt_password_set=1)
-    wrong = [key for key, value in expected.items() if state[key] != value]
-    if abs(state["clock_max_error_sec"] - float(values["clock_max_error_sec"])) > 1e-6:
-        wrong.append("clock_max_error_sec")
-    return wrong
+    return [key for key, value in expected.items() if state[key] != value]
 
 
 class ResponseTimeout(ValueError):
@@ -158,15 +131,10 @@ def provision(port, values: dict[str, str], *, timeout: float, emit,
     session = Session(port, timeout=timeout, emit=emit)
     nonce = uuid4().hex
     begin(session, nonce, timeout=timeout, interval=begin_interval)
-    for key in KEYS + DEVICE_KEYS:
+    for key in KEYS:
         encoded = values[key].encode("utf-8")
         session.send(f"CONFIG_SET {key} {encoded.hex()}")
-        reply = session.expect(lambda line: line == f"CONFIG_STAGED key={key} bytes={len(encoded)}", what=key,
-                               tolerate=UNKNOWN_KEY if key in DEVICE_KEYS else None)
-        if reply == UNKNOWN_KEY:
-            # node_lab firmware: it keeps the session and announces its fixed capability.
-            emit("key_unsupported", key=key)
-            continue
+        session.expect(lambda line: line == f"CONFIG_STAGED key={key} bytes={len(encoded)}", what=key)
         emit("staged", key=key, bytes=len(encoded))
     session.send(f"CONFIG_COMMIT {nonce}")
     saved = session.expect(lambda line: line.startswith("CONFIG_SAVED "), what="CONFIG_SAVED")
@@ -179,12 +147,6 @@ def provision(port, values: dict[str, str], *, timeout: float, emit,
         raise ValueError(f"다시 읽은 설정이 다르다: {', '.join(wrong)}")
     emit("provisioned", saved=saved, generation=state["generation"], values=public_view(values))
     return state
-
-
-def default_time_server(folder: Path) -> str:
-    """The lab's broker host. Demo folders run the broker and the time source on the same server PC."""
-    with (folder / "server.toml").open("rb") as stream:
-        return str(tomllib.load(stream)["mqtt"]["host"])
 
 
 def run(folder: Path, node: str, port_name: str, values: dict[str, str], *, timeout: float,
@@ -213,16 +175,12 @@ def main():
     parser.add_argument("--dir", type=Path, required=True, help="시험 폴더 (lab.json, server.toml, .env.*)")
     parser.add_argument("--node", required=True)
     parser.add_argument("--port", required=True)
-    parser.add_argument("--time-server", required=True)
-    parser.add_argument("--time-trust-sec", type=float, required=True)
-    parser.add_argument("--time-resync-sec", type=float, required=True)
     parser.add_argument("--wifi-file", type=Path, help="기본값: 시험 폴더의 .env.wifi.json")
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--begin-interval", type=float, default=1.0,
                         help="부팅 중 잃은 CONFIG_BEGIN을 다시 보내는 간격(초)")
     args = parser.parse_args()
-    values = build_values(args.dir, args.node, time_server=args.time_server, trust_sec=args.time_trust_sec,
-                          resync_sec=args.time_resync_sec, wifi_file=args.wifi_file)
+    values = build_values(args.dir, args.node, wifi_file=args.wifi_file)
     if not run(args.dir, args.node, args.port, values, timeout=args.timeout, begin_interval=args.begin_interval):
         raise SystemExit(1)
 

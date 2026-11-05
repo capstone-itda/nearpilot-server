@@ -12,17 +12,16 @@ void test_FR04_ready_requires_contract_order() {
     in.storageReady = true;
     TEST_ASSERT_EQUAL_STRING("wifi_disconnected", np::notReadyReason(in));
     in.wifiUp = true;
-    TEST_ASSERT_EQUAL_STRING("clock_not_configured", np::notReadyReason(in));
-    in.clockConfigured = true;
-    TEST_ASSERT_EQUAL_STRING("clock_unverified", np::notReadyReason(in));
-    in.everSynchronized = true;
-    TEST_ASSERT_EQUAL_STRING("clock_trust_expired", np::notReadyReason(in));
-    in.mqttConnected = in.announced = true;  // MQTT alone never makes an untrusted node ready.
-    TEST_ASSERT_EQUAL_STRING("clock_trust_expired", np::notReadyReason(in));
-    in.trusted = true;
-    in.mqttConnected = in.announced = false;
+    in.trusted = true;  // The clock is set over MQTT (#236), so MQTT comes first.
     TEST_ASSERT_EQUAL_STRING("mqtt_disconnected", np::notReadyReason(in));
     in.mqttConnected = true;
+    in.trusted = false;
+    TEST_ASSERT_EQUAL_STRING("clock_unverified", np::notReadyReason(in));
+    in.everSynchronized = true;
+    in.announced = true;  // An announced but untrusted node is still not ready.
+    TEST_ASSERT_EQUAL_STRING("clock_trust_expired", np::notReadyReason(in));
+    in.trusted = true;
+    in.announced = false;
     TEST_ASSERT_EQUAL_STRING("announce_pending", np::notReadyReason(in));
     in.announced = true;
     TEST_ASSERT_NULL(np::notReadyReason(in));

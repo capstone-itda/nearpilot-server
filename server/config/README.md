@@ -56,7 +56,7 @@ keepalive, 접속·시작·종료 제한 시간, 재접속 최소·최대 대기
 - `[runtime]`은 주기 작업 간격, SQLite 대기시간과 종료 대기 제한이다. 모두 선택이다.
 - `[proximity.models]`에 장소별 모델 버전을 명시한다. 파일은 `<model_root>/<place_id>/<model_version>.json`이다.
 - `[mqtt]`와 `[delivery]`는 모든 키가 필수다. `password_file`은 서버 계정의 원문 비밀번호 파일이다.
-- `[delivery.clock_skew_sec]`에 없는 기기의 관측과 검사는 쓰지 않는다. 0은 같은 PC의 시뮬레이터에만 쓴다.
+- `[delivery]`의 `clock_max_error_sec`, `clock_trust_sec`, `clock_resync_sec`는 기기의 MQTT 시각 응답 값이다 (#236). 서버는 모든 기기의 관측 검사에 같은 오차 상한을 쓴다. 0은 같은 PC의 시뮬레이터에만 쓴다. 옛 `[delivery.clock_skew_sec]` 표가 있으면 시작하지 않는다.
 - `[dashboard]`는 선택이다. 있으면 서버가 소유자 토큰으로 대시보드의 모니터링 WebSocket(`/dashboard/stream`)과
   조회 REST(`/dashboard/...`)를 연다. 없으면 대시보드를 열지 않는다. 라우터, 조회 서비스, 따라 읽기를 만들지 않고 서버의 다른 동작은 같다.
   `serve --collect-only`에서도 있으면 연다. 이때 장소의 모델 버전은 `없음`이다.
@@ -110,7 +110,7 @@ nearpilot --dir var/final-demo serve       # 서버
 nearpilot --dir var/final-demo seed        # 시드. --dir이 있으면 파일을 생략하고 DIR/seed.toml을 읽는다
 nearpilot --dir var/final-demo dashboard   # 대시보드 개발 서버 (npm run dev)
 nearpilot --dir var/final-demo sim         # 가상 기기. lab.json의 mode가 sim인 폴더에서만
-nearpilot --dir var/final-demo provision --node locker-1 --port COM6 --time-trust-sec 120 --time-resync-sec 60   # USB 주입
+nearpilot --dir var/final-demo provision --node locker-1 --port COM6   # USB 주입
 ```
 
 - `broker`는 브로커 설정의 `password_file`, `acl_file`을 임시 ASCII 폴더에 복사해서 띄운다 (Windows 한글 경로). 설정 파일은 고치지 않는다. `--dir`이면 `DIR/broker.conf`의 경로를 `DIR` 기준으로, 아니면 `config/mosquitto.conf`의 경로를 `server/` 기준으로 푼다.
@@ -119,7 +119,7 @@ nearpilot --dir var/final-demo provision --node locker-1 --port COM6 --time-trus
 - `broker`는 시스템 임시 폴더(`TEMP`) 경로에 한글이 있으면(Windows 계정 이름이 한글) 띄우지 않는다. `TEMP`를 영문 경로(예: `C:\temp`)로 바꾼다.
 - `seed`의 `DIR/seed.toml`은 `node_lab init`이 만들지 않는다. 직접 쓴다 (형식은 `config/seed/example.toml`).
 - `sim`은 Ctrl+C나 `quit`으로 끝내도 0이다. `broker`와 `dashboard`는 Ctrl+C면 130이다.
-- `provision`은 `tools/node_lab/provision.py`와 같은 주입을 한다. pyserial이 필요하다(`pip install pyserial`). `--time-server`를 생략하면 `[mqtt].host`다. 주입 성공 0, 기기 거부·응답 없음·다시 읽은 값 불일치 1, `--dir` 없음·시험 폴더 값 오류·pyserial 없음 2다.
+- `provision`은 `tools/node_lab/provision.py`와 같은 주입을 한다. pyserial이 필요하다(`pip install pyserial`). 키 9개(기기 ID, MQTT 계정, Wi-Fi, `[mqtt].host`·`port`, 기능, 점유 방식)를 넣는다. 시각 값은 넣지 않는다 (#236). 주입 성공 0, 기기 거부·응답 없음·다시 읽은 값 불일치 1, `--dir` 없음·시험 폴더 값 오류·pyserial 없음 2다.
 
 파일 인자에 이름(`/`나 `\`가 없는 값)을 주면 아래 기본 폴더에서 찾고, 경로를 주면 실행 폴더 기준으로 읽는다.
 

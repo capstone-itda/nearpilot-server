@@ -15,7 +15,7 @@ import pytest
 
 from nearpilot.cli import EXIT_FAILED, EXIT_INVALID, EXIT_OK, main
 
-REQUIRED = ["--node", "light-1", "--port", "COM9", "--time-trust-sec", "120", "--time-resync-sec", "60"]
+REQUIRED = ["--node", "light-1", "--port", "COM9"]
 
 
 class FakeRun:
@@ -44,7 +44,7 @@ def lab(tmp_path: Path) -> Path:
     folder.mkdir()
     (folder / "lab.json").write_text(json.dumps({"nodes": ["light-1"]}), encoding="utf-8")
     (folder / "server.toml").write_text(
-        '[mqtt]\nhost = "10.0.0.5"\nport = 18883\n[delivery.clock_skew_sec]\n"light-1" = 1.0\n', encoding="utf-8")
+        '[mqtt]\nhost = "10.0.0.5"\nport = 18883\n', encoding="utf-8")
     (folder / "fleet.json").write_text(json.dumps({"devices": [
         {"node_id": "light-1", "capability": "light", "occupancy": "shared"}]}), encoding="utf-8")
     (folder / ".env.light-1").write_text("mqtt-secret\n", encoding="utf-8")
@@ -52,18 +52,19 @@ def lab(tmp_path: Path) -> Path:
     return folder.resolve()
 
 
-def test_NFR12_provision_defaults_time_server_to_broker_host(lab, fake_run):
+def test_NFR12_provision_injects_broker_host_without_clock(lab, fake_run):
     assert main(["--dir", str(lab), "provision", *REQUIRED]) == EXIT_OK
     [call] = fake_run.calls
     assert (call["folder"], call["node"], call["port"]) == (lab, "light-1", "COM9")
-    assert call["values"]["time_server"] == "10.0.0.5"
-    assert call["values"]["time_trust_ms"] == "120000"
+    assert call["values"]["mqtt_host"] == "10.0.0.5"
+    assert "time_server" not in call["values"]  # 기기는 MQTT로 시각을 맞춘다 (#236)
     assert (call["timeout"], call["begin_interval"]) == (10.0, 1.0)
 
 
-def test_NFR12_provision_uses_given_time_server(lab, fake_run):
-    assert main(["provision", *REQUIRED, "--time-server", "10.0.0.9", "--dir", str(lab)]) == EXIT_OK
-    assert fake_run.calls[0]["values"]["time_server"] == "10.0.0.9"
+def test_NFR12_provision_rejects_removed_clock_options(lab, fake_run, capsys):
+    assert main(["provision", *REQUIRED, "--time-server", "10.0.0.9", "--dir", str(lab)]) == EXIT_INVALID
+    assert "--time-server" in capsys.readouterr().err
+    assert fake_run.calls == []
 
 
 def test_NFR12_provision_device_failure_exit_code(lab, fake_run):
