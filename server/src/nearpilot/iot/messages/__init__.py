@@ -24,7 +24,7 @@ from nearpilot.shared.models import (
 )
 
 __all__ = ["SCHEMA_VERSION", "MessageValidationError", "decode_message", "decode_time_request",
-           "encode_command", "encode_occupancy", "encode_time"]
+           "encode_command", "encode_occupancy", "encode_restart", "encode_time"]
 
 SCHEMA_VERSION = 2
 REQUEST_ID_MAX = 64  # time_request.request_id 의 최대 길이 (iot-mqtt-time-sync spec 5절)
@@ -276,6 +276,23 @@ def encode_command(command: NodeCommand) -> bytes:
             _fail("parameters")
         data["parameters"] = {"volume": speaker.volume}
     return json.dumps(data, allow_nan=False).encode("utf-8")
+
+
+def encode_restart(node_id: str, restart_id: str, target_session_id: str, issued_at: datetime,
+                   expires_at: datetime) -> bytes:
+    """`restart` for the node's current connection (#235). No user or token is included."""
+    node_id = _string(node_id, "node_id")
+    if any(c in node_id for c in "/+#\x00"):
+        _fail("node_id")
+    restart_id = _string(restart_id, "restart_id")
+    if len(restart_id) > REQUEST_ID_MAX or any(c < " " or c == "\x7f" for c in restart_id):
+        _fail("restart_id")
+    issued, expires = _wire_time(issued_at, "issued_at"), _wire_time(expires_at, "expires_at")
+    if not issued_at < expires_at:
+        _fail("expires_at")
+    return json.dumps(dict(schema_version=SCHEMA_VERSION, node_id=node_id, restart_id=restart_id,
+        target_session_id=_uuid(target_session_id, "target_session_id"),
+        issued_at=issued, expires_at=expires), allow_nan=False).encode("utf-8")
 
 
 def encode_occupancy(node_id: str, device_state: DeviceState, sent_at: datetime) -> bytes:

@@ -129,6 +129,15 @@ SNTP를 쓰지 않는다. MQTT 연결 뒤 `nearpilot/node/{id}/time_request`(QoS
 - 준비 사유 순서: `config_missing`, `storage_unavailable`, `wifi_disconnected`, `mqtt_disconnected`, `clock_unverified`·`clock_trust_expired`, `announce_pending`.
 - 이전에 만든 `config.local.h`에는 `config.example.h`의 `NP_CLOCK_DRIFT_PPM`, `NP_CLOCK_RETRY_MS`를 더한다. 없으면 빌드가 멈춘다.
 
+## 원격 재시작 (#235)
+
+`nearpilot/node/{id}/restart`(QoS 1)를 구독한다. 서버의 `nearpilot restart`가 보낸다.
+
+- 기기 ID, 현재 연결 ID, 시각 신뢰, 유효 시간(명령과 같은 검사), 마지막으로 처리한 `restart_id`와 다른지 확인한다 (`np::validateRestart`).
+- 통과하면 `restart_id`를 설정 NVS(`np-config`의 `restart` 키)에 저장한 뒤 처리 중인 명령이 끝나면 `ESP.restart()`한다. 저장에 실패하면 재시작하지 않는다.
+- 로그: `RESTART_ACCEPTED`, `RESTARTING`, 무시하면 `RESTART_IGNORED reason=...`. 결과는 MQTT로 보고하지 않는다.
+- 재시작 뒤에는 새 연결 ID로 접속하고 시각을 다시 맞춘 뒤 발표한다.
+
 ## 설정과 확인
 
 USB 설정은 문자열 키 9개다: `node_id`, `mqtt_user`, `mqtt_password`, `wifi_ssid`, `wifi_password`, `mqtt_host`, `mqtt_port`, `capability`, `occupancy`.

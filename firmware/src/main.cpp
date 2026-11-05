@@ -118,6 +118,8 @@ bool timeRequestPending = false;
 String timeReply;                // Latest `time` body and its arrival micros(), taken in the callback.
 unsigned long timeReplyUs = 0;
 bool timeReplyWaiting = false;
+// Remote restart (#235): set once the request is checked and its id stored; runs when no command is busy.
+String pendingRestartId;
 
 struct Observation {
     char uuid[37] = {};
@@ -638,6 +640,36 @@ void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
 
 unsigned long backoff(unsigned long current) { return np::backoff(current, NP_RETRY_MAX_MS); }
 
+// Checks a `restart` (architecture.md §5 MQTT 8절), stores its id, then waits for the current command.
+void restartInput(const String& payload) {
+    JsonDocument doc;
+    std::string id;
+    const String last = settingsReady ? settings.getString("restart", "") : String();
+    const char* rejection = deserializeJson(doc, payload) ? "INVALID_MESSAGE" :
+        np::validateRestart(doc, liveContext(), last.c_str(), id);
+    if (rejection) {
+        Serial.printf("RESTART_IGNORED reason=%s\n", rejection);
+        return;
+    }
+    // Stored before restarting, so a redelivered request never restarts the node twice.
+    if (!settingsReady || settings.putString("restart", id.c_str()) != id.size() ||
+        settings.getString("restart", "") != id.c_str()) {
+        Serial.println("RESTART_IGNORED reason=storage_unavailable");
+        return;
+    }
+    pendingRestartId = id.c_str();
+    Serial.printf("RESTART_ACCEPTED restart_id=%s busy=%d\n", pendingRestartId.c_str(), executor.busy());
+}
+
+// The current command finishes, stores and reports its result before the restart.
+void restartStep() {
+    if (!pendingRestartId.length() || executor.busy()) return;
+    Serial.printf("RESTARTING restart_id=%s\n", pendingRestartId.c_str());
+    Serial.flush();
+    delay(100);
+    ESP.restart();
+}
+
 const char* notReadyReason(bool trusted) {
     np::ReadinessInputs in;
     in.configured = configured;
@@ -791,6 +823,10 @@ void loop() {
                 subscribed = mqtt.subscribe(base + "/time", 0);
                 feedWatchdog();
             }
+            if (subscribed) {
+                subscribed = mqtt.subscribe(base + "/restart", 1);
+                feedWatchdog();
+            }
             if (subscribed && NP_LED_PIN >= 0) {
                 subscribed = mqtt.subscribe(base + "/occupancy", 1);
                 feedWatchdog();
@@ -803,7 +839,7 @@ void loop() {
                 mqttDelay = NP_RECONNECT_MS;
                 wasConnected = true;
                 Serial.printf("MQTT_CONNECTED session_id=%s subscribed=%s\n", session.c_str(),
-                    NP_LED_PIN >= 0 ? "cmd,time,occupancy" : "cmd,time");
+                    NP_LED_PIN >= 0 ? "cmd,time,restart,occupancy" : "cmd,time,restart");
                 timeRequestPending = false;  // A reply from the old connection is never matched.
             }
         } else {
@@ -844,7 +880,9 @@ void loop() {
         inbox.erase(inbox.begin());
         if (received.topic.endsWith("/cmd")) executor.handle(received.payload.c_str(), received.receivedBusy);
         else if (received.topic.endsWith("/occupancy")) occupancyInput(received.payload);
+        else if (received.topic.endsWith("/restart")) restartInput(received.payload);
     }
+    restartStep();
     replayStep();
     if (current - lastStatus >= NP_STATUS_MS) {
         lastStatus = current;

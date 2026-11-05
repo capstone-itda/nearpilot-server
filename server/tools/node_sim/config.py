@@ -18,8 +18,8 @@ from tools.node_sim.store import CommandStore
 REPORTS = ("announce", "rssi", "status", "result")
 # Real nodes also ask the server for the time (#236); simulators share the PC clock but may.
 NODE_WRITES = (*REPORTS, "time_request")
-NODE_READS = ("cmd", "occupancy", "time")
-SERVER_WRITES = ("cmd", "occupancy", "time")
+NODE_READS = ("cmd", "occupancy", "time", "restart")
+SERVER_WRITES = ("cmd", "occupancy", "time", "restart")
 
 
 def server_acl(username: str = "nearpilot-server") -> str:

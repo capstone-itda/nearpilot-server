@@ -24,7 +24,7 @@ TIME_REQUEST = "time_request"
 SUBSCRIPTIONS = tuple((f"nearpilot/node/+/{kind}", qos)
                       for kind, qos in (*REPORT_QOS.items(), (TIME_REQUEST, 0)))
 # Server -> node kinds as (QoS, retain) (architecture.md §5 MQTT 1절).
-REQUEST_DELIVERY = {"cmd": (1, False), "occupancy": (1, True), "time": (0, False)}
+REQUEST_DELIVERY = {"cmd": (1, False), "occupancy": (1, True), "time": (0, False), "restart": (1, False)}
 
 
 class ConnectionFailure(RuntimeError):

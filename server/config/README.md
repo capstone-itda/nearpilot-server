@@ -164,6 +164,27 @@ nearpilot serve
 - `fit` 출력의 `place-a = "v1"` 줄을 `config/server.toml`의 `[proximity.models]`에 쓴다.
   수집 전용 서버를 끈 뒤 `nearpilot serve`를 실행한다. 모델 표가 없으면 일반 `serve`는 시작하지 않는다 (종료 코드 2).
 
+# 기기 원격 재시작
+
+장소 소유자는 `nearpilot restart`로 기기를 재시작한다 (#235). `nearpilot serve`가 떠 있어야 한다.
+명령은 `POST /admin/nodes/{node_id}/restart`만 부른다. 토큰 파일과 `--server`는 `nearpilot recover`와 같다.
+
+```
+nearpilot restart locker-1 --token-file config/.env.owner-token
+```
+
+- 서버는 기기의 현재 MQTT 연결에 `restart`를 한 번 보낸다. 자동으로 다시 보내지 않는다.
+- 종료 코드 0은 요청을 보냈다는 뜻이다. 재시작 완료가 아니다. 기기가 새 연결로 발표하면(대시보드, 시리얼 `NODE_READY`) 끝난 것이다.
+- 기기는 처리 중인 명령을 마친 뒤 재시작한다. 시각을 신뢰하지 않거나 요청이 만료(`exec_timeout_sec`)됐으면 무시한다.
+- 재시작은 점유, 명령 기록, 복구 건을 바꾸지 않는다. MCP와 대시보드에는 없다.
+
+| 사유 | 뜻 |
+|---|---|
+| `INVALID_TOKEN` (401) | 토큰이 없거나 틀리다. |
+| `NOT_OWNER` (403) | 토큰의 계정이 그 기기 장소의 소유자가 아니다. |
+| `NODE_OFFLINE` (409) | 기기의 현재 연결을 확인하지 못했다. 전원과 Wi-Fi를 확인한다. |
+| `NOT_SENT` (503) | MQTT가 준비되지 않았거나 발행 결과를 모른다. 잠시 뒤 다시 실행한다. |
+
 # FAULT 복구
 
 기기가 `FAULT`로 격리되면 그 기기가 있는 장소의 소유자가 `nearpilot recover`로 푼다. `nearpilot serve`가 떠 있어야 한다.

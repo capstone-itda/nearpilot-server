@@ -352,3 +352,16 @@ def test_NFR08_rejection_logs_omit_secrets(h, caplog):
     assert "node=locker-1" in caplog.text and "kind=status" in caplog.text
     assert secret not in caplog.text
     assert "core-secret" not in caplog.text
+
+
+def test_NFR04_current_session_needs_fresh_status(h):
+    """원격 재시작의 현재 연결: 신선한 상태 보고로 확인한 연결만 (#235)."""
+    assert h.delivery.current_session("locker-1") is None
+    h.feed(incoming("announce"))
+    assert h.delivery.current_session("locker-1") is None  # 발표만으로는 확인하지 않는다
+    h.feed(incoming("status", seq=1))
+    assert h.delivery.current_session("locker-1") == S1
+    h.now = T0 + sec(0.1) + sec(Settings().online_ttl_sec)  # 수신 뒤 online_ttl_sec 까지는 현재 연결이다
+    assert h.delivery.current_session("locker-1") == S1
+    h.advance(0.001)
+    assert h.delivery.current_session("locker-1") is None
