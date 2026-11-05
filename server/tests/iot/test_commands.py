@@ -83,7 +83,7 @@ class Connection:
 def env():
     sink, connection = Sink(), Connection()
     delivery = ReportDelivery(sink, settings=Settings,
-                              config=DeliveryConfig({"locker-1": 0.0}, 100, 0.05, 2.0),
+                              config=DeliveryConfig(0.0, 120, 60, 100, 0.05, 2.0),
                               clock=lambda: T0 + timedelta(seconds=1))
     gateway = MqttCommandGateway(connection, delivery)
     return sink, connection, delivery, gateway
@@ -177,7 +177,7 @@ def test_FR06_saturation_not_sent(env):
     sink, connection, _, _ = env
     sink.fail = True
     delivery = ReportDelivery(sink, settings=Settings,
-                              config=DeliveryConfig({"locker-1": 0.0}, 1, 0.05, 2.0),
+                              config=DeliveryConfig(0.0, 120, 60, 1, 0.05, 2.0),
                               clock=lambda: T0 + timedelta(seconds=1))
     gateway = MqttCommandGateway(connection, delivery)
     delivery.process(result())
@@ -272,7 +272,7 @@ def test_FR07_wait_and_sink_no_deadlock():
 
     sink, connection = BlockingSink(), Connection()
     delivery = ReportDelivery(sink, settings=Settings,
-                              config=DeliveryConfig({"locker-1": 0.0}, 100, 0.05, 2.0))
+                              config=DeliveryConfig(0.0, 120, 60, 100, 0.05, 2.0))
     gateway = MqttCommandGateway(connection, delivery)
     delivery.start()
     try:

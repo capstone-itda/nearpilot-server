@@ -19,10 +19,12 @@ import paho.mqtt.client as mqtt
 log = logging.getLogger(__name__)
 
 REPORT_QOS = {"announce": 1, "rssi": 0, "status": 1, "result": 1}
+# The node's clock request bypasses report delivery: the reply must leave at once (#236).
+TIME_REQUEST = "time_request"
 SUBSCRIPTIONS = tuple((f"nearpilot/node/+/{kind}", qos)
-                      for kind, qos in REPORT_QOS.items())
-# Server -> node kinds and their retain flag; both use QoS 1 (architecture.md §5 MQTT 1절).
-REQUEST_RETAIN = {"cmd": False, "occupancy": True}
+                      for kind, qos in (*REPORT_QOS.items(), (TIME_REQUEST, 0)))
+# Server -> node kinds as (QoS, retain) (architecture.md §5 MQTT 1절).
+REQUEST_DELIVERY = {"cmd": (1, False), "occupancy": (1, True), "time": (0, False)}
 
 
 class ConnectionFailure(RuntimeError):
@@ -91,10 +93,12 @@ class MqttConnection:
     def __init__(self, config: MqttConfig, *,
                  on_report: Callable[[IncomingReport], None],
                  on_connection_lost: Callable[[], None],
+                 on_time_request: Callable[[str, bytes], None] | None = None,
                  client_factory=mqtt.Client,
                  clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)):
         self.config = config
         self._on_report = on_report
+        self._on_time_request = on_time_request
         self._on_connection_lost = on_connection_lost
         self._clock = clock
         self._condition = threading.Condition(threading.RLock())
@@ -193,14 +197,15 @@ class MqttConnection:
         if (not isinstance(node_id, str) or not node_id
                 or any(char in node_id for char in "/+#\x00")):
             raise ValueError("Invalid MQTT node ID")
-        if kind not in REQUEST_RETAIN or not isinstance(payload, bytes):
+        if kind not in REQUEST_DELIVERY or not isinstance(payload, bytes):
             raise ValueError("Invalid MQTT request")
+        qos, retain = REQUEST_DELIVERY[kind]
         with self._condition:
             if not self._running or not self._ready:
                 raise NotReady("MQTT subscriptions not ready; publish not attempted")
             try:
                 receipt = self._client.publish(f"nearpilot/node/{node_id}/{kind}", payload,
-                                               qos=1, retain=REQUEST_RETAIN[kind])
+                                               qos=qos, retain=retain)
                 if receipt.rc != mqtt.MQTT_ERR_SUCCESS:
                     raise ValueError("Publish rejected")
                 return receipt
@@ -271,8 +276,17 @@ class MqttConnection:
         # discovery. Body/freshness validation belongs to the delivery worker.
         parts = message.topic.split("/")
         if (len(parts) != 4 or parts[:2] != ["nearpilot", "node"] or not parts[2]
-                or any(char in parts[2] for char in "+#\x00") or parts[3] not in REPORT_QOS):
+                or any(char in parts[2] for char in "+#\x00")
+                or parts[3] not in (*REPORT_QOS, TIME_REQUEST)):
             log.warning("MQTT unexpected report topic")
+            return
+        if parts[3] == TIME_REQUEST:
+            if self._on_time_request is None:
+                return
+            try:
+                self._on_time_request(message.topic, bytes(message.payload))
+            except Exception:
+                log.error("MQTT time request handoff failed")
             return
         try:
             received_at = self._clock()

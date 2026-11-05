@@ -16,6 +16,18 @@ from tools.node_sim.node import ACTIONS, Beacon, Scenario, SimNode
 from tools.node_sim.store import CommandStore
 
 REPORTS = ("announce", "rssi", "status", "result")
+# Real nodes also ask the server for the time (#236); simulators share the PC clock but may.
+NODE_WRITES = (*REPORTS, "time_request")
+NODE_READS = ("cmd", "occupancy", "time")
+SERVER_WRITES = ("cmd", "occupancy", "time")
+
+
+def server_acl(username: str = "nearpilot-server") -> str:
+    """Mosquitto ACL section of the server account."""
+    lines = [f"user {username}"]
+    lines += [f"topic read nearpilot/node/+/{kind}" for kind in (*REPORTS, "time_request")]
+    lines += [f"topic write nearpilot/node/+/{kind}" for kind in SERVER_WRITES]
+    return "\n".join(lines) + "\n\n"
 
 
 class ConfigError(ValueError):
@@ -84,7 +96,7 @@ def acl_sections(fleet: FleetConfig) -> str:
     for device in fleet.devices:
         base = f"nearpilot/node/{device.node_id}"
         lines = [f"user {device.username}"]
-        lines += [f"topic write {base}/{kind}" for kind in REPORTS]
-        lines += [f"topic read {base}/{kind}" for kind in ("cmd", "occupancy")]
+        lines += [f"topic write {base}/{kind}" for kind in NODE_WRITES]
+        lines += [f"topic read {base}/{kind}" for kind in NODE_READS]
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks) + "\n"

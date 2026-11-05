@@ -38,7 +38,7 @@ python -m tools.final_demo
 | `.env.*` | 새 MQTT 비밀번호와 암호화한 브로커 비밀번호 파일 |
 | `models/final-demo/synthetic-1.json` | 기기 7대의 합성 초기 모델 |
 | `run.ps1` | 기존 브로커, 서버, 시드, 가상 기기와 대시보드를 실행하는 스크립트 |
-| `firewall.ps1` | HTTP·MQTT 포트(실제 기기 구성은 NTP UDP `123`도)를 로컬 서브넷에만 여는 방화벽 규칙 |
+| `firewall.ps1` | HTTP·MQTT 포트를 로컬 서브넷에만 여는 방화벽 규칙 |
 
 다른 주소나 포트를 쓰려면 새 구성 폴더를 만든다.
 
@@ -51,27 +51,26 @@ python -m tools.final_demo --dir var/final-demo-2 --host 192.168.0.10 --mqtt-por
 ## 2. ESP32 연결 준비
 
 1. 서버 PC와 기기를 같은 독립 AP에 연결한다.
-2. `server.toml`의 `[delivery.clock_skew_sec]`에 기기별 실측 최대 시각 오차를 초로 넣는다.
-3. 시연 폴더에 `.env.wifi.json`을 만든다. 실제 `ssid`와 `password` 문자열을 넣는다.
-4. 각 기기에 제품 펌웨어를 올린다. ID와 접속 정보는 다음 단계에서 주입한다.
-5. 새 기기만 기존 주입 도구로 설정한다. 기존 인증정보를 통합한 기기는 USB 재주입 없이 연결한다.
+2. 시연 폴더에 `.env.wifi.json`을 만든다. 실제 `ssid`와 `password` 문자열을 넣는다.
+3. 각 기기에 제품 펌웨어를 올린다. ID와 접속 정보는 다음 단계에서 주입한다.
+4. 새 기기만 기존 주입 도구로 설정한다. 기존 인증정보를 통합한 기기는 USB 재주입 없이 연결한다.
+
+기기는 MQTT에 접속한 뒤 서버에 시각을 물어 맞춘다 (#236). NTP 서버, `w32tm`, 기기별 시각 오차 실측은 필요 없다.
+오차 상한, 신뢰 기간, 재동기화 간격은 `server.toml`의 `[delivery]`에 있다(0.5초, 120초, 60초).
 
 펌웨어 환경은 `firmware/platformio.ini`를 따른다.
 사물함은 `esp32dev-locker-1`, 조명은 `esp32dev-light-1`, 스피커는 `esp32dev-speaker-1`이다.
 같은 종류의 기기는 같은 펌웨어를 쓰고 주입하는 `--node`를 바꾼다. 플래시를 지우지 않는다.
 
 주입은 `server/`에서 `nearpilot provision`으로 한다. pyserial이 필요하다(`pip install pyserial`). PlatformIO 가상환경의 Python은 필요 없다.
-COM 포트와 시각 신뢰 기간은 검증한 값으로 바꾼다. `--time-server`를 생략하면 `server.toml`의 `[mqtt].host`를 시각원으로 쓴다.
+COM 포트는 기기를 꽂은 포트로 바꾼다.
 
 ```powershell
-nearpilot --dir var/final-demo provision --node locker-1 --port COM6 --time-trust-sec 120 --time-resync-sec 60
+nearpilot --dir var/final-demo provision --node locker-1 --port COM6
 ```
 
-시각 오차는 다른 기기의 값을 빌려 쓰지 않는다.
-미설정 기기는 미검증 값 `-1`을 주입받고 시각을 신뢰하지 않는다.
-시각 실측은 `server/tools/node_lab/README.md`의 USB 시각 실측 절차를 따른다.
-PC의 NTP 응답과 ESP32의 `CLOCK_SYNCED`를 확인한다.
-AP에서 서버 PC의 TCP `8000`, `18883`과 UDP `123`(NTP)에 접근할 수 있어야 한다.
+주입 뒤 시리얼 로그에서 `CLOCK_SYNCED rtt_ms=... error_ms=...`와 `NODE_READY`를 확인한다.
+AP에서 서버 PC의 TCP `8000`, `18883`에 접근할 수 있어야 한다.
 관리자 PowerShell에서 시연 폴더의 `firewall.ps1`을 한 번 실행하면 이 포트를 로컬 서브넷에만 연다. 다시 실행하면 규칙을 바꾸고, `-Remove`를 붙이면 지운다.
 다른 PC에서 대시보드를 열면 TCP `5173`도 사용한다.
 

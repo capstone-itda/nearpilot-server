@@ -1,6 +1,6 @@
 #pragma once
 // Build-time tuning shared by every device. Copy to config.local.h only to change it.
-// Device ID, MQTT account, Wi-Fi, server/time-source address and clock trust are NOT here:
+// Device ID, MQTT account, Wi-Fi and server address are NOT here (the clock comes over MQTT, #236):
 // they are injected over USB (`python -m tools.node_lab provision`) and kept in NVS.
 // Optional plain GPIO output for any device. No build profile sets it.
 // No extra board is required. Leave OUTPUT_PIN=-1 for serial-only verification.
@@ -71,6 +71,11 @@
 #define NP_SPEAKER_FRAME_GAP_MS 100
 #define NP_RSSI_FRAME_MS 1000UL
 #define NP_STATUS_MS 1000UL
+// MQTT clock sync (#236). A reply is accepted only if half its round trip plus this drift over the
+// server's trust window stays within the server's error bound; 100 ppm is well above an ESP32 crystal.
+#define NP_CLOCK_DRIFT_PPM 100
+// Unanswered time_request is sent again after this; the server keeps no request state.
+#define NP_CLOCK_RETRY_MS 2000UL
 // Retry starts at these minimums, doubles after each failure and stops at NP_RETRY_MAX_MS.
 #define NP_RECONNECT_MS 2000UL
 #define NP_WIFI_RECONNECT_MS 10000UL

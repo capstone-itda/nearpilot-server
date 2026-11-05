@@ -15,7 +15,7 @@ import tempfile
 from uuid import UUID
 
 from nearpilot.runtime import load_config
-from tools.node_sim.config import acl_sections, load_config as load_fleet
+from tools.node_sim.config import acl_sections, load_config as load_fleet, server_acl
 
 
 def executable(name: str) -> str:
@@ -85,7 +85,6 @@ def initialize(folder: Path, *, mode: str, host: str, port: int, nodes: list[str
         (folder / f".env.{name}").write_text(password + "\n", encoding="utf-8")
     write_broker_passwords(folder / ".env.broker-passwords", credentials)
     q =lambda value: json.dumps(value, ensure_ascii=False)
-    skew = "\n".join(f"{q(node)} = 0.0" for node in nodes) if mode == "sim" else ""
     (folder / "server.toml").write_text(f'''# Generated lab configuration, not a deployment model.
 [settings]
 version = "node-lab-1"
@@ -113,12 +112,12 @@ stop_timeout_sec = 5.0
 reconnect_min_sec = 1
 reconnect_max_sec = 8
 [delivery]
+clock_max_error_sec = 0.5
+clock_trust_sec = 120
+clock_resync_sec = 60
 pending_limit = 1000
 retry_interval_sec = 0.5
 stop_timeout_sec = 5.0
-# Hardware: fill only measured maximum clock errors, in seconds.
-[delivery.clock_skew_sec]
-{skew}
 ''', encoding="utf-8")
     model_nodes = {node: dict(x=i * 2.0, y=0.0, front_x=i * 2.0, front_y=0.5,
                              A=-59.0, n=2.0, sigma=4.0, none_rssi=-90.0, none_sigma=6.0)
@@ -144,11 +143,7 @@ stop_timeout_sec = 5.0
                 beacons=[{**beacon, "rssi": -59.0 - 20.0 * math.log10(distance)}])))
     write_json(folder / "fleet.json", dict(broker=dict(host=host, port=port, keepalive_sec=30,
         reconnect_min_sec=1, reconnect_max_sec=8), settings={}, devices=devices))
-    acl = "user nearpilot-server\n" + "\n".join(
-        [f"topic read nearpilot/node/+/{kind}" for kind in
-         ("announce", "rssi", "status", "result")]
-        + [f"topic write nearpilot/node/+/{kind}" for kind in ("cmd", "occupancy")]) + "\n\n"
-    (folder / "broker.acl").write_text(acl + acl_sections(load_fleet(folder / "fleet.json")), encoding="utf-8")
+    (folder / "broker.acl").write_text(server_acl() + acl_sections(load_fleet(folder / "fleet.json")), encoding="utf-8")
     (folder / "broker.conf").write_text(
         f"listener {port} {host}\nallow_anonymous false\n"
         'password_file .env.broker-passwords\nacl_file broker.acl\n'

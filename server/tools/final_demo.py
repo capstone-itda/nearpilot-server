@@ -10,17 +10,16 @@ import shutil
 
 from nearpilot.runtime import load_config
 from tools.node_lab.setup import write_broker_passwords, write_json
-from tools.node_sim.config import acl_sections, load_config as load_fleet
+from tools.node_sim.config import acl_sections, load_config as load_fleet, server_acl
 
 SERVER = Path(__file__).resolve().parents[1]
 TEMPLATES = SERVER / "config" / "final-demo"
-NTP_PORT = 123  # The time source the firmware syncs with (#140 A안); not a tuning value
 
 
 def firewall_rules(*, mode: str, mqtt_port: int, http_port: int) -> list[tuple[str, str, int]]:
-    """(name, protocol, port) to open. Simulated devices share the server PC's clock, so sim has no NTP rule."""
-    rules = [("HTTP", "TCP", http_port), ("MQTT", "TCP", mqtt_port)]
-    return rules + [("NTP", "UDP", NTP_PORT)] if mode == "hardware" else rules
+    """(name, protocol, port) to open. Devices take the time over MQTT, so no NTP rule (#236)."""
+    del mode  # Same rules for real devices and simulators.
+    return [("HTTP", "TCP", http_port), ("MQTT", "TCP", mqtt_port)]
 
 
 def prepare(folder: Path, *, host: str, mode: str = "hardware", mqtt_port: int = 18883,
@@ -34,7 +33,7 @@ def prepare(folder: Path, *, host: str, mode: str = "hardware", mqtt_port: int =
     if mode not in ("hardware", "sim"):
         raise ValueError("mode는 hardware 또는 sim이다")
     if mode == "sim" and str(address) != "127.0.0.1":
-        raise ValueError("시뮬레이터의 0초 시각 오차는 127.0.0.1에서만 쓴다")
+        raise ValueError("시뮬레이터는 서버와 같은 PC의 시계를 쓰므로 127.0.0.1에서만 쓴다")
     if any(type(port) is not int or not 1 <= port <= 65535 for port in (mqtt_port, http_port)):
         raise ValueError("포트는 1~65535의 정수여야 한다")
     if mqtt_port == http_port:
@@ -46,8 +45,6 @@ def prepare(folder: Path, *, host: str, mode: str = "hardware", mqtt_port: int =
     replacements = {"@HOST@": host, "@HTTP_PORT@": str(http_port), "@MQTT_PORT@": str(mqtt_port)}
     for old, new in replacements.items():
         config = config.replace(old, new)
-    if mode == "sim":
-        config += "\n" + "\n".join(f'"{node}" = 0.0' for node in options["nodes"]) + "\n"
     options["mode"] = mode
     fleet["broker"].update(host=host, port=mqtt_port)
     for device in fleet["devices"]:
@@ -71,10 +68,7 @@ def prepare(folder: Path, *, host: str, mode: str = "hardware", mqtt_port: int =
     for name, password in credentials.items():
         (folder / f".env.{name}").write_text(password + "\n", encoding="utf-8")
     write_broker_passwords(folder / ".env.broker-passwords", credentials)
-    server_acl = "user nearpilot-server\n" + "\n".join(
-        [f"topic read nearpilot/node/+/{kind}" for kind in ("announce", "rssi", "status", "result")]
-        + [f"topic write nearpilot/node/+/{kind}" for kind in ("cmd", "occupancy")]) + "\n\n"
-    (folder / "broker.acl").write_text(server_acl + acl_sections(load_fleet(folder / "fleet.json")), encoding="utf-8")
+    (folder / "broker.acl").write_text(server_acl() + acl_sections(load_fleet(folder / "fleet.json")), encoding="utf-8")
     bind = "127.0.0.1" if mode == "sim" else "0.0.0.0"
     (folder / "broker.conf").write_text(
         f"listener {mqtt_port} {bind}\nallow_anonymous false\n"

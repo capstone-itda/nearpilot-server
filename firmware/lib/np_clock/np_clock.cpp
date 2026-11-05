@@ -1,5 +1,8 @@
 #include "np_clock.h"
 
+#include <ArduinoJson.h>
+#include <cmath>
+
 namespace np {
 
 namespace {
@@ -32,14 +35,53 @@ long long daysFromCivil(int year, int month, int day) {
 
 }  // namespace
 
-bool clockConfigured(bool configured, const NodeConfig& config) {
-    return configured && !config.timeServer.empty() && config.clockMaxErrorSec >= 0.0 &&
-        config.timeTrustMs > 0 && config.timeResyncMs > 0;
+const char* decodeTimeReply(const char* body, size_t length, const std::string& nodeId,
+    const std::string& requestId, TimeOffer& out) {
+    JsonDocument doc;
+    if (deserializeJson(doc, body, length) || !doc.is<JsonObject>()) return "json";
+    if (!doc["schema_version"].is<int>() || doc["schema_version"].as<int>() != 2) return "schema_version";
+    if (!doc["node_id"].is<const char*>() || nodeId != doc["node_id"].as<const char*>()) return "node_id";
+    // A late reply to an earlier request has an unknown round trip.
+    if (!doc["request_id"].is<const char*>() || requestId.empty() || requestId != doc["request_id"].as<const char*>())
+        return "request_id";
+    if (!doc["server_time"].is<const char*>() || !parseUtc(doc["server_time"].as<const char*>(), out.serverTime))
+        return "server_time";
+    const double bound = doc["max_error_sec"] | -1.0;
+    if (!doc["max_error_sec"].is<double>() || !std::isfinite(bound) || bound < 0.0 || bound > 60.0)
+        return "max_error_sec";
+    if (!doc["trust_sec"].is<unsigned long>() || doc["trust_sec"].as<unsigned long>() < 15 ||
+        doc["trust_sec"].as<unsigned long>() > 86400) return "trust_sec";
+    const unsigned long trust = doc["trust_sec"].as<unsigned long>();
+    if (!doc["resync_sec"].is<unsigned long>() || doc["resync_sec"].as<unsigned long>() < 5 ||
+        doc["resync_sec"].as<unsigned long>() > trust) return "resync_sec";
+    out.maxErrorSec = bound;
+    out.trustMs = trust * 1000UL;
+    out.resyncMs = doc["resync_sec"].as<unsigned long>() * 1000UL;
+    return nullptr;
 }
 
-bool clockTrusted(bool configured, const NodeConfig& config, bool synchronized, unsigned long lastSyncMs,
-    unsigned long nowMs) {
-    return synchronized && clockConfigured(configured, config) && nowMs - lastSyncMs <= config.timeTrustMs;
+double offerErrorSec(const TimeOffer& offer, unsigned long roundTripUs, double driftPpm) {
+    return roundTripUs / 2e6 + driftPpm * 1e-6 * (offer.trustMs / 1000.0);
+}
+
+double offerTime(const TimeOffer& offer, unsigned long roundTripUs) {
+    return offer.serverTime + roundTripUs / 2e6;
+}
+
+void recordSync(ClockState& state, const TimeOffer& offer, unsigned long nowMs) {
+    state.synchronized = true;
+    state.maxErrorSec = offer.maxErrorSec;
+    state.syncedMs = nowMs;
+    state.trustMs = offer.trustMs;
+    state.resyncMs = offer.resyncMs;
+}
+
+bool clockTrusted(const ClockState& state, unsigned long nowMs) {
+    return state.synchronized && nowMs - state.syncedMs <= state.trustMs;
+}
+
+bool resyncDue(const ClockState& state, unsigned long nowMs) {
+    return !state.synchronized || nowMs - state.syncedMs >= state.resyncMs;
 }
 
 bool parseUtc(const std::string& raw, double& seconds) {

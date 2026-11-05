@@ -88,13 +88,12 @@ reconnect_min_sec = 1
 reconnect_max_sec = 2
 
 [delivery]
+clock_max_error_sec = 0.0
+clock_trust_sec = 120
+clock_resync_sec = 60
 pending_limit = 1000
 retry_interval_sec = 0.05
 stop_timeout_sec = 2.0
-
-[delivery.clock_skew_sec]
-locker-1 = 0.0
-locker-2 = 0.0
 """
 FIT_TOML = """\
 [split]

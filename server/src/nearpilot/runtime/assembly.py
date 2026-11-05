@@ -36,6 +36,7 @@ from nearpilot.core.proximity.model import ProximityModel, load_models
 from nearpilot.db.repositories import SqliteDashboardReads
 from nearpilot.iot.mqtt import (
     ConnectionFailure, MqttCommandGateway, MqttConnection, OccupancyPublisher, ReportDelivery,
+    TimeResponder,
 )
 from nearpilot.runtime.auth_audit import AuditedAuthenticator
 from nearpilot.runtime.config import DashboardConfig, ServerConfig
@@ -359,8 +360,12 @@ class Runtime:
         sink = _ScopedSink(db)
         delivery = ReportDelivery(sink, settings=settings, config=cfg.delivery, clock=clock)
         lost = Late("mqtt_connection_lost")
+        # 실제 기기의 시각 요청은 수신 스레드에서 바로 답한다 (#236).
+        time_responder = TimeResponder(cfg.delivery, clock=clock)
         connection = MqttConnection(cfg.mqtt, on_report=delivery.submit, on_connection_lost=lost,
+                                    on_time_request=time_responder.handle,
                                     client_factory=self._client_factory, clock=clock)
+        time_responder.connection = connection
         gateway = MqttCommandGateway(connection, delivery, clock=clock)
         # 점유 표시는 저장한 기기 상태만 옮긴다. 판정과 상태를 바꾸지 않는다.
         occupancy = OccupancyPublisher(connection, repo.nodes, clock=clock)

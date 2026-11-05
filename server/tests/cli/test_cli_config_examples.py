@@ -52,6 +52,6 @@ def test_FR16_config_examples_agree():
     counts = Counter(run.label for run in plan.runs)
     assert set(counts) == {*layout.nodes, "none"}
     assert min(counts.values()) >= fit.split.min_runs_per_label
-    # 서버 설정 예시가 이 기기들의 시각 오차를 정해 둔다. 없는 기기의 관측은 쓰지 않는다
+    # 서버 설정 예시는 모든 기기에 같은 시각 오차 상한을 쓴다 (#236). 기기별 표는 없다
     server = tomllib.loads((CONFIG / "server.example.toml").read_text(encoding="utf-8"))
-    assert set(layout.nodes) <= set(server["delivery"]["clock_skew_sec"])
+    assert "clock_skew_sec" not in server["delivery"] and server["delivery"]["clock_max_error_sec"] > 0

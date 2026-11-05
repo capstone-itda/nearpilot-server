@@ -5,21 +5,27 @@ topic read nearpilot/node/+/announce
 topic read nearpilot/node/+/rssi
 topic read nearpilot/node/+/status
 topic read nearpilot/node/+/result
+topic read nearpilot/node/+/time_request
 topic write nearpilot/node/+/cmd
 topic write nearpilot/node/+/occupancy
+topic write nearpilot/node/+/time
 
 user node-a
 topic write nearpilot/node/node-a/announce
 topic write nearpilot/node/node-a/rssi
 topic write nearpilot/node/node-a/status
 topic write nearpilot/node/node-a/result
+topic write nearpilot/node/node-a/time_request
 topic read nearpilot/node/node-a/cmd
 topic read nearpilot/node/node-a/occupancy
+topic read nearpilot/node/node-a/time
 
 user node-b
 topic write nearpilot/node/node-b/announce
 topic write nearpilot/node/node-b/rssi
 topic write nearpilot/node/node-b/status
 topic write nearpilot/node/node-b/result
+topic write nearpilot/node/node-b/time_request
 topic read nearpilot/node/node-b/cmd
 topic read nearpilot/node/node-b/occupancy
+topic read nearpilot/node/node-b/time

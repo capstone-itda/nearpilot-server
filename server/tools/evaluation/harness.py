@@ -342,7 +342,6 @@ class Harness:
         raw["proximity"] = {"model_root": str(self.config.model_root),
                             "models": {PLACE_ID: self.config.model_version}}
         raw["mqtt"] = {**raw["mqtt"], "port": mqtt_port, "password_file": str(self._secret_file(SERVER_ACCOUNT))}
-        raw["delivery"] = {**raw["delivery"], "clock_skew_sec": {node.node_id: 0.0 for node in self.config.nodes}}
         raw.pop("dashboard", None)
         self._server_toml.write_text(_toml(raw), encoding="utf-8")
 

@@ -1,14 +1,12 @@
 #include "np_config.h"
 
 #include <cctype>
-#include <cstdlib>
 #include <cstring>
 
 namespace np {
 
 const char* const CONFIG_KEYS[CONFIG_KEY_COUNT] = {"node_id", "mqtt_user", "mqtt_password", "wifi_ssid",
-    "wifi_password", "mqtt_host", "mqtt_port", "time_server", "clock_max_error_sec", "time_trust_ms",
-    "time_resync_ms", "capability", "occupancy"};
+    "wifi_password", "mqtt_host", "mqtt_port", "capability", "occupancy"};
 
 namespace {
 
@@ -40,9 +38,6 @@ bool parseUnsigned(const std::string& value, unsigned long maximum, unsigned lon
     return true;
 }
 
-// lwIP SNTP does not poll faster than 15 s; zero keeps clock trust disabled.
-bool trustWindowValid(unsigned long value) { return value == 0 || (value >= 15000UL && value <= 86400000UL); }
-
 int nibble(char ch) {
     if (ch >= '0' && ch <= '9') return ch - '0';
     if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
@@ -71,27 +66,15 @@ const char* decodeConfig(JsonDocument& doc, NodeConfig& out) {
     out.wifiSsid = doc["wifi_ssid"].as<std::string>();
     out.wifiPassword = doc["wifi_password"].as<std::string>();
     out.mqttHost = doc["mqtt_host"].as<std::string>();
-    out.timeServer = doc["time_server"].as<std::string>();
     if (!charsetValid(out.nodeId, 1, 64, "_-")) return "node_id";
     if (!charsetValid(out.mqttUser, 1, 64, "_-")) return "mqtt_user";
     if (!textValid(out.mqttPassword, 1, 64)) return "mqtt_password";
     if (!textValid(out.wifiSsid, 1, 32)) return "wifi_ssid";
     if (!textValid(out.wifiPassword, 0, 64)) return "wifi_password";
     if (!charsetValid(out.mqttHost, 1, 64, ".-")) return "mqtt_host";
-    if (!charsetValid(out.timeServer, 0, 64, ".-")) return "time_server";
     unsigned long port;
     if (!parseUnsigned(doc["mqtt_port"].as<std::string>(), 65535, port) || !port) return "mqtt_port";
     out.mqttPort = port;
-    std::string bound = doc["clock_max_error_sec"].as<std::string>();
-    char* end = nullptr;
-    double error = std::strtod(bound.c_str(), &end);
-    if (bound.empty() || *end || !(bound == "-1" || (error >= 0.0 && error < 3600.0))) return "clock_max_error_sec";
-    out.clockMaxErrorSec = error;
-    if (!parseUnsigned(doc["time_trust_ms"].as<std::string>(), 86400000UL, out.timeTrustMs) ||
-        !trustWindowValid(out.timeTrustMs)) return "time_trust_ms";
-    if (!parseUnsigned(doc["time_resync_ms"].as<std::string>(), 86400000UL, out.timeResyncMs) ||
-        !trustWindowValid(out.timeResyncMs)) return "time_resync_ms";
-    if (out.timeTrustMs && out.timeResyncMs && out.timeResyncMs > out.timeTrustMs) return "time_resync_ms";
     out.generation = doc["generation"] | 0UL;
     return nullptr;
 }

@@ -39,6 +39,10 @@ reconnect_min_sec = 1
 reconnect_max_sec = 8
 
 [delivery]
+# 기기는 MQTT로 시각을 맞춘다 (#236). 오차 상한(초), 신뢰 기간(초), 재동기화 간격(초)
+clock_max_error_sec = 0.5
+clock_trust_sec = 120
+clock_resync_sec = 60
 pending_limit = 1000
 retry_interval_sec = 0.5
 stop_timeout_sec = 5.0
@@ -50,7 +54,3 @@ auth_timeout_sec = 5.0
 audit_limit_max = 200
 weak_rssi_dbm = -80
 tail_interval_sec = 0.5
-
-# 실기용은 비워 둔다. 기기별 실측 최대 오차(초)만 입력한다.
-# 같은 PC의 시뮬레이터용 구성에만 준비 스크립트가 0초를 넣는다.
-[delivery.clock_skew_sec]

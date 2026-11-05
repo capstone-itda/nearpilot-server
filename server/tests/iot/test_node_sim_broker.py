@@ -64,7 +64,7 @@ class Sink:
 def iot(broker):
     sink = Sink()
     delivery = ReportDelivery(sink, settings=Settings,
-                              config=DeliveryConfig({"node-a": 0.0, "node-b": 0.0}, 1000, 0.1, 3.0))
+                              config=DeliveryConfig(0.0, 120, 60, 1000, 0.1, 3.0))
     holder = {}
     connection = MqttConnection(
         MqttConfig("127.0.0.1", broker.port, "gateway-sim-test", "nearpilot-server",
