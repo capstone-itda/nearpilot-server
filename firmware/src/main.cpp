@@ -644,7 +644,8 @@ unsigned long backoff(unsigned long current) { return np::backoff(current, NP_RE
 void restartInput(const String& payload) {
     JsonDocument doc;
     std::string id;
-    const String last = settingsReady ? settings.getString("restart", "") : String();
+    // isKey first: getString on a missing key logs a Preferences error line on the first restart.
+    const String last = settingsReady && settings.isKey("restart") ? settings.getString("restart", "") : String();
     const char* rejection = deserializeJson(doc, payload) ? "INVALID_MESSAGE" :
         np::validateRestart(doc, liveContext(), last.c_str(), id);
     if (rejection) {
