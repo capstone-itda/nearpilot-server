@@ -15,6 +15,7 @@ from math import fsum, isclose, isfinite
 from typing import Any
 
 from nearpilot.shared.config import Settings, is_light_color
+from nearpilot.shared.descriptor import DeviceDescriptor
 from nearpilot.shared.enums import (
     RestartOutcome,
     ApprovalDecisionReason,
@@ -233,8 +234,11 @@ class NodeInfo:
     release_policy: Mapping[str, Any] = field(default_factory=dict)
     session_id: str | None = None  # 현재 기기 연결 ID. 확인한 연결이 없으면 None
     session_first_seen_at: datetime | None = None  # 현재 연결의 첫 수신 시각
-    light_controls: LightControls | None = None  # 발표한 조명 제어 정보. 없으면 인자를 받지 않는다 (FR-09)
-    speaker_controls: SpeakerControls | None = None  # 발표한 스피커 제어 정보. 없으면 음량을 받지 않는다 (FR-09)
+    # 선언에서 계산한 호환 값이다. PR ② 에서 선언 기반 판정으로 바꾸며 지운다 (iot-device-descriptor spec 결정 7).
+    light_controls: LightControls | None = None  # 조명 제어 정보. 없으면 인자를 받지 않는다 (FR-09)
+    speaker_controls: SpeakerControls | None = None  # 스피커 제어 정보. 없으면 음량을 받지 않는다 (FR-09)
+    descriptor: DeviceDescriptor | None = None  # 저장한 기기 선언. 이전 전 행이면 None (FR-04)
+    descriptor_hash: str | None = None  # 저장한 선언 해시. 신뢰는 이 값에 묶인다 (FR-04)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "release_policy", _freeze(self.release_policy))
@@ -608,17 +612,23 @@ class CloseResult:
 
 @dataclass(frozen=True, slots=True)
 class NodeAnnounce:
-    """기능 발표 (FR-04). 발표는 신뢰 부여가 아니다."""
+    """기기 선언 발표 (FR-04, #245). 발표는 신뢰 부여가 아니다.
+
+    IOT 가 `parse_descriptor` 로 검증한 선언만 담는다. v2 발표는 IOT 가 템플릿으로 선언을 만든다.
+    `schema_version` 은 기기가 보낸 MQTT 버전이다. IOT 가 같은 버전으로 `cmd` 를 보낸다.
+    """
 
     node_id: str
-    capability: Capability
-    occupancy: Occupancy
+    descriptor: DeviceDescriptor
     received_at: datetime
     session_id: str
     seq: int
     sent_at: datetime
-    light_controls: LightControls | None = None  # 조명 기기만 담는다. 신뢰 상태를 바꾸지 않는다 (FR-04)
-    speaker_controls: SpeakerControls | None = None  # 스피커 기기만 담는다. 신뢰 상태를 바꾸지 않는다 (FR-04)
+    schema_version: int = 3
+
+    @property
+    def occupancy(self) -> Occupancy:
+        return self.descriptor.occupancy
 
 
 @dataclass(frozen=True, slots=True)

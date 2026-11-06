@@ -9,6 +9,7 @@ import pytest
 from nearpilot.iot.messages import (
     MessageValidationError, decode_message, encode_command, encode_occupancy,
 )
+from nearpilot.shared.descriptor import legacy_descriptor
 from nearpilot.shared.enums import (
     Action, CommandState, Capability, DeviceState, NodeResultState, Occupancy,
 )
@@ -43,16 +44,25 @@ def decode(kind, data=None):
 
 def test_FR04_announce_to_shared_model():
     assert decode("announce") == NodeAnnounce(**COMMON,
-        capability=Capability.LOCKER, occupancy=Occupancy.RENTAL)
+        descriptor=legacy_descriptor(Capability.LOCKER, Occupancy.RENTAL), schema_version=2)
 
 
-@pytest.mark.parametrize("capability", ["locker", "light", "speaker"])
-@pytest.mark.parametrize("occupancy", ["rental", "shared"])
+@pytest.mark.parametrize("capability,occupancy", [
+    ("locker", "rental"), ("light", "shared"), ("speaker", "shared")])
 def test_FR04_all_capabilities_and_occupancies(capability, occupancy):
+    """v2 발표는 템플릿 선언이 된다. 팀 기기의 조합을 모두 받는다 (iot-device-descriptor spec 결정 3)."""
     data = body("announce") | dict(capability=capability, occupancy=occupancy)
     report = decode("announce", data)
-    assert report.capability == Capability(capability)
+    assert report.descriptor.kind == capability
     assert report.occupancy == Occupancy(occupancy)
+
+
+@pytest.mark.parametrize("capability,occupancy", [
+    ("locker", "shared"), ("light", "rental"), ("speaker", "rental")])
+def test_FR04_v2_role_rule_violations_rejected(capability, occupancy):
+    """shared 기기는 deactivate 가 하나 있어야 하고 rental 은 가질 수 없다 (FR-09, #245)."""
+    with pytest.raises(MessageValidationError):
+        decode("announce", body("announce") | dict(capability=capability, occupancy=occupancy))
 
 
 def test_FR05_batch_preserves_metadata():
@@ -217,7 +227,7 @@ def command():
 
 @pytest.mark.parametrize("action", list(Action))
 def test_FR06_encode_preserves_command(action):
-    data = json.loads(encode_command(replace(command(), action=action)))
+    data = json.loads(encode_command(replace(command(), action=action), schema_version=2))
     assert datetime.fromisoformat(data.pop("issued_at")) == SENT
     assert datetime.fromisoformat(data.pop("expires_at")) == RECEIVED
     assert data == dict(
@@ -226,7 +236,7 @@ def test_FR06_encode_preserves_command(action):
 
 
 def test_NFR08_outbound_allowlist():
-    assert set(json.loads(encode_command(command()))) == {
+    assert set(json.loads(encode_command(command(), schema_version=2))) == {
         "schema_version", "node_id", "command_id", "action", "target_session_id", "issued_at", "expires_at"}
 
 
@@ -234,7 +244,7 @@ def test_NFR08_outbound_allowlist():
     ("target_session_id", "bad"), ("issued_at", SENT.replace(tzinfo=None)), ("expires_at", None)])
 def test_NFR11_invalid_outbound_fields_rejected(field, value):
     with pytest.raises(MessageValidationError):
-        encode_command(replace(command(), **{field: value}))
+        encode_command(replace(command(), **{field: value}), schema_version=2)
 
 
 @pytest.mark.parametrize("state", list(DeviceState))
@@ -258,4 +268,4 @@ def test_NFR11_all_v2_message_shapes():
     assert isinstance(decode("rssi")[0], RssiFrame)
     assert isinstance(decode("status"), NodeStatus)
     assert isinstance(decode("result"), NodeResult)
-    assert json.loads(encode_command(command()))["schema_version"] == 2
+    assert json.loads(encode_command(command(), schema_version=2))["schema_version"] == 2

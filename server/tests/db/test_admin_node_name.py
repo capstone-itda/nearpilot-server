@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from nearpilot.shared.descriptor import legacy_descriptor
 from nearpilot.shared.enums import AdminWriteOutcome, AdminWriteReason, Capability, Occupancy, TrustState
 from nearpilot.shared.interfaces import AdminRepository
 from nearpilot.shared.models import NodeAnnounce
@@ -36,7 +37,7 @@ def _audit_rows(conn):
 
 def _announce(node_id, capability, occupancy):
     now = datetime(2026, 10, 24, 9, 0, tzinfo=timezone.utc)
-    return NodeAnnounce(node_id=node_id, capability=capability, occupancy=occupancy, received_at=now,
+    return NodeAnnounce(node_id=node_id, descriptor=legacy_descriptor(capability, occupancy), received_at=now,
                         session_id="session-1", seq=1, sent_at=now)
 
 

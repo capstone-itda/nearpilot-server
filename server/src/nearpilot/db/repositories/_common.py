@@ -17,7 +17,9 @@ from uuid import uuid4
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.errors import StoreNotApplied, StoreOutcomeUnknown
-from nearpilot.shared.models import LightControls, LightSetting, SpeakerControls, SpeakerSetting
+from nearpilot.shared.descriptor import DeviceDescriptor, legacy_controls, parse_descriptor
+from nearpilot.shared.enums import Capability, DeviceState, Occupancy, TrustState
+from nearpilot.shared.models import LightControls, LightSetting, NodeInfo, SpeakerControls, SpeakerSetting
 
 logger = logging.getLogger(__name__)
 
@@ -74,18 +76,39 @@ def light_from_json(value: str | None) -> LightSetting | None:
     return None if value is None else LightSetting.from_json(json.loads(value))
 
 
-def light_controls_to_json(controls: LightControls | None) -> str | None:
-    """발표한 조명 제어 정보 열 값 (FR-04). 없으면 NULL 이다."""
-    if controls is None:
-        return None
-    return json.dumps({"brightness_max": controls.brightness_max, "color": controls.color}, sort_keys=True)
+def descriptor_to_json(descriptor: DeviceDescriptor) -> str:
+    """`node.descriptor` 열 값 (FR-04). 키 순서를 고정해서 같은 선언은 같은 문자열이다."""
+    return json.dumps(descriptor.to_json(), sort_keys=True, ensure_ascii=False)
 
 
-def light_controls_from_json(value: str | None) -> LightControls | None:
-    if value is None:
-        return None
-    data = json.loads(value)
-    return LightControls(data["brightness_max"], data["color"])
+def descriptor_from_json(value: str | None) -> DeviceDescriptor | None:
+    """저장한 선언을 다시 검증해서 복원한다. 선언이 없는 행(이전 전 행)은 None 이다 (spec 결정 10)."""
+    return None if value is None else parse_descriptor(json.loads(value))
+
+
+def node_from_row(row: sqlite3.Row) -> NodeInfo:
+    """`node` 행 → `NodeInfo`. 조명·스피커 제어 정보는 선언에서 계산한다 (spec 결정 7)."""
+    descriptor = descriptor_from_json(row["descriptor"])
+    light, volume_max = legacy_controls(descriptor)
+    return NodeInfo(
+        node_id=row["node_id"],
+        place_id=row["place_id"],
+        capability=Capability(row["capability"]),
+        occupancy=Occupancy(row["occupancy"]),
+        trust_state=TrustState(row["trust_state"]),
+        device_state=DeviceState(row["device_state"]),
+        exclusive_group=row["exclusive_group"],
+        last_seen_at=parse_iso(row["last_seen_at"]) if row["last_seen_at"] else None,
+        release_policy=from_json(row["release_policy"]),
+        session_id=row["session_id"],
+        session_first_seen_at=(
+            parse_iso(row["session_first_seen_at"]) if row["session_first_seen_at"] else None
+        ),
+        light_controls=None if light is None else LightControls(*light),
+        speaker_controls=None if volume_max is None else SpeakerControls(volume_max),
+        descriptor=descriptor,
+        descriptor_hash=row["descriptor_hash"],
+    )
 
 
 def speaker_to_json(speaker: SpeakerSetting | None) -> str | None:
@@ -95,20 +118,6 @@ def speaker_to_json(speaker: SpeakerSetting | None) -> str | None:
 
 def speaker_from_json(value: str | None) -> SpeakerSetting | None:
     return None if value is None else SpeakerSetting.from_json(json.loads(value))
-
-
-def speaker_controls_to_json(controls: SpeakerControls | None) -> str | None:
-    """발표한 스피커 제어 정보 열 값 (FR-04). 없으면 NULL 이다."""
-    if controls is None:
-        return None
-    return json.dumps({"volume_max": controls.volume_max}, sort_keys=True)
-
-
-def speaker_controls_from_json(value: str | None) -> SpeakerControls | None:
-    if value is None:
-        return None
-    data = json.loads(value)
-    return SpeakerControls(data["volume_max"])
 
 
 class _JsonlExporter(Protocol):

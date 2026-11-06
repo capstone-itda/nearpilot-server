@@ -92,7 +92,7 @@
 | 저장한 명령 재구성 | DB의 `speaker`로 같은 `NodeCommand` | `test_FR19_command_speaker_round_trip`(저장), `test_FR19_execution_sends_stored_speaker`(명령) |
 | 명령 ID로 다시 만든 실행 문맥 | `speaker`가 판정이 넘긴 값과 같음 | `test_FR09_restored_context_keeps_speaker` |
 | 발표의 스피커 `controls` 형식 오류, 조명 키를 담은 스피커 발표 | 발표 거부 | `test_FR04_announce_rejects_bad_speaker_controls` |
-| 스피커 `controls`만 바뀜 | 신뢰 유지, 감사 기록 | `test_FR04_speaker_controls_change_keeps_trust` |
+| 스피커 `controls`만 바뀜 | 선언 해시가 바뀌어 `discovered`, 감사 기록 (#245, `iot-device-descriptor`가 대체) | `test_FR04_speaker_controls_change_resets_trust` |
 | 설정 상한·기본값이 범위 밖 | 설정 로드 실패 | `test_FR09_speaker_settings_validate` |
 | 조회 응답의 스피커 `controls` | `{"volume_max": k}` | `test_FR09_device_query_speaker_controls` |
 | 음량 0 `on`의 성공 | 마지막 제어 상태 `on` | `test_FR20_zero_volume_on_is_on` |

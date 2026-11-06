@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sqlite3
 
 from _runtime import TOKENS, VISITOR_A, McpCaller, asgi_post, query, wait_until
 from test_server_assembly import world  # noqa: F401  (fixture)
@@ -23,11 +24,26 @@ def announce_controls(w, controls):
     w.broker.report("speaker-1", [node._message("announce", capability="speaker", occupancy="shared",
                                                 controls=controls)])
     wait_until(lambda: _stored_controls(w) == controls)
+    _retrust(w, "speaker-1")
 
 
 def _stored_controls(w):
-    text = query(w.db, "SELECT speaker_controls FROM node WHERE node_id = 'speaker-1'")[0]["speaker_controls"]
-    return json.loads(text) if text else None
+    """저장한 선언의 스피커 on 인자 스키마 → v2 제어 정보 (iot-device-descriptor spec 결정 7)."""
+    text = query(w.db, "SELECT descriptor FROM node WHERE node_id = 'speaker-1'")[0]["descriptor"]
+    if not text:
+        return None
+    properties = json.loads(text)["actions"][0]["input_schema"]["properties"]
+    return {"volume_max": properties["volume"]["maximum"]} if "volume" in properties else None
+
+
+def _retrust(w, node_id):
+    """선언 해시가 바뀌면 신뢰가 풀린다. 소유자가 다시 신뢰한 것으로 둔다 (FR-04, #245)."""
+    conn = sqlite3.connect(str(w.db))
+    try:
+        conn.execute("UPDATE node SET trust_state = 'trusted' WHERE node_id = ?", (node_id,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def wait_succeeded(w, count):

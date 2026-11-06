@@ -18,6 +18,7 @@ from conftest import (
 
 from nearpilot.db.repositories._common import settings_to_json
 from nearpilot.shared.config import Settings
+from nearpilot.shared.descriptor import legacy_descriptor
 from nearpilot.shared.enums import Action, Capability, Occupancy, StoreOutcome
 from nearpilot.shared.models import LightControls, LightSetting, NodeAnnounce, SpeakerControls, SpeakerSetting
 
@@ -124,60 +125,44 @@ def test_FR09_last_speaker_setting_latest_succeeded_on(conn, repo):
     assert repo.last_speaker_setting("speaker-1") is None
 
 
-def announce(controls, capability=Capability.SPEAKER):
+def announce(controls):
+    """스피커 v2 발표의 템플릿 선언 (iot-device-descriptor spec 결정 3)."""
+    extra = {} if controls is None else dict(volume_max=controls.volume_max)
     return NodeAnnounce(
-        node_id="speaker-1", capability=capability, occupancy=Occupancy.SHARED,
-        received_at=NOW, session_id="s1", seq=1, sent_at=NOW, speaker_controls=controls,
+        node_id="speaker-1", descriptor=legacy_descriptor(Capability.SPEAKER, Occupancy.SHARED, **extra),
+        received_at=NOW, session_id="s1", seq=1, sent_at=NOW,
     )
 
 
 def test_FR04_announce_stores_speaker_controls(conn, repo):
+    """스피커 제어 정보는 선언의 volume 상한으로 계산한다 (spec 결정 7)."""
     repo.upsert_announced_node(announce(CAPPED))
 
-    row = conn.execute("SELECT speaker_controls FROM node WHERE node_id = 'speaker-1'").fetchone()
-    assert json.loads(row["speaker_controls"]) == {"volume_max": 20}
+    row = conn.execute("SELECT descriptor FROM node WHERE node_id = 'speaker-1'").fetchone()
+    on = json.loads(row["descriptor"])["actions"][0]
+    assert on["input_schema"]["properties"]["volume"]["maximum"] == 20
     assert [n.speaker_controls for n in repo.nodes(Capability.SPEAKER)] == [CAPPED]
 
 
-def test_FR04_speaker_controls_change_keeps_trust(conn, repo):
-    speaker_node(conn)  # trusted, controls 없음
+def test_FR04_speaker_controls_change_resets_trust(conn, repo):
+    """음량 상한은 선언의 인자 스키마다. 바뀌면 선언 해시가 바뀐다 (FR-04, #245)."""
+    speaker_node(conn)  # trusted, 선언 없는 행
 
     repo.upsert_announced_node(announce(CAPPED))
-    repo.upsert_announced_node(announce(CAPPED))  # 같은 값은 감사를 남기지 않는다
-
-    row = conn.execute("SELECT trust_state, speaker_controls FROM node WHERE node_id = 'speaker-1'").fetchone()
-    assert row["trust_state"] == "trusted" and json.loads(row["speaker_controls"]) == {"volume_max": 20}
-    audits = conn.execute("SELECT step, payload_json FROM audit_log").fetchall()
-    assert [a["step"] for a in audits] == ["announce"]
-    assert json.loads(audits[0]["payload_json"]) == {
-        "node_id": "speaker-1", "previous_speaker_controls": None, "speaker_controls": {"volume_max": 20},
-    }
+    repo.upsert_announced_node(announce(CAPPED))
+    row = conn.execute("SELECT trust_state FROM node WHERE node_id = 'speaker-1'").fetchone()
+    assert row["trust_state"] == "trusted"
+    assert conn.execute("SELECT COUNT(*) AS c FROM audit_log").fetchone()["c"] == 0
 
     repo.upsert_announced_node(announce(None))
-    row = conn.execute("SELECT trust_state, speaker_controls FROM node WHERE node_id = 'speaker-1'").fetchone()
-    assert row["trust_state"] == "trusted" and row["speaker_controls"] is None
-    assert conn.execute("SELECT COUNT(*) AS c FROM audit_log").fetchone()["c"] == 2
-
-
-def test_FR04_light_and_speaker_controls_change_each_audited(conn, repo):
-    speaker_node(conn)
-    both = NodeAnnounce(
-        node_id="speaker-1", capability=Capability.SPEAKER, occupancy=Occupancy.SHARED,
-        received_at=NOW, session_id="s1", seq=1, sent_at=NOW,
-        light_controls=LightControls(brightness_max=64, color=True), speaker_controls=CAPPED,
-    )
-
-    repo.upsert_announced_node(both)
-    repo.upsert_announced_node(both)  # 같은 값은 감사를 남기지 않는다
-
-    payloads = [json.loads(a["payload_json"]) for a in conn.execute("SELECT payload_json FROM audit_log")]
-    assert len(payloads) == 2
-    assert sum("light_controls" in p for p in payloads) == 1
-    assert sum("speaker_controls" in p for p in payloads) == 1
+    row = conn.execute("SELECT trust_state FROM node WHERE node_id = 'speaker-1'").fetchone()
+    assert row["trust_state"] == "discovered"
+    assert conn.execute("SELECT COUNT(*) AS c FROM audit_log").fetchone()["c"] == 1
 
 
 def test_FR04_speaker_columns_migrated(conn):
+    """발표한 음량 제어 정보 열은 선언으로 옮겨 지웠다. 명령의 음량 열은 남는다 (spec 결정 9)."""
     node_cols = {r["name"] for r in conn.execute("PRAGMA table_info(node)")}
     command_cols = {r["name"] for r in conn.execute("PRAGMA table_info(node_command)")}
-    assert "speaker_controls" in node_cols and "speaker" in command_cols
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 9
+    assert "speaker_controls" not in node_cols and "speaker" in command_cols
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 10

@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from nearpilot.shared.descriptor import legacy_descriptor
 from nearpilot.shared.enums import Capability, Occupancy, ReasonCode, TrustState, Verdict
 from nearpilot.shared.models import NodeAnnounce
 from tools.node_lab.session import Lab, demo
@@ -53,7 +54,7 @@ def test_FR13_lab_only_configures_listed_nodes(lab_world):
     stamp = datetime.now(timezone.utc)
     with lab.runtime.db.scope() as bound:
         bound.repo.upsert_announced_node(NodeAnnounce(
-            "light-outsider", Capability.LIGHT, Occupancy.SHARED, stamp, str(uuid4()), 1, stamp))
+            "light-outsider", legacy_descriptor(Capability.LIGHT, Occupancy.SHARED), stamp, str(uuid4()), 1, stamp))
     lab.snapshot()
     with lab.runtime.db.scope() as bound:
         outsider = next(node for node in bound.repo.nodes() if node.node_id == "light-outsider")

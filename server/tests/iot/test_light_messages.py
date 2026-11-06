@@ -7,7 +7,8 @@ from datetime import datetime, timedelta
 import pytest
 
 from nearpilot.iot.messages import MessageValidationError, decode_message, encode_command
-from nearpilot.shared.enums import Action, Capability
+from nearpilot.shared.descriptor import legacy_controls, legacy_descriptor
+from nearpilot.shared.enums import Action, Capability, Occupancy
 from nearpilot.shared.models import LightControls, LightSetting, NodeCommand
 
 SESSION = "12345678-1234-1234-1234-123456789abc"
@@ -24,9 +25,9 @@ def announce(capability="light", **extra):
 
 def test_FR04_announce_controls_to_shared_model():
     report = announce(controls={"brightness_max": 64, "color": True})
-    assert report.capability is Capability.LIGHT
-    assert report.light_controls == LightControls(brightness_max=64, color=True)
-    assert announce().light_controls is None  # 이전 펌웨어의 발표는 그대로 받는다
+    assert report.descriptor == legacy_descriptor(Capability.LIGHT, Occupancy.SHARED, brightness_max=64, color=True)
+    assert legacy_controls(report.descriptor) == ((64, True), None)
+    assert legacy_controls(announce().descriptor) == (None, None)  # 이전 펌웨어의 발표는 그대로 받는다
 
 
 @pytest.mark.parametrize("controls", [
@@ -52,15 +53,15 @@ def command(action=Action.ON, light=None):
 
 
 def test_FR06_encode_command_parameters():
-    data = json.loads(encode_command(command(light=LightSetting(30, "#0000ff"))))
+    data = json.loads(encode_command(command(light=LightSetting(30, "#0000ff")), schema_version=2))
     assert data["parameters"] == {"brightness": 30, "color": "#0000FF"}
     assert data["action"] == "on"
-    zero = json.loads(encode_command(command(light=LightSetting(0, "#FFFFFF"))))
+    zero = json.loads(encode_command(command(light=LightSetting(0, "#FFFFFF")), schema_version=2))
     assert zero["parameters"]["brightness"] == 0 and zero["action"] == "on"
 
 
 def test_FR06_encode_command_without_light_unchanged():
-    assert "parameters" not in json.loads(encode_command(command()))
+    assert "parameters" not in json.loads(encode_command(command(), schema_version=2))
 
 
 @pytest.mark.parametrize("cmd", [
@@ -70,9 +71,9 @@ def test_FR06_encode_command_without_light_unchanged():
 def test_FR09_encode_command_rejects_partial_or_non_on(cmd):
     # 일부 인자만 보내거나 on 이 아닌 명령에 인자를 붙이지 않는다.
     with pytest.raises(MessageValidationError):
-        encode_command(cmd)
+        encode_command(cmd, schema_version=2)
 
 
 def test_FR22_same_command_same_parameters():
-    a = encode_command(command(light=LightSetting(30, "#0000FF")))
-    assert a == encode_command(replace(command(), light=LightSetting(30, "#0000FF")))
+    a = encode_command(command(light=LightSetting(30, "#0000FF")), schema_version=2)
+    assert a == encode_command(replace(command(), light=LightSetting(30, "#0000FF")), schema_version=2)

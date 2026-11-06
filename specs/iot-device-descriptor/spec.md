@@ -1,6 +1,6 @@
 # 기기 선언 발표의 검증과 저장
 
-- 상태: 진행 중
+- 상태: 완료
 - 담당: 작업 지시자 (shared 선언 모델, IOT, DB, 상태 관리 연결 구현)
 - 요구사항: FR-04, FR-06, NFR-07
 - 따르는 결정: #245 (decision PR #246). 후속 PR ②~④의 첫 단계다 (`architecture.md` §4 "기기 자기 선언의 후속 반영").
@@ -106,7 +106,7 @@
    - `light`: `on` — 제어 정보가 있으면 `brightness`(`integer`, 0~`brightness_max`)와 색 지원 시 `color`(`string`, `^#[0-9A-Fa-f]{6}$`). 설명은 "조명을 켜고 밝기와 색을 정한다" / "조명을 켜고 밝기를 정한다" / "조명을 켠다". `off` "조명을 끈다" (`deactivate`)
    - `speaker`: `on` — 제어 정보가 있으면 `volume`(`integer`, 0~`volume_max`). 설명은 "스피커를 재생하고 음량을 정한다" / "스피커를 재생한다". `off` "스피커를 정지한다" (`deactivate`)
    - 역할 규칙에 맞지 않는 v2 조합(예: `shared` 사물함)은 템플릿 검증에서 거부한다 — 팀 기기는 사물함 `rental`, 조명·스피커 `shared`다.
-4. 인자 스키마의 `type`은 `integer`, `number`, `string`, `boolean`이다. `minimum`·`maximum`은 수 타입에만, `pattern`·`maxLength`는 `string`에만 쓴다. `pattern`은 Python `re`로 컴파일되어야 하고 검사는 `re.search`다 — JSON Schema의 `pattern`은 앵커 없는 검색이다. `additionalProperties`가 없거나 `true`면 선언 밖 인자도 평탄한 값이면 받는다 — JSON Schema의 의미를 그대로 따른다.
+4. 인자 스키마의 `type`은 `integer`, `number`, `string`, `boolean`이다. `minimum`·`maximum`은 수 타입에만, `pattern`·`maxLength`는 `string`에만 쓴다. `pattern`은 Python `re`로 컴파일되어야 하고 검사는 `re.search`다 — JSON Schema의 `pattern`은 앵커 없는 검색이다. `additionalProperties`가 없거나 `true`면 선언 밖 인자도 평탄한 값이면 받는다 — JSON Schema의 의미를 그대로 따른다. 그래서 `deactivate` 동작은 `properties`가 비어 있고 `additionalProperties`가 `false`여야 "인자를 받지 않는다"를 만족한다.
 5. 인자 검증 결과는 `OUT_OF_RANGE`(`minimum`·`maximum`만 위반)와 `INVALID`(그 밖)로 나눈다. 둘 다 있으면 `INVALID`다 — 판정(PR ②)의 `PARAMETER_OUT_OF_RANGE`와 `INVALID_INPUT`에 그대로 대응한다.
 6. 이 PR은 `Capability` 열거형에 있는 종류(`locker`, `light`, `speaker`)의 v3 발표만 받는다. 다른 종류는 거부하고 감사에 남긴다 — 판정·조회·대시보드가 아직 열거형을 쓴다. PR ②가 열거형을 걷어 내며 이 검사를 지운다.
 7. `NodeInfo`는 `descriptor`와 `descriptor_hash`를 더 담는다. `light_controls`, `speaker_controls`는 DB가 선언에서 계산해 채우는 호환 값으로 PR ②에서 지운다. 조명 `on`의 `brightness`가 1~255 정수 상한이면 조명 제어 정보, 스피커 `on`의 `volume`이 1~30 정수 상한이면 스피커 제어 정보다. 그 밖은 `None`이다.
@@ -130,4 +130,6 @@
 | FR-04, FR-06 | `tests/iot/test_descriptor_delivery.py` | 거부 감사, 연결별 발표, 송신 전 검증 `NOT_SENT` |
 | FR-04 | `tests/db/test_descriptor_store.py` | 저장, 해시·`vendor` 규칙, 감사, 이전 |
 | FR-04, NFR-04 | `tests/core/lifecycle/test_node_events.py` | 점유 중 해시 변경의 격리 |
-| FR-04, FR-06 | `tests/integration/test_descriptor_announce_flow.py` | v2 기기와 v3 기기가 같은 서버에서 발표·명령 |
+| FR-04, FR-06 | `tests/integration/test_descriptor_announce_flow.py` | v2 기기와 v3 기기가 같은 서버에서 발표·명령. 시뮬레이터는 아직 v2라 v3 명령의 형식만 본다 |
+
+- 바뀐 기존 테스트: 제어 정보만 바뀌면 신뢰를 유지하던 `test_FR04_controls_change_keeps_trust`, `test_FR04_speaker_controls_change_keeps_trust`는 해시 규칙의 `..._resets_trust`로 바꿨다. 조명·스피커 제어 정보를 함께 담는 발표는 선언으로 만들 수 없어 `test_FR04_light_and_speaker_controls_change_each_audited`를 지웠다. 역할 규칙에 맞지 않는 v2 조합은 `test_FR04_v2_role_rule_violations_rejected`가 거부를 본다.
