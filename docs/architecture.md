@@ -883,14 +883,14 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | 영역 | 책임 |
 |---|---|
 | API | `arguments`가 객체인지만 검사한다. 대상 종류와 동작별 인자를 검사하지 않는다. |
-| 판정 | 대상을 정한 뒤 저장한 선언으로 동작과 인자를 검증한다. 선언의 범위와 `param_max.{kind}.{action}.{arg}` 중 좁은 범위로 검사한다. 사유 코드는 `UNSUPPORTED_ACTION`, `INVALID_INPUT`, `PARAMETER_OUT_OF_RANGE`다. 판정은 동작 역할과 점유 방식으로 ⓪~⑥을 정한다. 종류로 판정 분기를 두지 않는다 (NFR-07). |
+| 판정 | 대상을 정한 뒤 저장한 선언으로 동작과 인자를 검증한다. 생략한 인자를 정한다. 선언의 범위와 `param_max.{kind}.{action}.{arg}` 중 좁은 범위로 검사한다. 사유 코드는 `UNSUPPORTED_ACTION`, `INVALID_INPUT`, `PARAMETER_OUT_OF_RANGE`다. 판정은 동작 역할과 점유 방식으로 ⓪~⑥을 정한다. 종류로 판정 분기를 두지 않는다 (NFR-07). |
 | 상태 관리 | 인계받은 인자를 `NodeCommand.arguments`에 담는다. 이탈 꺼짐에는 그 기기의 `deactivate` 동작을 인자 없이 보낸다 (FR-20). |
 | DB | 명령 기록에 인자를 저장하고 복원한다. 기존 명령 기록의 `light`, `speaker` 값은 키가 같으므로 `arguments`로 읽는다. |
 | IOT | 보내기 전에 저장한 선언으로 동작과 인자를 다시 검증한다. 맞지 않으면 보내지 않고 `NOT_SENT`다. 맞으면 `cmd`의 `action`과 `arguments`로 보낸다. IOT는 값을 바꾸지 않는다. |
 | API의 조회 응답 | 기기마다 `kind`와 `actions`(`name`, `description`, `input_schema`)를 담는다. 인자 스키마의 상한은 선언 값과 `param_max` 설정 중 작은 값이다. `vendor`와 선언 해시는 담지 않는다 (FR-11). |
 
 - 판정이 근거로 쓰는 선언 값은 `occupancy`와 `role`뿐이다. `kind`는 대상 선택과 종류별 설정 조회에만 쓴다.
-- 미결 — #245: 생략한 인자를 서버가 채우는 규칙의 일반화. 지금 규칙(마지막 성공 `on`의 인자, 없으면 `light_default_*`·`speaker_default_volume`)은 FR-09에 있다.
+- 판정은 생략한 인자를 정하고 실행 인계에 담는다. 같은 기기, 같은 동작의 마지막 성공 명령의 인자를 DB에서 읽는다. 없으면 `param_default.{kind}.{action}.{arg}`를 쓰고, 그것도 없으면 생략한 채 둔다 (FR-09, #245 담당자 결정).
 - `LightSetting`, `LightControls`, `SpeakerSetting`, `SpeakerControls`와 종류별 인자 검사 코드는 후속 feat PR에서 지운다.
 
 ### 기기 원격 재시작
@@ -970,8 +970,8 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | IOT | `announce` v3의 선언 검증, v2 발표의 템플릿 변환, `cmd`의 동작 이름과 인자 인코딩, 송신 전 선언 검증 |
 | 판정 | 종류별 설정 조회(`threshold_{kind}`, `param_max`, `any_allowed_kinds`), 선언 기반 동작·인자 검증, 동작 역할에 따른 재조작 |
 | 상태 관리 | 선언 해시 변경 시 격리, `deactivate` 동작의 이탈 꺼짐 |
-| API | `request_use`의 `arguments`, 조회 응답의 `actions`, WebSocket과 REST의 종류 필드 |
-| DB | `node`의 선언·해시 열과 이전, 명령 인자 저장 |
+| API | `request_use`의 `arguments`, 조회 응답의 `actions`, WebSocket과 REST의 종류 필드, 대시보드 장소 목록의 선언 표시 |
+| DB | `node`의 선언·해시 열과 이전, 명령 인자 저장, 같은 동작의 마지막 성공 인자 조회 |
 | 펌웨어 | `capability`·`occupancy` 설정 제거, 선언 내장과 발표, 선언 기반 명령 검증. 공개 규칙의 참조 구현이 된다. |
 | 그 밖 | 앱의 BLE 설정 키, 시뮬레이터, 기기 목록과 평가 설정, 대시보드 표시 |
 
@@ -1143,7 +1143,7 @@ MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_sess
 - 기기는 `action`이 자기 선언에 없으면 구동 전에 `UNSUPPORTED_ACTION`으로 거부한다. `arguments`가 자기 선언의 인자 스키마를 벗어나면 구동 전에 `UNSUPPORTED_PARAMETER`로 거부한다.
 - 서버는 `arguments`를 바꾸지 않고 보낸다. 기기는 명령 내용만으로 출력을 정한다.
 - 전환 기간에 IOT는 v2 `announce`(`capability`, `occupancy`, `controls?`)도 받는다. IOT는 종류별 선언 템플릿으로 선언을 만든다. v2 `cmd`의 `parameters`와 v3 `arguments`는 키(`brightness`, `color`, `volume`)가 같다.
-- 미결 — #245: 전환 기간에 v2로 발표한 기기에 보내는 `cmd`의 버전과 인자 필드 이름
+- 전환 기간에 IOT는 기기가 마지막으로 발표한 `schema_version`으로 `cmd`를 보낸다. v2로 발표한 기기에는 `schema_version` 2와 `parameters` 필드로 보낸다. 값은 `arguments`와 같다 (#245 담당자 결정).
 - 팀 기기의 인자 규칙: 조명은 채널별 출력을 `색 채널 값 × brightness ÷ 255`(내림)로 정한다. 어떤 색도 채널 출력이 `brightness`를 넘지 않는다. 재생 중인 스피커는 새 `on`의 음량만 바꾸고 재생을 이어 간다.
 - RSSI의 `uuid`는 하이픈을 포함한 소문자 UUID 문자열이다. `major`와 `minor`는 0~65535의 정수다.
 - `rssi`는 dBm 단위의 유한한 수다. 한 프레임은 같은 비콘 조합을 중복으로 담지 않는다.
@@ -1393,7 +1393,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 
 | 형식 | 키 (✔ 필수, ∅ null 허용, 나머지 선택) |
 |---|---|
-| 장소 목록 (`places`) | `weakRssiDbm` ✔, `places` ✔ [`placeId` ✔, `placeName` ✔, `modelVersion` ✔, `calibrationVersion` ✔, `devices` ✔ [`nodeId` ✔, `name` ✔, `deviceKind` ✔ (기기 선언의 `kind`. 기존 `capability`를 대체한다), `occupancy` ✔]]. `placeId`와 `nodeId`는 목록 전체에서 한 번씩만 나온다. `name`은 시드의 기기 이름(`node.name`)이고 없으면 `nodeId`다 |
+| 장소 목록 (`places`) | `weakRssiDbm` ✔, `places` ✔ [`placeId` ✔, `placeName` ✔, `modelVersion` ✔, `calibrationVersion` ✔, `devices` ✔ [`nodeId` ✔, `name` ✔, `deviceKind` ✔ (기기 선언의 `kind`. 기존 `capability`를 대체한다), `occupancy` ✔, `vendor` ✔ [`name` ✔, `model` ✔, `firmware` ✔], `actions` ✔ [`name` ✔, `description` ✔, `role`], `descriptorHash` ✔]]. 소유자는 신뢰하기 전에 이 값으로 기기 선언을 확인한다 (#245 담당자 결정). `placeId`와 `nodeId`는 목록 전체에서 한 번씩만 나온다. `name`은 시드의 기기 이름(`node.name`)이고 없으면 `nodeId`다 |
 | 점유 행 (`uses`) | `personId` ✔, `nodeId` ✔, `occupancy` ✔, `session` ✔ (`RESERVED`, `ACTIVE`, `CLOSING`), `sessionNote`, `startedAt` ✔, `overdueMinutes` |
 | 승인 (`approvals`) | `pending` ✔, `active` ✔, `ended` ✔. 행: `personId` ✔, `nodeId` ✔, `mode`, `requestedAt`, `remainingMinutes`, `validUntil`, `uses`, `endReason` (`APPROVAL_REJECTED`, `APPROVAL_REQUEST_EXPIRED`, `APPROVAL_EXHAUSTED`, `APPROVAL_EXPIRED`) |
 | 감사 행 (`audit`, 스트림 `audit`의 `row`) | `id` ✔, `at` ✔, `step` ✔ (`Step`), `nodeId`, `text` ✔, `code` ✔ |
