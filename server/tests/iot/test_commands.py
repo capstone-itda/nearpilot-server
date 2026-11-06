@@ -79,6 +79,14 @@ class Connection:
         return object()
 
 
+def announce(node="locker-1"):
+    """The target connection's v2 announce. The gateway checks commands against it (FR-06)."""
+    data = dict(schema_version=2, node_id=node, session_id=S1, seq=1, sent_at=iso(T0),
+                capability="locker", occupancy="rental")
+    return IncomingReport(f"nearpilot/node/{node}/announce", json.dumps(data).encode(),
+                          1, True, False, T0 + timedelta(seconds=0.1))
+
+
 @pytest.fixture
 def env():
     sink, connection = Sink(), Connection()
@@ -86,6 +94,9 @@ def env():
                               config=DeliveryConfig(0.0, 120, 60, 100, 0.05, 2.0),
                               clock=lambda: T0 + timedelta(seconds=1))
     gateway = MqttCommandGateway(connection, delivery)
+    delivery.process(announce())
+    delivery.deliver_due()
+    sink.calls.clear()
     return sink, connection, delivery, gateway
 
 
@@ -180,6 +191,7 @@ def test_FR06_saturation_not_sent(env):
                               config=DeliveryConfig(0.0, 120, 60, 1, 0.05, 2.0),
                               clock=lambda: T0 + timedelta(seconds=1))
     gateway = MqttCommandGateway(connection, delivery)
+    delivery.process(announce())
     delivery.process(result())
     assert delivery.saturated
     assert gateway.send(COMMAND, 5).outcome == CommandOutcome.NOT_SENT
@@ -274,6 +286,7 @@ def test_FR07_wait_and_sink_no_deadlock():
     delivery = ReportDelivery(sink, settings=Settings,
                               config=DeliveryConfig(0.0, 120, 60, 100, 0.05, 2.0))
     gateway = MqttCommandGateway(connection, delivery)
+    delivery.process(announce())  # The command's target connection announced first (FR-06).
     delivery.start()
     try:
         delivery.submit(result(command_id="command-0", event=event(9)))
@@ -281,7 +294,7 @@ def test_FR07_wait_and_sink_no_deadlock():
         connection.on_publish = lambda *_: delivery.submit(result())
         outcome = gateway.send(COMMAND, 2)
         assert outcome.outcome == CommandOutcome.SUCCEEDED
-        assert sink.calls == []
+        assert [method for method, _ in sink.calls if method == "on_result"] == []
     finally:
         release.set()
         delivery.stop()

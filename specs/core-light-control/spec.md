@@ -84,7 +84,7 @@
 | 인자 없는 요청의 정규화 입력 | 기존 digest와 같음 | `test_FR22_digest_without_light_unchanged` |
 | 저장한 명령 재구성 | DB의 `light`로 같은 `NodeCommand` | `test_FR19_command_light_round_trip` |
 | 발표의 `controls` 형식 오류 | 발표 거부 | `test_FR04_announce_rejects_bad_controls` |
-| `controls`만 바뀜 | 신뢰 유지, 감사 기록 | `test_FR04_controls_change_keeps_trust` |
+| `controls`만 바뀜 | 선언 해시가 바뀌어 `discovered`, 감사 기록 (#245, `iot-device-descriptor`가 대체) | `test_FR04_controls_change_resets_trust` |
 | 펌웨어가 상한 초과 밝기 수신 | `UNSUPPORTED_PARAMETER`, 출력 없음 | `test_NFR10_light_parameters_above_cap_rejected` |
 | 펌웨어가 같은 ID에 다른 `parameters` 수신 | `COMMAND_ID_CONFLICT` | `test_FR22_parameters_change_conflicts` |
 | 펌웨어 재시작 뒤 같은 명령 재전송 | 저장 결과만 보고, 재구동 없음 | `test_FR19_parameters_command_not_rerun_after_restart` |

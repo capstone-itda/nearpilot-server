@@ -77,9 +77,18 @@ class NodeEventService:
     def on_announce(self, announce: NodeAnnounce) -> None:
         with self._lock_for(announce.node_id):
             old = self._node(announce.node_id, required=False)
-            if old is not None and (
-                old.capability != announce.capability or old.occupancy != announce.occupancy
-            ):
+            descriptor = announce.descriptor
+            new_hash = descriptor.hash
+            if old is None:
+                changed = False
+            elif old.descriptor_hash is None:
+                # 선언이 없는 행은 종류와 점유 방식만 비교한다 (iot-device-descriptor spec 결정 10).
+                changed = (old.capability.value != descriptor.kind
+                           or old.occupancy != descriptor.occupancy)
+            else:
+                # 신뢰는 선언 해시에 묶인다. vendor 만 바뀌면 격리하지 않는다 (FR-04, #245).
+                changed = old.descriptor_hash != new_hash
+            if changed:
                 occupied = old.device_state in (
                     DeviceState.RESERVED, DeviceState.ACTIVE, DeviceState.CLOSING,
                 )
@@ -92,10 +101,12 @@ class NodeEventService:
                     self._faults.setdefault(announce.node_id, _Fault({
                         "source": "announce_changed", "session_id": announce.session_id,
                         "seq": announce.seq, "received_at": announce.received_at,
-                        "previous_capability": old.capability.value,
+                        "previous_descriptor_hash": old.descriptor_hash,
+                        "descriptor_hash": new_hash,
+                        "previous_kind": old.capability.value,
                         "previous_occupancy": old.occupancy.value,
-                        "capability": announce.capability.value,
-                        "occupancy": announce.occupancy.value,
+                        "kind": descriptor.kind,
+                        "occupancy": descriptor.occupancy.value,
                     }))
             # 발표 저장과 격리는 별개 쓰기다. 점유 중 변경은 먼저 격리해야
             # 발표 저장 직후 재시작해도 변경 전 점유의 연결을 잃지 않는다.

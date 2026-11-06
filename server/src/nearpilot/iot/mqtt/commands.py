@@ -15,9 +15,10 @@ import math
 import threading
 import time
 
-from nearpilot.iot.messages import MessageValidationError, encode_command
+from nearpilot.iot.messages import MessageValidationError, command_arguments, encode_command
 from nearpilot.iot.mqtt.connection import NotReady
 from nearpilot.iot.mqtt.delivery import ReportDelivery
+from nearpilot.shared.descriptor import validate_arguments
 from nearpilot.shared.enums import CommandOutcome, NodeResultState, RejectCode
 from nearpilot.shared.models import CommandResult, NodeCommand, NodeResult
 
@@ -76,8 +77,20 @@ class MqttCommandGateway:
         if (type(timeout_sec) not in (int, float) or not math.isfinite(timeout_sec)
                 or timeout_sec <= 0):
             raise ValueError("Invalid command timeout")
+        announce = self._delivery.announce_for(command.node_id, command.target_session_id)
+        if announce is None:
+            log.error("Command not sent: no announce for the target connection, node=%s",
+                      command.node_id)
+            return self._server_result(command, CommandOutcome.NOT_SENT)
         try:
-            payload = encode_command(command)
+            arguments = command_arguments(command)
+            spec = announce.descriptor.action(str(command.action))
+            if spec is None or validate_arguments(spec, arguments) is not None:
+                # The server checks again with the stored descriptor before sending (FR-06).
+                log.error("Command not sent: action or arguments outside the descriptor, node=%s",
+                          command.node_id)
+                return self._server_result(command, CommandOutcome.NOT_SENT)
+            payload = encode_command(command, schema_version=announce.schema_version)
         except MessageValidationError:
             log.error("Command not sent: invalid MQTT command for node=%s", command.node_id)
             return self._server_result(command, CommandOutcome.NOT_SENT)

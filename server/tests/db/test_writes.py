@@ -12,6 +12,7 @@ import pytest
 from nearpilot.db.repositories.repository import SqliteRepository
 from nearpilot.db.schema import connect
 from nearpilot.shared.config import Settings
+from nearpilot.shared.descriptor import legacy_descriptor
 from nearpilot.shared.enums import (
     Action, Capability, ExecutionKind, ExecutionStatus, Occupancy, ReasonCode, ReserveOutcome, StoreOutcome,
     Verdict,
@@ -622,7 +623,7 @@ def test_FR13_announce_changed(conn, repo):
     insert_node(conn, trust_state="trusted", capability="locker", occupancy="rental")
 
     announce = NodeAnnounce(
-        node_id="node1", capability=Capability.LOCKER, occupancy=Occupancy.SHARED,
+        node_id="node1", descriptor=legacy_descriptor(Capability.LIGHT, Occupancy.SHARED),
         received_at=NOW, session_id="s1", seq=1, sent_at=NOW,
     )
     repo.upsert_announced_node(announce)
@@ -640,7 +641,7 @@ def test_FR13_announce_unchanged_keeps_trust(conn, repo):
     insert_node(conn, trust_state="trusted", capability="locker", occupancy="rental")
 
     announce = NodeAnnounce(
-        node_id="node1", capability=Capability.LOCKER, occupancy=Occupancy.RENTAL,
+        node_id="node1", descriptor=legacy_descriptor(Capability.LOCKER, Occupancy.RENTAL),
         received_at=NOW, session_id="s1", seq=1, sent_at=NOW,
     )
     repo.upsert_announced_node(announce)
@@ -652,7 +653,7 @@ def test_FR13_announce_unchanged_keeps_trust(conn, repo):
 
 def test_FR04_announce_new_node_is_discovered(conn, repo):
     announce = NodeAnnounce(
-        node_id="brand-new", capability=Capability.LIGHT, occupancy=Occupancy.SHARED,
+        node_id="brand-new", descriptor=legacy_descriptor(Capability.LIGHT, Occupancy.SHARED),
         received_at=NOW, session_id="s1", seq=1, sent_at=NOW,
     )
 

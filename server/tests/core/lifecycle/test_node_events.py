@@ -15,6 +15,9 @@ from nearpilot.core.lifecycle.release import ReleaseService
 from nearpilot.core.lifecycle.restore import RestoreService
 from nearpilot.core.lifecycle.shared_light import SharedLightService
 from nearpilot.shared.config import Settings
+from nearpilot.shared.descriptor import (
+    ActionSpec, DescriptorError, DeviceDescriptor, VendorInfo, legacy_descriptor,
+)
 from nearpilot.shared.enums import (
     Action, CommandState, Capability, CommandOutcome, DeviceState, EndReason,
     ExecutionKind, ExecutionStatus, NodeResultState, Occupancy, ReasonCode,
@@ -30,11 +33,28 @@ from nearpilot.shared.models import (
 )
 
 
+def descriptor_of(capability=Capability.LOCKER, occupancy=Occupancy.RENTAL, *, firmware="v2",
+                  description=None):
+    """발표 선언. 역할 규칙에 맞지 않는 조합도 상태 관리 시험용으로 직접 만든다."""
+    try:
+        base = legacy_descriptor(capability, occupancy)
+    except DescriptorError:
+        base = DeviceDescriptor(1, capability.value, occupancy, VendorInfo("nearpilot", "test", "v2"),
+                                (ActionSpec("open", "연다", {"type": "object"}),))
+    if description is not None:
+        first = replace(base.actions[0], description=description)
+        base = replace(base, actions=(first, *base.actions[1:]))
+    return replace(base, vendor=replace(base.vendor, firmware=firmware))
+
+
+LOCKER = descriptor_of()
+
+
 class RepositoryFake:
     def __init__(self, now):
         self.items = {"locker": NodeInfo("locker", "place", Capability.LOCKER,
             Occupancy.RENTAL, TrustState.TRUSTED, DeviceState.AVAILABLE, None, now,
-            session_id="connection")}
+            session_id="connection", descriptor=LOCKER, descriptor_hash=LOCKER.hash)}
         self.sessions, self.frames, self.calls, self.errors = {}, {}, [], {}
         self.beacon = BeaconKey("beacon", 1, 1)
 
@@ -50,13 +70,17 @@ class RepositoryFake:
     def upsert_announced_node(self, report):
         self.calls.append(("announce", report))
         self.fail("announce")
-        old = self.items.get(report.node_id)
+        old, new = self.items.get(report.node_id), report.descriptor
         if old is None:
-            self.items[report.node_id] = NodeInfo(report.node_id, None, report.capability,
-                report.occupancy, TrustState.DISCOVERED, DeviceState.AVAILABLE, None, None)
-        elif old.capability != report.capability or old.occupancy != report.occupancy:
-            self.items[report.node_id] = replace(old, capability=report.capability,
-                occupancy=report.occupancy, trust_state=TrustState.DISCOVERED)
+            self.items[report.node_id] = NodeInfo(report.node_id, None, Capability(new.kind),
+                new.occupancy, TrustState.DISCOVERED, DeviceState.AVAILABLE, None, None,
+                descriptor=new, descriptor_hash=new.hash)
+        elif old.descriptor_hash != new.hash:
+            self.items[report.node_id] = replace(old, capability=Capability(new.kind),
+                occupancy=new.occupancy, trust_state=TrustState.DISCOVERED,
+                descriptor=new, descriptor_hash=new.hash)
+        else:
+            self.items[report.node_id] = replace(old, descriptor=new)
 
     def set_node_session(self, node_id, session_id, first_seen_at):
         self.calls.append(("connection", node_id, session_id, first_seen_at))
@@ -221,10 +245,11 @@ def status(env, **changes):
         CommandState.IDLE), **changes)
 
 
-def announce(env, **changes):
+def announce(env, *, capability=Capability.LOCKER, occupancy=Occupancy.RENTAL, firmware="v2",
+             description=None, **changes):
     at = env.clock()
-    return replace(NodeAnnounce("locker", Capability.LOCKER, Occupancy.RENTAL,
-        at, "announced-connection", 1, at), **changes)
+    descriptor = descriptor_of(capability, occupancy, firmware=firmware, description=description)
+    return replace(NodeAnnounce("locker", descriptor, at, "announced-connection", 1, at), **changes)
 
 
 def frame(env, **changes):
@@ -242,8 +267,9 @@ def occupied(env):
 
 def command(env, *, shared=False):
     if shared:
+        light = descriptor_of(Capability.LIGHT, Occupancy.SHARED)
         env.repo.items["locker"] = replace(env.repo.items["locker"], capability=Capability.LIGHT,
-            occupancy=Occupancy.SHARED)
+            occupancy=Occupancy.SHARED, descriptor=light, descriptor_hash=light.hash)
     else:
         occupied(env)
     ctx = ExecutionContext("request", UseRequest("visitor", "external",
@@ -284,7 +310,8 @@ def test_FR04_changed_announce_forwarded(env):
     assert env.store.recoveries == {}
 
 
-@pytest.mark.parametrize("change", [{"capability": Capability.LIGHT}, {"occupancy": Occupancy.SHARED}])
+@pytest.mark.parametrize("change", [{"capability": Capability.LIGHT}, {"occupancy": Occupancy.SHARED},
+                                    {"description": "사물함 문을 연다"}])
 def test_FR04_changed_announce_during_occupancy(env, change):
     original = occupied(env)
     report = announce(env, **change)
@@ -295,6 +322,35 @@ def test_FR04_changed_announce_during_occupancy(env, change):
     assert env.repo.sessions["use"] == original
     recovery, = env.store.recoveries.values()
     assert (recovery.use_id, recovery.internal_request_ids) == ("use", ("request",))
+
+
+def test_FR04_hash_change_while_occupied_isolates(env):
+    """설명만 바뀌어도 선언 해시가 바뀐다. 점유 중이면 FAULT 로 격리한다 (FR-04, #245)."""
+    occupied(env)
+    env.sink.on_announce(announce(env, description="사물함 문을 연다"))
+    node = env.repo.items["locker"]
+    assert (node.trust_state, node.device_state) == (TrustState.DISCOVERED, DeviceState.FAULT)
+    recovery, = env.store.recoveries.values()
+    assert recovery.use_id == "use"
+
+
+def test_FR04_vendor_change_while_occupied_not_isolated(env):
+    """vendor 는 해시 밖이다. 점유 중에 펌웨어 버전만 바뀌어도 격리하지 않는다 (FR-04)."""
+    occupied(env)
+    env.sink.on_announce(announce(env, firmware="v3"))
+    node = env.repo.items["locker"]
+    assert (node.trust_state, node.device_state) == (TrustState.TRUSTED, DeviceState.ACTIVE)
+    assert env.store.recoveries == {}
+
+
+def test_FR04_row_without_descriptor_compares_kind_and_occupancy(env):
+    """선언이 없는 행(이전 전 행)은 종류와 점유 방식만 비교한다 (spec 결정 10)."""
+    occupied(env)
+    env.repo.items["locker"] = replace(env.repo.items["locker"], descriptor=None, descriptor_hash=None)
+    env.sink.on_announce(announce(env))
+    assert env.store.recoveries == {}
+    env.sink.on_announce(announce(env, capability=Capability.LIGHT, seq=2))
+    assert env.repo.items["locker"].device_state == DeviceState.FAULT
 
 
 def test_FR13_announce_does_not_touch(env):

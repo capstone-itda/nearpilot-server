@@ -12,11 +12,8 @@ from datetime import datetime, timedelta, timezone
 
 from nearpilot.db.repositories.retention import SqliteRetentionStore
 from nearpilot.db.repositories._common import (
-    light_controls_from_json,
-    light_controls_to_json,
-    speaker_controls_from_json,
-    speaker_controls_to_json,
-    from_json, immediate_transaction, iso, new_id, parse_iso, settings_to_json, to_json,
+    descriptor_to_json, from_json, immediate_transaction, iso, new_id, node_from_row, parse_iso,
+    settings_to_json, to_json,
 )
 from nearpilot.shared.enums import (
     AccessMode,
@@ -150,23 +147,7 @@ class SqliteRepository:
         return [self._node_from_row(row) for row in rows]
 
     def _node_from_row(self, row: sqlite3.Row) -> NodeInfo:
-        return NodeInfo(
-            node_id=row["node_id"],
-            place_id=row["place_id"],
-            capability=Capability(row["capability"]),
-            occupancy=Occupancy(row["occupancy"]),
-            trust_state=TrustState(row["trust_state"]),
-            device_state=DeviceState(row["device_state"]),
-            exclusive_group=row["exclusive_group"],
-            last_seen_at=parse_iso(row["last_seen_at"]) if row["last_seen_at"] else None,
-            release_policy=from_json(row["release_policy"]),
-            session_id=row["session_id"],
-            session_first_seen_at=(
-                parse_iso(row["session_first_seen_at"]) if row["session_first_seen_at"] else None
-            ),
-            light_controls=light_controls_from_json(row["light_controls"]),
-            speaker_controls=speaker_controls_from_json(row["speaker_controls"]),
-        )
+        return node_from_row(row)
 
     def last_light_setting(self, node_id: str) -> LightSetting | None:
         row = self._conn.execute(
@@ -568,79 +549,72 @@ class SqliteRepository:
     # ── ② 발표와 기기 연결 (FR-04, FR-13) ─────────────────────────────
 
     def upsert_announced_node(self, announce: NodeAnnounce) -> None:
-        controls = light_controls_to_json(announce.light_controls)
-        speaker_controls = speaker_controls_to_json(announce.speaker_controls)
+        """기기 선언 저장 (FR-04, #245). 신뢰는 선언 해시에 묶는다.
+
+        해시가 같으면 신뢰를 유지한다. `vendor`처럼 해시 밖 값만 바뀌면 새 선언과 감사를 남긴다.
+        해시가 바뀌면 `discovered`로 되돌리고 감사를 남긴다. 선언이 없는 행(이전 전 행)은
+        종류와 점유 방식만 비교한다 (iot-device-descriptor spec 결정 10).
+        """
+        descriptor = announce.descriptor
+        stored = descriptor_to_json(descriptor)
+        new_hash = descriptor.hash
+        kind, occupancy = descriptor.kind, descriptor.occupancy.value
         with immediate_transaction(self._conn):
             row = self._conn.execute(
-                "SELECT capability, occupancy, light_controls, speaker_controls FROM node WHERE node_id = ?",
+                "SELECT capability, occupancy, descriptor, descriptor_hash FROM node WHERE node_id = ?",
                 (announce.node_id,),
             ).fetchone()
             if row is None:
                 self._conn.execute(
                     "INSERT INTO node (node_id, place_id, capability, occupancy, trust_state, "
-                    "device_state, exclusive_group, release_policy, light_controls, speaker_controls) "
+                    "device_state, exclusive_group, release_policy, descriptor, descriptor_hash) "
                     "VALUES (?, NULL, ?, ?, ?, ?, NULL, '{}', ?, ?)",
-                    (
-                        announce.node_id, announce.capability.value, announce.occupancy.value,
-                        TrustState.DISCOVERED.value, DeviceState.AVAILABLE.value, controls, speaker_controls,
-                    ),
+                    (announce.node_id, kind, occupancy, TrustState.DISCOVERED.value,
+                     DeviceState.AVAILABLE.value, stored, new_hash),
                 )
                 return
-            if row["light_controls"] != controls:
-                # 조명 제어 정보만의 변경은 신뢰를 되돌리지 않는다. 새 값과 감사를 남긴다 (FR-04).
+            old_hash = row["descriptor_hash"]
+            if old_hash is None:
+                same = row["capability"] == kind and row["occupancy"] == occupancy
+            else:
+                same = old_hash == new_hash
+            if same:
+                if row["descriptor"] == stored:
+                    return
                 self._conn.execute(
-                    "UPDATE node SET light_controls = ? WHERE node_id = ?", (controls, announce.node_id))
-                self._conn.execute(
-                    "INSERT INTO audit_log (log_id, event_id, internal_request_id, command_id, step, "
-                    "payload_json, created_at) VALUES (?, ?, NULL, NULL, ?, ?, ?)",
-                    (new_id(), new_id(), Step.ANNOUNCE.value,
-                     to_json({"node_id": announce.node_id,
-                              "previous_light_controls": from_json(row["light_controls"])
-                              if row["light_controls"] else None,
-                              "light_controls": from_json(controls) if controls else None}),
-                     iso(announce.received_at)),
-                )
-            if row["speaker_controls"] != speaker_controls:
-                # 스피커 제어 정보만의 변경도 신뢰를 되돌리지 않는다. 새 값과 감사를 남긴다 (FR-04).
-                self._conn.execute(
-                    "UPDATE node SET speaker_controls = ? WHERE node_id = ?",
-                    (speaker_controls, announce.node_id))
-                self._conn.execute(
-                    "INSERT INTO audit_log (log_id, event_id, internal_request_id, command_id, step, "
-                    "payload_json, created_at) VALUES (?, ?, NULL, NULL, ?, ?, ?)",
-                    (new_id(), new_id(), Step.ANNOUNCE.value,
-                     to_json({"node_id": announce.node_id,
-                              "previous_speaker_controls": from_json(row["speaker_controls"])
-                              if row["speaker_controls"] else None,
-                              "speaker_controls": from_json(speaker_controls) if speaker_controls else None}),
-                     iso(announce.received_at)),
-                )
-            if row["capability"] == announce.capability.value and row["occupancy"] == announce.occupancy.value:
+                    "UPDATE node SET descriptor = ?, descriptor_hash = ? WHERE node_id = ?",
+                    (stored, new_hash, announce.node_id))
+                if row["descriptor"] is not None:
+                    # 해시 밖 값(`vendor`, `format`)만 바뀌었다. 신뢰는 유지한다 (FR-04).
+                    previous = from_json(row["descriptor"])
+                    self._announce_audit(announce, {
+                        "previous_vendor": previous.get("vendor"),
+                        "vendor": descriptor.vendor.to_json(),
+                        "descriptor_hash": new_hash,
+                    })
                 return
             self._conn.execute(
-                "UPDATE node SET capability = ?, occupancy = ?, trust_state = ? "
-                "WHERE node_id = ?",
-                (announce.capability.value, announce.occupancy.value, TrustState.DISCOVERED.value, announce.node_id),
+                "UPDATE node SET capability = ?, occupancy = ?, descriptor = ?, descriptor_hash = ?, "
+                "trust_state = ? WHERE node_id = ?",
+                (kind, occupancy, stored, new_hash, TrustState.DISCOVERED.value, announce.node_id),
             )
-            self._conn.execute(
-                "INSERT INTO audit_log (log_id, event_id, internal_request_id, command_id, step, "
-                "payload_json, created_at) VALUES (?, ?, NULL, NULL, ?, ?, ?)",
-                (
-                    new_id(),
-                    new_id(),
-                    Step.ANNOUNCE.value,
-                    to_json(
-                        {
-                            "node_id": announce.node_id,
-                            "previous_capability": row["capability"],
-                            "previous_occupancy": row["occupancy"],
-                            "capability": announce.capability.value,
-                            "occupancy": announce.occupancy.value,
-                        }
-                    ),
-                    iso(announce.received_at),
-                ),
-            )
+            self._announce_audit(announce, {
+                "previous_descriptor_hash": old_hash,
+                "descriptor_hash": new_hash,
+                "previous_kind": row["capability"],
+                "kind": kind,
+                "previous_occupancy": row["occupancy"],
+                "occupancy": occupancy,
+                "trust_state": TrustState.DISCOVERED.value,
+            })
+
+    def _announce_audit(self, announce: NodeAnnounce, payload: dict) -> None:
+        self._conn.execute(
+            "INSERT INTO audit_log (log_id, event_id, internal_request_id, command_id, step, "
+            "payload_json, created_at) VALUES (?, ?, NULL, NULL, ?, ?, ?)",
+            (new_id(), new_id(), Step.ANNOUNCE.value, to_json({"node_id": announce.node_id, **payload}),
+             iso(announce.received_at)),
+        )
 
     def touch_node(self, node_id: str, seen_at: datetime) -> None:
         self._conn.execute(

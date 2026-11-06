@@ -15,9 +15,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from nearpilot.db.repositories._common import (
-    deferred_transaction, from_json, immediate_transaction, iso, light_controls_from_json,
-    light_from_json, light_to_json, new_id, parse_iso, settings_from_json, settings_to_json,
-    speaker_controls_from_json, speaker_from_json, speaker_to_json, to_json,
+    deferred_transaction, from_json, immediate_transaction, iso,
+    light_from_json, light_to_json, new_id, node_from_row, parse_iso, settings_from_json, settings_to_json,
+    speaker_from_json, speaker_to_json, to_json,
 )
 from nearpilot.shared.enums import (
     Action,
@@ -1050,23 +1050,7 @@ class SqliteExecutionStore:
 
     @staticmethod
     def _node_from_row(row: sqlite3.Row) -> NodeInfo:
-        return NodeInfo(
-            node_id=row["node_id"],
-            place_id=row["place_id"],
-            capability=Capability(row["capability"]),
-            occupancy=Occupancy(row["occupancy"]),
-            trust_state=TrustState(row["trust_state"]),
-            device_state=DeviceState(row["device_state"]),
-            exclusive_group=row["exclusive_group"],
-            last_seen_at=parse_iso(row["last_seen_at"]) if row["last_seen_at"] else None,
-            release_policy=from_json(row["release_policy"]),
-            session_id=row["session_id"],
-            session_first_seen_at=(
-                parse_iso(row["session_first_seen_at"]) if row["session_first_seen_at"] else None
-            ),
-            light_controls=light_controls_from_json(row["light_controls"]),
-            speaker_controls=speaker_controls_from_json(row["speaker_controls"]),
-        )
+        return node_from_row(row)
 
     @staticmethod
     def _use_request_from_row(row: sqlite3.Row) -> UseRequest:

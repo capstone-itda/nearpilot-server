@@ -16,11 +16,14 @@ import logging
 import math
 import threading
 
+from uuid import uuid4
+
 from nearpilot.iot.messages import MessageValidationError, decode_message
 from nearpilot.iot.mqtt.connection import IncomingReport
 from nearpilot.shared.config import Settings
-from nearpilot.shared.interfaces import NodeEventSink
-from nearpilot.shared.models import NodeAnnounce, NodeResult, NodeStatus, RssiFrame
+from nearpilot.shared.enums import Step
+from nearpilot.shared.interfaces import AuditLog, NodeEventSink
+from nearpilot.shared.models import AuditEvent, NodeAnnounce, NodeResult, NodeStatus, RssiFrame
 
 log = logging.getLogger(__name__)
 
@@ -85,11 +88,16 @@ class ReportDelivery:
     """
 
     def __init__(self, sink: NodeEventSink, *, settings: Callable[[], Settings],
-                 config: DeliveryConfig, clock: Callable[[], datetime] = _utc_now):
+                 config: DeliveryConfig, clock: Callable[[], datetime] = _utc_now,
+                 audit: AuditLog | None = None):
         self._sink = sink
         self._settings = settings
         self.config = config
         self._clock = clock
+        self._audit = audit
+        self._audited: set[tuple[str, str | None, str]] = set()
+        # Last accepted announce per connection: cmd version and pre-send check (spec 결정 11).
+        self._latest_announce: dict[tuple[str, str], NodeAnnounce] = {}
         self._condition = threading.Condition(threading.RLock())
         self._inbox: deque[IncomingReport] = deque()
         self._lanes: dict[tuple, deque[_Pending]] = {}
@@ -122,6 +130,11 @@ class ReportDelivery:
                 return None
             return current.session_id
 
+    def announce_for(self, node_id: str, session_id: str) -> NodeAnnounce | None:
+        """The last validated announce (largest seq) of that connection, else None (FR-06)."""
+        with self._condition:
+            return self._latest_announce.get((node_id, session_id))
+
     @property
     def saturated(self) -> bool:
         with self._condition:
@@ -148,6 +161,8 @@ class ReportDelivery:
             decoded = decode_message(report.topic, report.payload, received_at=report.received_at)
         except MessageValidationError as error:
             self._reject(node_id, kind, str(error))
+            if kind == "announce" and parts[:2] == ["nearpilot", "node"] and node_id:
+                self._audit_announce(node_id, error.session_id, str(error))
             return
         settings = self._settings()
         if kind == "announce":
@@ -162,6 +177,26 @@ class ReportDelivery:
     def _reject(self, node_id: str, kind: str, reason: str) -> None:
         # Never log payloads or credentials (NFR-08).
         log.warning("MQTT report rejected: node=%s kind=%s reason=%s", node_id, kind, reason)
+
+    def _audit_announce(self, node_id: str, session_id: str | None, reason: str) -> None:
+        """Rejected announce → one `announce` audit row per (node, connection, reason) (FR-04).
+
+        The payload is never included. A failing audit write only logs: it must not stop
+        report processing.
+        """
+        key = (node_id, session_id, reason)
+        with self._condition:
+            if self._audit is None or key in self._audited:
+                return
+            self._audited.add(key)
+        try:
+            self._audit.append(AuditEvent(
+                event_id=str(uuid4()), step=Step.ANNOUNCE,
+                payload={"node_id": node_id, "session_id": session_id, "reason": reason}))
+        except Exception as error:
+            with self._condition:
+                self._audited.discard(key)
+            log.error("Rejected announce audit failed: node=%s error=%s", node_id, type(error).__name__)
 
     def _stale_or_future(self, received_at: datetime, observed_at: datetime,
                          times: tuple[datetime, ...], max_age: float, skew: float) -> str | None:
@@ -185,6 +220,10 @@ class ReportDelivery:
                 self._reject(announce.node_id, "announce", "handover saturated")
                 return
             self._announces[key] = announce
+            connection = (announce.node_id, announce.session_id)
+            latest = self._latest_announce.get(connection)
+            if latest is None or latest.seq < announce.seq:
+                self._latest_announce[connection] = announce
             self._enqueue((announce.node_id, "observe"), "on_announce", announce)
 
     def _accept_status(self, status: NodeStatus, settings: Settings) -> None:

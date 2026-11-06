@@ -112,7 +112,6 @@ def test_FR09_speaker_setting_json_round_trip():
         (UseRequest, "speaker"),
         (ExecutionContext, "speaker"),
         (CommandRecord, "speaker"),
-        (NodeAnnounce, "speaker_controls"),
         (NodeCommand, "speaker"),
     ],
 )

@@ -374,7 +374,8 @@ class Runtime:
 
         # IOT. 연결 상실과 CORE 인계는 서비스를 만든 뒤 연결한다.
         sink = _ScopedSink(db)
-        delivery = ReportDelivery(sink, settings=settings, config=cfg.delivery, clock=clock)
+        # 거부한 발표는 IOT 가 감사에 남긴다 (FR-04, iot-device-descriptor spec 결정 12).
+        delivery = ReportDelivery(sink, settings=settings, config=cfg.delivery, clock=clock, audit=audit)
         lost = Late("mqtt_connection_lost")
         # 실제 기기의 시각 요청은 수신 스레드에서 바로 답한다 (#236).
         time_responder = TimeResponder(cfg.delivery, clock=clock)

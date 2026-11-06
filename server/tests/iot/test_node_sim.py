@@ -200,7 +200,7 @@ def test_FR04_reconnect_announces_new_session(make):
     assert first.session_id != second.session_id
     assert (first.seq, second.seq) == (1, 1)
     assert decode(node.status()).seq == 1
-    assert (second.capability.value, second.occupancy.value) == ("locker", "rental")
+    assert (second.descriptor.kind, second.occupancy.value) == ("locker", "rental")
 
 
 def test_FR20_simulator_has_no_release_check(make):

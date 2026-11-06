@@ -7,7 +7,8 @@ from datetime import datetime, timedelta
 import pytest
 
 from nearpilot.iot.messages import MessageValidationError, decode_message, encode_command
-from nearpilot.shared.enums import Action, Capability
+from nearpilot.shared.descriptor import legacy_controls, legacy_descriptor
+from nearpilot.shared.enums import Action, Capability, Occupancy
 from nearpilot.shared.models import LightSetting, NodeCommand, SpeakerControls, SpeakerSetting
 
 SESSION = "12345678-1234-1234-1234-123456789abc"
@@ -24,13 +25,13 @@ def announce(capability="speaker", **extra):
 
 def test_FR04_announce_speaker_controls_to_shared_model():
     report = announce(controls={"volume_max": 20})
-    assert report.capability is Capability.SPEAKER
-    assert report.speaker_controls == SpeakerControls(volume_max=20)
-    assert report.light_controls is None
+    assert report.descriptor == legacy_descriptor(Capability.SPEAKER, Occupancy.SHARED, volume_max=20)
+    assert legacy_controls(report.descriptor) == (None, 20)
     for volume_max in (1, 30):  # 범위의 양 끝도 받는다
-        assert announce(controls={"volume_max": volume_max}).speaker_controls == SpeakerControls(volume_max)
-    assert announce().speaker_controls is None  # 이전 펌웨어의 발표는 그대로 받는다
-    assert announce("light", controls={"brightness_max": 64, "color": True}).speaker_controls is None
+        assert legacy_controls(announce(controls={"volume_max": volume_max}).descriptor) == (None, volume_max)
+    assert legacy_controls(announce().descriptor) == (None, None)  # 이전 펌웨어의 발표는 그대로 받는다
+    light = announce("light", controls={"brightness_max": 64, "color": True})
+    assert legacy_controls(light.descriptor)[1] is None
 
 
 @pytest.mark.parametrize("capability, controls", [
@@ -51,10 +52,10 @@ def command(action=Action.ON, light=None, speaker=None):
 
 
 def test_FR06_encode_command_speaker_parameters():
-    data = json.loads(encode_command(command(speaker=SpeakerSetting(12))))
+    data = json.loads(encode_command(command(speaker=SpeakerSetting(12)), schema_version=2))
     assert data["parameters"] == {"volume": 12}
     assert data["action"] == "on"
-    zero = json.loads(encode_command(command(speaker=SpeakerSetting(0))))
+    zero = json.loads(encode_command(command(speaker=SpeakerSetting(0)), schema_version=2))
     assert zero["parameters"] == {"volume": 0} and zero["action"] == "on"
 
 
@@ -66,12 +67,12 @@ def test_FR06_encode_command_speaker_parameters():
 def test_FR09_encode_command_rejects_bad_speaker(cmd):
     # 값 없는 설정, on 이 아닌 명령의 인자, 두 기능의 인자를 함께 담은 명령은 보내지 않는다.
     with pytest.raises(MessageValidationError):
-        encode_command(cmd)
+        encode_command(cmd, schema_version=2)
 
 
 def test_FR22_same_command_same_speaker_parameters():
-    a = encode_command(command(speaker=SpeakerSetting(12)))
-    assert a == encode_command(replace(command(), speaker=SpeakerSetting(12)))
+    a = encode_command(command(speaker=SpeakerSetting(12)), schema_version=2)
+    assert a == encode_command(replace(command(), speaker=SpeakerSetting(12)), schema_version=2)
     # 내용이 다르면 바이트도 다르다. parameters 가 없는 명령과도 다르다.
-    assert a != encode_command(command(speaker=SpeakerSetting(13)))
-    assert a != encode_command(command())
+    assert a != encode_command(command(speaker=SpeakerSetting(13)), schema_version=2)
+    assert a != encode_command(command(), schema_version=2)

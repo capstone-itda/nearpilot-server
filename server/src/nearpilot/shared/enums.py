@@ -128,6 +128,13 @@ class Occupancy(StrEnum):
     SHARED = "shared"  # 공용형: ⑤⑥·세션 생략
 
 
+class ActionRole(StrEnum):
+    """기기 선언의 동작 역할 (#245, device-protocol.md 3절). 역할이 없는 동작은 새 점유를 시작한다."""
+
+    REOPERATE = "reoperate"  # 본인 ACTIVE 대여의 재조작으로만 실행한다. rental 기기만
+    DEACTIVATE = "deactivate"  # 공용형 유지 대상자가 모두 떠나면 서버가 요청한다. shared 기기는 정확히 하나
+
+
 class TrustState(StrEnum):
     DISCOVERED = "discovered"
     TRUSTED = "trusted"

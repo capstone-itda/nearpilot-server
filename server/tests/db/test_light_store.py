@@ -18,6 +18,7 @@ from conftest import (
 
 from nearpilot.db.repositories._common import settings_to_json
 from nearpilot.shared.config import Settings
+from nearpilot.shared.descriptor import legacy_descriptor
 from nearpilot.shared.enums import Action, Capability, Occupancy, StoreOutcome
 from nearpilot.shared.models import LightControls, LightSetting, NodeAnnounce
 
@@ -102,42 +103,46 @@ def test_FR09_last_light_setting_latest_succeeded_on(conn, repo):
     assert repo.last_light_setting("light1") is None
 
 
-def announce(controls, capability=Capability.LIGHT):
+def announce(controls):
+    """조명 v2 발표의 템플릿 선언 (iot-device-descriptor spec 결정 3)."""
+    extra = {} if controls is None else dict(brightness_max=controls.brightness_max, color=controls.color)
     return NodeAnnounce(
-        node_id="light1", capability=capability, occupancy=Occupancy.SHARED,
-        received_at=NOW, session_id="s1", seq=1, sent_at=NOW, light_controls=controls,
+        node_id="light1", descriptor=legacy_descriptor(Capability.LIGHT, Occupancy.SHARED, **extra),
+        received_at=NOW, session_id="s1", seq=1, sent_at=NOW,
     )
 
 
 def test_FR04_announce_stores_controls(conn, repo):
+    """조명 제어 정보는 선언의 brightness 상한과 color 로 계산한다 (spec 결정 7)."""
     repo.upsert_announced_node(announce(RING))
 
-    row = conn.execute("SELECT light_controls FROM node WHERE node_id = 'light1'").fetchone()
-    assert json.loads(row["light_controls"]) == {"brightness_max": 64, "color": True}
+    row = conn.execute("SELECT descriptor FROM node WHERE node_id = 'light1'").fetchone()
+    on = json.loads(row["descriptor"])["actions"][0]
+    assert on["input_schema"]["properties"]["brightness"]["maximum"] == 64
     assert [n.light_controls for n in repo.nodes(Capability.LIGHT)] == [RING]
 
 
-def test_FR04_controls_change_keeps_trust(conn, repo):
-    light_node(conn)  # trusted, controls 없음
+def test_FR04_controls_change_resets_trust(conn, repo):
+    """제어 정보는 선언의 인자 스키마다. 바뀌면 선언 해시가 바뀐다 (FR-04, #245)."""
+    light_node(conn)  # trusted, 선언 없는 행
 
-    repo.upsert_announced_node(announce(RING))
-    repo.upsert_announced_node(announce(RING))  # 같은 값은 감사를 남기지 않는다
-
-    row = conn.execute("SELECT trust_state, light_controls FROM node WHERE node_id = 'light1'").fetchone()
-    assert row["trust_state"] == "trusted" and json.loads(row["light_controls"])["brightness_max"] == 64
-    audits = conn.execute("SELECT step, payload_json FROM audit_log").fetchall()
-    assert [a["step"] for a in audits] == ["announce"]
-    payload = json.loads(audits[0]["payload_json"])
-    assert payload["previous_light_controls"] is None and payload["light_controls"]["brightness_max"] == 64
+    repo.upsert_announced_node(announce(RING))  # 종류·점유 방식이 같아 신뢰를 유지한다 (spec 결정 10)
+    repo.upsert_announced_node(announce(RING))  # 같은 선언은 감사를 남기지 않는다
+    row = conn.execute("SELECT trust_state FROM node WHERE node_id = 'light1'").fetchone()
+    assert row["trust_state"] == "trusted"
+    assert conn.execute("SELECT COUNT(*) AS c FROM audit_log").fetchone()["c"] == 0
 
     repo.upsert_announced_node(announce(None))
-    row = conn.execute("SELECT trust_state, light_controls FROM node WHERE node_id = 'light1'").fetchone()
-    assert row["trust_state"] == "trusted" and row["light_controls"] is None
-    assert conn.execute("SELECT COUNT(*) AS c FROM audit_log").fetchone()["c"] == 2
+    row = conn.execute("SELECT trust_state FROM node WHERE node_id = 'light1'").fetchone()
+    assert row["trust_state"] == "discovered"
+    payload = json.loads(conn.execute("SELECT payload_json FROM audit_log").fetchone()["payload_json"])
+    assert payload["previous_descriptor_hash"] != payload["descriptor_hash"]
 
 
 def test_FR04_light_control_columns_migrated(conn):
+    """발표한 제어 정보 열은 선언으로 옮겨 지웠다. 명령의 조명 설정 열은 남는다 (spec 결정 9)."""
     node_cols = {r["name"] for r in conn.execute("PRAGMA table_info(node)")}
     command_cols = {r["name"] for r in conn.execute("PRAGMA table_info(node_command)")}
-    assert "light_controls" in node_cols and "light" in command_cols
-    assert conn.execute("PRAGMA user_version").fetchone()[0] >= 8
+    assert "light_controls" not in node_cols and {"descriptor", "descriptor_hash"} <= node_cols
+    assert "light" in command_cols
+    assert conn.execute("PRAGMA user_version").fetchone()[0] >= 10
