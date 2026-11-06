@@ -1,0 +1,183 @@
+# 기기 공개 규칙
+
+<!--
+이 문서는 "제작사는 기기를 NearPilot에 붙이려면 무엇을 구현해야 하는가"에 답한다.
+쓰는 것: 제작사가 구현할 필수 항목과 선택 항목, 기기 선언 형식, 크기 상한, 버전 정책, 서버의 처리
+쓰지 않는 것: 서버 내부 계약 (architecture.md), 요구사항 (requirements.md)
+이 문서는 외부 계약이다. 변경은 decision PR로만 하고, 서버 문서와 같은 PR에서 함께 바꾼다.
+-->
+
+[#245](https://github.com/capstone-itda/nearpilot-server/issues/245)의 A안과 세부 질문 권장안(2026-11-06 대면 합의)을 따른다.
+
+- 선언 형식 버전: `nearpilot.device/1`
+- MQTT 기기 메시지: `announce`와 `cmd`는 `schema_version` 3이다. 그 밖의 메시지 버전은 `architecture.md` §5 MQTT를 따른다.
+- 팀의 ESP32 펌웨어는 이 규칙의 참조 구현이다.
+
+## 1. 역할 나눔
+
+| 누가 정하나 | 무엇을 | 언제 |
+|---|---|---|
+| 제작사 | 종류(`kind`), 점유 방식, 동작 목록, 인자 스키마 | 펌웨어를 만들 때. 선언을 펌웨어에 내장한다. |
+| 서버 (소유자가 앱으로 넣는다) | `node_id`, MQTT 계정과 비밀번호, 서버 주소와 포트 | 기기를 처음 설치할 때 |
+| 사용자 | Wi-Fi 이름과 비밀번호 | 기기를 처음 설치할 때 |
+| 소유자 | 신뢰, 장소 배치, 접근 정책 | 기기가 처음 발표한 뒤 |
+
+- 서버는 기기의 동작이나 점유 방식을 기기에 넣지 않는다.
+- 서버가 접속 정보를 정한다. 브로커는 기기마다 다른 계정으로 자기 토픽만 쓰게 막는다.
+
+## 2. 구현 항목
+
+제작사는 필수 항목을 모두 구현한다. 선택 항목을 구현하기로 하면 이 문서의 규칙을 따른다.
+
+| 항목 | 구분 | 규칙 |
+|---|---|---|
+| 접속 설정 수신 | 필수 | BLE 설정 서비스와 줄 형식(`CONFIG_BEGIN` 등). `architecture.md` §5 "BLE 기기 설정"을 따른다. 설정 키는 접속 정보와 Wi-Fi뿐이다. |
+| MQTT 접속과 토픽 | 필수 | 기기별 계정으로 접속한다. 토픽은 `nearpilot/node/{node_id}/{종류}`다. QoS와 retain은 `architecture.md` §5 MQTT 1절을 따른다. |
+| 시각 동기화 | 필수 | `time_request`와 `time`으로 서버 시각에 맞춘다. 시각을 검증하기 전에는 새 명령을 `CLOCK_UNVERIFIED`로 거부한다. `architecture.md` §5 MQTT 6절을 따른다. |
+| 기기 선언 | 필수 | 접속할 때마다 시각을 맞춘 뒤 `announce`(retained)로 선언을 발표한다. 형식은 아래 3절이다. |
+| 명령 접수 | 필수 | 명령 ID 중복 처리, 대상 연결과 만료 검사, `DEVICE_BUSY`, 기록 보존. `architecture.md` §5 MQTT 4절을 따른다. 동작과 인자는 자기 선언으로 검사한다. |
+| 상태와 결과 보고 | 필수 | `status`와 `result`의 상태 값과 성공의 뜻. `architecture.md` §5 MQTT 5절을 따른다. 성공은 제어 신호 출력 완료다. |
+| RSSI 보고 | 선택 | 비콘 스캔과 `rssi` 보고. `requirements.md` FR-05와 `architecture.md` §5 MQTT 3절의 `rssi` 형식을 따른다. |
+| 원격 재시작 | 선택 | `restart`. `architecture.md` §5 MQTT 8절을 따른다. |
+| 점유 표시 | 선택 | `occupancy`. `architecture.md` §5 MQTT 3절의 점유 표시 규칙을 따른다. 표시에만 쓴다. |
+
+- 근접 추정에 참여하려는 제작사는 RSSI 보고를 구현한다. 팀이 만드는 기기는 모두 RSSI를 보고한다.
+- RSSI를 보고하지 않는 기기도 장소에 둘 수 있다. 서버는 같은 장소의 다른 앵커 관측으로 장소를 확인하고 이탈을 판단한다.
+- 근접 모델 파일에 배치하기 전에는 기기를 명시적 지정(예: `light-2`)으로만 쓸 수 있다. 근접 지정(`nearest:`)과 전역 할당(`any:`)의 후보가 아니다.
+- 적합성 시험 도구는 이 규칙에 넣지 않는다. 시뮬레이터를 참조 구현으로 맞춘 뒤 별도 이슈로 다룬다.
+
+## 3. 기기 선언 형식
+
+`announce` 본문은 MQTT 공통 필드(`schema_version`, `node_id`, `session_id`, `seq`, `sent_at`)와 `descriptor`를 담는다.
+
+```json
+{
+  "schema_version": 3,
+  "node_id": "light-2",
+  "session_id": "6f1c…",
+  "seq": 1,
+  "sent_at": "2026-11-05T03:00:00.000Z",
+  "descriptor": {
+    "format": "nearpilot.device/1",
+    "kind": "light",
+    "occupancy": "shared",
+    "vendor": { "name": "acme", "model": "ring-light-a", "firmware": "1.4.0" },
+    "actions": [
+      {
+        "name": "on",
+        "description": "조명을 켜고 밝기와 색을 정한다",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "brightness": { "type": "integer", "minimum": 0, "maximum": 64 },
+            "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "result": { "kind": "signal_output" }
+      },
+      {
+        "name": "off",
+        "description": "조명을 끈다",
+        "role": "deactivate",
+        "input_schema": { "type": "object", "properties": {}, "additionalProperties": false },
+        "result": { "kind": "signal_output" }
+      }
+    ]
+  }
+}
+```
+
+| 필드 | 뜻 |
+|---|---|
+| `format` | 선언 형식의 버전이다. `nearpilot.device/{N}`의 정수 버전 하나만 쓴다. MQTT `schema_version`과 따로 관리한다. |
+| `kind` | 종류 이름이다. 근접 지정(`nearest:{kind}`), 전역 할당(`any:{kind}`), 종류별 서버 설정 조회에 쓴다. 열거형이 아닌 문자열이다. |
+| `occupancy` | 기기 단위의 점유 방식이다. `rental`(대여형) 또는 `shared`(공용형)다. |
+| `vendor` | 제작사 이름 `name`, 모델 `model`, 펌웨어 버전 `firmware`다. 소유자의 신뢰 판단과 감사 기록에 쓴다. 판정에는 쓰지 않는다. |
+| `actions` | 동작 선언의 목록이다. |
+| `actions[].name` | 동작 이름이다. `cmd`의 `action`과 `request_use`의 동작이 이 값이다. |
+| `actions[].description` | AI 호스트가 동작을 고를 때 읽는 설명이다. |
+| `actions[].role` | 동작 역할이다. 없을 수 있다. 아래 표를 따른다. |
+| `actions[].input_schema` | 인자의 JSON Schema다. 아래 "인자 스키마"를 따른다. |
+| `actions[].result.kind` | 결과 종류다. 지금은 `signal_output` 하나다. 성공은 제어 신호 출력 완료다. |
+
+### 동작 역할
+
+서버는 역할로만 동작의 뜻을 구분한다. 종류와 동작 이름으로 판정하지 않는다.
+
+| `role` | 뜻 | 제약 |
+|---|---|---|
+| 없음 | 새 점유를 시작하는 일반 동작이다. 공용형에서는 켜기 요청이다. | 없음 |
+| `reoperate` | 본인 `ACTIVE` 대여의 재조작으로만 실행한다. 승인 사용분을 예약하지 않는다. 사물함 `close`가 예다. | `rental` 기기만 가질 수 있다. |
+| `deactivate` | 공용형 기기의 유지 대상자가 모두 떠나면 서버가 요청하는 동작이다. 방문자도 명시적으로 요청할 수 있다. | `shared` 기기는 정확히 하나를 선언한다. 인자를 받지 않는다. |
+
+- 서버가 모르는 `occupancy`나 `role`은 형식 위반이다. 서버는 그 발표를 거부한다.
+- 새 점유 방식과 역할은 서버 판정의 변경과 decision을 거쳐 `format`의 새 버전으로만 추가한다.
+- `rental` 기기가 `deactivate` 역할을 선언하면 서버는 발표를 거부한다.
+
+### 생략한 인자
+
+`request_use`에서 생략한 인자는 서버가 아래 순서로 채운다.
+
+1. 같은 기기, 같은 동작의 마지막 성공 명령의 값
+2. 서버의 인자 기본값 설정 `param_default.{kind}.{action}.{arg}`
+3. 둘 다 없으면 생략한 채 보낸다. 기기는 생략한 인자의 출력을 스스로 정한다.
+
+### 인자 스키마
+
+`input_schema`는 MCP `inputSchema`와 같은 JSON Schema의 부분집합이다.
+
+- 허용 키워드: `type`, `properties`, `required`, `minimum`, `maximum`, `enum`, `pattern`, `maxLength`, `additionalProperties`
+- 최상위 `type`은 `object`다.
+- 스키마 깊이는 1이다. 인자는 객체와 배열이 아닌 평탄한 값이다.
+- 서버는 모르는 키워드가 있는 선언을 거부한다. 키워드를 추가하면 `format` 버전을 올린다.
+
+## 4. 크기 상한과 이름 규칙
+
+상한을 넘는 선언은 서버가 거부한다. 상한은 고정값이다. 제작사의 하드웨어가 작아도 이 상한 안에서 선언을 만들 수 있다.
+
+| 항목 | 상한 |
+|---|---|
+| `announce` 전체 | 2048바이트 |
+| 동작 수 | 8 |
+| 동작 이름 | 32바이트, `^[a-z][a-z0-9_]*$` |
+| 종류 이름 | 동작 이름과 같다 |
+| 설명 | 120바이트 (UTF-8 기준. 한국어는 약 40자) |
+| 동작당 인자 수 | 8 |
+| 스키마 깊이 | 1 (평탄한 인자만) |
+| `enum` 항목 수 | 16 |
+| `pattern` 길이 | 64바이트 |
+
+- 종류 이름의 규칙은 `target_spec`의 `nearest:{kind}` 문법과 충돌하지 않게 한다.
+- 위 상한으로 조회 응답의 기기 정보는 기기당 약 2KB 이하다.
+
+## 5. 서버의 처리
+
+1. 서버는 형식 버전, 허용 키워드, 크기 상한, 이름 규칙, 점유 방식과 역할을 검증한다. 실패하면 발표를 거부하고 감사 로그에 남긴다.
+2. 서버는 처음 보는 기기를 `discovered`로 저장한다. 발표는 신뢰 부여가 아니다.
+3. 소유자가 대시보드에서 선언(제작사, 모델, 동작 목록, 선언 해시)을 확인하고 기기를 신뢰한다. 장소와 접근 정책도 정한다.
+4. AI 호스트는 조회 응답에서 기기마다 동작 이름, 설명, 인자 스키마를 받는다.
+5. 호스트가 `request_use`로 동작과 `arguments`를 보낸다. 서버는 선언으로 동작과 인자를 검증한다.
+6. 서버는 판정이 허가한 명령만 `cmd`로 보낸다. 기기는 자기 선언으로 다시 검사한 뒤 실행한다.
+
+- 선언 해시: 서버는 `kind`, `occupancy`, `actions` 전체로 선언 해시를 계산한다. 설명도 해시에 넣는다. 바뀐 설명은 호스트의 동작 선택을 바꿀 수 있기 때문이다.
+- 펌웨어 갱신으로 선언 해시가 바뀌면 서버는 기기를 `discovered`로 되돌린다. 소유자가 다시 신뢰해야 쓸 수 있다.
+- `vendor`만 바뀌면 신뢰는 유지된다. 서버는 새 값을 저장하고 감사 로그에 남긴다.
+- 진행 중인 점유가 있는 기기의 선언 해시가 바뀌면 서버는 기기를 `FAULT`로 격리한다. 소유자의 복구를 거쳐야 다시 쓸 수 있다.
+- 안전 범위: 서버는 선언의 범위와 서버의 인자 상한 설정 중 좁은 범위로 검사한다. 기기도 자기 선언으로 다시 검사하고, 벗어나면 구동 전에 `UNSUPPORTED_PARAMETER`로 거부한다. 선언에 없는 동작은 `UNSUPPORTED_ACTION`으로 거부한다.
+- 종류별 서버 설정: 근접 지정에는 `threshold_{kind}`가, 전역 할당에는 `any_allowed_kinds` 등록이 필요하다. 운영자가 설정을 추가하지 않으면 그 종류는 명시적 지정으로만 쓴다. 서버 코드는 고치지 않는다.
+
+## 6. 버전 정책
+
+- `format`은 정수 주 버전만 쓴다. 하위 버전은 두지 않는다.
+- 서버는 현재 버전과 바로 앞 버전을 함께 받는다.
+- 앞 버전의 지원 종료는 decision PR로 정한다. 이 문서에 미리 알린다.
+- 모르는 키워드, 점유 방식, 역할은 거부한다. 무시하면 기기가 의도한 제한이 서버에서 빠질 수 있기 때문이다.
+- 지금 서버가 받는 버전은 `nearpilot.device/1`이다. 팀 기기의 전환 기간에는 MQTT v2 `announce`도 받는다. 서버는 기기가 마지막으로 발표한 버전으로 `cmd`를 보낸다. v2 수신은 팀 기기를 모두 v3로 올린 뒤 끝낸다.
+
+## 7. 등록 직후 사용의 한계
+
+- 처음 등록한 기기는 소유자가 신뢰한 뒤 서버를 재시작하면 쓸 수 있다. 서버 실행 중 처음 발표한 기기는 재시작 복원을 거치지 않았기 때문이다 (`requirements.md` FR-04, 2026-10-26 결정).
+- "등록 즉시 사용"은 "서버 코드 수정 없이 사용"이라는 뜻이다.
+- 근접 모델 파일에 배치하기 전에는 명시적 지정으로만 쓴다 (2절).

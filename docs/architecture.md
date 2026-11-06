@@ -59,7 +59,7 @@ flowchart TB
 nearpilot-server/
 ├── AGENTS.md                   에이전트 지침
 ├── CLAUDE.md                   AGENTS.md를 불러온다
-├── docs/                       제품, 요구사항, 아키텍처, 문체와 용어
+├── docs/                       제품, 요구사항, 아키텍처, 문체와 용어, 기기 공개 규칙
 ├── specs/                      작업 명세 specs/{계층}-{요약}/spec.md
 │   └── _template/              spec 양식
 ├── .github/                    이슈 양식, PR 양식, CI
@@ -156,8 +156,8 @@ api  ──▶  core  ──▶  db
 | 정책 검사 인터페이스 | DB (`core/policy`) | CORE (판정) | ④에서 계정, 확정한 기기, 동작, 현재 시각과 내부 요청 ID(남은 횟수에서 뺄 같은 요청의 사용분)로 정책과 승인을 검사한다 (`PolicyChecker.check`). 허용, 승인 필요, 거부와 사유, 적용한 정책 버전(정책이 없으면 없음), 승인 ID를 `PolicyCheckResult`로 반환한다. 정책 모드, 승인 범위, 정책 버전 비교 규칙은 이 접점 안에 둔다. 승인 필요 사유는 승인 이력으로 고른다. 상세는 아래 "승인 이력과 승인 필요 사유"에 있다. 승인 사용분 예약은 하지 않는다 (`reserve_if_free`). |
 | 근접 추정 인터페이스 | 근접 추정 (`core/proximity`) | CORE (판정) | ③에서 비콘, 후보 기기, 시각으로 후보별 사후확률을 계산한다 (`ProximityEstimator.posterior`). 근접 추정은 장소의 전체 상태로 계산한 후보의 확률을 다시 정규화하지 않고 반환한다. `ProximityResult.posteriors`의 합은 1 이하다. 판정은 근접 지정과 전역 할당에 ②의 전체 후보를 넘긴다. 명시 지정은 장소의 비콘 수신과 후보를 확인한 뒤 `posterior` 호출과 임계값 검사를 생략한다. 상세는 아래 "근접 사후확률의 범위"에 있다. |
 | 감사 로그 인터페이스 | DB | CORE | 단계별 입력, 결과, 버전, 임계값, 후보 확률의 기록 (`AuditLog.append`). 감사 테이블이 원본이다. JSONL은 커밋한 행을 내보낸 사본이다. |
-| 기기 명령 인터페이스 | IOT | CORE | `command_id`별로 전송과 결과를 추적한다. 확실한 미전송, 전송 뒤 성공, 전송 뒤 실패, 결과 불명을 구분한다. 시간 초과와 연결 끊김을 미실행으로 보지 않는다. 기기가 구동 전에 `DEVICE_BUSY`로 거부한 결과는 거부 상태와 사유를 그대로 전달한다 (§5 MQTT 5절). 접점은 `NodeCommandGateway.send`다. |
-| 기기 이벤트 인터페이스 | CORE | IOT | CORE는 기능 발표, RSSI 프레임, 명령 처리 상태와 실행 결과를 받는다 (`NodeEventSink`). 논리적 점유 해제는 CORE가 결정한다. |
+| 기기 명령 인터페이스 | IOT | CORE | `command_id`별로 전송과 결과를 추적한다. 확실한 미전송, 전송 뒤 성공, 전송 뒤 실패, 결과 불명을 구분한다. 시간 초과와 연결 끊김을 미실행으로 보지 않는다. 기기가 구동 전에 `DEVICE_BUSY`로 거부한 결과는 거부 상태와 사유를 그대로 전달한다 (§5 MQTT 5절). IOT는 보내기 전에 저장한 기기 선언으로 동작과 인자를 다시 검증하고, 맞지 않으면 보내지 않고 `NOT_SENT`를 반환한다 (FR-06). 접점은 `NodeCommandGateway.send`다. |
+| 기기 이벤트 인터페이스 | CORE | IOT | CORE는 기기 선언 발표, RSSI 프레임, 명령 처리 상태와 실행 결과를 받는다 (`NodeEventSink`). 논리적 점유 해제는 CORE가 결정한다. |
 | 기능 인터페이스 | CORE | API | MCP 도구 6개와 관리 기능 (계정 등록, 기기 신뢰, 정책, 승인, `FAULT` 복구) |
 | 모니터링 발행 인터페이스 | API (`api/ws`) | 대시보드 따라 읽기 (`core/dashboard/`) | 따라 읽기가 커밋된 DB 행을 주기마다 읽어 이벤트로 바꿔 넘긴다 (`MonitorFeed.publish`). 되돌려진 쓰기는 발행하지 않고, 같은 테이블의 행은 커밋 순서대로 낸다. 판정, 상태 관리, IOT, MCP 도구는 발행을 부르지 않는다 (2026-10-24 대시보드 담당 결정. 2026-10-23 팀 결정의 "사건이 난 영역이 그 자리에서 넘긴다"를 바꾼다). 어느 스레드에서 불러도 막지 않고 예외를 올리지 않는다. 모니터링의 실패는 판정과 실행을 바꾸지 않는다 (NFR-07). 사람은 사용자 ID와 역할(`Subject`)로 넘기고, API가 이름으로 바꾸며 형식 밖의 키를 버린다 (FR-11). 형식은 §5 WebSocket이다. 자유 문자열(`detail`, 감사 `text`)과 맵 키에 사용자 ID를 넣지 않는 것은 따라 읽기가 지킨다 (2026-10-23 팀 결정). |
 | 대시보드 조회 인터페이스 | CORE (`core/dashboard/` 대시보드 조회 서비스) | API (`api/ws`, `api/rest`) | 스트림 연결 직후의 지금 상태(`MonitorSnapshot.current_events`)와 조회 REST 9개의 결과(`DashboardQueries`)를 준다. 조회 서비스는 저장소의 읽기 접점(`DashboardReadStore`) 위에서 만들고, 조회 하나를 읽기 트랜잭션 하나에서 읽는다. 결과는 §5 REST "대시보드 조회" 형식의 키로 담고, 사람은 `Subject`, 시각은 시간대가 있는 `datetime`, 수는 `int`·`float`로 넘긴다. null 허용 키는 값이 없어도 키를 빼지 않고 `None`을 넣는다. API는 형식 밖의 키를 버리지만 허용 키의 값은 그대로 보낸다. 자유 문자열(감사 `text`, 단계 `detail`, 이력 `outcome`, 점유 `sessionNote`, 점검 `note`, 대여 타임라인 `text`, 지표 문구)과 맵 키에 사용자 ID를 넣지 않는 것은 값을 만드는 쪽이 지킨다 (2026-10-23 팀 결정). |
@@ -611,7 +611,8 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - 판정은 명시 지정의 최초 사용과 재조작에서 기기별 근접 확률 검사를 생략한다. 최초 판정과 실행 직전 재검사에 같은 규칙을 적용한다.
 - 명시 지정도 대상 장소의 비콘 수신, 후보, 정책, 승인과 점유 검사를 유지한다.
 - 판정은 ③ 감사 기록에 `skipped=true`와 명시 지정 사유를 남긴다. 계산하지 않은 `p_max`와 모델 버전은 `None`, 사후확률 표는 빈 값이다.
-- 전역 할당은 `any:locker` 요청만 묶고 `threshold_locker`를 적용한다. 명시 지정의 확률 검사 생략을 적용하지 않는다.
+- 전역 할당은 `any_allowed_kinds`에 있는 종류의 `any:{kind}` 요청을 종류별로 묶고 `threshold_{kind}`를 적용한다. 초기 설정은 `any:locker`와 `threshold_locker`다. 명시 지정의 확률 검사 생략을 적용하지 않는다 (#245).
+- 판정은 근접 모델 파일에 배치가 없는 기기를 근접 지정과 전역 할당의 후보에서 뺀다. 이 기기는 명시 지정으로만 쓴다 (FR-05, #245).
 - 감사 기록의 후보 확률은 다시 정규화하지 않은 값이다.
 - `threshold_explicit_locker`, `threshold_explicit_light`, `threshold_explicit_speaker`는 이전 설정과 저장된 스냅샷의 호환 필드다. 기존 값 검증은 유지하지만 판정에는 쓰지 않는다.
 - 미결: 스피커의 근접 임계값. 설정 이름은 `threshold_speaker`다. 기본값 `None`이면 스피커의 근접 지정 실행을 허가하지 않는다 (#61).
@@ -681,14 +682,14 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | 종류 | `shared` 모델 | 전달할 정보와 필드 |
 |---|---|---|
 | 기기 보고의 공통 정보 | 아래 모델 모두 | `node_id`, 기기 연결 ID `session_id`, 순번 `seq`, 발행 시각 `sent_at`, 서버 수신 시각 `received_at` |
-| 기능 발표 | `NodeAnnounce` | 공통 정보, `capability`, `occupancy`, 조명 제어 정보 `light_controls` (`LightControls`. 없을 수 있다), 스피커 제어 정보 `speaker_controls` (`SpeakerControls`. 없을 수 있다) |
+| 기기 선언 발표 | `NodeAnnounce` | 공통 정보, 기기 선언 `descriptor` (`DeviceDescriptor`). 선언은 `format`, `kind`, `occupancy`, `vendor`, 동작 선언 목록 `actions` (`ActionSpec`)를 담는다 (#245). v2 발표이면 IOT가 종류별 선언 템플릿으로 `descriptor`를 만든다. |
 | RSSI | `RssiFrame` | 공통 정보, 관측 시각 `frame_ts`, `beacon`, `rssi` |
 | 상태 | `NodeStatus` | 공통 정보, 보고 기준 시각 `observed_at`, 펌웨어의 명령 처리 상태. 새 필드 형식은 미결이다. |
 | 실행 결과 | `NodeResult` | 공통 정보, `command_id`, 결과 사건 ID `event_id`, 결과 발생 시각 `occurred_at`, 기기가 보고한 상태 `state` (`NodeResultState`), 오류 근거 `error_code` |
 
 | 접점 | 전달하는 사건 |
 |---|---|
-| `NodeEventSink.on_announce(NodeAnnounce)` | 기능 발표 |
+| `NodeEventSink.on_announce(NodeAnnounce)` | 기기 선언 발표 |
 | `NodeEventSink.on_rssi(RssiFrame)` | RSSI 프레임 |
 | `NodeEventSink.on_status(NodeStatus)` | 펌웨어의 명령 처리 상태 |
 | `NodeEventSink.on_result(NodeResult)` | 결과 대기 중의 실행 결과와 결과 대기가 끝난 뒤의 실행 결과 |
@@ -708,6 +709,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - CORE 인계가 실패하면 IOT는 실패를 기록하고 다시 인계한다. IOT는 인계에 실패한 결과를 전달 완료로 버리지 않는다.
 - DB에 없는 명령의 결과는 이 서버가 보낸 명령의 결과가 아니다. CORE는 `command_id`와 함께 경고를 기록하고 인계를 끝낸다. 판정, 점유와 기기 상태는 바꾸지 않는다. 기기가 DB 교체 전의 명령 기록을 다시 보고하는 경우다.
 - `NodeStatus`와 `CommandResult`에는 `safe` 필드를 두지 않는다. 물리 안전은 검사 대상에서 제외한다.
+- IOT는 기기 선언의 형식 버전, 허용 키워드, 크기 상한, 이름 규칙, 점유 방식과 동작 역할을 검증한 뒤에만 `NodeAnnounce`를 전달한다. 규칙은 `device-protocol.md`에 있다. 거부한 발표는 IOT가 기록한다 (#245).
 
 ### 명시적 반납과 논리적 종료
 
@@ -744,7 +746,9 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 
 - DB는 처음 보는 `node_id`의 발표를 `discovered`로 저장한다. 발표는 신뢰 부여가 아니다.
 - 내용이 같은 재발표는 신뢰 상태를 바꾸지 않는다.
-- 신뢰한 기기가 다른 기능이나 다른 점유 방식으로 발표하면 DB는 신뢰 상태를 `discovered`로 되돌린다. DB는 기능과 점유 방식을 새 값으로 바꾼다. DB는 같은 트랜잭션에서 변경을 감사 로그에 기록한다.
+- DB는 기기 선언과 선언 해시를 `node`에 저장한다. 선언 해시는 `kind`, `occupancy`, `actions` 전체(`name`, `description`, `role`, `input_schema`, `result`)로 계산한다. `vendor`는 해시에 넣지 않는다 (#245). 해시의 정규화 방식은 DB spec "결정" 절에 쓴다.
+- 신뢰한 기기의 선언 해시가 바뀌면 DB는 신뢰 상태를 `discovered`로 되돌린다. DB는 선언과 해시를 새 값으로 바꾼다. DB는 같은 트랜잭션에서 변경을 감사 로그에 기록한다.
+- `vendor`만 바뀌면 DB는 새 값을 저장하고 감사 로그에 기록한다. 신뢰 상태는 바꾸지 않는다.
 - 소유자가 다시 신뢰해야 기기가 후보가 된다.
 - `touch_node()`는 저장한 값보다 새로운 시각일 때만 `last_seen_at`을 바꾼다.
 - DB는 현재 기기 연결 ID와 그 연결의 첫 수신 시각을 `node`에 저장한다. 저장 접점은 `Repository.set_node_session`이다. 같은 기기 연결 ID를 다시 받으면 DB는 첫 수신 시각을 바꾸지 않는다.
@@ -754,7 +758,8 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - DB는 `(node_id, 기기 연결 ID, 순번, 비콘)`이 같은 관측을 한 번만 저장한다. `RssiFrame`의 필드 이름은 `session_id`, `seq`, `sent_at`, `received_at`이다.
 - `tools/data_collection`이 수집 회차와 라벨을 기록한다. DB는 저장한 관측에 수집 회차 ID를 연결한다.
 - 근접 추정은 HMM 내부 상태를 메모리에 둔다. DB의 관측은 재현과 재시작 복원에 쓴다.
-- 진행 중인 점유(`RESERVED`, `ACTIVE`, `CLOSING`)가 있는 기기의 발표 내용이 바뀔 때 `isolate_device`로 격리할지는 상태 관리가 정한다. 이 판단은 상태 관리 영역의 내부 결정이다.
+- 진행 중인 점유(`RESERVED`, `ACTIVE`, `CLOSING`)가 있는 기기의 선언 해시가 바뀌면 상태 관리는 `isolate_device`로 기기를 `FAULT`로 격리한다. 복구는 NFR-04의 기존 경로를 쓴다 (#245 담당자 결정. 상태 관리의 내부 결정에 맡기던 규칙을 바꾼다).
+- 기존 기기의 이전: DB 이전은 기존 `capability`, `occupancy`, 제어 정보로 종류별 선언 템플릿을 채워 선언과 해시를 만든다. 신뢰 상태는 유지한다. 템플릿은 참조 펌웨어가 내장할 선언과 같다 (#245).
 - 기기 발표의 신뢰 되돌림 감사는 `Step.ANNOUNCE`(`announce`)다. 관리 쓰기의 감사는 `Step.ADMIN`(`admin`)이다.
 
 ### RSSI 수집 회차
@@ -863,37 +868,30 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - 소유자는 스크립트로 두 경로를 호출한다. 대시보드는 복구 화면을 두지 않는다.
 - 복구 스크립트는 `nearpilot recover`(`src/nearpilot/cli/recover.py`)다. 복구 두 경로만 부르고 DB를 열지 않는다. 복구 경로와 같은 담당이 맡는다.
 
-### 조명 설정의 전달
+### 동작 선언과 인자의 전달
 
-2026-10-27 담당자 결정이다. 규칙은 `requirements.md` FR-09에 있다.
-
-| 모델 | 정보 | 만드는 영역 |
-|---|---|---|
-| `LightSetting` | `brightness`(정수), `color`(`#RRGGBB` 대문자). 두 값은 각각 없을 수 있다. | API가 입력을 검증해서 만든다. |
-| `LightControls` | 발표한 밝기 상한 `brightness_max`와 색 지원 여부 `color` | IOT가 발표를 검증해서 만든다. |
-| `UseRequest.light` | 방문자가 준 조명 설정. 인자가 없으면 `None`이다. | API |
-| `NodeCommand.light` | 서버가 정한 밝기와 색. 두 값을 모두 담는다. 인자 없는 명령이면 `None`이다. | 상태 관리 |
-
-- API는 자료형, 형식, 대상 기능과 동작을 검사한다. 기기별 지원 여부와 상한은 판정이 ③ 뒤에 검사한다.
-- 판정은 생략한 인자를 정하고 실행 인계에 담는다. 마지막 조명 설정은 DB의 마지막 성공 `on` 명령에서 읽는다.
-- 상태 관리는 인계받은 조명 설정을 `NodeCommand.light`에 담는다. DB는 명령 기록과 함께 저장하고 복원한다.
-- IOT는 `NodeCommand.light`를 `cmd`의 `parameters`로 보낸다. IOT는 값을 바꾸지 않는다.
-- 조회 응답은 조명 제어 정보를 `controls`(`brightness_max`, `color`)로 담는다. `brightness_max`는 발표 값과 `light_brightness_max` 중 작은 값이다.
-
-### 스피커 음량의 전달
-
-2026-10-29 담당자 결정이다. 규칙은 `requirements.md` FR-09에 있다. 전달 경로는 조명 설정과 같다.
+[#245](https://github.com/capstone-itda/nearpilot-server/issues/245)의 A안이다. 규칙은 `requirements.md` FR-09에 있다. 선언 형식은 `device-protocol.md`에 있다.
+이 절은 2026-10-27 "조명 설정의 전달"과 2026-10-29 "스피커 음량의 전달"을 대체한다.
 
 | 모델 | 정보 | 만드는 영역 |
 |---|---|---|
-| `SpeakerSetting` | `volume`(정수). 없을 수 있다. | API가 입력을 검증해서 만든다. |
-| `SpeakerControls` | 발표한 음량 상한 `volume_max` | IOT가 발표를 검증해서 만든다. |
-| `UseRequest.speaker` | 방문자가 준 음량. 인자가 없으면 `None`이다. | API |
-| `NodeCommand.speaker` | 서버가 정한 음량. 인자 없는 명령이면 `None`이다. | 상태 관리 |
+| `DeviceDescriptor` | `format`, `kind`, `occupancy`, `vendor`, `actions` | IOT가 발표를 검증해서 만든다. |
+| `ActionSpec` | `name`, `description`, `role`(없을 수 있다), `input_schema`, `result` | IOT |
+| `UseRequest.arguments` | 방문자가 준 동작 인자 객체. 없을 수 있다. | API |
+| `NodeCommand.arguments` | 서버가 정한 동작 인자 객체 | 상태 관리 |
 
-- 판정은 ③ 뒤에 지원 여부와 상한을 검사하고 생략한 음량을 정한다. 마지막 음량은 DB의 마지막 성공 `on` 명령에서 읽는다.
-- IOT는 `NodeCommand.speaker`를 `cmd`의 `parameters`로 보낸다. IOT는 값을 바꾸지 않는다.
-- 조회 응답은 스피커 제어 정보를 `controls`(`volume_max`)로 담는다. `volume_max`는 발표 값과 `speaker_volume_max` 중 작은 값이다.
+| 영역 | 책임 |
+|---|---|
+| API | `arguments`가 객체인지만 검사한다. 대상 종류와 동작별 인자를 검사하지 않는다. |
+| 판정 | 대상을 정한 뒤 저장한 선언으로 동작과 인자를 검증한다. 생략한 인자를 정한다. 선언의 범위와 `param_max.{kind}.{action}.{arg}` 중 좁은 범위로 검사한다. 사유 코드는 `UNSUPPORTED_ACTION`, `INVALID_INPUT`, `PARAMETER_OUT_OF_RANGE`다. 판정은 동작 역할과 점유 방식으로 ⓪~⑥을 정한다. 종류로 판정 분기를 두지 않는다 (NFR-07). |
+| 상태 관리 | 인계받은 인자를 `NodeCommand.arguments`에 담는다. 이탈 꺼짐에는 그 기기의 `deactivate` 동작을 인자 없이 보낸다 (FR-20). |
+| DB | 명령 기록에 인자를 저장하고 복원한다. 기존 명령 기록의 `light`, `speaker` 값은 키가 같으므로 `arguments`로 읽는다. |
+| IOT | 보내기 전에 저장한 선언으로 동작과 인자를 다시 검증한다. 맞지 않으면 보내지 않고 `NOT_SENT`다. 맞으면 `cmd`의 `action`과 `arguments`로 보낸다. IOT는 값을 바꾸지 않는다. |
+| API의 조회 응답 | 기기마다 `kind`와 `actions`(`name`, `description`, `input_schema`)를 담는다. 인자 스키마의 상한은 선언 값과 `param_max` 설정 중 작은 값이다. `vendor`와 선언 해시는 담지 않는다 (FR-11). |
+
+- 판정이 근거로 쓰는 선언 값은 `occupancy`와 `role`뿐이다. `kind`는 대상 선택과 종류별 설정 조회에만 쓴다.
+- 판정은 생략한 인자를 정하고 실행 인계에 담는다. 같은 기기, 같은 동작의 마지막 성공 명령의 인자를 DB에서 읽는다. 없으면 `param_default.{kind}.{action}.{arg}`를 쓰고, 그것도 없으면 생략한 채 둔다 (FR-09, #245 담당자 결정).
+- `LightSetting`, `LightControls`, `SpeakerSetting`, `SpeakerControls`와 종류별 인자 검사 코드는 후속 feat PR에서 지운다.
 
 ### 기기 원격 재시작
 
@@ -918,7 +916,9 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | `ProvisioningSource.bundle(node_id)` | 상태 관리(조립) | 상태 관리 | 서버 설정 `[provisioning]`이 가리키는 기기 목록과 기기별 비밀번호 파일에서 `ProvisioningBundle`을 만든다. 목록에 없거나 파일이 없으면 `None`이다. |
 | `NodeAdminService.provisioning(user_id, node_id)` | 상태 관리 | API | 장소 소유권을 검사한 뒤 묶음을 반환한다. 소유자가 아니면 `PermissionError`, 묶음이 없으면 `LookupError`다. |
 
-- 묶음은 `node_id`, `mqtt_user`, `mqtt_password`, `mqtt_host`, `mqtt_port`, `capability`, `occupancy`다. Wi-Fi 이름과 비밀번호는 담지 않는다. 앱 사용자가 입력한다.
+- 묶음은 `node_id`, `mqtt_user`, `mqtt_password`, `mqtt_host`, `mqtt_port`다. Wi-Fi 이름과 비밀번호는 담지 않는다. 앱 사용자가 입력한다.
+- 묶음은 `capability`와 `occupancy`를 담지 않는다. 서버는 기기의 동작과 점유 방식을 주입하지 않는다. 기기는 펌웨어에 내장한 기기 선언으로 발표한다 (#245).
+- 기기 목록 파일(`fleet`)은 기기마다 접속 정보만 정한다. 기존 기기의 MQTT 계정, 포트, 비밀번호와 기기 목록의 접속 정보는 그대로 둔다 (#245).
 - `mqtt_host`는 `[provisioning]`의 mDNS 이름에 `.local`을 붙인 값이다. `mqtt_port`는 서버의 `[mqtt].port`다.
 - `[provisioning]`은 선택 섹션이다. 값은 기기 목록 파일(`fleet`), mDNS 이름(`mdns_name`), 알릴 IPv4 주소(`mdns_address`)다. 섹션이 없으면 서버는 mDNS를 알리지 않고 묶음 조회는 `LookupError`다.
 - 묶음은 기기 비밀번호를 담는다. 서버는 묶음을 로그와 감사 기록에 쓰지 않는다 (NFR-08).
@@ -959,6 +959,25 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - BLE 비콘과 RSSI의 최신성, 저장 범위, 장소 범위와 근접 판정은 유지한다.
 - 후속 구현의 테스트 통과 전에는 센서 제외 동작을 구현 완료로 표시하지 않는다.
 
+#### 기기 자기 선언의 후속 반영
+
+[#245](https://github.com/capstone-itda/nearpilot-server/issues/245)의 decision PR은 `docs/`만 바꾼다. 코드는 decision PR이 머지된 뒤 계층별 feat PR에서 바꾼다.
+전환 기간에 IOT가 v2 발표도 받으므로, 계층별 feat PR을 나눠도 중간의 main은 기존 기기로 동작한다.
+
+| 영역 | 후속 변경 |
+|---|---|
+| shared | `DeviceDescriptor`, `ActionSpec`을 추가한다. `NodeAnnounce`, `NodeCommand`, `UseRequest`에 선언과 `arguments`를 담는다. `Capability` 열거형과 종류별 인자·제어 정보 모델을 정리한다. |
+| IOT | `announce` v3의 선언 검증, v2 발표의 템플릿 변환, `cmd`의 동작 이름과 인자 인코딩, 송신 전 선언 검증 |
+| 판정 | 종류별 설정 조회(`threshold_{kind}`, `param_max`, `any_allowed_kinds`), 선언 기반 동작·인자 검증, 동작 역할에 따른 재조작 |
+| 상태 관리 | 선언 해시 변경 시 격리, `deactivate` 동작의 이탈 꺼짐 |
+| API | `request_use`의 `arguments`, 조회 응답의 `actions`, WebSocket과 REST의 종류 필드, 대시보드 장소 목록의 선언 표시 |
+| DB | `node`의 선언·해시 열과 이전, 명령 인자 저장, 같은 동작의 마지막 성공 인자 조회 |
+| 펌웨어 | `capability`·`occupancy` 설정 제거, 선언 내장과 발표, 선언 기반 명령 검증. 공개 규칙의 참조 구현이 된다. |
+| 그 밖 | 앱의 BLE 설정 키, 시뮬레이터, 기기 목록과 평가 설정, 대시보드 표시 |
+
+- v2 발표의 수신은 팀 기기를 모두 v3로 올린 뒤 fix PR로 끝낸다.
+- 적합성 시험 도구는 이 결정에서 뺀다. 시뮬레이터를 참조 구현으로 맞춘 뒤 별도 이슈로 다룬다.
+
 ### 실행·복원·복구의 공동 모델
 
 - `ExecutionKind`는 `rental_initial`, `rental_reoperation`, `shared`다. `ExecutionContext.execution_kind`에 담는다.
@@ -983,7 +1002,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 |---|---|
 | `RestoreBundle` | `node`, `read_at`, `requests`, `commands`, `sessions`, `approval_usages`, `recoveries` |
 | `PendingRequestRecord` | 내부 요청 ID, 원래 요청, 입력 요약값, 실행 종류, 세션·사용분 연결, 예약 시각, 판정 |
-| `CommandRecord` | 명령·요청·기기·세션·사용분 연결, 동작, 조명 설정 `light` (없을 수 있다), 스피커 음량 `speaker` (없을 수 있다), 진행 상태, 실행 종류, 예약·전송·결과 시각, 전송 여부, 결과·근거 |
+| `CommandRecord` | 명령·요청·기기·세션·사용분 연결, 동작, 동작 인자 `arguments` (없을 수 있다. 기존 `light`, `speaker`를 대체한다), 진행 상태, 실행 종류, 예약·전송·결과 시각, 전송 여부, 결과·근거 |
 | `RestoredSession` | `UseSession`, 소유 계정, 생성 시각, 관련 근거 |
 | `ApprovalUsageRecord` | 사용분·승인·요청·명령 연결과 사용분 상태 |
 | `RecoveryEvidence` | 근거 ID, 기기 연결 ID, 관측 시각, 대조한 명령 결과와 현재 연결의 명령 처리 상태 |
@@ -1046,6 +1065,9 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 실제 기기 검증 항목은 7절에 있다.
 페이로드 스키마의 구현 경로는 `server/src/nearpilot/iot/messages/`다.
 
+기기 제작사가 지킬 규칙은 [기기 공개 규칙](device-protocol.md)에 있다 (#245). 공개 규칙은 필수 항목과 선택 항목, 기기 선언 형식, 크기 상한, 버전 정책을 정한다.
+이 절의 기기 쪽 규칙(토픽, 공통 형식, 명령 접수, 결과 보고, 시각 동기화, 원격 재시작, 점유 표시)은 공개 규칙이 참조하는 메시지 형식이다. 두 문서는 같은 decision PR에서 함께 바꾼다.
+
 #### 1. MQTT 전달 설정
 
 MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_session=true`로 접속하고 매번 구독한다.
@@ -1073,7 +1095,7 @@ MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_sess
 | `restart` | 서버 → 기기 | 1 | false |
 
 - MQTT의 전송 확인은 제어 신호 출력 완료를 뜻하지 않는다. 서버는 `result`의 명령 결과를 확인한다.
-- `clean_session`은 브로커의 이전 세션을 지운다. retained 기능 발표는 연결이 끝나도 남을 수 있다.
+- `clean_session`은 브로커의 이전 세션을 지운다. retained 기기 선언 발표는 연결이 끝나도 남을 수 있다.
 - 클라이언트가 전송 중인 메시지를 다시 발행할 수 있다. 서버와 기기는 아래 명령 ID·기기 연결 ID·만료 검사로 대응한다.
 - 기기는 자기 `announce`, `rssi`, `status`, `result`, `time_request`만 발행한다. 기기는 자기 `cmd`, `occupancy`, `time`, `restart`만 구독한다.
 - 서버는 기기 보고와 시각 요청을 구독한다. 실행 명령, 점유 표시, 시각 응답과 재시작 요청은 서버만 발행한다.
@@ -1083,7 +1105,7 @@ MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_sess
 
 #### 2. 공통 형식
 
-모든 메시지는 `schema_version`과 `node_id`를 담는다. 기존 구현의 버전은 1이다. 변경할 메시지별 버전은 미결이다. ID는 비어 있지 않은 문자열이다. 시각은 RFC 3339의 UTC 문자열로 쓴다. 예시는 `2026-10-09T03:00:00.000Z`다.
+모든 메시지는 `schema_version`과 `node_id`를 담는다. 기존 구현의 버전은 1이다. 변경할 메시지별 버전은 미결이다. 기기 선언을 담는 `announce`와 동작 인자를 담는 `cmd`는 `schema_version` 3이다 (#245). 기기 선언의 형식 버전(`format`)은 `schema_version`과 따로 관리한다. ID는 비어 있지 않은 문자열이다. 시각은 RFC 3339의 UTC 문자열로 쓴다. 예시는 `2026-10-09T03:00:00.000Z`다.
 
 기기 → 서버 메시지는 다음 필드도 담는다.
 
@@ -1106,26 +1128,23 @@ MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_sess
 
 | 종류 | 추가 필드와 타입 | 약속 |
 |---|---|---|
-| `announce` | `capability`: `locker`, `light`, `speaker` 중 하나, `occupancy`: `rental` 또는 `shared`, `controls?`: 조명 또는 스피커 제어 정보 | 연결마다 발표한다. retained 발표만으로 온라인과 현재 연결을 확정하지 않는다. |
+| `announce` | `descriptor`: 기기 선언 객체. 형식은 `device-protocol.md` "기기 선언 형식"이다 | 연결마다 시각을 맞춘 뒤 발표한다. retained 발표만으로 온라인과 현재 연결을 확정하지 않는다. 메시지 전체는 2048바이트 이하다. |
 | `rssi` | `frame_ts`: UTC 시각, `observations`: 배열 | `frame_ts`는 스캔 관측 시각이다. 각 관측은 `uuid`, `major`, `minor`, `rssi`를 담는다. 빈 배열을 허용한다. |
 | `status` | `observed_at`: UTC 시각, 펌웨어의 명령 처리 상태: 필드와 타입은 미결이다 | 처리 대기, 처리 중, 확인 불가를 구분한다. 실제 상태와 센서 고장 값은 담지 않는다. |
 | `result` | `command_id`: 문자열, `event_id`: UUID 문자열, `state`: 아래 상태 값, `occurred_at`: UTC 시각, `error_code?`: 문자열 | 제어 신호 출력 결과다. 재보고 시 사건 ID, 결과와 발생 시각을 유지한다. |
-| `cmd` | `command_id`: 문자열, `action`: `open`·`close`·`on`·`off`, `target_session_id`: 문자열, `issued_at`: UTC 시각, `expires_at`: UTC 시각, `parameters?`: 조명 설정 또는 스피커 음량 | 현재 연결을 지정한다. 사물함은 `open`·`close`, 조명·스피커는 `on`·`off`를 받는다. 사물함은 자동으로 닫지 않는다. |
+| `cmd` | `command_id`: 문자열, `action`: 기기가 선언한 동작 이름, `target_session_id`: 문자열, `issued_at`: UTC 시각, `expires_at`: UTC 시각, `arguments?`: 동작 인자 객체 | 현재 연결을 지정한다. `action`과 `arguments`는 기기 선언의 동작과 인자 스키마를 따른다. 팀의 사물함은 자동으로 닫지 않는다. |
 | `occupancy` | `device_state`: `AVAILABLE`·`RESERVED`·`ACTIVE`·`CLOSING`·`FAULT` 중 하나, `sent_at`: UTC 시각 | 대여형 기기의 저장된 기기 상태다. 표시에만 쓴다. 구동과 실행 판정의 근거가 아니다. |
 | `time_request` | `request_id`: 문자열 | 기기가 시각을 요청한다. 기기는 보낸 순간의 자기 단조 시계 값 t0을 보관한다. |
 | `time` | `request_id`: 문자열, `server_time`: UTC 시각, `max_error_sec`: 수, `trust_sec`: 정수, `resync_sec`: 정수 | 서버의 시각 응답이다. `request_id`는 요청의 값을 그대로 담는다. |
 | `restart` | `restart_id`: 문자열, `target_session_id`: 문자열, `issued_at`: UTC 시각, `expires_at`: UTC 시각 | 관리자의 재시작 요청이다. 현재 연결을 지정한다. 아래 8절을 따른다. |
 
-- `on`과 `off`는 조명 제어와 스피커 재생·정지의 제어 신호 출력이다. 실제 상태를 증명하지 않는다.
-- 조명 제어 정보 `controls`는 `brightness_max`(1~255의 정수)와 `color`(불리언)를 모두 담는다. `light` 기기만 보낸다. 형식이 틀리면 서버는 발표를 거부한다.
-- `brightness_max`는 펌웨어가 지키는 채널별 출력 상한이다. 서버 설정과 별개로 펌웨어가 정한다.
-- 조명 설정 `parameters`는 `brightness`(0~255의 정수)와 `color`(`#RRGGBB` 대문자 문자열)를 모두 담는다. 서버는 조명 제어 정보를 발표한 `light` 기기의 `on`에만 보낸다.
-- 기기는 채널별 출력을 `색 채널 값 × brightness ÷ 255`(내림)로 정한다. 어떤 색도 채널 출력이 `brightness`를 넘지 않는다.
-- 기기는 `brightness`가 자기 출력 상한을 넘거나, 형식이 틀리거나, 인자를 지원하지 않으면 구동 전에 `UNSUPPORTED_PARAMETER`로 거부한다.
-- `parameters`가 없는 조명의 `on`은 펌웨어 기본 출력을 쓴다. 기존 v2 명령과 같다. `schema_version`은 2를 유지한다.
-- 스피커 제어 정보 `controls`는 `volume_max`(1~30의 정수)만 담는다. `speaker` 기기만 보낸다. 형식이 틀리면 서버는 발표를 거부한다. `volume_max`는 펌웨어가 지키는 음량 상한이다.
-- 스피커 음량 `parameters`는 `volume`(0~30의 정수)만 담는다. 서버는 스피커 제어 정보를 발표한 `speaker` 기기의 `on`에만 보낸다.
-- 기기는 `volume`이 자기 음량 상한을 넘거나, 형식이 틀리거나, 인자를 지원하지 않으면 구동 전에 `UNSUPPORTED_PARAMETER`로 거부한다. 재생 중인 스피커는 음량만 바꾸고 재생을 이어 간다. `parameters`가 없는 스피커의 `on`은 음량을 바꾸지 않는다.
+- 모든 동작은 제어 신호 출력이다. 실제 상태를 증명하지 않는다.
+- 서버는 기기 선언의 형식이 틀리거나 상한을 넘으면 발표를 거부한다. 서버가 모르는 점유 방식, 동작 역할, 스키마 키워드도 거부한다 (`device-protocol.md`).
+- 기기는 `action`이 자기 선언에 없으면 구동 전에 `UNSUPPORTED_ACTION`으로 거부한다. `arguments`가 자기 선언의 인자 스키마를 벗어나면 구동 전에 `UNSUPPORTED_PARAMETER`로 거부한다.
+- 서버는 `arguments`를 바꾸지 않고 보낸다. 기기는 명령 내용만으로 출력을 정한다.
+- 전환 기간에 IOT는 v2 `announce`(`capability`, `occupancy`, `controls?`)도 받는다. IOT는 종류별 선언 템플릿으로 선언을 만든다. v2 `cmd`의 `parameters`와 v3 `arguments`는 키(`brightness`, `color`, `volume`)가 같다.
+- 전환 기간에 IOT는 기기가 마지막으로 발표한 `schema_version`으로 `cmd`를 보낸다. v2로 발표한 기기에는 `schema_version` 2와 `parameters` 필드로 보낸다. 값은 `arguments`와 같다 (#245 담당자 결정).
+- 팀 기기의 인자 규칙: 조명은 채널별 출력을 `색 채널 값 × brightness ÷ 255`(내림)로 정한다. 어떤 색도 채널 출력이 `brightness`를 넘지 않는다. 재생 중인 스피커는 새 `on`의 음량만 바꾸고 재생을 이어 간다.
 - RSSI의 `uuid`는 하이픈을 포함한 소문자 UUID 문자열이다. `major`와 `minor`는 0~65535의 정수다.
 - `rssi`는 dBm 단위의 유한한 수다. 한 프레임은 같은 비콘 조합을 중복으로 담지 않는다.
 - 재보고 시 발행 순번과 발행 시각은 새로 부여한다.
@@ -1148,10 +1167,10 @@ MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_sess
 1. 기록이 있고 명령 내용이 같으면 기기는 저장한 진행 상태나 결과를 보고한다. 물리 동작을 다시 시작하지 않는다.
 2. 기록이 있는데 내용이 다르면 기기는 `COMMAND_ID_CONFLICT`로 거부한다. 기존 기록을 덮어쓰지 않는다.
 3. 새 명령이면 기기는 다른 구동 명령이 진행 중인지 확인한다. 진행 중이면 기기는 `DEVICE_BUSY`로 거부한다.
-4. 기기는 버전, 대상 연결, 기능별 동작, 유효 시간을 검사한다.
+4. 기기는 버전, 대상 연결, 자기 선언의 동작과 인자 스키마, 유효 시간을 검사한다.
 5. 검사를 통과하면 기기는 접수 기록을 재시작 뒤에도 남도록 저장한다. 저장을 확인한 뒤 물리 동작을 시작한다.
 
-같은 명령의 내용은 `node_id`, `action`, `target_session_id`, `issued_at`, `expires_at`, `parameters`다. `parameters`가 없는 명령과 있는 명령은 내용이 다르다. 서버는 재전송할 때 이 내용을 바꾸지 않는다. 중복 조회는 연결·만료 검사보다 먼저 한다. 오래된 중복 명령에도 기존 결과만 반환한다.
+같은 명령의 내용은 `node_id`, `action`, `target_session_id`, `issued_at`, `expires_at`, `arguments`다. `arguments`가 없는 명령과 있는 명령은 내용이 다르다. 서버는 재전송할 때 이 내용을 바꾸지 않는다. 중복 조회는 연결·만료 검사보다 먼저 한다. 오래된 중복 명령에도 기존 결과만 반환한다.
 
 새 명령의 대상 연결이 다르거나 유효 시간이 지났으면 기기는 실행하지 않는다. 시각의 신뢰성을 확인할 수 없어도 실행하지 않는다. 기기는 유효한 명령 ID를 읽을 수 있을 때 `rejected`와 거부 코드를 보고한다.
 
@@ -1202,7 +1221,7 @@ MQTT 3.1.1과 UTF-8 JSON 객체를 사용한다. 서버와 기기는 `clean_sess
 
 명령 완료는 펌웨어의 제어 신호 출력 완료와 결과 저장으로 확인한다.
 
-- 기능별 출력 처리를 마치고 결과 저장을 확인한 뒤에만 `succeeded`를 보고한다.
+- 동작의 출력 처리를 마치고 결과 저장을 확인한 뒤에만 `succeeded`를 보고한다.
 - 출력 처리 실패는 `failed`다. 출력 완료나 결과가 불명이면 `unknown`이다.
 - IR 송출, 서보 제어 신호와 스피커 제어 신호는 같은 원칙을 따른다.
 - 실제 상태 관측이 없다는 이유만으로 완료된 출력을 `unknown`으로 바꾸지 않는다.
@@ -1286,7 +1305,8 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 줄의 형식은 USB 시리얼 주입과 같다: `CONFIG_BEGIN <nonce>`, `CONFIG_SET <키> <UTF-8 값의 16진수>`, `CONFIG_COMMIT <nonce>`, `CONFIG_ABORT`, `CONFIG?`. 응답 줄(`CONFIG_READY`, `CONFIG_STAGED`, `CONFIG_REJECTED`, `CONFIG_SAVED`, `CONFIG_STATE`)은 `reply`로 알린다.
 - 기기는 암호화한 링크(LE Secure Connections)의 쓰기만 받는다. 연결 기기를 저장(bonding)하지 않는다.
 - 기기는 `CONFIG_SAVED`를 알린 뒤 재시작해서 새 설정을 쓴다. 기존 명령 기록과 `node_id` 변경 차단은 USB 주입과 같다.
-- 설정 키는 `node_id`, `mqtt_user`, `mqtt_password`, `wifi_ssid`, `wifi_password`, `mqtt_host`, `mqtt_port`, `capability`, `occupancy`다. 시각 설정은 MQTT 시각 응답으로 받는다 (#236).
+- 설정 키는 `node_id`, `mqtt_user`, `mqtt_password`, `wifi_ssid`, `wifi_password`, `mqtt_host`, `mqtt_port`다. 시각 설정은 MQTT 시각 응답으로 받는다 (#236).
+- 설정 키에 `capability`와 `occupancy`를 두지 않는다. 동작과 점유 방식은 펌웨어에 내장한 기기 선언에 있다 (#245). 공개 규칙의 "접속 설정 수신" 항목이 이 절을 따른다.
 - `mqtt_host`가 `.local`로 끝나면 기기는 MQTT에 접속할 때마다 mDNS로 주소를 찾는다. 서버는 `[provisioning]`의 mDNS 이름과 IPv4 주소를 알린다. 서버 IP가 바뀌어도 기기를 다시 설정하지 않는다.
 - 앱은 소유자 토큰으로 `GET /admin/nodes/{node_id}/provisioning`을 불러 묶음을 받고, 사용자가 입력한 Wi-Fi와 합쳐 기기에 넣는다. 앱은 묶음을 저장하지 않는다.
 
@@ -1373,11 +1393,11 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 
 | 형식 | 키 (✔ 필수, ∅ null 허용, 나머지 선택) |
 |---|---|
-| 장소 목록 (`places`) | `weakRssiDbm` ✔, `places` ✔ [`placeId` ✔, `placeName` ✔, `modelVersion` ✔, `calibrationVersion` ✔, `devices` ✔ [`nodeId` ✔, `name` ✔, `capability` ✔, `occupancy` ✔]]. `placeId`와 `nodeId`는 목록 전체에서 한 번씩만 나온다. `name`은 시드의 기기 이름(`node.name`)이고 없으면 `nodeId`다 |
+| 장소 목록 (`places`) | `weakRssiDbm` ✔, `places` ✔ [`placeId` ✔, `placeName` ✔, `modelVersion` ✔, `calibrationVersion` ✔, `devices` ✔ [`nodeId` ✔, `name` ✔, `deviceKind` ✔ (기기 선언의 `kind`. 기존 `capability`를 대체한다), `occupancy` ✔, `vendor` ✔ [`name` ✔, `model` ✔, `firmware` ✔], `actions` ✔ [`name` ✔, `description` ✔, `role`], `descriptorHash` ✔]]. 소유자는 신뢰하기 전에 이 값으로 기기 선언을 확인한다 (#245 담당자 결정). `placeId`와 `nodeId`는 목록 전체에서 한 번씩만 나온다. `name`은 시드의 기기 이름(`node.name`)이고 없으면 `nodeId`다 |
 | 점유 행 (`uses`) | `personId` ✔, `nodeId` ✔, `occupancy` ✔, `session` ✔ (`RESERVED`, `ACTIVE`, `CLOSING`), `sessionNote`, `startedAt` ✔, `overdueMinutes` |
 | 승인 (`approvals`) | `pending` ✔, `active` ✔, `ended` ✔. 행: `personId` ✔, `nodeId` ✔, `mode`, `requestedAt`, `remainingMinutes`, `validUntil`, `uses`, `endReason` (`APPROVAL_REJECTED`, `APPROVAL_REQUEST_EXPIRED`, `APPROVAL_EXHAUSTED`, `APPROVAL_EXPIRED`) |
 | 감사 행 (`audit`, 스트림 `audit`의 `row`) | `id` ✔, `at` ✔, `step` ✔ (`Step`), `nodeId`, `text` ✔, `code` ✔ |
-| 이력 행 (`history`) | `requestId` ✔, `at` ✔, `personId` ✔, `target` ✔ [`kind` ✔, `capability`, `nodeId`], `action` ✔, `verdict` ✔, `nodeId`, `outcome` ✔, `code` |
+| 이력 행 (`history`) | `requestId` ✔, `at` ✔, `personId` ✔, `target` ✔ [`kind` ✔, `deviceKind`, `nodeId`], `action` ✔, `verdict` ✔, `nodeId`, `outcome` ✔, `code` |
 | 요청 한 건 (`requests/{id}`) | `id` ✔, `personId` ✔, `tool` ✔ (`request_use`), `target` ✔, `action` ✔, `at` ✔, `verdict`, `reason`, `steps` ✔ (⓪~⑥ 일곱 칸 [`result` ✔ (`pending`, `pass`, `stop`, `skip`), `detail`]), `nodeId`, `posteriors`, `threshold`, `execution` (`ExecutionStatus`), `accessRequestedAt`, `accessEnd` (`approved`, `denied`, `expired`. 승인 신청이 끝났을 때만), `accessExpiredAt` (`expired`일 때만), `respondedAt` |
 | 신뢰도 (`trust`) | `live` ✔ [`since` ✔, `decisions` ✔, `doubleOccupancy` ✔, `latencyMedianSec` ∅, `latencyP95Sec` ∅, `counts` ✔ (판정 값 다섯 개 모두)], `evaluation` [`date` ✔, `metrics` ✔ [`id` ✔, `name` ✔, `pass` ∅, `label` ✔, `sample` ✔, `sampleNote`], `confusion` [`labels` ✔, `values` ✔]]. `evaluation`은 평가 리포트가 없으면 빠지고, 평가 리포트에 혼동 행렬이 없어 `confusion`은 빠진다 |
 | 대여 한 건 (`rentals/{node_id}`) | `nodeId` ✔, `personId` ✔, `startedAt` ✔, `overdueMinutes` ✔, `timeline` ✔ [`at` ✔, `text` ✔, `now`] |
@@ -1398,7 +1418,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 |---|---|---|
 | `beacon` | `seen` ✔ | 모두 |
 | `rssi` | `rssi` ✔ (기기 ID → dBm) | `personId` |
-| `mcp_call` | `requestId` ✔, `tool` ✔ (MCP 도구 6개), `target` [`kind` ✔, `capability`, `nodeId`], `action` | `personId` |
+| `mcp_call` | `requestId` ✔, `tool` ✔ (MCP 도구 6개), `target` [`kind` ✔, `deviceKind`, `nodeId`], `action` | `personId` |
 | `step` | `requestId` ✔, `step` ✔ (`Step`의 `"0"`~`"6"`), `result` ✔ (`pass`, `stop`), `detail` | 없음 |
 | `posterior` | `requestId` ✔, `posteriors` ✔ (기기 ID → 확률), `threshold` ✔ | 없음 |
 | `verdict` | `requestId` ✔, `verdict` ✔, `reason` ✔, `nodeId` | 없음 |
@@ -1409,6 +1429,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `approval` | `requestId` ✔, `nodeId` ✔, `kind` ✔ (`requested`, `approved`, `denied`, `expired`) | `personId` |
 | `audit` | `row` ✔ (REST 감사 행과 같다) | 없음 |
 
+- `target.kind`는 대상 지정 방식이다. `target.deviceKind`는 `nearest:{kind}`와 `any:{kind}`의 종류 이름이다. 기존 `capability` 키를 대체한다 (#245). REST 이력 행의 `target`도 같다.
 - 닫기 코드: 4401 토큰 오류, 4403 소유자 아님, 4408 인증 기한, 1011 서버 오류, 1013 대기열 넘침. 1011과 1013이면 대시보드가 다시 연결해 지금 상태를 다시 받는다.
 - 이름은 서버 프로세스가 끝날 때까지 유지한다. 방문자는 처음 나타난 순서로 글자를 받는다. 소유자가 여럿이어도 이름은 모두 `소유자`다.
 
@@ -1426,7 +1447,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `user` | PK `user_id`, `name`, UNIQUE `token_hash`, `role` (`visitor`, `owner`). `token_hash`는 토큰의 SHA-256 해시를 소문자 hex 문자열로 쓴 값이다. 토큰 원문은 저장하지 않는다. |
 | `beacon` | PK `beacon_id`, FK `user_id`, `(uuid, major, minor)` 조합 UNIQUE, `is_active` |
 | `place` | PK `place_id`, FK `owner_user_id`, `name` |
-| `node` | TEXT PK `node_id`, FK `place_id`, 대시보드에 보일 이름 `name`(없을 수 있다), `capability`, `occupancy`, `trust_state`, `device_state`, `exclusive_group`, JSON `release_policy`, `last_seen_at`, 현재 기기 연결 ID `session_id`, 그 연결의 첫 수신 시각 `session_first_seen_at`, 발표한 조명 제어 정보 JSON `light_controls`(없을 수 있다), 발표한 스피커 제어 정보 JSON `speaker_controls`(없을 수 있다) |
+| `node` | TEXT PK `node_id`, FK `place_id`, 대시보드에 보일 이름 `name`(없을 수 있다), 종류 `kind`, `occupancy`, 기기 선언 JSON `descriptor`, 선언 해시 `descriptor_hash`, `trust_state`, `device_state`, `exclusive_group`, JSON `release_policy`, `last_seen_at`, 현재 기기 연결 ID `session_id`, 그 연결의 첫 수신 시각 `session_first_seen_at`. `kind`와 `occupancy`는 `descriptor`의 값과 같다. 기존 `capability`, `light_controls`, `speaker_controls`는 선언으로 이전한다 (#245). |
 | `access_policy` | PK `policy_id`, UNIQUE FK `node_id` (기기당 하나), `current_version`. 현재 접근 정책 리비전을 참조한다. 정책 변경은 새 리비전 추가와 `current_version` 갱신을 한 트랜잭션에서 한다. |
 | `policy_revision` | 복합 PK `(policy_id, version)`, `visibility` (`public`, `private`), `mode` (`open`, `restricted`), FK `approver_user_id`, `approval_ttl_sec`, `approval_mode` (`one_time`, `time_window`), `max_uses` (기간형의 횟수 한도. 무제한이면 NULL. `one_time`은 이 값과 상관없이 1회). 과거 리비전은 바꾸지 않는다. |
 | `approval` | PK `approval_id`, FK `node_id`, `requester_user_id`, `internal_request_id`, `approved_by_user_id`, `action`, 정책 리비전 참조, `status` (`pending`, `approved`, `denied`), `created_at`, `pending_until`, `valid_until`, `used_count`. 요청 참조는 승인 신청의 출처다. 허용 범위는 요청자, 기기, 동작, 정책 버전으로 검사한다. |
@@ -1434,7 +1455,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `collection_run` | PK `collection_id`, FK `beacon_id`, `label` (기기 1~7 앞 또는 none), `started_at`, nullable `ended_at`. 같은 비콘의 수집 구간은 겹치지 않는다. |
 | `rssi_observation` | PK `obs_id`, FK `node_id`, `beacon_id`, `rssi` (dBm), `frame_ts` (약 1초 프레임), 서버 수신 시각 `received_at`, 발행 시각 `sent_at`, 기기 연결 ID `session_id`, 순번 `seq`, `(node_id, session_id, seq, beacon_id)` UNIQUE, nullable FK `collection_id`. 등록된 활성 비콘의 관측만 저장한다. 라벨은 연결한 수집 회차에서 읽는다. |
 | `request` | TEXT PK `internal_request_id`, FK `user_id`, 외부 `request_id`, UNIQUE `(user_id, request_id)`, 정규화 입력 요약 `input_digest`, nullable FK `parent_internal_request_id`, nullable FK `node_id`, `target_spec`, `action`, `verdict`, `reason_code`, `p_max`, 버전 `model`, `calib`, `policy_ver`, `config_ver`, 실제 설정을 포함한 JSON `decision_context`, `host_kind` |
-| `node_command` | TEXT PK `command_id`, FK `internal_request_id`, `node_id`, 대상 동작과 입력 요약, 서버가 정한 조명 설정 JSON `light`(없을 수 있다), 서버가 정한 스피커 음량 JSON `speaker`(없을 수 있다), 전송 시도, 실행 상태, 결과, 시각. 승인 사용분과 연결한다. 결과 불명은 실패, 미전송과 구분한다. 접수·실행 전 거부는 미전송, 실패와 구분한다. 기록은 재시작 뒤에도 보존한다. |
+| `node_command` | TEXT PK `command_id`, FK `internal_request_id`, `node_id`, 대상 동작과 입력 요약, 서버가 정한 동작 인자 JSON `arguments`(없을 수 있다. 기존 `light`, `speaker`를 대체한다), 전송 시도, 실행 상태, 결과, 시각. 승인 사용분과 연결한다. 결과 불명은 실패, 미전송과 구분한다. 접수·실행 전 거부는 미전송, 실패와 구분한다. 기록은 재시작 뒤에도 보존한다. |
 | `use_session` | TEXT PK `use_id`, FK `internal_request_id`, `user_id`, `node_id`, `state` (`RESERVED`, `ACTIVE`, `CLOSING`, `CLOSED`), `end_reason` (`release`, `leave`, `timeout`, `fault`, `cancelled`), nullable `rental_due_at` (실행 성공 때 정한다), nullable `closed_at`, 생성 당시 종료 정책. 대여형 요청과 살아 있는(취소되지 않은) 점유 세션은 1:0..1 관계다. 오류 뒤 취소한 요청을 재판정하면(#76, #80) 취소된 세션 옆에 새 세션이 생긴다. |
 | 복구 건 | TEXT PK `recovery_id`, FK `node_id`, 관련 요청·명령·점유 세션 연결, 명령 결과·현재 연결의 명령 처리 상태의 참조와 시각, 복구 승인 계정과 승인 시각, 정산 내용의 요약값, 완료 결과. 같은 복구 건의 대상 연결은 바꾸지 않는다. 엔터티의 코드 이름은 `recovery`다. |
 | `audit_log` | PK `log_id`, UNIQUE `event_id`, nullable FK `internal_request_id`, nullable 명령 참조, `step` (`auth`, ⓪~⑥, `exec`, `close`, `fault`, `announce`, `admin`), JSON `payload_json`. 인증 실패는 요청 참조 없이 기록한다. 같은 `event_id`는 한 번만 저장한다. |
@@ -1449,9 +1470,9 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 같은 요청자, 기기, 동작, 정책 리비전에는 만료되지 않은 `pending` 승인을 하나만 둔다.
 - 관리 쓰기의 신뢰 변경은 `node.trust_state`만 바꾼다. `device_state`와 점유 세션은 바꾸지 않는다.
 - `audit_log` 테이블이 감사 로그의 원본이다. JSONL은 커밋한 행을 커밋 순서대로 내보낸 사본이다.
-- 기기 기능은 `locker`, `light`, `speaker` 중 하나다. 점유 방식은 `rental` 또는 `shared`다. 신뢰 상태는 `discovered`, `trusted`, `revoked` 중 하나다.
+- 기기 종류는 열거형이 아닌 문자열이다. 이름 규칙은 `device-protocol.md`를 따른다. 점유 방식은 `rental` 또는 `shared`다. 신뢰 상태는 `discovered`, `trusted`, `revoked` 중 하나다.
 - `ONLINE`과 `OFFLINE`은 `last_seen_at`과 TTL로 계산한다. 온라인 여부는 신뢰 상태와 따로 둔다.
-- `last_seen_at`은 더 새로운 시각으로만 바뀐다. 발표한 기능이나 점유 방식이 바뀌면 신뢰 상태는 `discovered`로 돌아간다 (§4 "기기 발표와 관측의 저장").
+- `last_seen_at`은 더 새로운 시각으로만 바뀐다. 선언 해시가 바뀌면 신뢰 상태는 `discovered`로 돌아간다 (§4 "기기 발표와 관측의 저장").
 - DB는 반납(`use_id`)의 종료 시각, 종료 사유와 완료 기록을 보존한다. 검사 ID와 센서 근거는 새 종료 조건에서 제외한다. 기존 기록의 이전 절차는 미결이다.
 - `gate`와 `pass`는 나중 확장을 위한 예약값이다.
 - 기기 상태(`AVAILABLE`, `RESERVED`, `ACTIVE`, `CLOSING`, `FAULT`)와 점유 세션 상태를 구분한다.
