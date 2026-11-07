@@ -4,11 +4,35 @@
 // 14:43 A가 옆방으로 옮겨 무드등을 켬 (승인 없이 OK).
 import { resolveArrangement, withArrangement } from '../../view/arrange';
 import type {
-  ApprovalRow, Approvals, AuditRow, FloorLayout, Health, HistoryRow, PlaceInfo, RentalInfo, TrustReport, UseRow
+  ApprovalRow, Approvals, AuditRow, DeviceInfo, FloorLayout, Health, HistoryRow, PlaceInfo, RentalInfo, TrustReport, UseRow
 } from '../../model/types';
 
 /** 배치 화면에서 약한 신호로 표시할 기준 (dBm). 응답 전체에 하나다. */
 export const WEAK_RSSI_DBM = -80;
+
+/**
+ * 기기 선언 (FR-12A). v2 기기 선언 템플릿(server shared/descriptor.py의 legacy_descriptor)과 같은 값이고,
+ * 해시도 그 템플릿의 선언 해시다. 조명은 밝기 상한 64와 색, 스피커는 음량 상한 20이다 (참조 펌웨어 기본값).
+ */
+type Declaration = Pick<DeviceInfo, 'deviceKind' | 'occupancy' | 'vendor' | 'actions' | 'descriptorHash'>;
+const v2 = (kind: string) => ({ name: 'nearpilot', model: kind, firmware: 'v2' });
+export const DECLARATIONS: Record<'locker' | 'light' | 'speaker', Declaration> = {
+  locker: {
+    deviceKind: 'locker', occupancy: 'rental', vendor: v2('locker'),
+    actions: [{ name: 'open', description: '사물함을 연다' }, { name: 'close', description: '사물함을 잠근다. 반납이 아니다', role: 'reoperate' }],
+    descriptorHash: '64e5b12fac7357abf72184544920b6246af48f839543adfa7076d855fb3470ee'
+  },
+  light: {
+    deviceKind: 'light', occupancy: 'shared', vendor: v2('light'),
+    actions: [{ name: 'on', description: '조명을 켜고 밝기와 색을 정한다' }, { name: 'off', description: '조명을 끈다', role: 'deactivate' }],
+    descriptorHash: 'fda0c079eb08e2dbd966470b94fb425d5afbc42728e2b0b5a7b04cecf952bc3a'
+  },
+  speaker: {
+    deviceKind: 'speaker', occupancy: 'shared', vendor: v2('speaker'),
+    actions: [{ name: 'on', description: '스피커를 재생하고 음량을 정한다' }, { name: 'off', description: '스피커를 정지한다', role: 'deactivate' }],
+    descriptorHash: 'c4ff0e56c0cc0a5b29e9eff40e4a045310c18f1689c429161399ad5e323eb2f7'
+  }
+};
 
 export const LOUNGE: PlaceInfo = {
   placeId: 'lounge',
@@ -17,13 +41,13 @@ export const LOUNGE: PlaceInfo = {
   calibrationVersion: 'cal-2',
   // NFR-10 시연 장비: 사물함 3, LED 조명 3, 스피커 1
   devices: [
-    { nodeId: 'locker-1', name: '사물함 1', capability: 'locker', occupancy: 'rental' },
-    { nodeId: 'locker-2', name: '사물함 2', capability: 'locker', occupancy: 'rental' },
-    { nodeId: 'locker-3', name: '사물함 3', capability: 'locker', occupancy: 'rental' },
-    { nodeId: 'speaker-1', name: '스피커', capability: 'speaker', occupancy: 'shared' },
-    { nodeId: 'light-1', name: '조명 1', capability: 'light', occupancy: 'shared' },
-    { nodeId: 'light-2', name: '조명 2', capability: 'light', occupancy: 'shared' },
-    { nodeId: 'light-3', name: '조명 3', capability: 'light', occupancy: 'shared' }
+    { nodeId: 'locker-1', name: '사물함 1', ...DECLARATIONS.locker },
+    { nodeId: 'locker-2', name: '사물함 2', ...DECLARATIONS.locker },
+    { nodeId: 'locker-3', name: '사물함 3', ...DECLARATIONS.locker },
+    { nodeId: 'speaker-1', name: '스피커', ...DECLARATIONS.speaker },
+    { nodeId: 'light-1', name: '조명 1', ...DECLARATIONS.light },
+    { nodeId: 'light-2', name: '조명 2', ...DECLARATIONS.light },
+    { nodeId: 'light-3', name: '조명 3', ...DECLARATIONS.light }
   ]
 };
 /** NFR-10 시연의 두 번째 장소: 무드등 하나. 장소마다 근접 모델과 보정이 따로라 버전이 다르다. */
@@ -32,7 +56,7 @@ export const SIDE_ROOM: PlaceInfo = {
   placeName: '옆방',
   modelVersion: 'v2',
   calibrationVersion: 'cal-1',
-  devices: [{ nodeId: 'mood-1', name: '무드등', capability: 'light', occupancy: 'shared' }]
+  devices: [{ nodeId: 'mood-1', name: '무드등', ...DECLARATIONS.light }]
 };
 export const PLACES: PlaceInfo[] = [LOUNGE, SIDE_ROOM];
 /** 라운지에 기본 표시 배치를 입힌 것 (테스트용) */
@@ -75,20 +99,20 @@ export const AUDIT: AuditRow[] = [
 ];
 
 export const HISTORY: Since<HistoryRow>[] = [
-  { requestId: 'r-1443', at: '14:43', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'OK', nodeId: 'mood-1', outcome: '제어 신호 출력 완료', since: '14:43:49' },
-  { requestId: 'r-1430', at: '14:30', personId: 'p-b', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함', code: 'APPROVAL_REQUIRED', since: '14:30:58' },
-  { requestId: 'r-1429', at: '14:29', personId: 'p-b', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-2', outcome: '결과 불명 → 고장 격리', code: 'EXEC_UNKNOWN', since: '14:29:40' },
-  { requestId: 'r-1428', at: '14:28', personId: 'p-a', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-1', outcome: '제어 신호 출력 완료', since: '14:28:11' },
-  { requestId: 'r-1426', at: '14:26', personId: 'p-a', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'ASK', outcome: '다시 질문', code: 'LOW_CONFIDENCE', since: '14:26:12' },
-  { requestId: 'r-1422', at: '14:22', personId: 'p-b', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'BUSY', nodeId: 'locker-3', outcome: '실행 안 함', code: 'DEVICE_BUSY', since: '14:22:05' },
-  { requestId: 'r-1420', at: '14:20', personId: 'p-c', target: { kind: 'nearest', capability: 'speaker' }, action: 'on', verdict: 'DENY', outcome: '실행 안 함', code: 'BEACON_NOT_SEEN', since: '14:20:41' },
-  { requestId: 'r-1403', at: '14:03', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'OK', nodeId: 'light-1', outcome: '제어 신호 출력 완료 · 시간 승인 사용', since: '14:03:00' },
-  { requestId: 'r-1401', at: '14:01', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함 · 시간 승인됨', code: 'APPROVAL_REQUIRED', since: '14:01:00' },
-  { requestId: 'r-1358', at: '13:58', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'OK', nodeId: 'light-2', outcome: '제어 신호 출력 완료 · 1회 승인 소진', since: '13:58:00' },
-  { requestId: 'r-1347', at: '13:47', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-2', outcome: '실행 안 함 · 1회 승인됨', code: 'APPROVAL_REQUIRED', since: '13:47:00' },
-  { requestId: 'r-1342', at: '13:42', personId: 'p-c', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-2', outcome: '실행 안 함 · 승인 신청 만료', code: 'APPROVAL_REQUIRED', since: '13:42:00' },
-  { requestId: 'r-1339', at: '13:39', personId: 'p-c', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함 · 소유자 거절', code: 'APPROVAL_REQUIRED', since: '13:39:00' },
-  { requestId: 'r-1321', at: '13:21', personId: 'p-c', target: { kind: 'nearest', capability: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-3', outcome: '제어 신호 출력 완료 · 대여 시작', since: '13:21:05' }
+  { requestId: 'r-1443', at: '14:43', personId: 'p-a', target: { kind: 'nearest', deviceKind: 'light' }, action: 'on', verdict: 'OK', nodeId: 'mood-1', outcome: '제어 신호 출력 완료', since: '14:43:49' },
+  { requestId: 'r-1430', at: '14:30', personId: 'p-b', target: { kind: 'nearest', deviceKind: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함', code: 'APPROVAL_REQUIRED', since: '14:30:58' },
+  { requestId: 'r-1429', at: '14:29', personId: 'p-b', target: { kind: 'nearest', deviceKind: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-2', outcome: '결과 불명 → 고장 격리', code: 'EXEC_UNKNOWN', since: '14:29:40' },
+  { requestId: 'r-1428', at: '14:28', personId: 'p-a', target: { kind: 'nearest', deviceKind: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-1', outcome: '제어 신호 출력 완료', since: '14:28:11' },
+  { requestId: 'r-1426', at: '14:26', personId: 'p-a', target: { kind: 'nearest', deviceKind: 'locker' }, action: 'open', verdict: 'ASK', outcome: '다시 질문', code: 'LOW_CONFIDENCE', since: '14:26:12' },
+  { requestId: 'r-1422', at: '14:22', personId: 'p-b', target: { kind: 'nearest', deviceKind: 'locker' }, action: 'open', verdict: 'BUSY', nodeId: 'locker-3', outcome: '실행 안 함', code: 'DEVICE_BUSY', since: '14:22:05' },
+  { requestId: 'r-1420', at: '14:20', personId: 'p-c', target: { kind: 'nearest', deviceKind: 'speaker' }, action: 'on', verdict: 'DENY', outcome: '실행 안 함', code: 'BEACON_NOT_SEEN', since: '14:20:41' },
+  { requestId: 'r-1403', at: '14:03', personId: 'p-a', target: { kind: 'nearest', deviceKind: 'light' }, action: 'on', verdict: 'OK', nodeId: 'light-1', outcome: '제어 신호 출력 완료 · 시간 승인 사용', since: '14:03:00' },
+  { requestId: 'r-1401', at: '14:01', personId: 'p-a', target: { kind: 'nearest', deviceKind: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함 · 시간 승인됨', code: 'APPROVAL_REQUIRED', since: '14:01:00' },
+  { requestId: 'r-1358', at: '13:58', personId: 'p-a', target: { kind: 'nearest', deviceKind: 'light' }, action: 'on', verdict: 'OK', nodeId: 'light-2', outcome: '제어 신호 출력 완료 · 1회 승인 소진', since: '13:58:00' },
+  { requestId: 'r-1347', at: '13:47', personId: 'p-a', target: { kind: 'nearest', deviceKind: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-2', outcome: '실행 안 함 · 1회 승인됨', code: 'APPROVAL_REQUIRED', since: '13:47:00' },
+  { requestId: 'r-1342', at: '13:42', personId: 'p-c', target: { kind: 'nearest', deviceKind: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-2', outcome: '실행 안 함 · 승인 신청 만료', code: 'APPROVAL_REQUIRED', since: '13:42:00' },
+  { requestId: 'r-1339', at: '13:39', personId: 'p-c', target: { kind: 'nearest', deviceKind: 'light' }, action: 'on', verdict: 'NEED_APPROVAL', nodeId: 'light-1', outcome: '실행 안 함 · 소유자 거절', code: 'APPROVAL_REQUIRED', since: '13:39:00' },
+  { requestId: 'r-1321', at: '13:21', personId: 'p-c', target: { kind: 'nearest', deviceKind: 'locker' }, action: 'open', verdict: 'OK', nodeId: 'locker-3', outcome: '제어 신호 출력 완료 · 대여 시작', since: '13:21:05' }
 ];
 
 /** 실시간 집계의 바탕. 목 어댑터가 지금까지 보인 HISTORY를 센다. 이력 "오늘"과 같은 수가 된다. */

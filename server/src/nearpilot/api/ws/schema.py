@@ -12,6 +12,7 @@ from typing import Any
 from nearpilot.api.ws.names import Person, PersonNames
 from nearpilot.shared.descriptor import is_name
 from nearpilot.shared.enums import (
+    ActionRole,
     ApprovalMode,
     ApprovalStatus,
     DeviceState,
@@ -101,6 +102,16 @@ def _name(value: Any, path: str, names: PersonNames) -> str:
     if not is_name(value):
         raise SchemaError(path)
     return str(value)
+
+
+_HEX = frozenset("0123456789abcdef")
+
+
+def _hash(value: Any, path: str, names: PersonNames) -> str:
+    """선언 해시: SHA-256 의 64자리 소문자 16진수 (spec 결정 3)."""
+    if not isinstance(value, str) or len(value) != 64 or not set(value) <= _HEX:
+        raise SchemaError(path)
+    return value
 
 
 def _enum(cls: type[StrEnum]) -> _Check:
@@ -262,7 +273,7 @@ def _obj(shape: _Shape) -> _Check:
 
 # 이벤트 (architecture.md §5 WebSocket 형식 표)
 
-_TARGET = _shape(_req("kind", _enum(TargetKind)), _opt("capability", _name), _opt("nodeId", _str))
+_TARGET = _shape(_req("kind", _enum(TargetKind)), _opt("deviceKind", _name), _opt("nodeId", _str))
 _FAULT = _shape(_req("cause", _enum(ReasonCode)), _opt("action", _name))
 _AUDIT_ROW = _shape(
     _req("id", _str),
@@ -328,11 +339,16 @@ _EVENTS: dict[str, _Shape] = {
 
 # 조회 결과 (architecture.md §5 "대시보드 조회" 형식 표)
 
+_VENDOR = _shape(_req("name", _str), _req("model", _str), _req("firmware", _str))
+_ACTION_INFO = _shape(_req("name", _name), _req("description", _str), _opt("role", _enum(ActionRole)))
 _DEVICE_INFO = _shape(
     _req("nodeId", _str),
     _req("name", _str),
-    _req("capability", _name),
+    _req("deviceKind", _name),
     _req("occupancy", _enum(Occupancy)),
+    _req("vendor", _obj(_VENDOR)),
+    _req("actions", _list(_obj(_ACTION_INFO))),
+    _req("descriptorHash", _hash),
 )
 _PLACE_INFO = _shape(
     _req("placeId", _str),

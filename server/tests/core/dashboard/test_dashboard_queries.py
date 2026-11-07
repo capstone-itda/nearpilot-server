@@ -16,6 +16,7 @@ from nearpilot.api.ws.schema import RESPONSE_KINDS, render_response
 from nearpilot.core.dashboard import DashboardQueryService, ModelVersions, fault_of
 from nearpilot.core.lifecycle.shared_light import SharedHolder
 from nearpilot.shared.config import Settings
+from nearpilot.shared.descriptor import DeviceDescriptor, legacy_descriptor, parse_descriptor
 from nearpilot.shared.enums import (
     ApprovalMode,
     ApprovalStatus,
@@ -51,7 +52,7 @@ VISITOR_ID, VISITOR2_ID, OWNER_ID = "user-visitor-1", "user-visitor-2", "user-ow
 VISITOR = Subject(VISITOR_ID, Role.VISITOR)
 VISITOR2 = Subject(VISITOR2_ID, Role.VISITOR)
 OWNER = Subject(OWNER_ID, Role.OWNER)
-LOCKER_TARGET = {"kind": TargetKind.NEAREST, "capability": "locker"}
+LOCKER_TARGET = {"kind": TargetKind.NEAREST, "deviceKind": "locker"}
 
 
 def ago(seconds: float) -> datetime:
@@ -63,11 +64,17 @@ def ago(seconds: float) -> datetime:
 
 def make_node(
     node_id: str = "locker-1", *, name: str | None = None, place_id: str | None = "place-1",
-    capability: str = "locker", occupancy: Occupancy = Occupancy.RENTAL,
+    kind: str = "locker", occupancy: Occupancy = Occupancy.RENTAL,
     trust: TrustState = TrustState.TRUSTED, state: DeviceState = DeviceState.AVAILABLE,
     last_seen: datetime | None = ago(5), session_id: str | None = "conn-1",
+    descriptor: DeviceDescriptor | None | str = "template",
 ) -> DashboardNode:
-    return DashboardNode(node_id, name, place_id, capability, occupancy, trust, state, last_seen, session_id)
+    """선언은 기본으로 v2 템플릿이다. `None` 이면 선언 없는 행이다."""
+    if descriptor == "template":
+        descriptor = legacy_descriptor(kind, occupancy)
+    assert not isinstance(descriptor, str)
+    return DashboardNode(node_id, name, place_id, kind, occupancy, trust, state, last_seen, session_id,
+                         descriptor, None if descriptor is None else descriptor.hash)
 
 
 def make_session(
@@ -305,8 +312,8 @@ def test_FR12A_이름이_없는_기기는_ID를_이름으로_쓴다():
         places=[DashboardPlace("place-2", "옆방"), DashboardPlace("place-1", "라운지")],
         nodes=[
             make_node("locker-2"), make_node("mood-1", name="무드등", place_id="place-2",
-                                             capability="light", occupancy=Occupancy.SHARED),
-            make_node("light-1", name="조명 1", capability="light", occupancy=Occupancy.SHARED),
+                                             kind="light", occupancy=Occupancy.SHARED),
+            make_node("light-1", name="조명 1", kind="light", occupancy=Occupancy.SHARED),
             make_node("locker-1", name="사물함 1"),
         ],
     )
@@ -315,13 +322,13 @@ def test_FR12A_이름이_없는_기기는_ID를_이름으로_쓴다():
 
     assert result["weakRssiDbm"] == -82.5
     assert [(p["placeId"], p["placeName"]) for p in result["places"]] == [("place-1", "라운지"), ("place-2", "옆방")]
-    assert result["places"][0]["devices"] == [  # node_id 순이다
-        {"nodeId": "light-1", "name": "조명 1", "capability": "light", "occupancy": Occupancy.SHARED},
-        {"nodeId": "locker-1", "name": "사물함 1", "capability": "locker", "occupancy": Occupancy.RENTAL},
-        {"nodeId": "locker-2", "name": "locker-2", "capability": "locker", "occupancy": Occupancy.RENTAL},
+    assert brief(result["places"][0]["devices"]) == [  # node_id 순이다
+        {"nodeId": "light-1", "name": "조명 1", "deviceKind": "light", "occupancy": Occupancy.SHARED},
+        {"nodeId": "locker-1", "name": "사물함 1", "deviceKind": "locker", "occupancy": Occupancy.RENTAL},
+        {"nodeId": "locker-2", "name": "locker-2", "deviceKind": "locker", "occupancy": Occupancy.RENTAL},
     ]
-    assert result["places"][1]["devices"] == [
-        {"nodeId": "mood-1", "name": "무드등", "capability": "light", "occupancy": Occupancy.SHARED},
+    assert brief(result["places"][1]["devices"]) == [
+        {"nodeId": "mood-1", "name": "무드등", "deviceKind": "light", "occupancy": Occupancy.SHARED},
     ]
 
 
@@ -335,6 +342,67 @@ def test_FR12A_장소가_없는_기기는_장소_목록에_없다():
 
     assert [d["nodeId"] for p in places for d in p["devices"]] == ["locker-1"]
     assert places[1]["devices"] == []  # 기기가 없는 장소는 그대로 있다
+
+
+def brief(devices):
+    return [{k: d[k] for k in ("nodeId", "name", "deviceKind", "occupancy")} for d in devices]
+
+
+FAN = parse_descriptor({
+    "format": "nearpilot.device/1", "kind": "fan", "occupancy": "shared",
+    "vendor": {"name": "acme", "model": "f1", "firmware": "1.0"},
+    "actions": [
+        {"name": "spin", "description": "팬을 돌린다", "result": {"kind": "signal_output"},
+         "input_schema": {"type": "object", "additionalProperties": False, "required": [],
+                          "properties": {"speed": {"type": "integer", "minimum": 1, "maximum": 5}}}},
+        {"name": "stop", "description": "팬을 멈춘다", "role": "deactivate", "result": {"kind": "signal_output"},
+         "input_schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}},
+    ],
+})
+
+
+def test_FR12A_places_show_declaration():
+    """기기마다 종류, 점유 방식, 제작사, 동작(이름, 설명, 역할), 선언 해시를 저장한 선언 그대로 담는다."""
+    locker = legacy_descriptor("locker", Occupancy.RENTAL)
+    reads = FakeReads(places=[DashboardPlace("place-1", "라운지")], nodes=[make_node("locker-1", name="사물함 1")])
+
+    (device,) = make_service(reads).places()["places"][0]["devices"]
+
+    assert device == {
+        "nodeId": "locker-1", "name": "사물함 1", "deviceKind": "locker", "occupancy": Occupancy.RENTAL,
+        "vendor": {"name": "nearpilot", "model": "locker", "firmware": "v2"},
+        "actions": [  # 선언 순서이고, 역할이 없는 동작에는 role 키가 없다
+            {"name": "open", "description": "사물함을 연다"},
+            {"name": "close", "description": "사물함을 잠근다. 반납이 아니다", "role": "reoperate"},
+        ],
+        "descriptorHash": locker.hash,
+    }
+    assert "capability" not in device and "input_schema" not in str(device)
+
+
+def test_FR12A_places_unknown_kind():
+    """선언한 새 종류도 코드 수정 없이 그대로 보낸다. 형식 검사도 통과한다 (spec 결정 3)."""
+    reads = FakeReads(places=[DashboardPlace("place-1", "라운지")],
+                      nodes=[make_node("fan-1", kind="fan", occupancy=Occupancy.SHARED, descriptor=FAN)])
+
+    result = make_service(reads).places()
+
+    (device,) = result["places"][0]["devices"]
+    assert (device["deviceKind"], device["vendor"]["name"], device["descriptorHash"]) == ("fan", "acme", FAN.hash)
+    assert device["actions"] == [{"name": "spin", "description": "팬을 돌린다"},
+                                 {"name": "stop", "description": "팬을 멈춘다", "role": "deactivate"}]
+    rendered = render_response("places", result, PersonNames())
+    assert rendered["places"][0]["devices"][0]["actions"][1]["role"] == "deactivate"
+
+
+def test_FR12A_places_skip_node_without_descriptor():
+    """선언이 없는 행은 장소 목록에서 빼고 점검에는 남긴다 (spec 결정 1)."""
+    reads = FakeReads(places=[DashboardPlace("place-1", "라운지")],
+                      nodes=[make_node("locker-1"), make_node("locker-2", descriptor=None)])
+    service = make_service(reads)
+
+    assert [d["nodeId"] for d in service.places()["places"][0]["devices"]] == ["locker-1"]
+    assert [d["nodeId"] for d in service.health()["devices"]] == ["locker-1", "locker-2"]
 
 
 def test_FR12A_모델이_없는_장소는_버전이_없음():
@@ -357,7 +425,7 @@ def test_FR12A_점유_목록은_대여와_공용_유지_대상자다():
         nodes=[
             make_node("locker-1", state=DeviceState.ACTIVE), make_node("locker-2", state=DeviceState.RESERVED),
             make_node("locker-3", state=DeviceState.CLOSING), make_node("locker-4", state=DeviceState.FAULT),
-            make_node("light-1", capability="light", occupancy=Occupancy.SHARED),
+            make_node("light-1", kind="light", occupancy=Occupancy.SHARED),
         ],
         sessions=[
             make_session("use-4", node_id="locker-4", user_id=OWNER_ID, reserved=ago(300)),
@@ -966,7 +1034,7 @@ def rich_world() -> FakeReads:
     return FakeReads(
         places=[DashboardPlace("place-1", "라운지"), DashboardPlace("place-2", "옆방")],
         nodes=[
-            make_node("light-1", name="조명 1", capability="light", occupancy=Occupancy.SHARED),
+            make_node("light-1", name="조명 1", kind="light", occupancy=Occupancy.SHARED),
             make_node("locker-1", name="사물함 1", state=DeviceState.ACTIVE),
             make_node("locker-2", state=DeviceState.FAULT, last_seen=ago(40)),
             make_node("locker-3", place_id="place-2", state=DeviceState.CLOSING),
@@ -1084,7 +1152,7 @@ def test_FR12B_진행_중이_아닌_요청과_옛_요청은_지금_상태에_없
 
 def test_FR12B_끝난_서버_내부_요청은_진행_중이_아니다():
     reads = FakeReads(
-        nodes=[make_node("light-1", capability="light", occupancy=Occupancy.SHARED)],
+        nodes=[make_node("light-1", kind="light", occupancy=Occupancy.SHARED)],
         requests=[make_request("req-internal", kind="server_internal", node_id="light-1", action="off")],
         commands=[make_command("req-internal", 1, node_id="light-1", action="off", outcome="succeeded",
                                started=ago(9), occurred=ago(8))],

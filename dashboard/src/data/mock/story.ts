@@ -125,11 +125,11 @@ function requestEvents(r: RequestScript): StreamEvent[] {
   return out;
 }
 
-const LOCKER = { kind: 'nearest' as const, capability: 'locker' as const };
+const LOCKER = { kind: 'nearest' as const, deviceKind: 'locker' as const };
 const ALL_PASS = (details: string[]): RequestScript['steps'] => details.map((d) => ['pass', d]);
 
 const REQUEST_SCRIPTS: RequestScript[] = [
-  { id: 'r-1420', at: '14:20:41', personId: 'p-c', target: { kind: 'nearest', capability: 'speaker' }, action: 'on',
+  { id: 'r-1420', at: '14:20:41', personId: 'p-c', target: { kind: 'nearest', deviceKind: 'speaker' }, action: 'on',
     steps: [['pass', '새 요청'], ['stop']], verdict: 'DENY', reason: 'BEACON_NOT_SEEN', said: '스피커 켜 줘', reply: '폰 신호가 잡히지 않아 켤 수 없어요.' },
   { id: 'r-1422', at: '14:22:05', personId: 'p-b', target: LOCKER, action: 'open',
     steps: [...ALL_PASS(['새 요청', '비콘 최근 수신', '사물함 3대', 'P(locker-3) 0.96 ≥ 0.95 (설정값)', '열림 정책']), ['stop']],
@@ -148,12 +148,12 @@ const REQUEST_SCRIPTS: RequestScript[] = [
     posterior: { at: 3, posteriors: { 'locker-2': 0.96, 'locker-3': 0.03, 'locker-1': 0.01 }, threshold: 0.95 },
     verdict: 'OK', reason: 'OK', nodeId: 'locker-2', exec: { at: '14:29:40', result: 'unknown' }, said: '내 앞 사물함 열어 줘',
     reply: '사물함 2의 제어 신호 출력 결과를 확인하지 못해 사용을 멈췄어요. 소유자에게 알려 주세요.' },
-  { id: 'r-1430', at: '14:30:58', personId: 'p-b', target: { kind: 'nearest', capability: 'light' }, action: 'on',
+  { id: 'r-1430', at: '14:30:58', personId: 'p-b', target: { kind: 'nearest', deviceKind: 'light' }, action: 'on',
     steps: [...ALL_PASS(['새 요청', '비콘 최근 수신', '조명 3대', 'P(light-1) 0.91 ≥ 0.75 (설정값)']), ['stop']],
     posterior: { at: 3, posteriors: { 'light-1': 0.91, 'light-2': 0.06, 'light-3': 0.03 }, threshold: 0.75 },
     verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED', nodeId: 'light-1', said: '조명 켜 줘', reply: '조명 1은 소유자 승인이 필요해요. 승인을 신청할게요.' },
   // 옆방의 장소는 따로라 후보도 그 장소의 기기다
-  { id: 'r-1443', at: '14:43:48', personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on',
+  { id: 'r-1443', at: '14:43:48', personId: 'p-a', target: { kind: 'nearest', deviceKind: 'light' }, action: 'on',
     steps: ALL_PASS(['새 요청', '비콘 최근 수신', '조명 1대', 'P(mood-1) 0.98 ≥ 0.75 (설정값)', '켜기 정책']),
     posterior: { at: 3, posteriors: { 'mood-1': 0.98 }, threshold: 0.75 },
     verdict: 'OK', reason: 'OK', nodeId: 'mood-1', exec: { at: '14:43:49', result: 'succeeded' }, said: '조명 켜 줘', reply: '무드등의 제어 신호 출력을 마쳤어요.' }

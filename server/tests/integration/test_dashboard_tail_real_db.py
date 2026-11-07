@@ -125,7 +125,7 @@ def test_FR12B_요청_하나의_이벤트가_순서대로_나간다(flow):
     call, *rest = mine
     assert dict(call.fields) == {
         "requestId": flow.world.requests["ok"], "tool": "request_use", "action": "open",
-        "target": {"kind": "nearest", "capability": "locker"},
+        "target": {"kind": "nearest", "deviceKind": "locker"},
     }
     assert [(e.fields["step"], e.fields["result"]) for e in rest if e.type == "step"] == [
         (Step(str(i)), "pass") for i in range(7)]

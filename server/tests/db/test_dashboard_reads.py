@@ -15,6 +15,7 @@ import pytest
 
 from nearpilot.db.audit import SqliteAuditLog
 from nearpilot.db.repositories.dashboard_reads import SqliteDashboardReads
+from nearpilot.shared.descriptor import legacy_descriptor
 from nearpilot.shared.enums import (
     ApprovalMode,
     ApprovalStatus,
@@ -107,6 +108,22 @@ def test_FR12A_대시보드_읽기_장소와_기기(reads, conn):
         DashboardNode("node-c", None, None, "light", Occupancy.SHARED,
                       TrustState.DISCOVERED, DeviceState.AVAILABLE, None, None),
     ]
+
+
+def test_FR12A_dashboard_reads_declaration(reads, conn):
+    """저장한 기기 선언과 해시를 그대로 읽는다. 선언이 없는 행은 None 이다 (spec 결정 1)."""
+    insert_user(conn, user_id="owner1", token_hash="hash-owner1", role="owner")
+    insert_place(conn, place_id="place-a", owner_user_id="owner1", name="실험실")
+    insert_node(conn, node_id="node-a", place_id="place-a")
+    insert_node(conn, node_id="node-b", place_id="place-a")
+    locker = legacy_descriptor("locker", Occupancy.RENTAL)
+    conn.execute("UPDATE node SET descriptor = ?, descriptor_hash = ? WHERE node_id = 'node-a'",
+                 (json.dumps(locker.to_json(), ensure_ascii=False), locker.hash))
+
+    node_a, node_b = reads.nodes()
+
+    assert (node_a.kind, node_a.descriptor, node_a.descriptor_hash) == ("locker", locker, locker.hash)
+    assert (node_b.descriptor, node_b.descriptor_hash) == (None, None)
 
 
 def test_FR12A_대시보드_읽기_계정_역할(reads, conn):

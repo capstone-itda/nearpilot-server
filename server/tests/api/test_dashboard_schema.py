@@ -11,7 +11,7 @@ from typing import Any, NamedTuple
 
 import pytest
 
-from _dashboard import NOW, OWNER, VISITOR
+from _dashboard import NOW, OWNER, VISITOR, declaration
 from nearpilot.api.ws.names import PersonNames
 from nearpilot.api.ws.schema import EVENT_TYPES, RESPONSE_KINDS, SchemaError, render_event, render_response
 from nearpilot.shared.enums import (
@@ -94,12 +94,18 @@ JUNK = {  # 허용 목록 밖의 키. 사용자 ID 와 가짜 사람 필드를 �
 NUMMAPS = {"rssi", "posteriors", "counts"}  # 키가 기기 ID 나 판정 값인 맵에는 다른 키를 끼울 수 없다
 
 
-def with_junk(value: Any) -> Any:
+# 형식 표에서 그 자리의 선택 키라 끼울 수 없는 JUNK 키. 동작 행의 `role` 은 사람 필드가 아니라 선언의 역할이다
+OWN_KEYS = {"actions": frozenset({"role"})}
+
+
+def with_junk(value: Any, own: frozenset[str] = frozenset()) -> Any:
     """모든 객체에 허용 목록 밖의 키를 끼운다. 원래 있던 키가 이긴다."""
     if isinstance(value, dict):
-        return {**JUNK, **{key: item if key in NUMMAPS else with_junk(item) for key, item in value.items()}}
+        junk = {key: item for key, item in JUNK.items() if key not in own}
+        return {**junk, **{key: item if key in NUMMAPS else with_junk(item, OWN_KEYS.get(key, frozenset()))
+                           for key, item in value.items()}}
     if isinstance(value, (list, tuple)):
-        return [with_junk(item) for item in value]
+        return [with_junk(item, own) for item in value]
     return value
 
 
@@ -144,9 +150,9 @@ EVENT_CASES = [
     EventCase(
         "mcp_call", "mcp_call",
         {"requestId": "req-1", "tool": "request_use", "action": "open",
-         "target": {"kind": TargetKind.NEAREST, "capability": "locker", "nodeId": "locker-1"}},
+         "target": {"kind": TargetKind.NEAREST, "deviceKind": "locker", "nodeId": "locker-1"}},
         {"requestId": "req-1", "tool": "request_use",
-         "target": {"kind": "nearest", "capability": "locker", "nodeId": "locker-1"}, "action": "open",
+         "target": {"kind": "nearest", "deviceKind": "locker", "nodeId": "locker-1"}, "action": "open",
          "personId": "p1"},
         VISITOR, ("target", "action"),
     ),
@@ -239,7 +245,7 @@ def test_FR12B_이벤트_종류마다_형식대로_보낸다(case):
 def test_FR12B_중첩_객체의_선택_키도_None이면_보내지_않는다():
     names = PersonNames()
     call = event("mcp_call", {"requestId": "req-1", "tool": "request_use",
-                              "target": {"kind": "any", "capability": None, "nodeId": None}}, VISITOR)
+                              "target": {"kind": "any", "deviceKind": None, "nodeId": None}}, VISITOR)
     assert render_event(call, names)["target"] == {"kind": "any"}
     fault = event("transition", {"nodeId": "locker-1", "to": "FAULT",
                                  "fault": {"cause": "EXEC_FAILED", "action": None}})
@@ -391,12 +397,12 @@ PLACES = {
     "places": [
         {"placeId": "lounge", "placeName": "라운지", "modelVersion": "m1", "calibrationVersion": "c1",
          "devices": [
-             {"nodeId": "locker-1", "name": "사물함 1", "capability": "locker",
+             {"nodeId": "locker-1", "name": "사물함 1", "deviceKind": "locker", **declaration("locker"),
               "occupancy": Occupancy.RENTAL},
-             {"nodeId": "light-1", "name": "조명 1", "capability": "light", "occupancy": "shared"},
+             {"nodeId": "light-1", "name": "조명 1", "deviceKind": "light", "occupancy": "shared", **declaration("light")},
          ]},
         {"placeId": "side-room", "placeName": "옆방", "modelVersion": "m2", "calibrationVersion": "c2",
-         "devices": [{"nodeId": "mood-1", "name": "무드등", "capability": "light", "occupancy": "shared"}]},
+         "devices": [{"nodeId": "mood-1", "name": "무드등", "deviceKind": "light", "occupancy": "shared", **declaration("light")}]},
     ],
 }
 PLACES_OUT = {
@@ -404,11 +410,11 @@ PLACES_OUT = {
     "places": [
         {"placeId": "lounge", "placeName": "라운지", "modelVersion": "m1", "calibrationVersion": "c1",
          "devices": [
-             {"nodeId": "locker-1", "name": "사물함 1", "capability": "locker", "occupancy": "rental"},
-             {"nodeId": "light-1", "name": "조명 1", "capability": "light", "occupancy": "shared"},
+             {"nodeId": "locker-1", "name": "사물함 1", "deviceKind": "locker", "occupancy": "rental", **declaration("locker")},
+             {"nodeId": "light-1", "name": "조명 1", "deviceKind": "light", "occupancy": "shared", **declaration("light")},
          ]},
         {"placeId": "side-room", "placeName": "옆방", "modelVersion": "m2", "calibrationVersion": "c2",
-         "devices": [{"nodeId": "mood-1", "name": "무드등", "capability": "light", "occupancy": "shared"}]},
+         "devices": [{"nodeId": "mood-1", "name": "무드등", "deviceKind": "light", "occupancy": "shared", **declaration("light")}]},
     ],
 }
 
@@ -448,14 +454,14 @@ AUDIT_OUT = [
 ]
 
 HISTORY = [
-    {"requestId": "req-1", "at": NOW, "target": {"kind": TargetKind.NEAREST, "capability": "locker"},
+    {"requestId": "req-1", "at": NOW, "target": {"kind": TargetKind.NEAREST, "deviceKind": "locker"},
      "action": "open", "verdict": Verdict.OK, "nodeId": "locker-1", "outcome": ExecutionStatus.SUCCEEDED,
      "code": ReasonCode.OK, "subject": VISITOR},  # str 자리에 온 StrEnum 멤버도 값 문자열로 나간다
     {"requestId": "req-2", "at": EARLY, "target": {"kind": "explicit", "nodeId": "light-1"}, "action": "on",
      "verdict": "ASK", "outcome": "더 가까이 와야 한다", "subject": OWNER},
 ]
 HISTORY_OUT = [
-    {"personId": "p1", "requestId": "req-1", "at": ISO, "target": {"kind": "nearest", "capability": "locker"},
+    {"personId": "p1", "requestId": "req-1", "at": ISO, "target": {"kind": "nearest", "deviceKind": "locker"},
      "action": "open", "verdict": "OK", "nodeId": "locker-1", "outcome": "succeeded", "code": "OK"},
     {"personId": "p2", "requestId": "req-2", "at": EARLY_ISO, "target": {"kind": "explicit", "nodeId": "light-1"},
      "action": "on", "verdict": "ASK", "outcome": "더 가까이 와야 한다"},
@@ -463,7 +469,7 @@ HISTORY_OUT = [
 
 # 선택 키를 가능한 한 채운 요청 셋. 값의 앞뒤가 맞는지는 형식 검사의 일이 아니다
 REQUEST = {  # 실행까지 끝난 요청
-    "id": "req-1", "tool": "request_use", "target": {"kind": TargetKind.NEAREST, "capability": "locker"},
+    "id": "req-1", "tool": "request_use", "target": {"kind": TargetKind.NEAREST, "deviceKind": "locker"},
     "action": "open", "at": NOW, "verdict": Verdict.OK, "reason": ReasonCode.OK,
     "steps": [{"result": "pass"}, {"result": "pass"}, {"result": "pass", "detail": "후보 2개"},
               {"result": "pass", "detail": "p=0.97"}, {"result": "pass"}, {"result": "pass"}, {"result": "pass"}],
@@ -472,7 +478,7 @@ REQUEST = {  # 실행까지 끝난 요청
     "subject": VISITOR,
 }
 REQUEST_OUT = {
-    "personId": "p1", "id": "req-1", "tool": "request_use", "target": {"kind": "nearest", "capability": "locker"},
+    "personId": "p1", "id": "req-1", "tool": "request_use", "target": {"kind": "nearest", "deviceKind": "locker"},
     "action": "open", "at": ISO, "verdict": "OK", "reason": "OK",
     "steps": [{"result": "pass"}, {"result": "pass"}, {"result": "pass", "detail": "후보 2개"},
               {"result": "pass", "detail": "p=0.97"}, {"result": "pass"}, {"result": "pass"}, {"result": "pass"}],
@@ -496,11 +502,11 @@ REQUEST_STOPPED_OUT = {
     "respondedAt": ISO,
 }
 REQUEST_PENDING = {  # 판정 전. 선택 키가 모두 없다
-    "id": "req-3", "tool": "request_use", "target": {"kind": "any", "capability": "light"}, "action": "on",
+    "id": "req-3", "tool": "request_use", "target": {"kind": "any", "deviceKind": "light"}, "action": "on",
     "at": NOW, "steps": [{"result": "pending"}] * 7, "subject": OWNER,
 }
 REQUEST_PENDING_OUT = {
-    "personId": "p1", "id": "req-3", "tool": "request_use", "target": {"kind": "any", "capability": "light"},
+    "personId": "p1", "id": "req-3", "tool": "request_use", "target": {"kind": "any", "deviceKind": "light"},
     "action": "on", "at": ISO, "steps": [{"result": "pending"}] * 7,
 }
 
@@ -653,8 +659,25 @@ BAD_RESPONSES = [
                  ("places", 1, "placeId"), UNENCODABLE),
     bad_response("place_devices_missing", "places", PLACES, "places.places[0].devices",
                  ("places", 0, "devices"), DROP),
-    bad_response("place_nested_enum", "places", PLACES, "places.places[0].devices[1].capability",
-                 ("places", 0, "devices", 1, "capability"), "Gate!"),  # 종류 이름 규칙 밖
+    bad_response("place_nested_enum", "places", PLACES, "places.places[0].devices[1].deviceKind",
+                 ("places", 0, "devices", 1, "deviceKind"), "Gate!"),  # 종류 이름 규칙 밖
+    # 기기 선언 (FR-12A, spec 결정 3)
+    bad_response("place_vendor_missing_key", "places", PLACES, "places.places[0].devices[0].vendor.firmware",
+                 ("places", 0, "devices", 0, "vendor", "firmware"), DROP),
+    bad_response("place_vendor_not_mapping", "places", PLACES, "places.places[0].devices[0].vendor",
+                 ("places", 0, "devices", 0, "vendor"), "nearpilot"),
+    bad_response("place_actions_missing", "places", PLACES, "places.places[0].devices[0].actions",
+                 ("places", 0, "devices", 0, "actions"), DROP),
+    bad_response("place_action_name_outside", "places", PLACES, "places.places[0].devices[0].actions[0].name",
+                 ("places", 0, "devices", 0, "actions", 0, "name"), "Open"),
+    bad_response("place_action_role_outside", "places", PLACES, "places.places[0].devices[0].actions[1].role",
+                 ("places", 0, "devices", 0, "actions", 1, "role"), "close"),
+    bad_response("place_hash_missing", "places", PLACES, "places.places[0].devices[0].descriptorHash",
+                 ("places", 0, "devices", 0, "descriptorHash"), DROP),
+    bad_response("place_hash_upper", "places", PLACES, "places.places[0].devices[0].descriptorHash",
+                 ("places", 0, "devices", 0, "descriptorHash"), "A" * 64),
+    bad_response("place_hash_short", "places", PLACES, "places.places[0].devices[0].descriptorHash",
+                 ("places", 0, "devices", 0, "descriptorHash"), "a" * 63),
     bad_response("weak_rssi_missing", "places", PLACES, "places.weakRssiDbm", ("weakRssiDbm",), DROP),
     bad_response("weak_rssi_bool_for_num", "places", PLACES, "places.weakRssiDbm", ("weakRssiDbm",), True),
     pytest.param(  # 약한 신호 기준은 응답 전체에 하나다. 장소마다 있는 값은 그것을 대신하지 않는다

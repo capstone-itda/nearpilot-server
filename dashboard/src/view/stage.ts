@@ -8,7 +8,7 @@ import {
 import { iso } from './iso';
 import { placeOfPerson, requestPlace } from './places';
 import {
-  OUTPUT_COMPLETE, ACTION_NAME, CAPABILITY_NAME,
+  OUTPUT_COMPLETE, actionName, kindName,
   DEVICE_STATE_NAME, approvalText, josa, reasonText
 } from './text';
 import { isDecided } from '../model/types';
@@ -25,7 +25,7 @@ export type Tone = 'none' | 'active' | 'ok' | 'ask' | 'appr' | 'busy' | 'deny' |
 export type StageScene = 'idle' | 'judging' | 'flow' | 'fault' | 'ask' | 'approval' | 'busy' | 'deny' | 'layout';
 
 export interface StageDeviceView {
-  nodeId: string; name: string; capability: LayoutDevice['capability'];
+  nodeId: string; name: string; deviceKind: LayoutDevice['deviceKind'];
   /** 평면 배치 자리와 기기 앞 */
   x: number; y: number; fx: number; fy: number; wall: Facing;
   /** 무대에서 본체가 차지하는 상자, 이름표 자리, 신호 세기 글자 자리 */
@@ -108,7 +108,7 @@ export function baseDevice(st: DeviceStatus | undefined): { status: string; code
 export function focusDevices(r: RequestProgress, layout: FloorLayout): string[] {
   if (r.nodeId) return [r.nodeId];
   if (r.target.nodeId) return [r.target.nodeId];
-  return layout.devices.filter((d) => d.capability === r.target.capability).map((d) => d.nodeId);
+  return layout.devices.filter((d) => d.deviceKind === r.target.deviceKind).map((d) => d.nodeId);
 }
 
 /**
@@ -218,8 +218,8 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
       else if (r.verdict === 'BUSY') v.tone = 'busy';
     }
     return {
-      nodeId: d.nodeId, name: d.name, capability: d.capability, x: b.x, y: b.y, fx: f.x, fy: f.y, wall: facing(d.spot),
-      body: deviceBody(b.x, b.y, d.capability), label: { x: 0, y: 0, w: 0 }, rssiAt: { x: 0, y: 0 }, hidden: false,
+      nodeId: d.nodeId, name: d.name, deviceKind: d.deviceKind, x: b.x, y: b.y, fx: f.x, fy: f.y, wall: facing(d.spot),
+      body: deviceBody(b.x, b.y, d.deviceKind), label: { x: 0, y: 0, w: 0 }, rssiAt: { x: 0, y: 0 }, hidden: false,
       ...v, dim: !!r && !opt.layoutCheck && !elsewhere && !keep.includes(d.nodeId)
     };
   });
@@ -366,8 +366,8 @@ export function stageView(s: MonitorState, layout: FloorLayout, opt: StageOption
     if (spot?.clean) set('accent', spot, '비콘 신호를 받는 중', '');
   } else {
     const name = devName(target ?? undefined);
-    const cap = CAPABILITY_NAME[r.target.capability ?? known(target ?? undefined)?.capability ?? 'locker'];
-    const act = ACTION_NAME[r.action];
+    const cap = kindName(r.target.deviceKind ?? known(target ?? undefined)?.deviceKind ?? 'locker');
+    const act = actionName(r.action);
     switch (scene) {
       case 'judging':
         // 서버 랙이 판정 게이지를 보인다. 콜아웃은 두지 않는다.

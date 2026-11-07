@@ -2,12 +2,12 @@
 import { describe, expect, it } from 'vitest';
 import { LAYOUT } from '../data/mock/fixtures';
 import { SCENES, sec, stateAt } from '../data/mock/story';
-import { NODE_ANCHOR, stageView } from './stage';
+import { NODE_ANCHOR, focusDevices, stageView } from './stage';
 import { LOUNGE, PLACES, SIDE_ROOM, WEAK_RSSI_DBM } from '../data/mock/fixtures';
 import type { MonitorState } from '../model/types';
 import { resolveArrangement, withArrangement } from './arrange';
 import { insetView } from './inset';
-import { CALLOUT_H, CALLOUT_W, PANEL_EDGE, STAGE_BOUNDS, canPlaceAll, crosses, deviceLabelBox, hits, labelBox, personBox, rssiBox, type Rect } from './placement';
+import { CALLOUT_H, CALLOUT_W, OTHER_DEVICE_H, PANEL_EDGE, STAGE_BOUNDS, canPlaceAll, crosses, deviceHeight, deviceLabelBox, hits, labelBox, personBox, rssiBox, type Rect } from './placement';
 import { nextFocus } from './places';
 
 const dev = (v: ReturnType<typeof stageView>, id: string) => v.devices.find((d) => d.nodeId === id)!;
@@ -141,6 +141,31 @@ describe('stageView', () => {
   });
 });
 
+describe('stageView 선언한 새 종류', () => {
+  it('FR12A 사물함·조명·스피커 밖의 종류는 표시용 기본 상자 높이로 그리고, 요청 제목은 종류·동작 이름 그대로다', () => {
+    const fan = {
+      nodeId: 'fan-1', name: '선풍기', deviceKind: 'fan', occupancy: 'shared' as const,
+      vendor: { name: 'acme', model: 'f1', firmware: '1.0' },
+      actions: [{ name: 'spin', description: '팬을 돌린다' }], descriptorHash: 'a'.repeat(64)
+    };
+    const place = { ...LOUNGE, devices: [...LOUNGE.devices, fan] };
+    const layout = withArrangement(place, resolveArrangement(place.devices), WEAK_RSSI_DBM);
+    const s: MonitorState = {
+      ...SCENES.idle(),
+      request: { id: 'r-f', personId: 'p-a', tool: 'request_use', target: { kind: 'nearest', deviceKind: 'fan' }, action: 'spin', at: '14:50:00', steps: Array(7).fill({ result: 'pending' }) }
+    };
+    const v = stageView(s, layout, { panelOpen: false });
+    const body = dev(v, 'fan-1').body;
+    const locker = dev(v, 'locker-1').body;
+    expect(Number.isFinite(body.y1) && Number.isFinite(body.y2)).toBe(true);
+    // 상자 높이 70: 스피커(56)보다 높고 사물함(110)보다 낮다
+    expect(body.y2 - body.y1).toBeLessThan(locker.y2 - locker.y1);
+    expect(focusDevices(s.request!, layout)).toEqual(['fan-1']);
+    expect(deviceHeight('fan')).toBe(OTHER_DEVICE_H);
+    expect(deviceHeight('constructor')).toBe(OTHER_DEVICE_H);
+  });
+});
+
 describe('stageView 사유별 콜아웃', () => {
   const failed = () => {
     const s = SCENES.fault();
@@ -211,7 +236,7 @@ describe('무대의 사람 자리 (표시용)', () => {
   });
   it('FR12B 기기 없이 멈춘 BUSY도 요청한 사람에게 콜아웃을 단다', () => {
     const s = SCENES.flow();
-    s.request = { ...s.request!, verdict: 'BUSY', reason: 'NOT_ASSIGNED', nodeId: undefined, target: { kind: 'nearest', capability: 'locker' }, execution: undefined };
+    s.request = { ...s.request!, verdict: 'BUSY', reason: 'NOT_ASSIGNED', nodeId: undefined, target: { kind: 'nearest', deviceKind: 'locker' }, execution: undefined };
     const v = stageView(s, LAYOUT, { panelOpen: false });
     expect(v.callout).toMatchObject({ on: true, title: '배정받지 못함' });
   });

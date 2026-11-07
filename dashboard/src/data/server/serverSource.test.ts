@@ -1,6 +1,7 @@
 // 서버 어댑터: 가짜 fetch·WebSocket·타이머로 조회 REST(FR-12A)와 모니터링 스트림(FR-12B)을 시험한다
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StreamEvent } from '../../model/events';
+import { DECLARATIONS } from '../mock/fixtures';
 import { createServerSource, type ServerOptions } from './serverSource';
 
 beforeAll(() => { vi.stubEnv('TZ', 'Asia/Seoul'); });
@@ -50,7 +51,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 interface Call { url: URL; init: RequestInit }
 
 const BODIES: Record<string, unknown> = {
-  '/dashboard/places': { weakRssiDbm: -75, places: [{ placeId: 'lounge', placeName: '공용 라운지', modelVersion: 'm-3', calibrationVersion: 'c-7', devices: [{ nodeId: 'locker-1', name: '사물함 1', capability: 'locker', occupancy: 'rental' }] }] },
+  '/dashboard/places': { weakRssiDbm: -75, places: [{ placeId: 'lounge', placeName: '공용 라운지', modelVersion: 'm-3', calibrationVersion: 'c-7', devices: [{ nodeId: 'locker-1', name: '사물함 1', ...DECLARATIONS.locker }] }] },
   '/dashboard/uses': [{ nodeId: 'locker-1', personId: 'p1', occupancy: 'rental', session: 'ACTIVE', startedAt: AT }],
   '/dashboard/approvals': { pending: [], active: [], ended: [] },
   '/dashboard/audit': [{ id: 'a-1', at: AT, step: '3', text: '근접 통과', code: 'OK' }],

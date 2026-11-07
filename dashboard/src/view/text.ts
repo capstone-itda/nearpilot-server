@@ -1,15 +1,23 @@
 // 화면에 쓰는 쉬운 말. 코드 값은 enums.py 그대로 두고 옆에 보조 글자로 붙인다.
-import type { Action, Capability, ReasonCode, RequestProgress, Verdict } from '../model/types';
+import type { Action, ActionRole, DeviceKind, ReasonCode, RequestProgress, Verdict } from '../model/types';
 
 export const VERDICT_LABEL: Record<string, string> = {
   OK: '허가', ASK: '다시 질문', NEED_APPROVAL: '승인 필요', BUSY: '바쁨', DENY: '거부',
   FAULT: '고장 격리', QUERY: '조회', WAIT: '대기', INFO: '정보'
 };
 
-export const CAPABILITY_NAME: Record<Capability, string> = { locker: '사물함', light: '조명', speaker: '스피커' };
-export const ACTION_NAME: Record<Action, string> = { open: '열기', on: '켜기', off: '끄기' };
+/** 아는 종류·동작 이름의 쉬운 말. 기기가 선언한 다른 이름은 이름 그대로 보인다 (#245) */
+export const KIND_NAME: Record<string, string> = { locker: '사물함', light: '조명', speaker: '스피커' };
+export const ACTION_NAME: Record<string, string> = { open: '열기', close: '닫기', on: '켜기', off: '끄기' };
 export const OUTPUT_COMPLETE = '제어 신호 출력 완료';
-export const ACTION_VERB: Record<Action, string> = { open: '열어요', on: '켜요', off: '꺼요' };
+export const ACTION_VERB: Record<string, string> = { open: '열어요', close: '닫아요', on: '켜요', off: '꺼요' };
+const own = (table: Record<string, string>, key: string) => (Object.hasOwn(table, key) ? table[key] : undefined);
+export const kindName = (kind: DeviceKind) => own(KIND_NAME, kind) ?? kind;
+export const actionName = (action: Action) => own(ACTION_NAME, action) ?? action;
+/** 모르는 동작은 동작 이름을 붙여 "spin 실행해요"다 */
+export const actionVerb = (action: Action) => own(ACTION_VERB, action) ?? `${action} 실행해요`;
+/** 동작 역할의 쉬운 말 (기기 상세의 선언 절) */
+export const ROLE_NAME: Record<ActionRole, string> = { reoperate: '재조작', deactivate: '끄기 역할' };
 
 export const DEVICE_STATE_NAME: Record<string, string> = {
   AVAILABLE: '사용 가능', RESERVED: '예약', ACTIVE: '사용 중', CLOSING: '점유 해제 중', FAULT: '고장 격리'
@@ -32,6 +40,9 @@ export const REASON_TEXT: Partial<Record<ReasonCode, string>> = {
   TARGET_UNAVAILABLE: '지금 쓸 수 없는 기기',
   LOW_CONFIDENCE: '어느 기기 앞인지 확신 부족',
   MOVE_CLOSER: '기기에 더 가까이 가야 함',
+  UNSUPPORTED_ACTION: '기기가 선언하지 않은 동작',
+  UNSUPPORTED_PARAMETER: '기기가 받은 인자를 지원하지 않음',
+  PARAMETER_OUT_OF_RANGE: '인자가 기기의 상한을 넘음',
   APPROVAL_REQUIRED: '승인 필요',
   POLICY_DENIED: '정책이 허락하지 않음',
   APPROVAL_PENDING: '소유자 응답 기다림',
@@ -81,14 +92,14 @@ export const josa = (word: string, withB: string, without: string) => word + (ha
 /** request_use 의 대상 표기: nearest:locker, locker-2, any:locker */
 export function targetCode(t: RequestProgress['target']): string {
   if (t.kind === 'explicit') return t.nodeId ?? '';
-  return `${t.kind}:${t.capability}`;
+  return `${t.kind}:${t.deviceKind}`;
 }
 export const toolCall = (r: Pick<RequestProgress, 'tool' | 'target' | 'action'>) => `${r.tool}(${targetCode(r.target)}, ${r.action})`;
 
 /** 요청 제목: "사물함 열기", 명시 지정이면 "사물함 2 열기" */
 export function requestTitle(r: Pick<RequestProgress, 'target' | 'action'>, deviceName: (id: string) => string): string {
-  const what = r.target.kind === 'explicit' && r.target.nodeId ? deviceName(r.target.nodeId) : CAPABILITY_NAME[r.target.capability ?? 'locker'];
-  return `${what} ${ACTION_NAME[r.action]}`;
+  const what = r.target.kind === 'explicit' && r.target.nodeId ? deviceName(r.target.nodeId) : kindName(r.target.deviceKind ?? 'locker');
+  return `${what} ${actionName(r.action)}`;
 }
 
 export const verdictLabel = (v: Verdict | 'FAULT') => VERDICT_LABEL[v];

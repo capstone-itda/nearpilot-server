@@ -12,7 +12,7 @@ import sqlite3
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 
-from nearpilot.db.repositories._common import from_json, iso, parse_iso
+from nearpilot.db.repositories._common import descriptor_from_json, from_json, iso, parse_iso
 from nearpilot.shared.enums import (
     ApprovalMode,
     ApprovalStatus,
@@ -125,19 +125,21 @@ class SqliteDashboardReads:
     def nodes(self) -> Sequence[DashboardNode]:
         rows = self._conn.execute(
             "SELECT node_id, name, place_id, kind, occupancy, trust_state, device_state, "
-            "last_seen_at, session_id FROM node ORDER BY node_id"
+            "last_seen_at, session_id, descriptor, descriptor_hash FROM node ORDER BY node_id"
         ).fetchall()
         return [
             DashboardNode(
                 node_id=row["node_id"],
                 name=row["name"],
                 place_id=row["place_id"],
-                capability=row["kind"],
+                kind=row["kind"],
                 occupancy=Occupancy(row["occupancy"]),
                 trust_state=TrustState(row["trust_state"]),
                 device_state=DeviceState(row["device_state"]),
                 last_seen_at=_time(row["last_seen_at"]),
                 session_id=row["session_id"],
+                descriptor=descriptor_from_json(row["descriptor"]),
+                descriptor_hash=row["descriptor_hash"],
             )
             for row in rows
         ]

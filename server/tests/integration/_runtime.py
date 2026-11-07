@@ -26,9 +26,11 @@ if str(SERVER) not in sys.path:
 from tools.node_sim.node import Beacon, Scenario, SimNode  # noqa: E402
 from tools.node_sim.store import CommandStore  # noqa: E402
 
+from nearpilot.db.repositories._common import descriptor_to_json  # noqa: E402
 from nearpilot.db.schema import connect  # noqa: E402
 from nearpilot.runtime import Runtime, ShutdownError  # noqa: E402
 from nearpilot.runtime.config import ServerConfig, parse_config  # noqa: E402
+from nearpilot.shared.descriptor import legacy_descriptor  # noqa: E402
 from nearpilot.shared.models import ProximityResult  # noqa: E402
 from nearpilot.shared.tokens import hash_token  # noqa: E402
 
@@ -89,7 +91,10 @@ def make_config(tmp: Path, *, settings: Mapping[str, Any] | None = None,
 
 def seed(db_path: Path, *, modes: Mapping[str, str] | None = None,
          nodes: Mapping[str, tuple[str, str]] = NODES) -> None:
-    """계정·비콘·장소·기기·정책을 넣는다. 기기의 연결과 온라인은 시뮬레이터 보고가 정한다."""
+    """계정·비콘·장소·기기·정책을 넣는다. 기기의 연결과 온라인은 시뮬레이터 보고가 정한다.
+
+    기기 선언은 시뮬레이터가 발표하는 v2 템플릿과 같다. 운영에서 기기 행은 발표로만 생기므로 선언이 있다.
+    """
     conn = connect(str(db_path))
     try:
         for user_id, role in ((OWNER, "owner"), (VISITOR_A, "visitor"), (VISITOR_B, "visitor")):
@@ -101,10 +106,12 @@ def seed(db_path: Path, *, modes: Mapping[str, str] | None = None,
                      (OWNER,))
         for node_id, (capability, occupancy) in nodes.items():
             policy = "{}"
+            descriptor = legacy_descriptor(capability, occupancy)
             conn.execute(
                 "INSERT INTO node (node_id, place_id, kind, occupancy, trust_state, device_state, "
-                "exclusive_group, release_policy) VALUES (?, 'place-a', ?, ?, 'trusted', 'AVAILABLE', NULL, ?)",
-                (node_id, capability, occupancy, policy))
+                "exclusive_group, release_policy, descriptor, descriptor_hash) "
+                "VALUES (?, 'place-a', ?, ?, 'trusted', 'AVAILABLE', NULL, ?, ?, ?)",
+                (node_id, capability, occupancy, policy, descriptor_to_json(descriptor), descriptor.hash))
             conn.execute("INSERT INTO access_policy (policy_id, node_id, current_version) VALUES (?, ?, 1)",
                          (f"pol-{node_id}", node_id))
             conn.execute(

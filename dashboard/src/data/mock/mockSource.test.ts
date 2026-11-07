@@ -119,7 +119,7 @@ describe('두 장소', () => {
     expect(info.places.map((p) => p.placeId)).toEqual(['lounge', 'side-room']);
     expect(info.places[0]).toMatchObject({ placeName: '공용 라운지' });
     expect(info.places[0].devices).toHaveLength(7);
-    expect(info.places[1]).toMatchObject({ placeName: '옆방', devices: [{ nodeId: 'mood-1', name: '무드등', capability: 'light', occupancy: 'shared' }] });
+    expect(info.places[1]).toMatchObject({ placeName: '옆방', devices: [{ nodeId: 'mood-1', name: '무드등', deviceKind: 'light', occupancy: 'shared' }] });
     // 장소마다 근접 모델과 보정이 따로다
     expect(info.places[0].modelVersion).not.toBe(info.places[1].modelVersion);
     expect(info.places[0].calibrationVersion).not.toBe(info.places[1].calibrationVersion);
@@ -133,7 +133,7 @@ describe('두 장소', () => {
     expect(person('p-a')).toMatchObject({ beaconSeen: true, near: 'mood-1' });
     expect(person('p-c').beaconSeen).toBe(true);
     expect(placeOfNode(PLACES, person('p-c').near)).toBe('lounge');
-    expect(s.request).toMatchObject({ personId: 'p-a', target: { kind: 'nearest', capability: 'light' }, action: 'on', verdict: 'OK', nodeId: 'mood-1', execution: 'sent' });
+    expect(s.request).toMatchObject({ personId: 'p-a', target: { kind: 'nearest', deviceKind: 'light' }, action: 'on', verdict: 'OK', nodeId: 'mood-1', execution: 'sent' });
     expect(requestPlace(s, PLACES)).toBe('side-room');
   });
 

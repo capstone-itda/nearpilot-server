@@ -3,9 +3,13 @@
 
 export type Verdict = 'OK' | 'BUSY' | 'ASK' | 'DENY' | 'NEED_APPROVAL';
 export type DeviceState = 'AVAILABLE' | 'RESERVED' | 'ACTIVE' | 'CLOSING' | 'FAULT';
-export type Capability = 'locker' | 'light' | 'speaker';
+/** 기기 선언의 종류 이름 (`^[a-z][a-z0-9_]*$`). 사물함·조명·스피커 밖의 종류도 온다 (#245) */
+export type DeviceKind = string;
 export type Occupancy = 'rental' | 'shared';
-export type Action = 'open' | 'on' | 'off';
+/** 기기가 선언한 동작 이름 (`^[a-z][a-z0-9_]*$`). open, close, on, off 밖의 이름도 온다 (#245) */
+export type Action = string;
+/** 동작의 역할. 역할이 없는 동작은 일반 실행이다 */
+export type ActionRole = 'reoperate' | 'deactivate';
 export type TargetKind = 'nearest' | 'explicit' | 'any';
 export type TrustState = 'discovered' | 'trusted' | 'revoked';
 export type AuditStep = 'auth' | '0' | '1' | '2' | '3' | '4' | '5' | '6' | 'exec' | 'close' | 'fault' | 'announce' | 'admin';
@@ -13,17 +17,30 @@ export type ApprovalMode = 'one_time' | 'time_window';
 export type ReasonCode =
   | 'OK' | 'INVALID_TOKEN' | 'INVALID_INPUT' | 'REQUEST_ID_CONFLICT' | 'CAPACITY_EXCEEDED'
   | 'BEACON_NOT_SEEN' | 'NO_CANDIDATE' | 'TARGET_UNAVAILABLE' | 'LOW_CONFIDENCE' | 'MOVE_CLOSER'
+  | 'UNSUPPORTED_ACTION' | 'UNSUPPORTED_PARAMETER' | 'PARAMETER_OUT_OF_RANGE'
   | 'APPROVAL_REQUIRED' | 'POLICY_DENIED' | 'APPROVAL_PENDING' | 'APPROVAL_REJECTED' | 'APPROVAL_EXPIRED'
   | 'APPROVAL_REQUEST_EXPIRED' | 'APPROVAL_EXHAUSTED' | 'ACTION_NOT_ALLOWED' | 'DEVICE_BUSY' | 'USER_BUSY'
   | 'NOT_ASSIGNED' | 'USE_NOT_FOUND' | 'RECHECK_FAILED' | 'INTERNAL_ERROR' | 'COMMAND_IN_PROGRESS'
   | 'EXEC_FAILED' | 'EXEC_UNKNOWN' | 'RESERVATION_EXPIRED' | 'NODE_NOT_CONNECTED' | 'COMMAND_NOT_SENT';
 
-/** 조회 REST의 기기 한 대 (현재 상태의 기기 목록) */
+/** 기기가 선언한 동작 하나. 인자 스키마는 대시보드에 오지 않는다 */
+export interface DeviceAction {
+  name: Action;
+  description: string;
+  role?: ActionRole;
+}
+
+/** 조회 REST의 기기 한 대 (현재 상태의 기기 목록). 선언 값은 서버에 저장한 기기 선언 그대로다 (FR-12A) */
 export interface DeviceInfo {
   nodeId: string;
   name: string;
-  capability: Capability;
+  deviceKind: DeviceKind;
   occupancy: Occupancy;
+  /** 제작사 정보. 소유자가 신뢰하기 전에 확인한다 */
+  vendor: { name: string; model: string; firmware: string };
+  actions: DeviceAction[];
+  /** 선언 해시 (SHA-256, 64자리 16진수). 바뀌면 기기를 다시 신뢰해야 한다 (FR-13) */
+  descriptorHash: string;
 }
 
 /** 조회 REST의 장소 하나. 좌표는 없다. */
@@ -87,7 +104,7 @@ export interface RequestProgress {
   id: string;
   personId: string;
   tool: 'request_use';
-  target: { kind: TargetKind; capability?: Capability; nodeId?: string };
+  target: { kind: TargetKind; deviceKind?: DeviceKind; nodeId?: string };
   action: Action;
   /** 요청 시각 (HH:MM:SS) */
   at: string;
@@ -182,7 +199,7 @@ export interface HistoryRow {
   requestId: string;
   at: string;
   personId: string;
-  target: { kind: TargetKind; capability?: Capability; nodeId?: string };
+  target: { kind: TargetKind; deviceKind?: DeviceKind; nodeId?: string };
   action: Action;
   verdict: Verdict;
   nodeId?: string;

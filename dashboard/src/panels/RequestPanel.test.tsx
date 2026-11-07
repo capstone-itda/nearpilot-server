@@ -35,7 +35,7 @@ describe('RequestPanel 여러 장소', () => {
   });
 
   it('FR12A 판정이 고른 옆방 기기의 이름으로 실행 결과를 말한다', () => {
-    renderRequest(ask({ target: { kind: 'nearest', capability: 'light' }, verdict: 'OK', reason: 'OK', nodeId: 'mood-1', execution: 'succeeded' }));
+    renderRequest(ask({ target: { kind: 'nearest', deviceKind: 'light' }, verdict: 'OK', reason: 'OK', nodeId: 'mood-1', execution: 'succeeded' }));
     expect(screen.getByText('무드등 켜기')).toBeTruthy();
     expect(screen.getByText('제어 신호 출력 완료')).toBeTruthy();
   });
@@ -43,7 +43,7 @@ describe('RequestPanel 여러 장소', () => {
 
 describe('RequestPanel 실행 결과', () => {
   const executed = (execution: RequestProgress['execution']) =>
-    ask({ target: { kind: 'nearest', capability: 'light' }, verdict: 'OK', reason: 'OK', nodeId: 'mood-1', execution });
+    ask({ target: { kind: 'nearest', deviceKind: 'light' }, verdict: 'OK', reason: 'OK', nodeId: 'mood-1', execution });
 
   it('FR12A 기기가 실행 전에 거절했으면 격리하지 않았다고 말한다. 고장 격리라고 쓰지 않는다', () => {
     renderRequest(executed('rejected'));
@@ -66,7 +66,7 @@ describe('RequestPanel 실행 결과', () => {
 
 describe('RequestPanel 승인 신청의 끝', () => {
   const needApproval = (r: Partial<RequestProgress>): RequestProgress => ({
-    id: 'r-appr', personId: 'p-b', tool: 'request_use', target: { kind: 'nearest', capability: 'light' }, action: 'on', at: '14:30:58',
+    id: 'r-appr', personId: 'p-b', tool: 'request_use', target: { kind: 'nearest', deviceKind: 'light' }, action: 'on', at: '14:30:58',
     steps: [{ result: 'pass' }, { result: 'pass' }, { result: 'pass' }, { result: 'pass' }, { result: 'stop' }, { result: 'skip' }, { result: 'skip' }],
     verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED', nodeId: 'light-1', accessRequestedAt: '14:31:00', ...r
   });

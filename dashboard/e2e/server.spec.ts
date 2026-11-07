@@ -12,14 +12,26 @@ const CLEAN = { pageScroll: [], innerScroll: [], textOverflow: [], ellipsized: [
 /** 서버가 보내는 시각 (UTC 05:mm:ss = 서울 14:mm:ss) */
 const at = (min: number, sec: number, ms = 0) => `2026-10-24T05:${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}.${String(ms).padStart(3, '0')}+00:00`;
 
+/** 장소 목록 기기의 선언 키 (FR-12A). v2 선언 템플릿의 값이다 (src/data/mock/fixtures.ts의 DECLARATIONS와 같다) */
+const LOCKER_DECL = {
+  vendor: { name: 'nearpilot', model: 'locker', firmware: 'v2' },
+  actions: [{ name: 'open', description: '사물함을 연다' }, { name: 'close', description: '사물함을 잠근다. 반납이 아니다', role: 'reoperate' }],
+  descriptorHash: '64e5b12fac7357abf72184544920b6246af48f839543adfa7076d855fb3470ee'
+};
+const LIGHT_DECL = {
+  vendor: { name: 'nearpilot', model: 'light', firmware: 'v2' },
+  actions: [{ name: 'on', description: '조명을 켜고 밝기와 색을 정한다' }, { name: 'off', description: '조명을 끈다', role: 'deactivate' }],
+  descriptorHash: 'fda0c079eb08e2dbd966470b94fb425d5afbc42728e2b0b5a7b04cecf952bc3a'
+};
+
 const PLACES = {
   weakRssiDbm: -75,
   places: [{
     placeId: 'lounge', placeName: '공용 라운지', modelVersion: 'm-3', calibrationVersion: 'c-7',
     devices: [
-      { nodeId: 'locker-1', name: '사물함 1', capability: 'locker', occupancy: 'rental' },
-      { nodeId: 'locker-2', name: '사물함 2', capability: 'locker', occupancy: 'rental' },
-      { nodeId: 'light-1', name: '조명 1', capability: 'light', occupancy: 'shared' }
+      { nodeId: 'locker-1', name: '사물함 1', deviceKind: 'locker', occupancy: 'rental', ...LOCKER_DECL },
+      { nodeId: 'locker-2', name: '사물함 2', deviceKind: 'locker', occupancy: 'rental', ...LOCKER_DECL },
+      { nodeId: 'light-1', name: '조명 1', deviceKind: 'light', occupancy: 'shared', ...LIGHT_DECL }
     ]
   }]
 };
@@ -40,7 +52,7 @@ const NOW = [
 ];
 
 /** 사물함 열림 흐름: 요청이 닿고(방문자 A, 가까운 사물함 열기), 판정 단계를 지나, 허가, 명령, 실행 완료, 응답 */
-const CALL = { type: 'mcp_call', at: at(28, 10, 100), requestId: 'req-1', personId: 'p-1', tool: 'request_use', target: { kind: 'nearest', capability: 'locker' }, action: 'open' };
+const CALL = { type: 'mcp_call', at: at(28, 10, 100), requestId: 'req-1', personId: 'p-1', tool: 'request_use', target: { kind: 'nearest', deviceKind: 'locker' }, action: 'open' };
 const JUDGING = [
   ...['0', '1', '2', '3', '4', '5', '6'].map((n, i) => ({ type: 'step', at: at(28, 10, 150 + i * 20), requestId: 'req-1', step: n, result: 'pass' })),
   { type: 'posterior', at: at(28, 10, 300), requestId: 'req-1', posteriors: { 'locker-1': 0.93, 'locker-2': 0.04 }, threshold: 0.8 },

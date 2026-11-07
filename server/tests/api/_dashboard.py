@@ -20,8 +20,18 @@ from nearpilot.shared.enums import (
     TrustState,
     Verdict,
 )
+from nearpilot.shared.descriptor import legacy_descriptor
 from nearpilot.shared.models import Account, MonitorEvent, Subject
 from nearpilot.shared.tokens import hash_token
+
+def declaration(kind: str) -> dict[str, Any]:
+    """장소 목록 기기 정보의 선언 키. v2 템플릿 선언의 값이다 (FR-12A)."""
+    occupancy = Occupancy.RENTAL if kind == "locker" else Occupancy.SHARED
+    descriptor = legacy_descriptor(kind, occupancy)
+    actions = [{"name": a.name, "description": a.description, **({"role": a.role.value} if a.role else {})}
+               for a in descriptor.actions]
+    return {"vendor": descriptor.vendor.to_json(), "actions": actions, "descriptorHash": descriptor.hash}
+
 
 NOW = datetime(2026, 10, 23, 14, 3, 5, 120000, tzinfo=timezone(timedelta(hours=9)))
 OWNER_TOKEN, VISITOR_TOKEN = "tok-owner", "tok-visitor"
@@ -93,11 +103,11 @@ class FakeQueries:
         self.error: Exception | None = None
         self.calls: list[tuple[str, tuple]] = []
         lounge = (  # 사물함 3, 조명 3, 스피커 1
-            [{"nodeId": f"locker-{n}", "name": f"사물함 {n}", "capability": "locker",
+            [{"nodeId": f"locker-{n}", "name": f"사물함 {n}", "deviceKind": "locker", **declaration("locker"),
               "occupancy": Occupancy.RENTAL} for n in (1, 2, 3)]
-            + [{"nodeId": f"light-{n}", "name": f"조명 {n}", "capability": "light",
+            + [{"nodeId": f"light-{n}", "name": f"조명 {n}", "deviceKind": "light", **declaration("light"),
                 "occupancy": Occupancy.SHARED} for n in (1, 2, 3)]
-            + [{"nodeId": "speaker-1", "name": "스피커 1", "capability": "speaker",
+            + [{"nodeId": "speaker-1", "name": "스피커 1", "deviceKind": "speaker", **declaration("speaker"),
                 "occupancy": Occupancy.SHARED}]
         )
         self.places_data: Any = {  # 한 소유자가 두 장소를 갖는다. weakRssiDbm 은 응답 전체에 하나다
@@ -107,7 +117,7 @@ class FakeQueries:
                  "calibrationVersion": "cal-1", "devices": lounge},
                 {"placeId": "side-room", "placeName": "옆방", "modelVersion": "model-2",
                  "calibrationVersion": "cal-2",
-                 "devices": [{"nodeId": "mood-1", "name": "무드등", "capability": "light",
+                 "devices": [{"nodeId": "mood-1", "name": "무드등", "deviceKind": "light", **declaration("light"),
                               "occupancy": Occupancy.SHARED}]},
             ],
         }
@@ -135,13 +145,13 @@ class FakeQueries:
              "target": {"kind": TargetKind.EXPLICIT, "nodeId": "light-1"}, "action": "on",
              "verdict": Verdict.OK, "nodeId": "light-1", "outcome": "succeeded", "code": ReasonCode.OK},
             {"subject": VISITOR, "requestId": "req-1", "at": early,
-             "target": {"kind": TargetKind.NEAREST, "capability": "locker"}, "action": "open",
+             "target": {"kind": TargetKind.NEAREST, "deviceKind": "locker"}, "action": "open",
              "verdict": Verdict.ASK, "nodeId": "locker-1", "outcome": "더 가까이 와야 한다",
              "code": ReasonCode.LOW_CONFIDENCE},
         ]
         self.request_data: Any = {
             "subject": VISITOR, "id": "req-1", "tool": "request_use",
-            "target": {"kind": TargetKind.NEAREST, "capability": "locker"}, "action": "open", "at": NOW,
+            "target": {"kind": TargetKind.NEAREST, "deviceKind": "locker"}, "action": "open", "at": NOW,
             "verdict": Verdict.OK, "reason": ReasonCode.OK,
             "steps": [{"result": "pass", "detail": f"단계 {n}"} for n in range(7)],
             "nodeId": "locker-1", "posteriors": {"locker-1": 0.97, "light-1": 0.03}, "threshold": 0.9,

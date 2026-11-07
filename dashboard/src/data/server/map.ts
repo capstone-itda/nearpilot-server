@@ -2,7 +2,7 @@
 // 서버가 형식 표의 키만 보내므로 표의 키만 읽는다. 형식이 표와 맞지 않으면 이벤트는 그 이벤트만 버리고, 조회는 오류로 알린다.
 import type { StreamEvent } from '../../model/events';
 import type {
-  Action, Approvals, AuditRow, AuditStep, Capability, DeviceState, Health, HistoryRow, Occupancy, PlacesInfo, Person,
+  Action, ActionRole, Approvals, AuditRow, AuditStep, DeviceInfo, DeviceState, Health, HistoryRow, Occupancy, PlacesInfo, Person,
   ReasonCode, RentalInfo, RequestProgress, StepOutcome, TargetKind, TrustReport, TrustState, UseRow, Verdict
 } from '../../model/types';
 import { localTime, type TimeFormat } from './time';
@@ -55,8 +55,13 @@ function obj<T, O = {}>(required: { [K in keyof T]: Check<T[K]> }, optional?: { 
 
 const VERDICT = lit<Verdict>('OK', 'BUSY', 'ASK', 'DENY', 'NEED_APPROVAL');
 const DEVICE_STATE = lit<DeviceState>('AVAILABLE', 'RESERVED', 'ACTIVE', 'CLOSING', 'FAULT');
-const ACTION = lit<Action>('open', 'on', 'off');
-const CAPABILITY = lit<Capability>('locker', 'light', 'speaker');
+/** 기기 선언의 종류·동작 이름 규칙 (#245). 화면이 모르는 이름도 받는다 */
+const NAME_RE = /^[a-z][a-z0-9_]*$/;
+const name: Check<string> = (v, p) => (typeof v === 'string' && NAME_RE.test(v) && v.length <= 32 ? v : bad(p));
+const ACTION = name as Check<Action>;
+const DEVICE_KIND = name;
+/** 선언 해시: SHA-256의 64자리 소문자 16진수 */
+const HASH: Check<string> = (v, p) => (typeof v === 'string' && /^[0-9a-f]{64}$/.test(v) ? v : bad(p));
 const OCCUPANCY = lit<Occupancy>('rental', 'shared');
 const TRUST_STATE = lit<TrustState>('discovered', 'trusted', 'revoked');
 /** 서버가 shared/enums.py의 값만 보낸다. 화면이 모르는 코드는 코드 그대로 보인다 */
@@ -65,7 +70,7 @@ const auditStep = str as Check<AuditStep>;
 /** 판정 단계 ⓪~⑥: 서버는 "0"~"6" 문자열로 보내고 화면은 칸 번호로 쓴다 */
 const stepNo: Check<number> = (v, p) => Number(lit('0', '1', '2', '3', '4', '5', '6')(v, p));
 
-const TARGET: Check<RequestProgress['target']> = obj({ kind: lit<TargetKind>('nearest', 'explicit', 'any') }, { capability: CAPABILITY, nodeId: str });
+const TARGET: Check<RequestProgress['target']> = obj({ kind: lit<TargetKind>('nearest', 'explicit', 'any') }, { deviceKind: DEVICE_KIND, nodeId: str });
 const AUDIT_ROW: Check<AuditRow> = obj({ id: str, at: time('HH:MM:SS'), step: auditStep, text: str, code: reason }, { nodeId: str });
 
 // ── 모니터링 스트림 이벤트 (architecture.md §5 "WebSocket" 형식 표) ──────────────
@@ -136,11 +141,19 @@ export function serverPeriod(period: string): string {
 
 // ── 조회 응답 (architecture.md §5 "대시보드 조회" 형식 표) ───────────────────────
 
+/** 장소 목록의 기기 한 대. 선언의 동작은 순서대로이고 role은 있을 때만 온다 */
+const DEVICE: Check<DeviceInfo> = obj({
+  nodeId: str, name: str, deviceKind: DEVICE_KIND, occupancy: OCCUPANCY,
+  vendor: obj({ name: str, model: str, firmware: str }),
+  actions: arr(obj({ name: ACTION, description: str }, { role: lit<ActionRole>('reoperate', 'deactivate') })),
+  descriptorHash: HASH
+});
+
 const PLACES: Check<PlacesInfo> = obj({
   weakRssiDbm: num,
   places: arr(obj({
     placeId: str, placeName: str, modelVersion: str, calibrationVersion: str,
-    devices: arr(obj({ nodeId: str, name: str, capability: CAPABILITY, occupancy: OCCUPANCY }))
+    devices: arr(DEVICE)
   }))
 });
 

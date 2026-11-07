@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { StreamEvent } from '../../model/events';
 import type { AuditRow } from '../../model/types';
+import { DECLARATIONS } from '../mock/fixtures';
 import { approvalsOf, auditOf, healthOf, historyOf, mapEvent, mapExecution, placesOf, rentalOf, requestOf, serverPeriod, trustOf, usesOf } from './map';
 
 // 시각은 이 PC의 지역 시각으로 바뀐다. 시험은 서울(UTC+9)로 고정한다.
@@ -26,8 +27,8 @@ const EVENTS: [name: string, raw: Record<string, unknown>, mapped: StreamEvent][
     { type: 'rssi', at: AT, personId: 'p1', rssi: { 'locker-1': -58, 'light-1': -71 } },
     { type: 'rssi', at: AT_MS, personId: 'p1', rssi: { 'locker-1': -58, 'light-1': -71 } }],
   ['mcp_call',
-    { type: 'mcp_call', at: AT, requestId: 'r1', personId: 'p1', tool: 'request_use', target: { kind: 'nearest', capability: 'locker' }, action: 'open' },
-    { type: 'mcp_call', at: AT_MS, requestId: 'r1', personId: 'p1', tool: 'request_use', target: { kind: 'nearest', capability: 'locker' }, action: 'open' }],
+    { type: 'mcp_call', at: AT, requestId: 'r1', personId: 'p1', tool: 'request_use', target: { kind: 'nearest', deviceKind: 'locker' }, action: 'open' },
+    { type: 'mcp_call', at: AT_MS, requestId: 'r1', personId: 'p1', tool: 'request_use', target: { kind: 'nearest', deviceKind: 'locker' }, action: 'open' }],
   ['step("3"은 3번 칸)',
     { type: 'step', at: AT, requestId: 'r1', step: '3', result: 'pass', detail: '후보 locker-1 0.91' },
     { type: 'step', at: AT_MS, requestId: 'r1', step: 3, result: 'pass', detail: '후보 locker-1 0.91' }],
@@ -191,7 +192,7 @@ describe('서버 어댑터 이력 기간', () => {
 
 describe('서버 어댑터 조회 응답 변환', () => {
   const REQUEST = {
-    id: 'r1', personId: 'p1', tool: 'request_use', target: { kind: 'nearest', capability: 'locker' }, action: 'open', at: AT,
+    id: 'r1', personId: 'p1', tool: 'request_use', target: { kind: 'nearest', deviceKind: 'locker' }, action: 'open', at: AT,
     verdict: 'OK', reason: 'OK', nodeId: 'locker-1', posteriors: { 'locker-1': 0.91 }, threshold: 0.8, execution: 'succeeded',
     accessRequestedAt: '2026-10-24T05:28:12.000+00:00', accessExpiredAt: '2026-10-24T05:28:40.000+00:00', respondedAt: '2026-10-24T05:28:41.500+00:00',
     steps: [
@@ -202,7 +203,7 @@ describe('서버 어댑터 조회 응답 변환', () => {
 
   it('FR12A 요청 한 건: 시각은 HH:MM:SS, 실행 상태는 화면 모델의 값이다', () => {
     expect(requestOf(REQUEST)).toEqual({
-      id: 'r1', personId: 'p1', tool: 'request_use', target: { kind: 'nearest', capability: 'locker' }, action: 'open', at: '14:28:10',
+      id: 'r1', personId: 'p1', tool: 'request_use', target: { kind: 'nearest', deviceKind: 'locker' }, action: 'open', at: '14:28:10',
       verdict: 'OK', reason: 'OK', nodeId: 'locker-1', posteriors: { 'locker-1': 0.91 }, threshold: 0.8, execution: 'succeeded',
       accessRequestedAt: '14:28:12', accessExpiredAt: '14:28:40', respondedAt: '14:28:41',
       steps: REQUEST.steps
@@ -272,11 +273,52 @@ describe('서버 어댑터 조회 응답 변환', () => {
   it('FR12A 장소 목록은 그대로 옮긴다', () => {
     const raw = {
       weakRssiDbm: -75,
-      places: [{ placeId: 'lounge', placeName: '공용 라운지', modelVersion: 'm-3', calibrationVersion: 'c-7', devices: [{ nodeId: 'locker-1', name: '사물함 1', capability: 'locker', occupancy: 'rental' }] }]
+      places: [{ placeId: 'lounge', placeName: '공용 라운지', modelVersion: 'm-3', calibrationVersion: 'c-7', devices: [{ nodeId: 'locker-1', name: '사물함 1', ...DECLARATIONS.locker }] }]
     };
     expect(placesOf(raw)).toEqual(raw);
     expect(() => placesOf({ weakRssiDbm: -75 })).toThrow('places.places');
-    expect(() => placesOf({ ...raw, places: [{ ...raw.places[0], devices: [{ nodeId: 'x', name: 'x', capability: 'toaster', occupancy: 'rental' }] }] })).toThrow('capability');
+  });
+
+  describe('FR12A 장소 목록의 기기 선언', () => {
+    const FAN = {
+      nodeId: 'fan-1', name: '선풍기', deviceKind: 'fan', occupancy: 'shared',
+      vendor: { name: 'acme', model: 'f1', firmware: '1.0' },
+      actions: [{ name: 'spin', description: '팬을 돌린다' }, { name: 'stop', description: '팬을 멈춘다', role: 'deactivate' }],
+      descriptorHash: 'a'.repeat(64)
+    };
+    const places = (device: unknown) => ({ weakRssiDbm: -75, places: [{ placeId: 'p', placeName: 'p', modelVersion: 'm', calibrationVersion: 'c', devices: [device] }] });
+    const device = (raw: unknown) => placesOf(raw).places[0].devices[0];
+
+    it('모르는 종류와 동작도 받는다 (role은 있을 때만)', () => {
+      expect(device(places(FAN))).toEqual(FAN);
+      expect(device(places(FAN)).actions[0]).not.toHaveProperty('role');
+    });
+    it('표에 없는 키(인자 스키마, 선언 형식)는 옮기지 않는다', () => {
+      const noisy = { ...FAN, format: 'nearpilot.device/1', actions: [{ ...FAN.actions[0], input_schema: { type: 'object' } }] };
+      expect(device(places(noisy))).toEqual({ ...FAN, actions: [FAN.actions[0]] });
+    });
+    it.each([
+      ['종류 이름 규칙 밖', { ...FAN, deviceKind: 'Toaster' }, 'deviceKind'],
+      ['동작 이름 규칙 밖', { ...FAN, actions: [{ name: 'Spin', description: 'x' }] }, 'actions[0].name'],
+      ['모르는 역할', { ...FAN, actions: [{ name: 'spin', description: 'x', role: 'close' }] }, 'actions[0].role'],
+      ['제작사 키가 빠짐', { ...FAN, vendor: { name: 'acme', model: 'f1' } }, 'vendor.firmware'],
+      ['해시가 대문자', { ...FAN, descriptorHash: 'A'.repeat(64) }, 'descriptorHash'],
+      ['해시가 짧음', { ...FAN, descriptorHash: 'a'.repeat(63) }, 'descriptorHash'],
+      ['선언이 빠짐', { nodeId: 'x', name: 'x', deviceKind: 'locker', occupancy: 'rental' }, 'vendor']
+    ])('%s이면 조회 오류다', (_, raw, path) => {
+      expect(() => placesOf(places(raw))).toThrow(path);
+    });
+  });
+
+  it('FR12B 화면이 모르는 동작(close, 선언한 다른 이름)과 종류의 이벤트도 받는다', () => {
+    const call = { type: 'mcp_call', at: AT, requestId: 'r1', personId: 'p1', tool: 'request_use', target: { kind: 'any', deviceKind: 'fan' }, action: 'spin' };
+    expect(mapEvent(call)).toMatchObject({ target: { kind: 'any', deviceKind: 'fan' }, action: 'spin' });
+    expect(mapEvent({ type: 'command', at: AT, requestId: 'r1', nodeId: 'locker-1', action: 'close' })).toMatchObject({ action: 'close' });
+    expect(mapEvent({ ...call, action: 'Spin' })).toBeUndefined();
+    expect(mapEvent({ ...call, target: { kind: 'nearest', deviceKind: 'fan!' } })).toBeUndefined();
+    // 옛 키 capability는 형식 표 밖이라 옮기지 않는다
+    expect(mapEvent({ ...call, target: { kind: 'nearest', capability: 'locker' } })).toMatchObject({ target: { kind: 'nearest' } });
+    expect((mapEvent({ ...call, target: { kind: 'nearest', capability: 'locker' } }) as { target: object }).target).not.toHaveProperty('capability');
   });
   it('FR12A 점유 목록: 시작 시각은 HH:MM이고 초과 분은 정수로 내린다', () => {
     const rows = usesOf([
