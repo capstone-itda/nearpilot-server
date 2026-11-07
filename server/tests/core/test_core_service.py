@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import pytest
 
 from nearpilot.core.decision.core_service import DelegatingCoreService
-from nearpilot.shared.enums import Action, ReasonCode, Verdict
+from nearpilot.shared.enums import ReasonCode, Verdict
 from nearpilot.shared.interfaces import CoreService
 from nearpilot.shared.models import Decision, TargetSpec, UseRequest
 
@@ -17,7 +17,7 @@ NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def req(user_id="u1", request_id="r1") -> UseRequest:
-    return UseRequest(user_id, request_id, TargetSpec.parse("nearest:locker"), Action.OPEN, "claude", NOW)
+    return UseRequest(user_id, request_id, TargetSpec.parse("nearest:locker"), "open", "claude", NOW)
 
 
 class Recorder:
@@ -76,14 +76,14 @@ def test_FR09_core_service_delegates_six_methods():
     r = req()
 
     assert svc.request_use(r) is use_d
-    assert svc.request_access("u1", "locker-2", Action.OPEN, "r2") is access_d
+    assert svc.request_access("u1", "locker-2", "open", "r2") is access_d
     assert svc.find_available_devices("u1") is devices
     assert svc.get_device_state("u1", "locker-1") is state
     assert svc.release_use("u1", "use-1") is release_d
     assert svc.get_use_status("u1", "use-1") is status
 
     assert use.calls == [("request_use", r)]
-    assert access.calls == [("request_access", "u1", "locker-2", Action.OPEN, "r2")]
+    assert access.calls == [("request_access", "u1", "locker-2", "open", "r2")]
     assert query.calls == [("find_available_devices", "u1"), ("get_device_state", "u1", "locker-1")]
     assert release.calls == [("release_use", "u1", "use-1"), ("get_use_status", "u1", "use-1")]
 

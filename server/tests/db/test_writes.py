@@ -14,7 +14,7 @@ from nearpilot.db.schema import connect
 from nearpilot.shared.config import Settings
 from nearpilot.shared.descriptor import legacy_descriptor
 from nearpilot.shared.enums import (
-    Action, Capability, ExecutionKind, ExecutionStatus, Occupancy, ReasonCode, ReserveOutcome, StoreOutcome,
+    ExecutionKind, ExecutionStatus, Occupancy, ReasonCode, ReserveOutcome, StoreOutcome,
     Verdict,
 )
 from nearpilot.shared.models import (
@@ -36,7 +36,7 @@ from conftest import (
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
-def _use_request(user_id="u1", request_id="ext-1", kind="nearest", capability="locker", action=Action.OPEN):
+def _use_request(user_id="u1", request_id="ext-1", kind="nearest", capability="locker", action="open"):
     return UseRequest(
         user_id=user_id,
         request_id=request_id,
@@ -282,7 +282,7 @@ def test_FR19_link_request_retry_keeps_single_reservation(conn, repo):
     reserved = repo.reserve_if_free(
         ReserveRequest(
             internal_request_id=link.internal_request_id, user_id="u1", node_id="node1",
-            action=Action.OPEN, approval_id=None,
+            action="open", approval_id=None,
         )
     )
     assert reserved.outcome == ReserveOutcome.RESERVED
@@ -293,7 +293,7 @@ def test_FR19_link_request_retry_keeps_single_reservation(conn, repo):
     retry_reserved = repo.reserve_if_free(
         ReserveRequest(
             internal_request_id=retry.internal_request_id, user_id="u1", node_id="node1",
-            action=Action.OPEN, approval_id=None,
+            action="open", approval_id=None,
         )
     )
 
@@ -319,7 +319,7 @@ def _cancel_after_error(store, internal_request_id):
 
 @pytest.mark.parametrize(
     ("occupancy", "node_id", "capability", "action"),
-    [("rental", "node1", "locker", Action.OPEN), ("shared", "light1", "light", Action.ON)],
+    [("rental", "node1", "locker", "open"), ("shared", "light1", "light", "on")],
 )
 def test_FR18_retry_after_cancelled_reservation_links_new_reservation(
     conn, repo, store, occupancy, node_id, capability, action
@@ -368,7 +368,7 @@ def test_FR22_link_request_previous_prefers_live_session_after_retry(conn, repo,
     insert_node(conn, node_id="node1", occupancy="rental")
     link = repo.link_request(_use_request(), "digest-1")
     reserve = ReserveRequest(
-        internal_request_id=link.internal_request_id, user_id="u1", node_id="node1", action=Action.OPEN,
+        internal_request_id=link.internal_request_id, user_id="u1", node_id="node1", action="open",
         approval_id=None,
     )
     repo.reserve_if_free(reserve)
@@ -396,7 +396,7 @@ def test_FR22_link_request_previous_of_rejected_retry_has_no_use_id(conn, repo, 
     insert_node(conn, node_id="node1", occupancy="rental")
     link = repo.link_request(_use_request(), "digest-1")
     repo.reserve_if_free(ReserveRequest(
-        internal_request_id=link.internal_request_id, user_id="u1", node_id="node1", action=Action.OPEN,
+        internal_request_id=link.internal_request_id, user_id="u1", node_id="node1", action="open",
         approval_id=None,
     ))
     _fail_without_node(repo, link)
@@ -421,7 +421,7 @@ def test_FR22_link_request_previous_keeps_cancelled_only_session(conn, repo, sto
     insert_node(conn, node_id="node1", occupancy="rental")
     link = repo.link_request(_use_request(), "digest-1")
     reserved = repo.reserve_if_free(ReserveRequest(
-        internal_request_id=link.internal_request_id, user_id="u1", node_id="node1", action=Action.OPEN,
+        internal_request_id=link.internal_request_id, user_id="u1", node_id="node1", action="open",
         approval_id=None,
     ))
     decision = Decision(
@@ -623,7 +623,7 @@ def test_FR13_announce_changed(conn, repo):
     insert_node(conn, trust_state="trusted", capability="locker", occupancy="rental")
 
     announce = NodeAnnounce(
-        node_id="node1", descriptor=legacy_descriptor(Capability.LIGHT, Occupancy.SHARED),
+        node_id="node1", descriptor=legacy_descriptor("light", Occupancy.SHARED),
         received_at=NOW, session_id="s1", seq=1, sent_at=NOW,
     )
     repo.upsert_announced_node(announce)
@@ -641,7 +641,7 @@ def test_FR13_announce_unchanged_keeps_trust(conn, repo):
     insert_node(conn, trust_state="trusted", capability="locker", occupancy="rental")
 
     announce = NodeAnnounce(
-        node_id="node1", descriptor=legacy_descriptor(Capability.LOCKER, Occupancy.RENTAL),
+        node_id="node1", descriptor=legacy_descriptor("locker", Occupancy.RENTAL),
         received_at=NOW, session_id="s1", seq=1, sent_at=NOW,
     )
     repo.upsert_announced_node(announce)
@@ -653,7 +653,7 @@ def test_FR13_announce_unchanged_keeps_trust(conn, repo):
 
 def test_FR04_announce_new_node_is_discovered(conn, repo):
     announce = NodeAnnounce(
-        node_id="brand-new", descriptor=legacy_descriptor(Capability.LIGHT, Occupancy.SHARED),
+        node_id="brand-new", descriptor=legacy_descriptor("light", Occupancy.SHARED),
         received_at=NOW, session_id="s1", seq=1, sent_at=NOW,
     )
 

@@ -22,7 +22,7 @@ from nearpilot.db.repositories.admin_repository import SqliteAdminRepository
 from nearpilot.db.repositories.repository import SqliteRepository
 from nearpilot.db.schema import connect
 from nearpilot.shared.descriptor import legacy_descriptor
-from nearpilot.shared.enums import AdminWriteOutcome, Capability, Occupancy, Role
+from nearpilot.shared.enums import AdminWriteOutcome, Occupancy, Role
 from nearpilot.shared.models import (
     AccountRegistration,
     AdminWriteResult,
@@ -127,7 +127,7 @@ def announce_nodes() -> Callable[..., None]:
     기본 설정(`BASE_SECTIONS`의 `database.path`)의 DB인 `var/nearpilot.db`에 쓰고 폴더가 없으면 만든다.
     """
 
-    def announce(server: Path, *node_ids: str, capability: Capability = Capability.LOCKER,
+    def announce(server: Path, *node_ids: str, capability: str = "locker",
                  occupancy: Occupancy = Occupancy.RENTAL) -> None:
         db_file = server / "var" / "nearpilot.db"
         db_file.parent.mkdir(parents=True, exist_ok=True)
@@ -200,7 +200,7 @@ def make_collection_db() -> Callable[..., list[str]]:
             admin = SqliteAdminRepository(conn)
             for seq, node_id in enumerate(node_ids, start=1):
                 repository.upsert_announced_node(NodeAnnounce(
-                    node_id=node_id, descriptor=legacy_descriptor(Capability.LOCKER, Occupancy.RENTAL),
+                    node_id=node_id, descriptor=legacy_descriptor("locker", Occupancy.RENTAL),
                     received_at=announced_at, session_id=f"session-{node_id}", seq=seq, sent_at=announced_at))
             _applied(admin.register_account(AccountRegistration(
                 "collector", "수집 담당", Role.OWNER, hash_token("collector-token"))), "계정 등록")

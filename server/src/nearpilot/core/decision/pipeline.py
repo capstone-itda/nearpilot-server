@@ -16,9 +16,9 @@ from typing import Any, Protocol
 from nearpilot.core.allocation import AllocationRequest
 from nearpilot.core.decision.digest import input_digest
 from nearpilot.shared.config import Settings
+from nearpilot.shared.descriptor import ArgumentProblem, normalize_arguments, validate_arguments
 from nearpilot.shared.enums import (
-    Action,
-    Capability,
+    ActionRole,
     DeviceState,
     ExecutionKind,
     ExecutionStatus,
@@ -44,11 +44,9 @@ from nearpilot.shared.models import (
     Decision,
     DecisionRecord,
     ExecutionContext,
-    LightSetting,
     NodeInfo,
     PolicyCheckResult,
     ReserveRequest,
-    SpeakerSetting,
     UseRequest,
 )
 
@@ -58,17 +56,18 @@ _GENERIC_MESSAGE = "요청을 처리하지 못했습니다."
 
 
 def select_candidates(
-    nodes: Sequence[NodeInfo], capability: Capability, settings: Settings, now: datetime,
+    nodes: Sequence[NodeInfo], kind: str | None, settings: Settings, now: datetime,
     place_id: str | None = None, executable: Callable[[str], bool] | None = None,
 ) -> Sequence[NodeInfo]:
     """② 후보 조건. 최초 판정과 실행 직전 재검사가 같은 조건을 쓴다.
 
+    `kind` 는 기기 선언의 종류 이름이다. None 이면 종류로 거르지 않는다.
     `executable` 이 있으면 새 실행이 불가능한 기기(재시작 복원 중)를 뺀다 (#82).
     """
     ttl = timedelta(seconds=settings.online_ttl_sec)
     return [
         n for n in nodes
-        if n.capability is capability
+        if (kind is None or n.kind == kind)
         and (place_id is None or n.place_id == place_id)
         and n.trust_state is TrustState.TRUSTED
         and n.device_state is not DeviceState.FAULT
@@ -78,9 +77,22 @@ def select_candidates(
     ]
 
 
-def threshold_for(settings: Settings, capability: Capability) -> float | None:
-    """근접 지정과 전역 할당의 임계값. 명시 지정에는 적용하지 않는다."""
-    return getattr(settings, f"threshold_{capability.value}", None)
+def threshold_for(settings: Settings, kind: str | None) -> float | None:
+    """근접 지정과 전역 할당의 임계값 `threshold_{kind}`. 명시 지정에는 적용하지 않는다 (FR-17)."""
+    return settings.threshold_for(kind)
+
+
+def target_kind(req: UseRequest, nodes: Sequence[NodeInfo]) -> str | None:
+    """요청이 가리키는 종류. 명시 지정은 저장한 기기의 종류다. 없는 기기면 None 이다."""
+    if req.target.kind is not TargetKind.EXPLICIT:
+        return req.target.device_kind
+    return next((n.kind for n in nodes if n.node_id == req.target.node_id), None)
+
+
+def is_reoperate(node: NodeInfo, action: str) -> bool:
+    """기기 선언에서 이 동작의 역할이 `reoperate` 인가 (FR-09). 동작 이름으로 정하지 않는다."""
+    spec = None if node.descriptor is None else node.descriptor.action(action)
+    return spec is not None and spec.role is ActionRole.REOPERATE
 
 
 def make_decision(
@@ -105,8 +117,8 @@ class _Applied:
     execution_kind: ExecutionKind | None = None
     reserved_at: datetime | None = None
     reserve_called: bool = False  # reserve_if_free() 를 부르기 직전에 True 가 된다. 오류 뒤 취소 여부를 정한다 (#80)
-    light: LightSetting | None = None  # ③ 뒤에 정한 조명 설정. 실행 인계로 넘긴다 (FR-09)
-    speaker: SpeakerSetting | None = None  # ③ 뒤에 정한 스피커 음량. 실행 인계로 넘긴다 (FR-09)
+    arguments: Mapping[str, Any] | None = None  # ③ 뒤에 정한 동작 인자. 실행 인계로 넘긴다 (FR-09)
+    reoperate: bool = False  # 동작 역할이 reoperate 다. ④ 정책과 ⑤⑥ 예약에 넘긴다 (FR-09)
 
 
 class _SaveConflict(Exception):
@@ -116,7 +128,7 @@ class _SaveConflict(Exception):
 class BatchAllocator(Protocol):
     """`any:` 요청을 대기 구간에 모아 배정한다 (`AllocationWindow`). 배정받은 기기 ID 또는 None."""
 
-    def submit(self, request: AllocationRequest) -> str | None: ...
+    def submit(self, request: AllocationRequest, group: str = "") -> str | None: ...
 
 
 class _Stop(Exception):
@@ -235,15 +247,20 @@ class DecisionPipeline:
 
         # ② 후보 — 비콘을 본 장소 안에서 고른다
         any_kind = req.target.kind is TargetKind.ANY
-        if any_kind and (self._window is None or req.target.capability is not Capability.LOCKER):
+        # 전역 할당은 `any_allowed_kinds` 의 종류만 받는다 (FR-23)
+        if any_kind and (self._window is None or req.target.device_kind not in s.any_allowed_kinds):
+            self._audit_step(Step.CANDIDATE, iid, {"any_allowed_kinds": list(s.any_allowed_kinds)})
             raise _Stop(Step.CANDIDATE, self._decision(req, iid, Verdict.DENY, ReasonCode.INVALID_INPUT))
         explicit = req.target.kind is TargetKind.EXPLICIT
-        threshold = None if explicit else threshold_for(s, req.target.capability)
-        if not explicit and threshold is None:  # 근접 지정과 전역 할당은 임계값이 필요하다
+        threshold = None if explicit else threshold_for(s, req.target.device_kind)
+        if not explicit and threshold is None:  # 근접 지정과 전역 할당은 `threshold_{kind}` 가 필요하다 (FR-17)
             self._audit_step(Step.CANDIDATE, iid, {"threshold": None, "explicit": explicit})
             raise _Stop(Step.CANDIDATE, self._decision(req, iid, Verdict.DENY, ReasonCode.INVALID_INPUT))
+        kind = target_kind(req, all_nodes)
         candidates = select_candidates(
-            all_nodes, req.target.capability, s, now, place_id, self._readiness.can_execute)
+            all_nodes, kind, s, now, place_id, self._readiness.can_execute)
+        if explicit and kind is None:
+            candidates = []  # 없는 기기다. 다른 종류의 기기를 후보로 보지 않는다
         self._audit_step(Step.CANDIDATE, iid, {"place_id": place_id,
                                               "candidates": [n.node_id for n in candidates],
                                               "online_ttl_sec": s.online_ttl_sec})
@@ -282,8 +299,8 @@ class DecisionPipeline:
                         req, iid, Verdict.ASK, ReasonCode.LOW_CONFIDENCE, p_max=p_max))
                 node_id, p = best
         node = by_id[node_id]
-        applied.light = self._resolve_light(req, iid, node, p)
-        applied.speaker = self._resolve_speaker(req, iid, node, p)
+        applied.arguments = self._resolve_action(req, iid, node, p)
+        applied.reoperate = is_reoperate(node, req.action)
 
         # ④ 정책 — 확정한 대상만 검사한다. `any:` 요청은 배정 전에 후보마다 검사했다
         if check is None:
@@ -293,7 +310,8 @@ class DecisionPipeline:
         applied.reserve_called = True  # 호출이 예외로 끝나도 반영됐을 수 있다
         reserved = self._repo.reserve_if_free(ReserveRequest(
             internal_request_id=iid, user_id=req.user_id, node_id=node_id, action=req.action,
-            approval_id=check.approval_id, release_policy=node.release_policy))
+            approval_id=check.approval_id, release_policy=node.release_policy,
+            reoperate_only=applied.reoperate))
         self._audit_step(Step.DEVICE_OCCUPANCY, iid, {"node_id": node_id,
                                                      "outcome": reserved.outcome.value})
         if reserved.outcome not in (ReserveOutcome.RESERVED, ReserveOutcome.REOPERATING):
@@ -309,76 +327,50 @@ class DecisionPipeline:
 
     # ── 보조 ────────────────────────────────────────────────────────
 
-    def _resolve_light(
+    def _resolve_action(
         self, req: UseRequest, iid: str, node: NodeInfo, p: float | None
-    ) -> LightSetting | None:
-        """③ 대상 확정 뒤 조명 설정을 검사하고 생략한 값을 정한다 (FR-09, FR-18).
+    ) -> Mapping[str, Any] | None:
+        """③ 대상 확정 뒤 기기 선언으로 동작과 인자를 검사하고 생략한 인자를 정한다 (FR-09, FR-18).
 
-        지원하지 않는 인자로 다른 기기를 고르지 않는다. 범위 밖 값은 보정하지 않고 거부한다.
-        조명 제어 정보를 발표하지 않은 기기는 인자가 없을 때 이전처럼 인자 없는 명령을 받는다.
+        다른 기기를 고르지 않는다. 범위 밖 값은 보정하지 않고 거부한다. 인자가 없으면 None 이다.
+        생략한 인자는 같은 기기·같은 동작의 마지막 성공 명령, `param_default` 순서로 채우고 둘 다 없으면 생략한다.
+        상한은 선언의 maximum 과 `param_max` 중 작은 값이다. 채운 값도 다시 검사한다.
         """
-        controls = node.light_controls
-        given = req.light
-        if controls is None or node.capability is not Capability.LIGHT or req.action is not Action.ON:
-            if given is not None:
-                self._light_stop(req, iid, node, p, ReasonCode.UNSUPPORTED_PARAMETER, {"controls": None})
-            return None
-        if given is not None and given.color is not None and not controls.color:
-            self._light_stop(req, iid, node, p, ReasonCode.UNSUPPORTED_PARAMETER,
-                             {"controls": {"brightness_max": controls.brightness_max, "color": False}})
+        spec = None if node.descriptor is None else node.descriptor.action(req.action)
+        detail: dict[str, Any] = {"node_id": node.node_id, "action": req.action}
+        if spec is None:
+            self._action_stop(req, iid, node, p, ReasonCode.UNSUPPORTED_ACTION, detail)
         s = self._settings
-        last = self._repo.last_light_setting(node.node_id)
-        brightness = next(v for v in (given and given.brightness, last and last.brightness,
-                                      s.light_default_brightness) if v is not None)
-        color = next(v for v in (given and given.color, last and last.color, s.light_default_color)
-                     if v is not None)
-        if not controls.color:
-            color = "#FFFFFF"  # 색을 받지 않는 기기는 흰색 출력만 한다
-        k = min(controls.brightness_max, s.light_brightness_max)
-        detail = {"node_id": node.node_id, "given": given.to_json() if given else None,
-                  "last": last.to_json() if last else None, "brightness_max": k,
-                  "resolved": {"brightness": brightness, "color": color}}
-        if brightness > k:
-            self._light_stop(req, iid, node, p, ReasonCode.PARAMETER_OUT_OF_RANGE, detail)
-        self._audit_step(Step.PROXIMITY, iid, {"light": detail})
-        return LightSetting(brightness, color)
+        caps = s.param_caps(node.kind, req.action)
+        given = None if req.arguments is None else dict(req.arguments)
+        detail.update(given=given, param_max=dict(caps))
+        self._argument_check(req, iid, node, p, validate_arguments(spec, given, caps=caps, partial=True), detail)
+        resolved = dict(given or {})
+        if any(name not in resolved for name in spec.properties):
+            last = self._repo.last_success_arguments(node.node_id, req.action)
+            defaults = s.param_defaults(node.kind, req.action)
+            detail["last"] = None if last is None else dict(last)
+            for name in spec.properties:
+                for source in (last or {}, defaults):
+                    if name not in resolved and name in source:
+                        resolved[name] = source[name]
+        resolved = normalize_arguments(spec, resolved)
+        detail["resolved"] = resolved
+        self._argument_check(req, iid, node, p, validate_arguments(spec, resolved, caps=caps), detail)
+        if given is not None or spec.properties:  # 인자 없는 동작은 이전처럼 ③ 근접 감사만 남긴다
+            self._audit_step(Step.PROXIMITY, iid, {"arguments": detail})
+        return resolved or None
 
-    def _light_stop(self, req: UseRequest, iid: str, node: NodeInfo, p: float | None,
-                    reason: ReasonCode, detail: Mapping[str, Any]) -> None:
-        self._audit_step(Step.PROXIMITY, iid, {"light": {**detail, "result": reason.value}})
-        raise _Stop(Step.PROXIMITY, self._decision(
-            req, iid, Verdict.DENY, reason, node_id=node.node_id, p_max=p))
+    def _argument_check(self, req: UseRequest, iid: str, node: NodeInfo, p: float | None,
+                        problem: ArgumentProblem | None, detail: Mapping[str, Any]) -> None:
+        if problem is ArgumentProblem.OUT_OF_RANGE:
+            self._action_stop(req, iid, node, p, ReasonCode.PARAMETER_OUT_OF_RANGE, detail)
+        if problem is not None:
+            self._action_stop(req, iid, node, p, ReasonCode.INVALID_INPUT, detail)
 
-    def _resolve_speaker(
-        self, req: UseRequest, iid: str, node: NodeInfo, p: float | None
-    ) -> SpeakerSetting | None:
-        """③ 대상 확정 뒤 스피커 음량을 검사하고 생략한 값을 정한다 (FR-09, FR-18).
-
-        지원하지 않는 인자로 다른 기기를 고르지 않는다. 범위 밖 값은 보정하지 않고 거부한다.
-        스피커 제어 정보를 발표하지 않은 기기는 인자가 없을 때 이전처럼 인자 없는 명령을 받는다.
-        """
-        controls = node.speaker_controls
-        given = req.speaker
-        if controls is None or node.capability is not Capability.SPEAKER or req.action is not Action.ON:
-            if given is not None:
-                self._speaker_stop(req, iid, node, p, ReasonCode.UNSUPPORTED_PARAMETER, {"controls": None})
-            return None
-        s = self._settings
-        last = self._repo.last_speaker_setting(node.node_id)
-        volume = next(v for v in (given and given.volume, last and last.volume, s.speaker_default_volume)
-                      if v is not None)
-        k = min(controls.volume_max, s.speaker_volume_max)
-        detail = {"node_id": node.node_id, "given": given.to_json() if given else None,
-                  "last": last.to_json() if last else None, "volume_max": k,
-                  "resolved": {"volume": volume}}
-        if volume > k:
-            self._speaker_stop(req, iid, node, p, ReasonCode.PARAMETER_OUT_OF_RANGE, detail)
-        self._audit_step(Step.PROXIMITY, iid, {"speaker": detail})
-        return SpeakerSetting(volume)
-
-    def _speaker_stop(self, req: UseRequest, iid: str, node: NodeInfo, p: float | None,
-                      reason: ReasonCode, detail: Mapping[str, Any]) -> None:
-        self._audit_step(Step.PROXIMITY, iid, {"speaker": {**detail, "result": reason.value}})
+    def _action_stop(self, req: UseRequest, iid: str, node: NodeInfo, p: float | None,
+                     reason: ReasonCode, detail: Mapping[str, Any]) -> None:
+        self._audit_step(Step.PROXIMITY, iid, {"arguments": {**detail, "result": reason.value}})
         raise _Stop(Step.PROXIMITY, self._decision(
             req, iid, Verdict.DENY, reason, node_id=node.node_id, p_max=p))
 
@@ -386,7 +378,8 @@ class DecisionPipeline:
         self, req: UseRequest, iid: str, applied: _Applied, node_id: str, p: float | None, now: datetime
     ) -> PolicyCheckResult:
         """④ 정책 검사 하나. OK 가 아니면 그 판정으로 멈춘다."""
-        check = self._policy.check(req.user_id, node_id, req.action, now, internal_request_id=iid)
+        check = self._policy.check(req.user_id, node_id, req.action, now, internal_request_id=iid,
+                                   reoperate=applied.reoperate)
         applied.policy_version = check.policy_version
         self._audit_step(Step.POLICY, iid, {"node_id": node_id, "verdict": check.verdict.value,
                                            "reason": check.reason.value,
@@ -403,7 +396,7 @@ class DecisionPipeline:
         posteriors: Mapping[str, float], best: tuple[str, float] | None, threshold: float,
         now: datetime,
     ) -> tuple[str, float, PolicyCheckResult]:
-        """`any:locker` ③~④ 와 전역 할당 (FR-23). 배정받은 (기기, 확률, 정책 검사)를 반환한다.
+        """`any:{kind}` ③~④ 와 전역 할당 (FR-23). 대기 구간은 종류별로 따로 연다. 배정받은 (기기, 확률, 정책 검사)를 반환한다.
 
         허용쌍은 ③ 임계값, ④ 정책 OK, 점유(AVAILABLE)를 모두 만족한 쌍이다. 승인이 필요한 기기는 뺀다.
         """
@@ -419,7 +412,8 @@ class DecisionPipeline:
         first_failure: tuple[str, float, PolicyCheckResult] | None = None
         for neg_p, nid in qualified:
             p = -neg_p
-            check = self._policy.check(req.user_id, nid, req.action, now, internal_request_id=iid)
+            check = self._policy.check(req.user_id, nid, req.action, now, internal_request_id=iid,
+                                       reoperate=is_reoperate(by_id[nid], req.action))
             self._audit_step(Step.POLICY, iid, {"node_id": nid, "verdict": check.verdict.value,
                                                "reason": check.reason.value,
                                                "policy_version": check.policy_version})
@@ -441,7 +435,8 @@ class DecisionPipeline:
         if not allowed:
             raise _Stop(Step.DEVICE_OCCUPANCY, self._decision(
                 req, iid, Verdict.BUSY, ReasonCode.DEVICE_BUSY, p_max=passed[0][1]))
-        assigned = self._window.submit(AllocationRequest(iid, {nid: p for nid, p, _ in allowed}))
+        assigned = self._window.submit(AllocationRequest(iid, {nid: p for nid, p, _ in allowed}),
+                                       group=req.target.device_kind or "")
         self._audit_step(Step.DEVICE_OCCUPANCY, iid, {
             "allocation": {"allowed": [nid for nid, _, _ in allowed], "assigned": assigned}})
         if assigned is None:  # 다른 요청이 가져갔다
@@ -478,13 +473,13 @@ class DecisionPipeline:
     ) -> ExecutionContext | None:
         if decision.verdict is not Verdict.OK or applied.execution_kind is None:
             return None
-        # 방문자의 조명·음량 입력은 판정에서만 쓴다. 실행은 정한 값(`light`, `speaker`)만 쓰고, 결과 인계 때
+        # 방문자의 인자 입력은 판정에서만 쓴다. 실행은 정한 값(`arguments`)만 쓰고, 결과 인계 때
         # 저장소가 다시 만드는 문맥과 같아야 하므로 요청에서 뺀다.
         return ExecutionContext(
-            internal_request_id=iid, request=replace(req, light=None, speaker=None), node_id=decision.node_id,
+            internal_request_id=iid, request=replace(req, arguments=None), node_id=decision.node_id,
             use_id=decision.use_id,
             usage_id=applied.usage_id, settings=self._settings, execution_kind=applied.execution_kind,
-            reserved_at=applied.reserved_at, light=applied.light, speaker=applied.speaker)
+            reserved_at=applied.reserved_at, arguments=applied.arguments)
 
     @staticmethod
     def _reserve_failure(req, iid, node_id, p, outcome: ReserveOutcome) -> Decision:

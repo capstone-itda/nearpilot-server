@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nearpilot.shared.enums import Action, ApprovalStatus
+from nearpilot.shared.enums import ApprovalStatus
 
 from conftest import insert_approval, insert_node, insert_place, insert_policy, insert_user
 
@@ -42,8 +42,8 @@ def test_FR14_approvals_in_scope_returns_all(repo, conn):
 
     assert [r.approval_id for r in records] == ["a-pending", "a-approved", "a-denied"]
     assert [r.status for r in records] == [ApprovalStatus.PENDING, ApprovalStatus.APPROVED, ApprovalStatus.DENIED]
-    assert records[1].action == Action.OPEN
-    assert records[2].action == Action.ON
+    assert records[1].action == "open"
+    assert records[2].action == "on"
     # 사용자 ID 필드가 없다.
     assert not hasattr(records[0], "user_id")
     assert not hasattr(records[0], "requester_user_id")

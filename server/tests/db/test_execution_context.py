@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import Action, ExecutionKind, InternalRequestCause, ReasonCode, Verdict
+from nearpilot.shared.enums import ExecutionKind, InternalRequestCause, ReasonCode, Verdict
 from nearpilot.shared.models import Decision, DecisionRecord, InternalRequest, TargetSpec, UseRequest
 
 from conftest import insert_node, insert_place, insert_request, insert_use_session, insert_user
@@ -17,7 +17,7 @@ NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 def _use_request(user_id="u1", request_id="ext-1"):
     return UseRequest(
         user_id=user_id, request_id=request_id, target=TargetSpec.parse("nearest:locker"),
-        action=Action.OPEN, host_kind=None, received_at=NOW,
+        action="open", host_kind=None, received_at=NOW,
     )
 
 
@@ -33,7 +33,7 @@ def test_FR07_execution_context_found(conn, repo, store):
     settings = Settings(version="7")
     repo.save_decision(decision, DecisionRecord(settings=settings))
     insert_use_session(conn, use_id="use1", internal_request_id=link.internal_request_id, state="RESERVED")
-    command = store.link_command(link.internal_request_id, "node1", Action.OPEN).command
+    command = store.link_command(link.internal_request_id, "node1", "open").command
 
     ctx = store.execution_context(command.command_id)
 
@@ -60,7 +60,7 @@ def test_FR07_execution_context_uses_saved_settings(conn, repo, store):
     saved_settings = Settings(version="old", threshold_locker=0.6)
     repo.save_decision(decision, DecisionRecord(settings=saved_settings))
     insert_use_session(conn, use_id="use1", internal_request_id=link.internal_request_id, state="RESERVED")
-    command = store.link_command(link.internal_request_id, "node1", Action.OPEN).command
+    command = store.link_command(link.internal_request_id, "node1", "open").command
 
     current_settings = Settings(version="new", threshold_locker=0.99)
     assert current_settings != saved_settings
@@ -90,7 +90,7 @@ def test_FR07_execution_context_keeps_rental_reservation(conn, repo, store):
     insert_node(conn)
     link = _decided(repo)
     insert_use_session(conn, use_id="use1", internal_request_id=link.internal_request_id, state="RESERVED")
-    command = store.link_command(link.internal_request_id, "node1", Action.OPEN).command
+    command = store.link_command(link.internal_request_id, "node1", "open").command
 
     ctx = store.execution_context(command.command_id)
 
@@ -103,7 +103,7 @@ def test_FR20_execution_context_has_no_reservation_for_shared_without_usage(conn
     insert_place(conn)
     insert_node(conn, capability="light", occupancy="shared")
     link = _decided(repo)
-    command = store.link_command(link.internal_request_id, "node1", Action.ON).command
+    command = store.link_command(link.internal_request_id, "node1", "on").command
 
     ctx = store.execution_context(command.command_id)
 
@@ -115,9 +115,9 @@ def test_FR20_execution_context_has_no_reservation_for_internal_request(conn, st
     insert_user(conn)
     insert_place(conn)
     insert_node(conn, capability="light", occupancy="shared")
-    internal = InternalRequest("internal-1", "node1", Action.OFF, InternalRequestCause.LEAVE_OFF, Settings(), NOW)
+    internal = InternalRequest("internal-1", "node1", "off", InternalRequestCause.LEAVE_OFF, Settings(), NOW)
     store.link_internal_request(internal)
-    command = store.link_command("internal-1", "node1", Action.OFF).command
+    command = store.link_command("internal-1", "node1", "off").command
 
     ctx = store.execution_context(command.command_id)
 

@@ -7,7 +7,7 @@ import json
 import pytest
 
 from _mcp_client import NOW, TOKEN_A, TOKEN_B, Client, run
-from nearpilot.shared.enums import Action, ReasonCode, TargetKind, Verdict
+from nearpilot.shared.enums import ReasonCode, TargetKind, Verdict
 from nearpilot.shared.models import Decision
 
 
@@ -100,8 +100,8 @@ def test_FR09_request_use는_토큰_계정으로_요청을_만든다():
     c = Client()
     resp = c.call(ARGS)
     (req,) = c.core.requests
-    assert (req.user_id, req.request_id, req.action, req.received_at) == ("user-a", "r1", Action.OPEN, NOW)
-    assert (req.target.kind, req.target.capability.value) == (TargetKind.NEAREST, "locker")
+    assert (req.user_id, req.request_id, req.action, req.received_at) == ("user-a", "r1", "open", NOW)
+    assert (req.target.kind, req.target.device_kind) == (TargetKind.NEAREST, "locker")
     assert req.host_kind is None and req.parent_internal_request_id is None
     assert resp == {"verdict": "OK", "reason": "OK", "node_id": "locker-1", "use_id": "use-1",
                     "request_id": "r1", "message": None}
@@ -120,8 +120,10 @@ def test_FR09_명시_지정_대상을_해석한다():
 
 
 @pytest.mark.parametrize("bad", [
-    {"target_spec": "locker"}, {"target_spec": "nearest:toaster"}, {"target_spec": ""},
-    {"action": "explode"}, {"action": ""}, {"request_id": ""},
+    # 종류와 동작은 선언의 이름 규칙만 검사한다. 모르는 이름은 판정이 거부한다 (FR-09, #245).
+    {"target_spec": "nearest:"}, {"target_spec": "nearest:Toaster"}, {"target_spec": "far:locker"},
+    {"target_spec": "explicit:locker-1"}, {"target_spec": ""}, {"target_spec": " locker-1"},
+    {"action": "Explode"}, {"action": ""}, {"action": "drop table"}, {"request_id": ""},
 ])
 def test_FR09_인자가_틀리면_INVALID_INPUT이고_서비스를_부르지_않는다(bad):
     c = Client()

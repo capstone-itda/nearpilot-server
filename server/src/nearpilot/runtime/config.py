@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 import math
 import re
 import tomllib
@@ -21,7 +22,9 @@ from typing import Any
 from nearpilot.api.ws.settings import DashboardSettings
 from nearpilot.iot.mqtt.connection import MqttConfig
 from nearpilot.iot.mqtt.delivery import DeliveryConfig
-from nearpilot.shared.config import Settings
+from nearpilot.shared.config import LEGACY_PARAM_KEYS, Settings, migrate_settings_table
+
+log = logging.getLogger(__name__)
 
 
 class ConfigError(ValueError):
@@ -153,11 +156,24 @@ def parse_config(raw: Mapping[str, Any], *, base: Path, source: Path | None = No
 
 
 def _settings(table: Mapping[str, Any]) -> Settings:
-    names = {f.name for f in fields(Settings)}
-    _keys(table, "settings", required={"version"}, allowed=names)
+    """`[settings]`. 종류별 임계값은 `threshold_{kind}`, 인자 설정은 `[settings.param_max.{kind}.{action}]` 표다.
+
+    옛 조명·스피커 키는 새 형식으로 옮겨 읽고 경고를 남긴다 (requirements.md §1.2, #245).
+    """
+    names = {f.name for f in fields(Settings)} - {"thresholds"}
+    thresholds = {key for key in table if key.startswith("threshold_")}
+    _keys(table, "settings", required={"version"}, allowed=names | thresholds | set(LEGACY_PARAM_KEYS))
     if not isinstance(table["version"], str) or not table["version"].strip():
         raise ConfigError("settings.version 은 빈 문자열이 아니어야 한다")
-    return Settings(**table)
+    values, legacy = migrate_settings_table(table)
+    for key in legacy:
+        section, kind, action, arg = LEGACY_PARAM_KEYS[key]
+        log.warning("옛 설정 키 settings.%s 를 settings.%s.%s.%s.%s 로 옮겨 읽는다", key, section, kind, action, arg)
+    if "any_allowed_kinds" in values:
+        if not isinstance(values["any_allowed_kinds"], list):
+            raise ConfigError("settings.any_allowed_kinds 는 종류 이름의 목록이어야 한다")
+        values["any_allowed_kinds"] = tuple(values["any_allowed_kinds"])
+    return Settings(**values)
 
 
 def _runtime(table: Mapping[str, Any]) -> RuntimeSettings:

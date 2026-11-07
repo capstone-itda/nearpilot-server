@@ -12,13 +12,13 @@ import nearpilot.db.schema as schema_module
 from nearpilot.db.repositories.repository import SqliteRepository
 from nearpilot.db.schema import connect
 from nearpilot.shared.descriptor import legacy_descriptor, parse_descriptor
-from nearpilot.shared.enums import Capability, Occupancy, TrustState
-from nearpilot.shared.models import LightControls, NodeAnnounce, SpeakerControls
+from nearpilot.shared.enums import Occupancy, TrustState
+from nearpilot.shared.models import NodeAnnounce
 
 from conftest import insert_node, insert_place, insert_user
 
 NOW = datetime(2026, 11, 6, 3, 0, tzinfo=timezone.utc)
-RING = legacy_descriptor(Capability.LIGHT, Occupancy.SHARED, brightness_max=64, color=True)
+RING = legacy_descriptor("light", Occupancy.SHARED, brightness_max=64, color=True)
 
 
 def announce(descriptor=RING, node_id="light1", seq=1):
@@ -45,12 +45,12 @@ def test_FR04_new_node_stored_with_descriptor(conn, repo):
     repo.upsert_announced_node(announce())
     row = node(conn)
     assert row["trust_state"] == "discovered"
-    assert (row["capability"], row["occupancy"]) == ("light", "shared")
+    assert (row["kind"], row["occupancy"]) == ("light", "shared")
     assert parse_descriptor(json.loads(row["descriptor"])) == RING
     assert row["descriptor_hash"] == RING.hash
-    info, = repo.nodes(Capability.LIGHT)
+    info, = repo.nodes("light")
     assert (info.descriptor, info.descriptor_hash) == (RING, RING.hash)
-    assert info.light_controls == LightControls(64, True) and info.speaker_controls is None
+    assert info.kind == "light" and info.descriptor.action("on").properties["brightness"]["maximum"] == 64
 
 
 def test_FR04_same_hash_keeps_trust(conn, repo):
@@ -85,10 +85,10 @@ def test_FR04_description_change_resets_trust(conn, repo):
 
 def test_FR04_kind_change_updates_kind_and_occupancy(conn, repo):
     trusted_light(conn, repo)
-    box = legacy_descriptor(Capability.LOCKER, Occupancy.RENTAL)
+    box = legacy_descriptor("locker", Occupancy.RENTAL)
     repo.upsert_announced_node(announce(box, seq=2))
     row = node(conn)
-    assert (row["capability"], row["occupancy"], row["trust_state"]) == ("locker", "rental", "discovered")
+    assert (row["kind"], row["occupancy"], row["trust_state"]) == ("locker", "rental", "discovered")
     assert audits(conn)[0]["previous_kind"] == "light"
 
 
@@ -98,7 +98,7 @@ def test_FR04_row_without_descriptor_kind_change_resets_trust(conn, repo):
     insert_place(conn)
     insert_node(conn, node_id="light1", capability="light", occupancy="shared")
     assert repo.nodes()[0].descriptor is None
-    repo.upsert_announced_node(announce(legacy_descriptor(Capability.SPEAKER, Occupancy.SHARED)))
+    repo.upsert_announced_node(announce(legacy_descriptor("speaker", Occupancy.SHARED)))
     row = node(conn)
     assert row["trust_state"] == "discovered" and audits(conn)[0]["previous_descriptor_hash"] is None
 
@@ -133,15 +133,15 @@ def _legacy_db(tmp_path: Path) -> str:
 def test_FR04_migration_backfills_descriptor(tmp_path):
     conn = connect(_legacy_db(tmp_path))
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 10
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 11
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(node)")}
         assert {"descriptor", "descriptor_hash"} <= columns
         assert not {"light_controls", "speaker_controls"} & columns
         nodes = {n.node_id: n for n in SqliteRepository(conn).nodes()}
-        assert nodes["locker-1"].descriptor == legacy_descriptor(Capability.LOCKER, Occupancy.RENTAL)
+        assert nodes["locker-1"].descriptor == legacy_descriptor("locker", Occupancy.RENTAL)
         assert nodes["light-1"].descriptor_hash == RING.hash
-        assert nodes["light-1"].light_controls == LightControls(64, True)
-        assert nodes["speaker-1"].speaker_controls == SpeakerControls(20)
+        assert nodes["light-1"].descriptor == RING
+        assert nodes["speaker-1"].descriptor == legacy_descriptor("speaker", Occupancy.SHARED, volume_max=20)
         assert [nodes[n].trust_state for n in ("locker-1", "light-1", "light-2", "speaker-1")] == [
             TrustState.TRUSTED, TrustState.TRUSTED, TrustState.REVOKED, TrustState.TRUSTED]
         assert nodes["odd-1"].descriptor is None  # 다음 발표를 기다린다

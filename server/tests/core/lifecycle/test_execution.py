@@ -13,28 +13,29 @@ from nearpilot.core.lifecycle.fault_recovery import FaultRecoveryService
 from nearpilot.core.lifecycle.release import ReleaseService
 from nearpilot.core.lifecycle.restore import RestoreService
 from nearpilot.core.lifecycle.shared_light import SharedLightService
+from nearpilot.shared.descriptor import legacy_descriptor
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, CommandState, Capability, CommandOutcome, DeviceState, ExecutionKind, ExecutionStatus,
+    CommandState, CommandOutcome, DeviceState, ExecutionKind, ExecutionStatus,
     NodeResultState, Occupancy, ReasonCode, RejectCode, StoreConflictReason, StoreOutcome,
     TrustState, Verdict,
 )
 from nearpilot.shared.errors import StoreError, StoreNotApplied, StoreOutcomeUnknown
 from nearpilot.shared.models import (
     CommandRecord, CommandResult, Decision, ExecutionContext, NodeInfo, NodeResult,
-    NodeStatus, RestoreBundle, SpeakerSetting, StoreResult, TargetSpec, UseRequest,
+    NodeStatus, RestoreBundle, StoreResult, TargetSpec, UseRequest,
 )
 
 
 class RepositoryFake:
     def __init__(self, now):
-        self.items = {"locker-1": NodeInfo("locker-1", "place-1", Capability.LOCKER,
+        self.items = {"locker-1": NodeInfo("locker-1", "place-1", "locker",
             Occupancy.RENTAL, TrustState.TRUSTED, DeviceState.RESERVED, None, now,
             session_id="connection-1")}
         self.due = {}
 
     def nodes(self, capability=None):
-        return tuple(n for n in self.items.values() if capability is None or n.capability == capability)
+        return tuple(n for n in self.items.values() if capability is None or n.kind == capability)
 
 
 class StoreFake:
@@ -74,7 +75,7 @@ class StoreFake:
                 if c.node_id == node_id and c.status == ExecutionStatus.SUCCEEDED]
         return done[-1] if done else None
 
-    def link_command(self, internal_request_id, node_id, action, light=None, speaker=None):
+    def link_command(self, internal_request_id, node_id, action, arguments=None):
         self.calls.append(("link", internal_request_id))
         failure = self._before("link")
         if self.link_conflict:
@@ -95,7 +96,7 @@ class StoreFake:
         if current is None:
             current = CommandRecord("command:" + internal_request_id, internal_request_id, node_id,
                 action, ExecutionStatus.PENDING, ctx.execution_kind, ctx.use_id, ctx.usage_id,
-                self.reserved_at, light=light)
+                self.reserved_at, arguments=arguments)
             self.commands[internal_request_id] = current
         return self._after(failure, StoreResult(outcome, command=current))
 
@@ -214,7 +215,7 @@ def env():
         return ExecutionService(repository=repository, store=store, rechecker=rechecker,
             gateway=gateway, clock=clock, lock_for=lock_for,
             can_execute=lambda node_id: restored[node_id], record_isolated=recovery.record_isolated)
-    request = UseRequest("visitor-1", "external-1", TargetSpec.parse("locker-1"), Action.OPEN,
+    request = UseRequest("visitor-1", "external-1", TargetSpec.parse("locker-1"), "open",
                          "test", clock())
     ctx = ExecutionContext("request-1", request, "locker-1", "use-1", "usage-1", Settings(),
                            reserved_at=clock())
@@ -268,32 +269,33 @@ def test_FR06_execute_sends_command_after_recheck(env):
 
 
 def test_FR19_execution_sends_stored_speaker(env):
-    """인계의 음량은 저장할 때만 쓴다. 보낸 명령의 음량은 저장한 명령 기록의 값이다 (FR-09, FR-19)."""
+    """인계의 인자는 저장할 때만 쓴다. 보낸 명령의 인자는 저장한 명령 기록의 값이다 (FR-09, FR-19)."""
     now = env.clock()
     env.repository.items["speaker-1"] = NodeInfo(
-        "speaker-1", "place-1", Capability.SPEAKER, Occupancy.SHARED, TrustState.TRUSTED,
-        DeviceState.AVAILABLE, None, now, session_id="connection-1")
+        "speaker-1", "place-1", "speaker", Occupancy.SHARED, TrustState.TRUSTED,
+        DeviceState.AVAILABLE, None, now, session_id="connection-1",
+        descriptor=legacy_descriptor("speaker", Occupancy.SHARED, volume_max=20))
     env.locks["speaker-1"], env.restored["speaker-1"] = RLock(), True
-    request = UseRequest("visitor-1", "external-2", TargetSpec.parse("speaker-1"), Action.ON, "test", now)
+    request = UseRequest("visitor-1", "external-2", TargetSpec.parse("speaker-1"), "on", "test", now)
     ctx = ExecutionContext("request-2", request, "speaker-1", None, None, Settings(), ExecutionKind.SHARED,
-                           speaker=SpeakerSetting(12))
+                           arguments={"volume": 12})
     env.store.contexts[ctx.internal_request_id] = ctx
     link, linked = env.store.link_command, []
 
-    def link_stored(internal_request_id, node_id, action, light=None, speaker=None):
-        linked.append(speaker)
-        result = link(internal_request_id, node_id, action, light, speaker)
-        record = replace(result.command, speaker=SpeakerSetting(7))  # 저장소가 돌려준 기록의 음량이 명령을 정한다
+    def link_stored(internal_request_id, node_id, action, arguments=None):
+        linked.append(arguments)
+        result = link(internal_request_id, node_id, action, arguments)
+        record = replace(result.command, arguments={"volume": 7})  # 저장소가 돌려준 기록의 인자가 명령을 정한다
         env.store.commands[internal_request_id] = record
         return replace(result, command=record)
 
     env.store.link_command = link_stored
     assert env.service.execute(ctx).status == ExecutionStatus.SUCCEEDED
-    assert linked == [SpeakerSetting(12)]
-    assert env.gateway.calls[-1][0].speaker == SpeakerSetting(7)
+    assert linked == [{"volume": 12}]
+    assert env.gateway.calls[-1][0].arguments == {"volume": 7}
     env.store.link_command = link
-    env.service.execute(env.ctx)  # 음량이 없는 명령은 인자 없는 명령으로 보낸다
-    assert env.gateway.calls[-1][0].speaker is None
+    env.service.execute(env.ctx)  # 인자가 없는 명령은 인자 없는 명령으로 보낸다
+    assert env.gateway.calls[-1][0].arguments is None
 
 
 def test_FR19_initial_success_sets_rental_due_at(env):
@@ -901,10 +903,10 @@ def test_FR07_other_device_rejection_is_unknown(env):
 def internal_env(env, *, confirm=True):
     from nearpilot.shared.enums import InternalRequestCause
     from nearpilot.shared.models import InternalRequest
-    env.repository.items["light-1"] = NodeInfo("light-1", "place-1", Capability.LIGHT,
+    env.repository.items["light-1"] = NodeInfo("light-1", "place-1", "light",
         Occupancy.SHARED, TrustState.TRUSTED, DeviceState.AVAILABLE, None, env.clock(),
-        session_id="connection-1")
-    internal = InternalRequest("internal-1", "light-1", Action.OFF, InternalRequestCause.LEAVE_OFF,
+        session_id="connection-1", descriptor=legacy_descriptor("light", Occupancy.SHARED))
+    internal = InternalRequest("internal-1", "light-1", "off", InternalRequestCause.LEAVE_OFF,
                                Settings(), env.clock())
     ctx = ExecutionContext("internal-1", None, "light-1", None, None, Settings(),
                            ExecutionKind.SERVER_INTERNAL, internal_request=internal)
@@ -935,7 +937,7 @@ def test_FR20_internal_request_executes_without_recheck(env):
     assert [c[0] for c in env.store.calls if c[0] in ("link_internal", "link", "begin")] == [
         "link_internal", "link", "begin"]
     command, _ = env.gateway.calls[0]
-    assert (command.node_id, command.action) == ("light-1", Action.OFF)
+    assert (command.node_id, command.action) == ("light-1", "off")
     assert calls(env, "result")[0][4] is None
 
 

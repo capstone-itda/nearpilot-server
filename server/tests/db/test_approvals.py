@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import Action, ApprovalDecisionReason, ApprovalStatus
+from nearpilot.shared.enums import ApprovalDecisionReason, ApprovalStatus
 from nearpilot.shared.models import ApprovalDecisionRequest, ApprovalRequest
 
 from conftest import add_policy_revision, insert_node, insert_place, insert_policy, insert_user
@@ -18,7 +18,7 @@ def _request(internal_request_id="areq-1", created_at=NOW, settings=None):
     return ApprovalRequest(
         requester_user_id="u1",
         node_id="node1",
-        action=Action.OPEN,
+        action="open",
         policy_id="policy1",
         policy_version=1,
         internal_request_id=internal_request_id,

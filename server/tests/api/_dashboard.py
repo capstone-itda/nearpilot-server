@@ -10,9 +10,7 @@ from typing import Any
 from nearpilot.api.auth.authenticator import Authenticator
 from nearpilot.api.ws.settings import DashboardSettings
 from nearpilot.shared.enums import (
-    Action,
     ApprovalMode,
-    Capability,
     Occupancy,
     ReasonCode,
     Role,
@@ -95,11 +93,11 @@ class FakeQueries:
         self.error: Exception | None = None
         self.calls: list[tuple[str, tuple]] = []
         lounge = (  # 사물함 3, 조명 3, 스피커 1
-            [{"nodeId": f"locker-{n}", "name": f"사물함 {n}", "capability": Capability.LOCKER,
+            [{"nodeId": f"locker-{n}", "name": f"사물함 {n}", "capability": "locker",
               "occupancy": Occupancy.RENTAL} for n in (1, 2, 3)]
-            + [{"nodeId": f"light-{n}", "name": f"조명 {n}", "capability": Capability.LIGHT,
+            + [{"nodeId": f"light-{n}", "name": f"조명 {n}", "capability": "light",
                 "occupancy": Occupancy.SHARED} for n in (1, 2, 3)]
-            + [{"nodeId": "speaker-1", "name": "스피커 1", "capability": Capability.SPEAKER,
+            + [{"nodeId": "speaker-1", "name": "스피커 1", "capability": "speaker",
                 "occupancy": Occupancy.SHARED}]
         )
         self.places_data: Any = {  # 한 소유자가 두 장소를 갖는다. weakRssiDbm 은 응답 전체에 하나다
@@ -109,7 +107,7 @@ class FakeQueries:
                  "calibrationVersion": "cal-1", "devices": lounge},
                 {"placeId": "side-room", "placeName": "옆방", "modelVersion": "model-2",
                  "calibrationVersion": "cal-2",
-                 "devices": [{"nodeId": "mood-1", "name": "무드등", "capability": Capability.LIGHT,
+                 "devices": [{"nodeId": "mood-1", "name": "무드등", "capability": "light",
                               "occupancy": Occupancy.SHARED}]},
             ],
         }
@@ -134,16 +132,16 @@ class FakeQueries:
         ]
         self.history_data: Any = [
             {"subject": OWNER, "requestId": "req-2", "at": NOW,
-             "target": {"kind": TargetKind.EXPLICIT, "nodeId": "light-1"}, "action": Action.ON,
+             "target": {"kind": TargetKind.EXPLICIT, "nodeId": "light-1"}, "action": "on",
              "verdict": Verdict.OK, "nodeId": "light-1", "outcome": "succeeded", "code": ReasonCode.OK},
             {"subject": VISITOR, "requestId": "req-1", "at": early,
-             "target": {"kind": TargetKind.NEAREST, "capability": Capability.LOCKER}, "action": Action.OPEN,
+             "target": {"kind": TargetKind.NEAREST, "capability": "locker"}, "action": "open",
              "verdict": Verdict.ASK, "nodeId": "locker-1", "outcome": "더 가까이 와야 한다",
              "code": ReasonCode.LOW_CONFIDENCE},
         ]
         self.request_data: Any = {
             "subject": VISITOR, "id": "req-1", "tool": "request_use",
-            "target": {"kind": TargetKind.NEAREST, "capability": Capability.LOCKER}, "action": Action.OPEN, "at": NOW,
+            "target": {"kind": TargetKind.NEAREST, "capability": "locker"}, "action": "open", "at": NOW,
             "verdict": Verdict.OK, "reason": ReasonCode.OK,
             "steps": [{"result": "pass", "detail": f"단계 {n}"} for n in range(7)],
             "nodeId": "locker-1", "posteriors": {"locker-1": 0.97, "light-1": 0.03}, "threshold": 0.9,

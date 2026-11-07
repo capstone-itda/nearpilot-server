@@ -9,8 +9,8 @@ import pytest
 
 from nearpilot.iot.messages import MessageValidationError, decode_message, encode_command
 from nearpilot.shared.descriptor import legacy_descriptor
-from nearpilot.shared.enums import Action, Capability, Occupancy
-from nearpilot.shared.models import LightSetting, NodeAnnounce, NodeCommand, SpeakerSetting
+from nearpilot.shared.enums import Occupancy
+from nearpilot.shared.models import NodeAnnounce, NodeCommand
 
 SESSION = "12345678-1234-1234-1234-123456789abc"
 STAMP = "2026-11-06T03:00:00.000Z"
@@ -20,7 +20,7 @@ RECEIVED = SENT + timedelta(seconds=1)
 
 def ring() -> dict:
     """조명 v2 템플릿과 같은 v3 선언. 참조 펌웨어가 내장할 선언이다 (spec 결정 3)."""
-    data = legacy_descriptor(Capability.LIGHT, Occupancy.SHARED, brightness_max=64, color=True).to_json()
+    data = legacy_descriptor("light", Occupancy.SHARED, brightness_max=64, color=True).to_json()
     data["vendor"] = {"name": "nearpilot", "model": "light-ring", "firmware": "3.0.0"}
     return data
 
@@ -47,7 +47,7 @@ def test_FR04_v2_announce_becomes_template():
                         controls={"brightness_max": 64, "color": True}))
     v3 = decode(message(3, descriptor=ring()))
     assert v2.schema_version == 2
-    assert v2.descriptor == legacy_descriptor(Capability.LIGHT, Occupancy.SHARED, brightness_max=64, color=True)
+    assert v2.descriptor == legacy_descriptor("light", Occupancy.SHARED, brightness_max=64, color=True)
     assert v2.descriptor.hash == v3.descriptor.hash  # 펌웨어를 v3로 올려도 다시 신뢰하지 않는다
 
 
@@ -74,12 +74,12 @@ def test_FR04_invalid_descriptor_rejected_with_session():
         decode(message(3, capability="light", occupancy="shared"))  # v3에 선언이 없다
 
 
-def test_FR04_unknown_kind_rejected_until_generalized():
-    """PR ② 전까지는 Capability 열거형의 종류만 받는다 (spec 결정 6)."""
+def test_FR04_new_kind_accepted():
+    """서버 코드를 고치지 않고 새 종류의 선언을 받는다 (specs/core-device-actions/spec.md, #245)."""
     data = ring()
     data["kind"] = "fan"
-    with pytest.raises(MessageValidationError, match="kind not supported yet"):
-        decode(message(3, descriptor=data))
+    report = decode(message(3, descriptor=data))
+    assert report.descriptor.kind == "fan"
 
 
 @pytest.mark.parametrize("version", [1, 4])
@@ -95,24 +95,24 @@ def test_FR04_other_messages_stay_v2():
 
 
 def command(**fields) -> NodeCommand:
-    return NodeCommand("command-1", "light-1", Action.ON, SESSION, SENT, RECEIVED, **fields)
+    return NodeCommand("command-1", "light-1", "on", SESSION, SENT, RECEIVED, **fields)
 
 
 def test_FR06_v3_node_gets_v3_command():
-    data = json.loads(encode_command(command(light=LightSetting(30, "#0000ff")), schema_version=3))
+    data = json.loads(encode_command(command(arguments={"brightness": 30, "color": "#0000FF"}), schema_version=3))
     assert data["schema_version"] == 3
     assert data["arguments"] == {"brightness": 30, "color": "#0000FF"}
     assert "parameters" not in data
-    speaker = NodeCommand("command-2", "speaker-1", Action.ON, SESSION, SENT, RECEIVED,
-                          speaker=SpeakerSetting(12))
+    speaker = NodeCommand("command-2", "speaker-1", "on", SESSION, SENT, RECEIVED,
+                          arguments={"volume": 12})
     assert json.loads(encode_command(speaker, schema_version=3))["arguments"] == {"volume": 12}
     assert "arguments" not in json.loads(encode_command(command(), schema_version=3))
 
 
 def test_FR06_v2_node_gets_v2_command():
     """v2 기기에는 같은 값을 parameters 로 보낸다 (#245 담당자 결정)."""
-    v2 = json.loads(encode_command(command(light=LightSetting(30, "#0000FF")), schema_version=2))
-    v3 = json.loads(encode_command(command(light=LightSetting(30, "#0000FF")), schema_version=3))
+    v2 = json.loads(encode_command(command(arguments={"brightness": 30, "color": "#0000FF"}), schema_version=2))
+    v3 = json.loads(encode_command(command(arguments={"brightness": 30, "color": "#0000FF"}), schema_version=3))
     assert v2["schema_version"] == 2 and "arguments" not in v2
     assert v2["parameters"] == v3["arguments"]
 

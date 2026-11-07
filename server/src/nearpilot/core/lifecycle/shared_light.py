@@ -3,7 +3,9 @@
 대상은 점유 방식이 shared인 모든 기기다. 스피커의 on은 재생, off는 정지다. 이름의 "조명"은 이를 뜻한다 (2026-10-27 팀 결정).
 유지 대상자가 모두 이탈하면 서버 내부 요청으로 꺼짐을 실행 서비스에 넘긴다 (#86).
 호출자는 검증된 관측과 저장을 확인한 실행 결과만 인계한다.
-켜짐 여부는 저장한 마지막 성공 명령의 on·off로 판단한다. 실제 켜짐의 관측이 아니다 (2026-10-26 결정).
+켜짐 여부는 저장한 마지막 성공 명령으로 판단한다. 실제 켜짐의 관측이 아니다 (2026-10-26 결정).
+켜기와 꺼짐은 동작 이름이 아니라 기기 선언의 동작 역할로 구분한다. 역할이 없는 동작이 켜기, `deactivate` 동작이
+꺼짐이다 (FR-20, #245).
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from uuid import uuid4
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, CommandState, DeviceState, ExecutionKind, ExecutionStatus, InternalRequestCause,
+    ActionRole, CommandState, DeviceState, ExecutionKind, ExecutionStatus, InternalRequestCause,
     Occupancy, ReasonCode, TrustState, Verdict,
 )
 from nearpilot.shared.interfaces import ExecutionStore, PolicyChecker, Repository
@@ -28,6 +30,20 @@ from nearpilot.shared.models import (
 
 # 끝나지 않은 꺼짐 요청의 진행 상태
 _UNFINISHED = (ExecutionStatus.PENDING, ExecutionStatus.IN_PROGRESS)
+_UNDECLARED = object()  # 기기 선언에 없는 동작
+
+
+def _role(node: NodeInfo, action: str) -> ActionRole | None | object:
+    """기기 선언에서 동작의 역할. 선언에 없으면 `_UNDECLARED` 다."""
+    spec = None if node.descriptor is None else node.descriptor.action(action)
+    return _UNDECLARED if spec is None else spec.role
+
+
+def _deactivate_action(node: NodeInfo) -> str | None:
+    """기기가 선언한 deactivate 동작 이름. shared 기기는 정확히 하나 선언한다 (FR-09)."""
+    if node.descriptor is None:
+        return None
+    return next((spec.name for spec in node.descriptor.actions if spec.role is ActionRole.DEACTIVATE), None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +60,7 @@ class _Holder:
     settings: Settings
     last_received_at: datetime
     last_observed_at: datetime | None = None
+    action: str = ""  # 켠 동작. 유지 권한을 이 동작의 정책으로 다시 검사한다 (spec core-device-actions 결정 10)
 
 
 @dataclass
@@ -94,16 +111,17 @@ class SharedLightService:
         ):
             return
         action = context.request.action if context.request is not None else context.internal_request.action
-        if action not in (Action.ON, Action.OFF) or (
-            context.request is None and action != Action.OFF
-        ):
-            raise ValueError("공용형 기기의 동작이 아니다")
         if not result.command_id:
             raise ValueError("성공한 실행의 명령 ID가 필요하다")
         with self._lock_for(context.node_id):
             node = self._node(context.node_id)
             if node is None or not self._is_light(node):
                 return
+            role = _role(node, action)
+            if role is _UNDECLARED or role is ActionRole.REOPERATE or (
+                context.request is None and role is not ActionRole.DEACTIVATE
+            ):
+                raise ValueError("공용형 기기의 켜기나 꺼짐 동작이 아니다")
             light = self._light(context.node_id)
             previous = light.successes.get(context.internal_request_id)
             if previous is not None:
@@ -111,12 +129,12 @@ class SharedLightService:
                     raise ValueError("같은 성공 인계의 내용이 다르다")
                 return
             now = self._clock()
-            if action == Action.OFF:
+            if role is ActionRole.DEACTIVATE:
                 light.holders.clear()
-            elif self._permitted(context.request.user_id, context.node_id, now):
+            elif self._permitted(context.request.user_id, context.node_id, action, now):
                 old = light.holders.get(context.request.user_id)
                 light.holders[context.request.user_id] = _Holder(
-                    context.settings, now, None if old is None else old.last_observed_at,
+                    context.settings, now, None if old is None else old.last_observed_at, action,
                 )
             light.successes[context.internal_request_id] = (context, result)
 
@@ -211,8 +229,13 @@ class SharedLightService:
         if ctx is None:
             if not self.can_request_off(node_id):
                 return False
+            node = self._node(node_id)
+            off = None if node is None else _deactivate_action(node)
+            if off is None:
+                return False
             settings, now = self._settings(), self._clock()
-            internal = InternalRequest(self._new_id(), node_id, Action.OFF,
+            # 이탈 꺼짐은 기기가 선언한 deactivate 동작을 인자 없이 요청한다 (FR-20)
+            internal = InternalRequest(self._new_id(), node_id, off,
                                        InternalRequestCause.LEAVE_OFF, settings, now)
             ctx = ExecutionContext(internal.internal_request_id, None, node_id, None, None, settings,
                                    ExecutionKind.SERVER_INTERNAL, internal_request=internal)
@@ -230,7 +253,8 @@ class SharedLightService:
     def can_request_off(self, node_id: str) -> bool:
         """현재 유지 대상자·연결·온라인·명령 처리 상태와 마지막 제어 상태를 다시 검사한다.
 
-        실행 허가가 아니다. 마지막 성공 명령이 `on`일 때만 꺼짐을 요청한다. 기록이 없으면 요청하지 않는다.
+        실행 허가가 아니다. 마지막 성공 명령이 켜기(역할 없는 동작)일 때만 꺼짐을 요청한다.
+        기록이 없거나 마지막 성공 명령이 `deactivate` 동작이면 요청하지 않는다 (FR-20).
         """
         with self._lock_for(node_id):
             with self._index_lock:
@@ -256,7 +280,9 @@ class SharedLightService:
             ):
                 return False
             last = self._store.last_succeeded(node_id)
-            if last is None or last.node_id != node_id or last.action != Action.ON:
+            if last is None or last.node_id != node_id or _role(node, last.action) is not None:
+                return False
+            if _deactivate_action(node) is None:
                 return False
             ttl = timedelta(seconds=light.settings.online_ttl_sec)
             return (
@@ -282,7 +308,7 @@ class SharedLightService:
     def _expire_holders(self, node_id: str, light: _Light, now: datetime) -> None:
         expired = []
         for user_id, holder in light.holders.items():
-            allowed = self._permitted(user_id, node_id, now)
+            allowed = self._permitted(user_id, node_id, holder.action, now)
             deadline = holder.last_received_at + timedelta(
                 seconds=holder.settings.leave_absent_sec + holder.settings.leave_grace_sec,
             )
@@ -292,9 +318,9 @@ class SharedLightService:
         for user_id in expired:
             del light.holders[user_id]
 
-    def _permitted(self, user_id: str, node_id: str, now: datetime) -> bool:
-        """유지 권한이다. 횟수형 승인을 다 쓴 계정도 유지 권한이 있다 (#87)."""
-        checked = self._policy.check(user_id, node_id, Action.ON, now)
+    def _permitted(self, user_id: str, node_id: str, action: str, now: datetime) -> bool:
+        """유지 권한이다. 켠 동작의 정책으로 검사한다. 횟수형 승인을 다 쓴 계정도 유지 권한이 있다 (#87)."""
+        checked = self._policy.check(user_id, node_id, action, now)
         return checked.verdict == Verdict.OK or checked.reason == ReasonCode.APPROVAL_EXHAUSTED
 
     def _light(self, node_id: str) -> _Light:

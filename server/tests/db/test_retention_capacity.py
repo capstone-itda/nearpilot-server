@@ -15,7 +15,7 @@ from nearpilot.db.repositories.repository import SqliteRepository
 from nearpilot.db.repositories.retention import SqliteRetentionStore
 from nearpilot.db.schema import connect
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import Action, ReserveOutcome
+from nearpilot.shared.enums import ReserveOutcome
 from nearpilot.shared.errors import StoreNotApplied
 from nearpilot.shared.models import ReserveRequest, TargetSpec, UseRequest
 
@@ -32,7 +32,7 @@ from conftest import (
 )
 
 
-def _use_request(user_id="u1", request_id="ext-1", kind="nearest", capability="locker", action=Action.OPEN):
+def _use_request(user_id="u1", request_id="ext-1", kind="nearest", capability="locker", action="open"):
     return UseRequest(
         user_id=user_id,
         request_id=request_id,
@@ -526,7 +526,7 @@ def test_FR19_link_request_reoperating_path_unaffected(conn, repo):
     reserve = repo.reserve_if_free(
         ReserveRequest(
             internal_request_id=link.internal_request_id, user_id="u1", node_id="node1",
-            action=Action.OPEN, approval_id=None,
+            action="open", approval_id=None,
         )
     )
     assert reserve.outcome == ReserveOutcome.REOPERATING

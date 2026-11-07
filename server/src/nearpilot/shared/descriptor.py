@@ -16,12 +16,12 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, NoReturn
 
-from nearpilot.shared.enums import ActionRole, Capability, Occupancy
+from nearpilot.shared.enums import ActionRole, Occupancy
 
 __all__ = [
-    "ANNOUNCE_MAX_BYTES", "CURRENT_FORMAT", "SUPPORTED_FORMATS", "ActionSpec", "ArgumentProblem",
-    "DescriptorError", "DeviceDescriptor", "VendorInfo", "descriptor_hash", "legacy_controls",
-    "legacy_descriptor", "parse_descriptor", "validate_arguments",
+    "ANNOUNCE_MAX_BYTES", "CURRENT_FORMAT", "LEGACY_KINDS", "SUPPORTED_FORMATS", "ActionSpec",
+    "ArgumentProblem", "DescriptorError", "DeviceDescriptor", "VendorInfo", "capped_schema", "descriptor_hash",
+    "is_name", "legacy_descriptor", "normalize_arguments", "parse_descriptor", "validate_arguments",
 ]
 
 # ── 상한과 이름 규칙 (device-protocol.md 4절, 6절) ─────────────────────
@@ -185,9 +185,15 @@ def _text(value: object, where: str) -> str:
     return value
 
 
+def is_name(value: object) -> bool:
+    """종류·동작·인자 이름 규칙 `^[a-z][a-z0-9_]*$`, 32바이트 이하 (device-protocol.md 4절)."""
+    return (isinstance(value, str) and len(value.encode("utf-8")) <= MAX_NAME_BYTES
+            and _NAME.fullmatch(value) is not None)
+
+
 def _name(value: object, where: str) -> str:
     value = _text(value, where)
-    if len(value.encode("utf-8")) > MAX_NAME_BYTES or not _NAME.fullmatch(value):
+    if not is_name(value):
         _fail(f"{where} breaks the name rule")
     return value
 
@@ -412,6 +418,30 @@ def validate_arguments(
     return ArgumentProblem.OUT_OF_RANGE if out_of_range else None
 
 
+def normalize_arguments(spec: ActionSpec, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """`#RRGGBB` 형식 인자를 대문자로 바꾼다 (FR-09). 종류가 아니라 인자 스키마의 `pattern`으로 고른다.
+
+    그 밖의 값은 바꾸지 않는다. 검사는 하지 않는다.
+    """
+    properties = spec.properties
+    return {
+        key: value.upper()
+        if isinstance(value, str) and properties.get(key, {}).get("pattern") == _COLOR_PATTERN else value
+        for key, value in arguments.items()
+    }
+
+
+def capped_schema(spec: ActionSpec, caps: Mapping[str, int | float] | None) -> dict[str, Any]:
+    """조회 응답에 보일 인자 스키마. 숫자 인자의 `maximum`은 선언 값과 서버 상한 중 작은 값이다 (FR-09)."""
+    schema = _thaw(spec.input_schema)
+    for key, cap in (caps or {}).items():
+        prop = schema.get("properties", {}).get(key)
+        if prop is None or prop.get("type") not in _NUMERIC_TYPES:
+            continue
+        prop["maximum"] = cap if "maximum" not in prop else min(prop["maximum"], cap)
+    return schema
+
+
 # ── v2 템플릿 (FR-04 전환 기간, spec 결정 3) ───────────────────────
 
 _COLOR_PATTERN = "^#[0-9A-Fa-f]{6}$"
@@ -443,22 +473,28 @@ def _speaker_on(volume_max: int | None) -> dict[str, Any]:
             "result": _SIGNAL}
 
 
+LEGACY_KINDS = frozenset({"locker", "light", "speaker"})  # v2 발표의 `capability` 값
+
+
 def legacy_descriptor(
-    capability: Capability, occupancy: Occupancy, *, brightness_max: int | None = None,
+    kind: str, occupancy: Occupancy, *, brightness_max: int | None = None,
     color: bool = False, volume_max: int | None = None,
 ) -> DeviceDescriptor:
     """v2 발표(기능, 점유 방식, 제어 정보)의 선언 템플릿. 참조 펌웨어가 내장할 선언과 같다.
 
-    역할 규칙에 맞지 않는 조합(예: shared 사물함)은 DescriptorError 다.
+    v2 기능 세 가지만 템플릿이 있다. 그 밖의 종류와 역할 규칙에 맞지 않는 조합(예: shared 사물함)은
+    DescriptorError 다. 전환 기간의 발표 변환과 DB 이전만 쓴다. 판정은 쓰지 않는다.
     """
-    capability, occupancy = Capability(capability), Occupancy(occupancy)
-    if capability is Capability.LOCKER:
+    if kind not in LEGACY_KINDS:
+        _fail(f"no v2 template for kind {kind!r}")
+    occupancy = Occupancy(occupancy)
+    if kind == "locker":
         actions = [
             {"name": "open", "description": "사물함을 연다", "input_schema": _NO_ARGUMENTS, "result": _SIGNAL},
             {"name": "close", "description": "사물함을 잠근다. 반납이 아니다", "role": "reoperate",
              "input_schema": _NO_ARGUMENTS, "result": _SIGNAL},
         ]
-    elif capability is Capability.LIGHT:
+    elif kind == "light":
         actions = [_light_on(brightness_max, color),
                    {"name": "off", "description": "조명을 끈다", "role": "deactivate",
                     "input_schema": _NO_ARGUMENTS, "result": _SIGNAL}]
@@ -468,40 +504,8 @@ def legacy_descriptor(
                     "input_schema": _NO_ARGUMENTS, "result": _SIGNAL}]
     return parse_descriptor({
         "format": f"{FORMAT_PREFIX}{CURRENT_FORMAT}",
-        "kind": capability.value,
+        "kind": kind,
         "occupancy": occupancy.value,
-        "vendor": {"name": "nearpilot", "model": capability.value, "firmware": "v2"},
+        "vendor": {"name": "nearpilot", "model": kind, "firmware": "v2"},
         "actions": actions,
     })
-
-
-def _integer_cap(spec: ActionSpec | None, arg: str, low: int, high: int) -> int | None:
-    if spec is None:
-        return None
-    prop = spec.properties.get(arg)
-    if prop is None or prop.get("type") != "integer":
-        return None
-    maximum = prop.get("maximum")
-    if type(maximum) is not int or not low <= maximum <= high:
-        return None
-    return maximum
-
-
-def legacy_controls(
-    descriptor: DeviceDescriptor | None,
-) -> tuple[tuple[int, bool] | None, int | None]:
-    """선언에서 PR ② 전까지 쓰는 조명·스피커 제어 정보를 계산한다 (spec 결정 7).
-
-    반환은 ((brightness_max, color) 또는 None, volume_max 또는 None) 이다.
-    """
-    if descriptor is None:
-        return None, None
-    on = descriptor.action("on")
-    if descriptor.kind == Capability.LIGHT.value:
-        brightness = _integer_cap(on, "brightness", 1, 255)
-        if brightness is None:
-            return None, None
-        return (brightness, "color" in on.properties), None
-    if descriptor.kind == Capability.SPEAKER.value:
-        return None, _integer_cap(on, "volume", 1, 30)
-    return None, None

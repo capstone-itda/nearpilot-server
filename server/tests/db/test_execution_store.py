@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nearpilot.shared.enums import Action, ExecutionKind, ExecutionStatus, StoreOutcome
+from nearpilot.shared.enums import ExecutionKind, ExecutionStatus, StoreOutcome
 
 from conftest import (
     insert_approval,
@@ -23,14 +23,14 @@ def test_FR18_link_command_creates(store, conn):
     insert_request(conn, internal_request_id="req1")
     insert_use_session(conn, use_id="use1", internal_request_id="req1", state="RESERVED")
 
-    result = store.link_command("req1", "node1", Action.OPEN)
+    result = store.link_command("req1", "node1", "open")
 
     assert result.outcome == StoreOutcome.APPLIED
     command = result.command
     assert command is not None
     assert command.internal_request_id == "req1"
     assert command.node_id == "node1"
-    assert command.action == Action.OPEN
+    assert command.action == "open"
     assert command.status == ExecutionStatus.PENDING
     assert command.execution_kind == ExecutionKind.RENTAL_INITIAL
     assert command.use_id == "use1"
@@ -48,8 +48,8 @@ def test_FR18_link_command_idempotent(store, conn):
     insert_request(conn, internal_request_id="req1")
     insert_use_session(conn, use_id="use1", internal_request_id="req1", state="RESERVED")
 
-    first = store.link_command("req1", "node1", Action.OPEN)
-    second = store.link_command("req1", "node1", Action.OPEN)
+    first = store.link_command("req1", "node1", "open")
+    second = store.link_command("req1", "node1", "open")
 
     assert second.outcome == StoreOutcome.ALREADY_APPLIED
     assert second.command is not None
@@ -70,7 +70,7 @@ def test_FR19_link_command_shared(store, conn):
     )
     insert_approval_usage(conn, usage_id="usage1", approval_id="approval-light", internal_request_id="req-shared")
 
-    result = store.link_command("req-shared", "light1", Action.ON)
+    result = store.link_command("req-shared", "light1", "on")
 
     assert result.outcome == StoreOutcome.APPLIED
     assert result.command.execution_kind == ExecutionKind.SHARED
@@ -88,7 +88,7 @@ def test_FR19_link_command_reoperation(store, conn):
     # 같은 점유에 새 조작을 요청하는 재조작
     insert_request(conn, internal_request_id="req-reop", request_id="ext-2")
 
-    result = store.link_command("req-reop", "node1", Action.OPEN)
+    result = store.link_command("req-reop", "node1", "open")
 
     assert result.outcome == StoreOutcome.APPLIED
     assert result.command.execution_kind == ExecutionKind.RENTAL_REOPERATION
@@ -107,7 +107,7 @@ def test_FR19_link_command_open_reoperation(store, conn):
     insert_use_session(conn, use_id="use1", internal_request_id="req-initial", state="ACTIVE")
     insert_request(conn, internal_request_id="req-reop", request_id="ext-2")
 
-    result = store.link_command("req-reop", "node1", Action.OPEN)
+    result = store.link_command("req-reop", "node1", "open")
 
     assert result.outcome == StoreOutcome.APPLIED
     assert result.command.execution_kind == ExecutionKind.RENTAL_REOPERATION
@@ -124,7 +124,7 @@ def test_FR19_execution_lookup(store, conn):
 
     assert store.execution("req1") is None
 
-    linked = store.link_command("req1", "node1", Action.OPEN)
+    linked = store.link_command("req1", "node1", "open")
     found = store.execution("req1")
 
     assert found is not None

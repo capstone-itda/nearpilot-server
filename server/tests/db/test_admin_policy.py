@@ -134,7 +134,7 @@ def test_NFR03_set_policy_concurrent(tmp_path):
     setup_conn.execute("INSERT INTO user (user_id, name, token_hash, role) VALUES ('owner1', 'o', 'h1', 'owner')")
     setup_conn.execute("INSERT INTO place (place_id, owner_user_id, name) VALUES ('place1', 'owner1', 'p')")
     setup_conn.execute(
-        "INSERT INTO node (node_id, place_id, capability, occupancy, trust_state, device_state, "
+        "INSERT INTO node (node_id, place_id, kind, occupancy, trust_state, device_state, "
         "release_policy) VALUES ('node1', 'place1', 'locker', 'rental', 'trusted', 'AVAILABLE', '{}')"
     )
     setup_conn.execute(

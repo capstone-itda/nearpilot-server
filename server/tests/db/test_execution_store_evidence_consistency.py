@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from nearpilot.shared.enums import Action, ExecutionStatus, ReasonCode, StoreOutcome
+from nearpilot.shared.enums import ExecutionStatus, ReasonCode, StoreOutcome
 
 from conftest import insert_node, insert_place, insert_request, insert_use_session, insert_user
 
@@ -21,7 +21,7 @@ def test_FR19_execution_evidence_with_datetime_mismatches_after_requery(store, c
     insert_node(conn, node_id="node1", occupancy="rental", device_state="RESERVED")
     insert_request(conn, internal_request_id="req1")
     insert_use_session(conn, use_id="use1", internal_request_id="req1", state="RESERVED")
-    store.link_command("req1", "node1", Action.OPEN)
+    store.link_command("req1", "node1", "open")
     evidence = {"source": "recheck", "confirmed_at": datetime(2026, 1, 1, tzinfo=timezone.utc)}
 
     direct = store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.RECHECK_FAILED, evidence)

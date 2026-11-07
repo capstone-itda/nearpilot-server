@@ -67,7 +67,7 @@ def _insert_place(conn, place_id, owner_user_id):
 
 def _insert_node(conn, node_id, place_id):
     conn.execute(
-        "INSERT INTO node (node_id, place_id, capability, occupancy, trust_state, device_state, "
+        "INSERT INTO node (node_id, place_id, kind, occupancy, trust_state, device_state, "
         "release_policy) VALUES (?, ?, 'locker', 'rental', 'discovered', 'AVAILABLE', '{}')",
         (node_id, place_id),
     )

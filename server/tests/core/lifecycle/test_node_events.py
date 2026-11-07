@@ -19,7 +19,7 @@ from nearpilot.shared.descriptor import (
     ActionSpec, DescriptorError, DeviceDescriptor, VendorInfo, legacy_descriptor,
 )
 from nearpilot.shared.enums import (
-    Action, CommandState, Capability, CommandOutcome, DeviceState, EndReason,
+    CommandState, CommandOutcome, DeviceState, EndReason,
     ExecutionKind, ExecutionStatus, NodeResultState, Occupancy, ReasonCode,
     SessionState, StoreOutcome, TrustState, Verdict,
 )
@@ -33,13 +33,13 @@ from nearpilot.shared.models import (
 )
 
 
-def descriptor_of(capability=Capability.LOCKER, occupancy=Occupancy.RENTAL, *, firmware="v2",
+def descriptor_of(capability="locker", occupancy=Occupancy.RENTAL, *, firmware="v2",
                   description=None):
     """발표 선언. 역할 규칙에 맞지 않는 조합도 상태 관리 시험용으로 직접 만든다."""
     try:
         base = legacy_descriptor(capability, occupancy)
     except DescriptorError:
-        base = DeviceDescriptor(1, capability.value, occupancy, VendorInfo("nearpilot", "test", "v2"),
+        base = DeviceDescriptor(1, capability, occupancy, VendorInfo("nearpilot", "test", "v2"),
                                 (ActionSpec("open", "연다", {"type": "object"}),))
     if description is not None:
         first = replace(base.actions[0], description=description)
@@ -52,7 +52,7 @@ LOCKER = descriptor_of()
 
 class RepositoryFake:
     def __init__(self, now):
-        self.items = {"locker": NodeInfo("locker", "place", Capability.LOCKER,
+        self.items = {"locker": NodeInfo("locker", "place", "locker",
             Occupancy.RENTAL, TrustState.TRUSTED, DeviceState.AVAILABLE, None, now,
             session_id="connection", descriptor=LOCKER, descriptor_hash=LOCKER.hash)}
         self.sessions, self.frames, self.calls, self.errors = {}, {}, [], {}
@@ -65,18 +65,18 @@ class RepositoryFake:
 
     def nodes(self, capability=None):
         self.fail("nodes")
-        return tuple(n for n in self.items.values() if capability is None or n.capability == capability)
+        return tuple(n for n in self.items.values() if capability is None or n.kind == capability)
 
     def upsert_announced_node(self, report):
         self.calls.append(("announce", report))
         self.fail("announce")
         old, new = self.items.get(report.node_id), report.descriptor
         if old is None:
-            self.items[report.node_id] = NodeInfo(report.node_id, None, Capability(new.kind),
+            self.items[report.node_id] = NodeInfo(report.node_id, None, new.kind,
                 new.occupancy, TrustState.DISCOVERED, DeviceState.AVAILABLE, None, None,
                 descriptor=new, descriptor_hash=new.hash)
         elif old.descriptor_hash != new.hash:
-            self.items[report.node_id] = replace(old, capability=Capability(new.kind),
+            self.items[report.node_id] = replace(old, kind=new.kind,
                 occupancy=new.occupancy, trust_state=TrustState.DISCOVERED,
                 descriptor=new, descriptor_hash=new.hash)
         else:
@@ -245,7 +245,7 @@ def status(env, **changes):
         CommandState.IDLE), **changes)
 
 
-def announce(env, *, capability=Capability.LOCKER, occupancy=Occupancy.RENTAL, firmware="v2",
+def announce(env, *, capability="locker", occupancy=Occupancy.RENTAL, firmware="v2",
              description=None, **changes):
     at = env.clock()
     descriptor = descriptor_of(capability, occupancy, firmware=firmware, description=description)
@@ -267,14 +267,14 @@ def occupied(env):
 
 def command(env, *, shared=False):
     if shared:
-        light = descriptor_of(Capability.LIGHT, Occupancy.SHARED)
-        env.repo.items["locker"] = replace(env.repo.items["locker"], capability=Capability.LIGHT,
+        light = descriptor_of("light", Occupancy.SHARED)
+        env.repo.items["locker"] = replace(env.repo.items["locker"], kind="light",
             occupancy=Occupancy.SHARED, descriptor=light, descriptor_hash=light.hash)
     else:
         occupied(env)
     ctx = ExecutionContext("request", UseRequest("visitor", "external",
         TargetSpec.parse("nearest:light" if shared else "nearest:locker"),
-        Action.ON if shared else Action.OPEN, "test", env.clock()), "locker",
+        "on" if shared else "open", "test", env.clock()), "locker",
         None if shared else "use", "usage", env.settings,
         ExecutionKind.SHARED if shared else ExecutionKind.RENTAL_INITIAL, env.clock())
     saved = CommandRecord("command", "request", "locker", ctx.request.action,
@@ -303,14 +303,14 @@ def test_FR04_same_announce_preserves_trust(env):
 
 
 def test_FR04_changed_announce_forwarded(env):
-    env.sink.on_announce(announce(env, capability=Capability.LIGHT))
+    env.sink.on_announce(announce(env, capability="light"))
     node = env.repo.items["locker"]
     assert node.trust_state == TrustState.DISCOVERED
-    assert node.capability == Capability.LIGHT
+    assert node.kind == "light"
     assert env.store.recoveries == {}
 
 
-@pytest.mark.parametrize("change", [{"capability": Capability.LIGHT}, {"occupancy": Occupancy.SHARED},
+@pytest.mark.parametrize("change", [{"capability": "light"}, {"occupancy": Occupancy.SHARED},
                                     {"description": "사물함 문을 연다"}])
 def test_FR04_changed_announce_during_occupancy(env, change):
     original = occupied(env)
@@ -349,7 +349,7 @@ def test_FR04_row_without_descriptor_compares_kind_and_occupancy(env):
     env.repo.items["locker"] = replace(env.repo.items["locker"], descriptor=None, descriptor_hash=None)
     env.sink.on_announce(announce(env))
     assert env.store.recoveries == {}
-    env.sink.on_announce(announce(env, capability=Capability.LIGHT, seq=2))
+    env.sink.on_announce(announce(env, capability="light", seq=2))
     assert env.repo.items["locker"].device_state == DeviceState.FAULT
 
 
@@ -459,7 +459,7 @@ def test_NFR04_status_never_isolates(env, state):
 
 def test_NFR04_repeat_fault_same_recovery(env):
     occupied(env)
-    report = announce(env, capability=Capability.LIGHT)
+    report = announce(env, capability="light")
     env.sink.on_announce(report)
     env.sink.on_announce(replace(report, seq=2))
     assert len(env.store.recoveries) == 1
@@ -468,7 +468,7 @@ def test_NFR04_repeat_fault_same_recovery(env):
 @pytest.mark.parametrize("error", [StoreNotApplied("save"), StoreOutcomeUnknown("save")])
 def test_NFR04_retry_missing_recovery_after_isolation(env, error):
     occupied(env)
-    method, report = env.sink.on_announce, announce(env, capability=Capability.LIGHT)
+    method, report = env.sink.on_announce, announce(env, capability="light")
     env.store.errors["recovery"] = error
     with pytest.raises(type(error)):
         method(report)
@@ -482,7 +482,7 @@ def test_NFR04_retry_missing_recovery_after_isolation(env, error):
 def test_NFR04_isolation_unknown_retries_recovery(env):
     occupied(env)
     env.store.errors["isolate_after"] = StoreOutcomeUnknown("isolation")
-    report = announce(env, capability=Capability.LIGHT)
+    report = announce(env, capability="light")
     with pytest.raises(StoreOutcomeUnknown):
         env.sink.on_announce(report)
     env.sink.on_announce(report)
@@ -493,7 +493,7 @@ def test_NFR04_isolation_conflict_is_not_delivered(env):
     occupied(env)
     env.store.isolate_outcome = StoreOutcome.CONFLICT
     with pytest.raises(StoreError):
-        env.sink.on_announce(announce(env, capability=Capability.LIGHT))
+        env.sink.on_announce(announce(env, capability="light"))
     assert env.store.recoveries == {}
 
 
@@ -615,11 +615,11 @@ def test_FR20_internal_off_result_routed(env):
     env.light.resume("locker")
     env.sink.on_status(status(env, command_state=CommandState.IDLE))
     assert env.light._lights["locker"].holders
-    internal = InternalRequest("internal", "locker", Action.OFF, InternalRequestCause.LEAVE_OFF,
+    internal = InternalRequest("internal", "locker", "off", InternalRequestCause.LEAVE_OFF,
                                env.settings, env.clock())
     ctx = ExecutionContext("internal", None, "locker", None, None, env.settings,
                            ExecutionKind.SERVER_INTERNAL, internal_request=internal)
-    env.store.commands["internal"] = CommandRecord("off-command", "internal", "locker", Action.OFF,
+    env.store.commands["internal"] = CommandRecord("off-command", "internal", "locker", "off",
         ExecutionStatus.IN_PROGRESS, ExecutionKind.SERVER_INTERNAL, None, None, None, env.clock(), True)
     env.contexts["off-command"] = ctx
     env.time[0] += timedelta(seconds=1)
@@ -641,7 +641,7 @@ def test_NFR04_node_events_serialized(env):
         with env.lock_for("locker"):
             return env.repo.items["locker"].device_state
     occupied(env)
-    report = announce(env, capability=Capability.LIGHT)
+    report = announce(env, capability="light")
     with ThreadPoolExecutor(max_workers=2) as pool:
         event = pool.submit(env.sink.on_announce, report)
         assert entered.wait(3)
@@ -695,7 +695,7 @@ def test_FR13_status_retries_failed_restore_handover(env):
 def test_FR04_announce_write_failure_keeps_changed_occupied_node_isolated(env):
     old_use = occupied(env)
     env.repo.errors["announce"] = StoreNotApplied("announce")
-    report = announce(env, capability=Capability.LIGHT)
+    report = announce(env, capability="light")
     with pytest.raises(StoreNotApplied):
         env.sink.on_announce(report)
     assert env.repo.items["locker"].device_state == DeviceState.FAULT
@@ -709,7 +709,7 @@ def test_FR04_announce_write_failure_keeps_changed_occupied_node_isolated(env):
 def test_NFR04_restarted_sink_repairs_missing_recovery(env):
     occupied(env)
     env.store.errors["recovery"] = StoreNotApplied("recovery")
-    report = announce(env, capability=Capability.LIGHT)
+    report = announce(env, capability="light")
     with pytest.raises(StoreNotApplied):
         env.sink.on_announce(report)
     fresh_recovery = FaultRecoveryService(repository=env.repo, store=env.store,
@@ -740,7 +740,7 @@ def test_FR07_shared_result_retries_failed_holder_handover(env):
 def test_NFR04_link_query_failure_still_isolates_known_fault(env):
     occupied(env)
     env.store.errors["restore"] = StoreNotApplied("links")
-    method, report = env.sink.on_announce, announce(env, capability=Capability.LIGHT)
+    method, report = env.sink.on_announce, announce(env, capability="light")
     with pytest.raises(StoreNotApplied):
         method(report)
     assert env.repo.items["locker"].device_state == DeviceState.FAULT

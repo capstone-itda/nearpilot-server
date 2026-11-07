@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from nearpilot.shared.enums import Action, CommandOutcome, StoreConflictReason, StoreOutcome
+from nearpilot.shared.enums import CommandOutcome, StoreConflictReason, StoreOutcome
 
 from conftest import (
     insert_approval,
@@ -31,7 +31,7 @@ def _seed_initial_in_progress(conn, store, *, with_approval=False):
         insert_policy(conn, policy_id="policy1", node_id="node1")
         insert_approval(conn, approval_id="approval1", node_id="node1", internal_request_id="req1")
         insert_approval_usage(conn, usage_id="usage1", approval_id="approval1", internal_request_id="req1")
-    linked = store.link_command("req1", "node1", Action.OPEN)
+    linked = store.link_command("req1", "node1", "open")
     store.begin_send(linked.command.command_id)
     return linked.command.command_id
 
@@ -49,7 +49,7 @@ def _seed_reoperation_in_progress(conn, store, *, with_approval=False):
         insert_policy(conn, policy_id="policy1", node_id="node1")
         insert_approval(conn, approval_id="approval1", node_id="node1", internal_request_id="req-reop")
         insert_approval_usage(conn, usage_id="usage1", approval_id="approval1", internal_request_id="req-reop")
-    linked = store.link_command("req-reop", "node1", Action.OPEN)
+    linked = store.link_command("req-reop", "node1", "open")
     store.begin_send(linked.command.command_id)
     return linked.command.command_id
 

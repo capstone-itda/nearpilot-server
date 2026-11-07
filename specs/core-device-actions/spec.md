@@ -1,6 +1,6 @@
 # 선언 기반 판정·인자·명령
 
-- 상태: 진행 중
+- 상태: 완료
 - 담당: 작업 지시자 (shared, 판정, 상태 관리, DB, IOT, API 연결 구현)
 - 요구사항: FR-09, FR-11, FR-17, FR-18, FR-20, FR-22, FR-23, NFR-07
 - 따르는 결정: #245 (decision PR #246). `architecture.md` §4 "기기 자기 선언의 후속 반영"의 두 번째 단계다. 첫 단계는 `specs/iot-device-descriptor/spec.md`다.
@@ -100,6 +100,10 @@
 | 옛 형식의 설정 스냅샷을 복원한다 | 새 형식으로 옮겨 복원한다 | `test_FR22_legacy_settings_snapshot_restored` |
 | 기존 명령 기록의 `light`, `speaker` | 마이그레이션이 `arguments`로 옮긴다 | `test_FR09_migration_moves_command_arguments` |
 | v2로 발표한 기기에 인자 있는 명령 | `parameters`로 같은 값을 보낸다 | `test_FR06_command_follows_announced_version` (PR ①) |
+| `deactivate` 동작에 인자를 준다 | `DENY`·`INVALID_INPUT`. 인자를 읽지 않는다 | `test_FR09_deactivate_takes_no_arguments` |
+| 동작 이름이 이름 규칙 밖이다 | API가 `INVALID_INPUT`으로 거부한다 | `test_FR09_action_name_rule_checked` |
+| 옛 형식 스냅샷으로 저장한 서버 내부 요청을 다시 저장한다 | 같은 값이면 같은 요청이다 | `test_FR22_internal_request_retry_with_legacy_snapshot` |
+| 호스트가 옛 평탄 인자(`brightness` 등)를 도구 인자로 보낸다 | MCP SDK가 모르는 키를 버린다. 인자 없는 요청이 된다 (결정 15) | 없음 (SDK 동작) |
 
 ## 6. 결정
 
@@ -117,6 +121,11 @@
 12. `node.capability` 열 이름을 `kind`로 바꾸고, `node_command.light`·`speaker`를 `arguments`로 옮긴 뒤 지운다(`0011`). 두 열의 키는 `arguments`와 같다.
 13. 같은 내부 요청의 재저장 비교는 설정 JSON 문자열이 아니라 복원한 설정으로 한다 — 옛 형식 스냅샷과 새 형식이 같은 값이면 같은 요청이다.
 14. 조명 `on`을 선언했지만 `color`를 받지 않는 기기에 흰색(`#FFFFFF`)을 넣어 보내던 동작을 없앤다. 선언에 없는 인자는 보내지 않는다. 팀 조명은 모두 색을 받는다.
+15. `request_use`의 평탄 인자(`brightness`, `color`, `volume`)를 없앤다. 도구 입력 스키마는 종류와 관계없이 `target_spec`, `action`, `request_id`, `arguments`다 (FR-09). MCP SDK는 스키마 밖의 키를 오류 없이 버리므로, 옛 형식으로 보낸 호스트의 요청은 인자 없는 요청이 된다. 저장소 안에 평탄 인자를 보내는 호출자는 없다. 도구 설명과 조회 응답이 `arguments`와 `input_schema`를 알린다.
+16. 인자 검사의 감사 행(③ `arguments`)은 인자를 받았거나 선언에 인자가 있는 동작에만 남긴다. 거부는 항상 남긴다 — 인자 없는 동작의 ③ 근접 감사 문구가 대시보드에서 그대로 보인다.
+17. `cmd`의 `arguments`(v2 `parameters`)는 키를 정렬해서 보낸다 — 재시작 뒤 저장소에서 읽은 같은 명령도 같은 바이트다 (FR-22).
+18. API는 동작 이름 규칙만 검사한다. `request_access`도 같다. 기기가 그 동작을 선언했는지는 판정이 검사한다.
+19. v2 템플릿(`legacy_descriptor`)은 v2 기능 세 가지(`locker`, `light`, `speaker`)에만 있다. 전환 기간의 발표 변환, DB 이전, 기기 접속 설정 묶음의 v2 키 검사만 쓴다. 판정은 쓰지 않는다.
 
 ## 7. 가정
 
@@ -126,12 +135,23 @@
 
 | 요구사항 | 테스트 | 확인하는 것 |
 |---|---|---|
-| FR-09 | `tests/core/test_device_actions.py` | 선언 기반 동작·인자 검사, 생략 인자 채우기, 정규화, 역할 기반 재조작 |
-| FR-09, FR-11 | `tests/core/test_device_query.py` | 조회 응답의 `kind`, `actions`, `param_max` 적용 |
-| FR-09 | `tests/api/test_mcp_arguments.py` | `arguments` 입력 검사와 판정 인계 |
-| FR-17, FR-23 | `tests/core/test_device_actions.py` | 종류별 임계값과 전역 할당 허용 종류 |
-| FR-23 | `tests/core/allocation/` | 종류별 대기 구간 |
+| FR-09, FR-17, FR-23, NFR-07 | `tests/core/test_device_actions.py` | 선언 기반 동작·인자 검사, 생략 인자 채우기, 역할 기반 재조작, 종류별 임계값, 전역 할당 허용 종류, 종류별 대기 구간 |
+| FR-09 | `tests/core/test_light_setting.py`, `tests/core/test_speaker_setting.py` | 조명·스피커 `on`의 인자 검사, 정규화, 중복 판단 요약 |
+| FR-09, FR-11 | `tests/core/test_device_query.py` | 조회 응답의 `kind`, `actions`, `param_max` 적용, 새 종류 |
+| FR-09 | `tests/api/test_mcp_arguments.py` | `arguments` 입력 검사, 동작 이름 규칙, 판정 인계 |
 | FR-20 | `tests/core/lifecycle/test_shared_light.py` | 역할 기반 켜기·꺼짐과 이탈 꺼짐 |
-| FR-09, FR-22 | `tests/db/test_command_arguments_store.py` | 명령 인자 저장·복원, 마지막 성공 인자, 이전 |
-| §1.2 | `tests/runtime/`, `tests/shared/test_config.py` | 종류별 설정 읽기, 옛 키 이전, 스냅샷 복원 |
-| FR-09, FR-23, NFR-07 | `tests/integration/test_new_kind_without_code.py` | 설정만 추가한 새 종류의 명시 지정 실행 |
+| FR-09 | `tests/db/test_reserve.py` | 동작 이름이 아니라 `reoperate_only`로 재조작 |
+| FR-09, FR-22 | `tests/db/test_command_arguments_store.py`, `test_light_store.py`, `test_speaker_store.py` | 명령 인자 저장·복원, 마지막 성공 인자, `0011` 이전, 옛 스냅샷 |
+| §1.2, FR-22 | `tests/shared/test_action_settings.py`, `tests/integration/test_runtime_config.py` | 종류별 설정 검증, 설정 파일 읽기, 옛 키 이전, 스냅샷 복원 |
+| FR-06, FR-09 | `tests/iot/test_light_messages.py`, `test_speaker_messages.py`, `test_descriptor_messages.py` | 인자 인코딩, 새 종류 발표 수용 |
+| FR-09, FR-23, NFR-07 | `tests/integration/test_new_kind_without_code.py` | 설정만 추가한 새 종류의 발표·판정·조회·`cmd` 인코딩 |
+
+이 작업으로 지우거나 바꾼 테스트다. 대신하는 테스트를 함께 쓴다.
+
+- `tests/api/test_mcp_light.py`, `tests/api/test_mcp_speaker.py`(13개) — 평탄 인자를 없앴다 (결정 15). `tests/api/test_mcp_arguments.py`가 대신한다.
+- `tests/shared/test_speaker_models.py`(7개) — `SpeakerSetting`·`SpeakerControls`와 옛 설정 필드를 없앴다. `tests/shared/test_action_settings.py`가 대신한다.
+- `test_FR09_light_setting_rejects_bad_brightness` — `LightSetting`을 없앴다. `test_FR09_bad_brightness_denies`가 판정에서 같은 값을 거부한다.
+- `test_FR09_encode_command_rejects_partial_or_non_on`, `test_FR09_encode_command_rejects_bad_speaker` — 인자 검사는 IOT 송신 전 선언 검사(`test_FR06_command_outside_descriptor_not_sent`, PR ①)가 한다. `test_FR06_encode_command_rejects_bad_action_name`을 더했다.
+- `test_FR04_unknown_kind_rejected_until_generalized` — 새 종류를 받는다. `test_FR04_new_kind_accepted`가 대신한다.
+- `test_FR04_legacy_controls_from_descriptor` — `legacy_controls`를 없앴다. `test_FR09_normalize_and_capped_schema`, `test_FR09_name_rule`을 더했다.
+- 이름은 그대로 두고 기대를 바꾼 테스트: 인자를 선언하지 않은 기기의 인자는 `UNSUPPORTED_PARAMETER`가 아니라 `INVALID_INPUT`이다. 콜론 없는 `target_spec`은 형식 오류가 아니라 기기 ID다. `nearest:toaster`처럼 이름 규칙을 지키는 종류는 형식 오류가 아니다. 대소문자만 다른 색은 중복 판단 요약이 다르다(정규화는 판정이 대상을 정한 뒤 한다).

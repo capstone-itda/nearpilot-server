@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from nearpilot.shared.enums import Action, ApprovalStatus, ReasonCode, Verdict
+from nearpilot.shared.enums import ApprovalStatus, ReasonCode, Verdict
 from nearpilot.shared.interfaces import PolicyChecker, Repository
 from nearpilot.shared.models import ApprovalRecord, PolicyCheckResult
 
@@ -63,13 +63,13 @@ def test_fr18_fake_policy_checker_satisfies_protocol():
 
     checker = FakePolicyChecker()
     assert isinstance(checker, PolicyChecker)
-    assert checker.check("u1", "locker-1", Action.OPEN, datetime(2026, 10, 1)).verdict is Verdict.OK
+    assert checker.check("u1", "locker-1", "open", datetime(2026, 10, 1)).verdict is Verdict.OK
 
 
 def test_fr03_fr14_approval_record_carries_reason_inputs():
     record = ApprovalRecord(
         approval_id="ap-1",
-        action=Action.OPEN,
+        action="open",
         policy_version=3,
         status=ApprovalStatus.PENDING,
         created_at=datetime(2026, 10, 1, 9, 0),

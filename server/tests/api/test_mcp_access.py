@@ -8,7 +8,7 @@ from dataclasses import replace
 import pytest
 
 from _mcp_client import TOKEN_A, TOKEN_B, Client, run
-from nearpilot.shared.enums import Action, ReasonCode, Verdict
+from nearpilot.shared.enums import ReasonCode, Verdict
 
 ARGS = {"node_id": "locker-1", "action": "open", "request_id": "r1"}
 
@@ -27,8 +27,8 @@ def test_FR09_request_access는_토큰_계정과_인자로_서비스를_부른�
     c = Client()
     access(c)
     access(c, ARGS, token=TOKEN_B)
-    assert c.core.accesses == [("user-a", "locker-1", Action.OPEN, "r1"),
-                               ("user-b", "locker-1", Action.OPEN, "r1")]
+    assert c.core.accesses == [("user-a", "locker-1", "open", "r1"),
+                               ("user-b", "locker-1", "open", "r1")]
 
 
 def test_FR09_승인_대기_판정을_반환한다():
@@ -57,7 +57,7 @@ def test_FR09_인자가_비면_INVALID_INPUT이고_서비스를_부르지_않는
     assert c.core.accesses == []
 
 
-@pytest.mark.parametrize("action", ["", "lock", "CLOSE", "drop table"])
+@pytest.mark.parametrize("action", ["", "Lock", "CLOSE", "drop table"])
 def test_FR09_action이_잘못되면_INVALID_INPUT(action):
     c = Client()
     resp = access(c, {**ARGS, "action": action})

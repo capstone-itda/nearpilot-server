@@ -15,15 +15,14 @@ from nearpilot.core.admin.service import DefaultAdminService
 from nearpilot.db.repositories.admin_repository import SqliteAdminRepository
 from nearpilot.runtime import Runtime, load_config
 from nearpilot.shared.enums import (
-    AccessMode, Action, AdminWriteOutcome, AdminWriteReason, ApprovalMode, Capability, DeviceState,
+    AccessMode, AdminWriteOutcome, AdminWriteReason, ApprovalMode, DeviceState,
     RecoveryStatus, Role, TrustState, Verdict, Visibility,
 )
 from nearpilot.shared.models import BeaconKey, BeaconRegistration, PlaceAssignment, PolicySettings, TargetSpec, UseRequest
 from tools.node_lab.setup import node_kind
 
 # Lab action -> capability it drives. Lockers open and close (architecture.md §5 MQTT).
-ACTION_CAPABILITY = {"on": Capability.LIGHT, "off": Capability.LIGHT,
-                     "open": Capability.LOCKER, "close": Capability.LOCKER}
+ACTION_CAPABILITY = {"on": "light", "off": "light", "open": "locker", "close": "locker"}
 USAGE = ("watch | on [nearest:light] | off [nearest:light] | open [nearest:locker] | close [nearest:locker] "
          "| release [use_id] | recover <node_id> | quit")
 
@@ -161,11 +160,11 @@ class Lab:
                 place_nodes, now(), place_nodes=place_nodes)
             self.evidence.emit("proximity", show=show, posteriors=dict(result.posteriors), best=result.best,
                 model_version=result.model_version, calib_version=result.calib_version,
-                thresholds={n.capability.value: self.threshold(n.capability) for n in place_nodes})
+                thresholds={n.kind: self.threshold(n.kind) for n in place_nodes})
             return dict(result.posteriors)
 
-    def threshold(self, capability: Capability):
-        return getattr(self.config.settings, f"threshold_{capability.value}")
+    def threshold(self, kind: str):
+        return self.config.settings.threshold_for(kind)
 
     def report_readiness(self, node, *, ready: bool, blockers, current):
         """Log only changes. FAULT stays visible; this log never clears or overrides it."""
@@ -186,12 +185,12 @@ class Lab:
         if action not in ACTION_CAPABILITY:
             raise ValueError("시험 동작은 on, off, open 또는 close다")
         capability = ACTION_CAPABILITY[action]
-        parsed = TargetSpec.parse(target or f"nearest:{capability.value}")
-        if parsed.capability != capability:
-            raise ValueError(f"{action}의 시험 대상은 {capability.value}다")
+        parsed = TargetSpec.parse(target or f"nearest:{capability}")
+        if parsed.device_kind not in (None, capability):
+            raise ValueError(f"{action}의 시험 대상은 {capability}다")
         self.snapshot()
         request = UseRequest(self.options["user_id"], request_id or uuid4().hex,
-                             parsed, Action(action), "node-lab", now())
+                             parsed, action, "node-lab", now())
         decision = self.runtime.core.request_use(request)
         self.evidence.emit("decision", **asdict(decision))
         with self.runtime.db.scope() as bound:
@@ -303,7 +302,7 @@ def demo(lab: Lab):
     deadline = time.monotonic() + lab.options["observe_timeout_sec"]
     while time.monotonic() < deadline:
         probabilities = lab.snapshot()
-        if probabilities and max(probabilities.values()) >= lab.threshold(Capability.LIGHT):
+        if probabilities and max(probabilities.values()) >= lab.threshold("light"):
             with lab.runtime.db.scope():
                 ready = all(lab.runtime.services.restore.can_execute(node) for node in lab.options["nodes"])
             if ready and len(probabilities) == len(lab.options["nodes"]):

@@ -30,7 +30,7 @@ from nearpilot.runtime import Runtime, ShutdownError, create_app
 from nearpilot.runtime.database import ThreadDatabase
 from nearpilot.runtime.tasks import NotAccepting, PeriodicTask
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import Action, ReasonCode, Verdict
+from nearpilot.shared.enums import ReasonCode, Verdict
 from nearpilot.shared.models import BeaconKey, RssiFrame, TargetSpec, UseRequest
 
 EXPLICIT = {"threshold_explicit_locker": 0.5, "threshold_explicit_light": 0.5}
@@ -70,7 +70,7 @@ class World:
     def _rssi_count(self):
         return query(self.db, "SELECT count(*) c FROM rssi_observation")[0]["c"]
 
-    def use(self, user_id, target="locker-1", request_id="r1", action=Action.OPEN):
+    def use(self, user_id, target="locker-1", request_id="r1", action="open"):
         return self.runtime.core.request_use(UseRequest(
             user_id, request_id, TargetSpec.parse(target), action, None, datetime.now(timezone.utc)))
 
@@ -192,7 +192,7 @@ def test_FR17_runtime_explicit_without_threshold_executes_but_nearest_speaker_st
     with running(w.runtime):
         w.ready("locker-1", "speaker-1")
         explicit = w.use(VISITOR_A, "locker-1")
-        speaker = w.use(VISITOR_A, "nearest:speaker", "r2", Action.ON)
+        speaker = w.use(VISITOR_A, "nearest:speaker", "r2", "on")
         assert (explicit.verdict, explicit.reason) == (Verdict.OK, ReasonCode.OK)
         assert explicit.p_max is None
         assert speaker.verdict is Verdict.DENY and speaker.use_id is None
@@ -385,7 +385,7 @@ def test_FR20_runtime_release_and_leave_off(world):
         status = w.runtime.core.get_use_status(VISITOR_A, rented.use_id)
         assert status["closed_at"] is not None
 
-        light = w.use(VISITOR_B, "light-1", "light-on", Action.ON)
+        light = w.use(VISITOR_B, "light-1", "light-on", "on")
         assert light.verdict is Verdict.OK
         # 유지 대상자의 관측이 끊기면 주기 이탈 검사가 서버 내부 꺼짐을 보낸다.
         wait_until(lambda: [c["action"] for c in w.broker.commands() if c["node_id"] == "light-1"]
@@ -399,7 +399,7 @@ def test_FR20_runtime_shared_result_handover_does_not_block_reports(world, caplo
     w = world()
     with caplog.at_level(logging.WARNING), running(w.runtime):
         w.ready("locker-1", "light-1")
-        light = w.use(VISITOR_B, "light-1", "light-on", Action.ON)
+        light = w.use(VISITOR_B, "light-1", "light-on", "on")
         assert light.verdict is Verdict.OK
         wait_until(lambda: [c["status"] for c in w.commands("light-1")] == ["succeeded"])
         seen = query(w.db, "SELECT last_seen_at FROM node WHERE node_id = 'light-1'")[0]["last_seen_at"]
@@ -548,11 +548,11 @@ def test_FR19_runtime_reoperation_after_release_is_use_not_found(world, monkeypa
         released = []
         link_command = SqliteExecutionStore.link_command
 
-        def link_after_release(self, internal_request_id, node_id, action, light=None, speaker=None):
+        def link_after_release(self, internal_request_id, node_id, action, arguments=None):
             # 재조작 판정은 끝났고 명령을 연결하기 전이다. 같은 사용자의 반납이 대여를 닫는다.
             if not released:
                 released.append(w.runtime.core.release_use(VISITOR_A, first.use_id))
-            return link_command(self, internal_request_id, node_id, action, light, speaker)
+            return link_command(self, internal_request_id, node_id, action, arguments)
 
         monkeypatch.setattr(SqliteExecutionStore, "link_command", link_after_release)
         again = w.use(VISITOR_A, "locker-1", "r-reopen")

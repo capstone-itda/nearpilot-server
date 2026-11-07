@@ -11,14 +11,14 @@ from nearpilot.iot.mqtt.commands import MqttCommandGateway
 from nearpilot.iot.mqtt.connection import IncomingReport, NotReady, PublishUncertain
 from nearpilot.iot.mqtt.delivery import DeliveryConfig, ReportDelivery
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import Action, CommandOutcome, NodeResultState
+from nearpilot.shared.enums import CommandOutcome, NodeResultState
 from nearpilot.shared.interfaces import NodeCommandGateway
 from nearpilot.shared.models import NodeCommand
 
 S1 = "11111111-1111-1111-1111-111111111111"
 EVENT = "87654321-4321-4321-4321-cba987654321"
 T0 = datetime(2026, 10, 16, 3, 0, 0, tzinfo=timezone.utc)
-COMMAND = NodeCommand("command-1", "locker-1", Action.OPEN, S1, T0, T0 + timedelta(seconds=3))
+COMMAND = NodeCommand("command-1", "locker-1", "open", S1, T0, T0 + timedelta(seconds=3))
 
 
 def iso(value):
@@ -155,7 +155,7 @@ def test_FR06_concurrent_same_command(env):
 
 def test_FR06_changed_command_not_republished(env):
     _, connection, delivery, gateway = env
-    changed = NodeCommand("command-1", "locker-1", Action.OPEN, S1, T0, T0 + timedelta(seconds=9))
+    changed = NodeCommand("command-1", "locker-1", "open", S1, T0, T0 + timedelta(seconds=9))
     waiting, box = in_thread(gateway.send, COMMAND, 5)
     assert wait_for(lambda: len(connection.publications) == 1)
     with pytest.raises(ValueError):
@@ -179,7 +179,7 @@ def test_FR06_definite_not_sent_before_publish(env):
     outcome = gateway.send(COMMAND, 5)
     assert (outcome.outcome, outcome.report) == (CommandOutcome.NOT_SENT, None)
     connection.error = None
-    invalid = NodeCommand("command-2", "locker/1", Action.OPEN, S1, T0, T0 + timedelta(seconds=3))
+    invalid = NodeCommand("command-2", "locker/1", "open", S1, T0, T0 + timedelta(seconds=3))
     assert gateway.send(invalid, 5).outcome == CommandOutcome.NOT_SENT
     assert [kind for _, kind, _ in connection.publications] == ["cmd"]
 
@@ -241,7 +241,7 @@ def test_FR07_fast_result_not_lost(env):
 
 def test_FR07_result_correlation(env):
     _, connection, delivery, gateway = env
-    other = NodeCommand("command-2", "locker-1", Action.OPEN, S1, T0, T0 + timedelta(seconds=3))
+    other = NodeCommand("command-2", "locker-1", "open", S1, T0, T0 + timedelta(seconds=3))
     first, a = in_thread(gateway.send, COMMAND, 0.5)
     second, b = in_thread(gateway.send, other, 5)
     assert wait_for(lambda: len(connection.publications) == 2)

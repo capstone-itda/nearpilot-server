@@ -11,9 +11,11 @@ from nearpilot.core.decision.access import AccessRequestService
 from nearpilot.core.decision.pipeline import DecisionPipeline
 from nearpilot.core.policy.checker import RepositoryPolicyChecker
 from nearpilot.db.repositories.repository import SqliteRepository
+from nearpilot.db.repositories._common import descriptor_to_json
 from nearpilot.db.schema import connect
+from nearpilot.shared.descriptor import legacy_descriptor
+from nearpilot.shared.enums import Occupancy
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import Action
 from nearpilot.shared.models import BeaconKey, ProximityResult, RssiFrame, TargetSpec, UseRequest
 
 NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -47,6 +49,9 @@ class FakeAudit:
 
 def beacon_of(user_id: str) -> BeaconKey:
     return BeaconKey("UUID", 1, {OWNER: 1, VISITOR_A: 2, VISITOR_B: 3}[user_id])
+
+
+LOCKER = legacy_descriptor("locker", Occupancy.RENTAL)  # 기기가 발표한 v2 템플릿 선언
 
 
 class World:
@@ -99,10 +104,10 @@ class World:
             ("locker-4", "public", "open"),         # 공개, 승인 불필요 (any:locker 의 두 번째 후보)
         ):
             c.execute(
-                "INSERT INTO node (node_id, place_id, capability, occupancy, trust_state, device_state, "
-                "exclusive_group, release_policy, last_seen_at) "
-                "VALUES (?, 'p1', 'locker', 'rental', 'trusted', 'AVAILABLE', NULL, '{}', ?)",
-                (node_id, seen))
+                "INSERT INTO node (node_id, place_id, kind, occupancy, trust_state, device_state, "
+                "exclusive_group, release_policy, last_seen_at, descriptor, descriptor_hash) "
+                "VALUES (?, 'p1', 'locker', 'rental', 'trusted', 'AVAILABLE', NULL, '{}', ?, ?, ?)",
+                (node_id, seen, descriptor_to_json(LOCKER), LOCKER.hash))
             policy_id = f"pol-{node_id}"
             c.execute("INSERT INTO access_policy (policy_id, node_id, current_version) VALUES (?, ?, 1)",
                       (policy_id, node_id))
@@ -119,7 +124,7 @@ class World:
     # ── 요청 ────────────────────────────────────────────────────────
 
     @staticmethod
-    def request(user_id, target="locker-1", request_id="r1", action=Action.OPEN) -> UseRequest:
+    def request(user_id, target="locker-1", request_id="r1", action="open") -> UseRequest:
         return UseRequest(user_id, request_id, TargetSpec.parse(target), action, "claude", NOW)
 
     def count(self, sql: str, *params) -> int:

@@ -13,7 +13,7 @@ from nearpilot.core.lifecycle.execution import ExecutionService
 from nearpilot.core.lifecycle.fault_recovery import FaultRecoveryService
 from nearpilot.core.lifecycle.restore import RestoreService
 from nearpilot.core.lifecycle.shared_light import SharedLightService
-from nearpilot.shared.enums import Action, DeviceState, ExecutionStatus, SessionState, StoreOutcome
+from nearpilot.shared.enums import DeviceState, ExecutionStatus, SessionState, StoreOutcome
 from nearpilot.shared.errors import StoreError
 from nearpilot.shared.interfaces import ExecutionStore, ProximityEstimator, Repository
 from nearpilot.shared.models import (
@@ -40,7 +40,7 @@ class _RssiDelivery:
 
 
 
-def _action(context: ExecutionContext) -> Action:
+def _action(context: ExecutionContext) -> str:
     """서버 내부 요청에는 방문자 요청이 없다 (#86)."""
     return context.internal_request.action if context.request is None else context.request.action
 
@@ -83,7 +83,7 @@ class NodeEventService:
                 changed = False
             elif old.descriptor_hash is None:
                 # 선언이 없는 행은 종류와 점유 방식만 비교한다 (iot-device-descriptor spec 결정 10).
-                changed = (old.capability.value != descriptor.kind
+                changed = (old.kind != descriptor.kind
                            or old.occupancy != descriptor.occupancy)
             else:
                 # 신뢰는 선언 해시에 묶인다. vendor 만 바뀌면 격리하지 않는다 (FR-04, #245).
@@ -103,7 +103,7 @@ class NodeEventService:
                         "seq": announce.seq, "received_at": announce.received_at,
                         "previous_descriptor_hash": old.descriptor_hash,
                         "descriptor_hash": new_hash,
-                        "previous_kind": old.capability.value,
+                        "previous_kind": old.kind,
                         "previous_occupancy": old.occupancy.value,
                         "kind": descriptor.kind,
                         "occupancy": descriptor.occupancy.value,

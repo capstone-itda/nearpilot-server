@@ -9,11 +9,10 @@ import pytest
 
 from nearpilot.core.decision.query import DeviceQueryService
 from nearpilot.shared.config import Settings
+from nearpilot.shared.descriptor import DescriptorError, legacy_descriptor
 from nearpilot.shared.enums import (
     AccessMode,
-    Action,
     ApprovalMode,
-    Capability,
     DeviceState,
     Occupancy,
     ReasonCode,
@@ -27,22 +26,39 @@ from nearpilot.shared.models import (
     PolicyCheckResult,
     PolicyRevision,
     RssiFrame,
-    SpeakerControls,
 )
 
 NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+_NO_ARGUMENTS = {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
+# 사물함 템플릿 선언의 동작 목록. 역할은 응답에 넣지 않는다 (FR-11).
+LOCKER_ACTIONS = [
+    {"name": "open", "description": "사물함을 연다", "input_schema": _NO_ARGUMENTS},
+    {"name": "close", "description": "사물함을 잠근다. 반납이 아니다", "input_schema": _NO_ARGUMENTS},
+]
 BEACON = BeaconKey("u", 1, 1)
 OWNER = "owner-1"
 
 
-def node(node_id="locker-1", cap=Capability.LOCKER, occ=Occupancy.RENTAL, **kw) -> NodeInfo:
+def node(node_id="locker-1", cap="locker", occ=Occupancy.RENTAL, **kw) -> NodeInfo:
     base = dict(
-        node_id=node_id, place_id="p", capability=cap, occupancy=occ,
+        node_id=node_id, place_id="p", kind=cap, occupancy=occ,
         trust_state=TrustState.TRUSTED, device_state=DeviceState.AVAILABLE,
         exclusive_group="g", last_seen_at=NOW - timedelta(seconds=1),
     )
     base.update(kw)
+    if "capability" in base:
+        base["kind"] = base.pop("capability")
+    if "descriptor" not in base:
+        base["descriptor"] = template(base["kind"], base["occupancy"])
     return NodeInfo(**base)
+
+def template(kind, occupancy):
+    """종류와 점유 방식의 v2 템플릿 선언. 역할 규칙에 맞지 않는 조합이면 None 이다."""
+    try:
+        return legacy_descriptor(kind, occupancy)
+    except DescriptorError:
+        return None
+
 
 
 def policy(node_id="locker-1", visibility=Visibility.PUBLIC, mode=AccessMode.OPEN) -> PolicyRevision:
@@ -102,7 +118,7 @@ class FakeReadiness:
 class FakePolicy:
     def __init__(self, result=None):
         self.result = result or PolicyCheckResult(Verdict.OK, ReasonCode.OK, 1)
-        self.calls: list[tuple[str, str, Action]] = []
+        self.calls: list[tuple[str, str, str]] = []
         self.by_node: dict[str, PolicyCheckResult] = {}
         self.error_nodes: set[str] = set()
 
@@ -130,8 +146,8 @@ def ids(listing):
 def test_FR09_조작_가능한_후보를_반환한다():
     svc, *_ = build()
     assert svc.find_available_devices("u1") == [
-        {"node_id": "locker-1", "capability": "locker", "occupancy": "rental", "access": "operable",
-         "controls": None}]
+        {"node_id": "locker-1", "kind": "locker", "occupancy": "rental", "access": "operable",
+         "actions": LOCKER_ACTIONS}]
 
 
 def test_FR09_비콘이_없으면_빈_목록():
@@ -148,14 +164,14 @@ def test_FR09_비콘_관측이_없으면_빈_목록():
 
 def test_FR09_같은_장소의_기기는_기기별_확률_없이_조회한다():
     svc, repo, *_ = build(settings=Settings(version="v1", threshold_locker=1.0, threshold_light=1.0))
-    repo.nodes_list = [node(), node("locker-2"), node("light-1", Capability.LIGHT, Occupancy.SHARED)]
+    repo.nodes_list = [node(), node("locker-2"), node("light-1", "light", Occupancy.SHARED)]
     repo.frames = [frame("light-1")]  # 같은 장소의 기기 하나만 비콘을 봐도 된다.
     assert ids(svc.find_available_devices("u1")) == ["light-1", "locker-1", "locker-2"]
 
 
 def test_FR09_임계값이_없는_기능도_조회한다():
     svc, repo, *_ = build(settings=Settings(version="v1", threshold_speaker=None))
-    repo.nodes_list = [node("speaker-1", Capability.SPEAKER, Occupancy.SHARED), node("light-1", Capability.LIGHT,
+    repo.nodes_list = [node("speaker-1", "speaker", Occupancy.SHARED), node("light-1", "light",
                                                                                      Occupancy.SHARED)]
     repo.frames = [frame("light-1")]
     assert ids(svc.find_available_devices("u1")) == ["light-1", "speaker-1"]
@@ -170,7 +186,7 @@ def test_FR09_임계값이_없는_기능도_조회한다():
 ])
 def test_FR09_후보_조건을_만족하지_않으면_뺀다(change):
     svc, repo, *_ = build()
-    anchor = node("anchor", Capability.LIGHT, Occupancy.SHARED)
+    anchor = node("anchor", "light", Occupancy.SHARED)
     repo.nodes_list = [anchor, node("locker-1", **change)]
     repo.frames = [frame("anchor")]
     assert ids(svc.find_available_devices("u1")) == ["anchor"]
@@ -192,7 +208,7 @@ def test_FR14_비공개_기기는_목록에서_숨긴다():
 def test_FR09_정책이_허용하면_조작_가능():
     svc, _, pol = build()
     assert svc.find_available_devices("u1")[0]["access"] == "operable"
-    assert pol.calls == [("u1", "locker-1", Action.OPEN)]  # 사물함의 기본 동작
+    assert pol.calls == [("u1", "locker-1", "open")]  # 사물함의 기본 동작
 
 
 def test_FR09_승인이_필요하면_승인_필요():
@@ -209,8 +225,8 @@ def test_FR09_정책이_거부하면_뺀다():
 
 def test_FR09_정책_조회가_실패한_기기만_뺀다():
     svc, repo, pol = build()
-    repo.nodes_list = [node("light-1", Capability.LIGHT, Occupancy.SHARED),
-                       node("light-2", Capability.LIGHT, Occupancy.SHARED)]
+    repo.nodes_list = [node("light-1", "light", Occupancy.SHARED),
+                       node("light-2", "light", Occupancy.SHARED)]
     repo.frames = [frame("light-1")]
     pol.error_nodes = {"light-2"}
     assert ids(svc.find_available_devices("u1")) == ["light-1"]
@@ -252,7 +268,7 @@ def test_FR09_비콘_장소_불변_조건_위반은_예외():
     repo.nodes_list = [node("locker-1", place_id=None)]
     with pytest.raises(ValueError):
         svc.find_available_devices("u1")
-    repo.nodes_list = [node(), node("light-1", Capability.LIGHT, Occupancy.SHARED, place_id="other")]
+    repo.nodes_list = [node(), node("light-1", "light", Occupancy.SHARED, place_id="other")]
     repo.frames = [frame(), frame("light-1")]
     with pytest.raises(ValueError):
         svc.find_available_devices("u1")
@@ -260,8 +276,8 @@ def test_FR09_비콘_장소_불변_조건_위반은_예외():
 
 def test_FR09_목록은_기기_ID_순이다():
     svc, repo, *_ = build()
-    repo.nodes_list = [node("light-2", Capability.LIGHT, Occupancy.SHARED),
-                       node("light-1", Capability.LIGHT, Occupancy.SHARED)]
+    repo.nodes_list = [node("light-2", "light", Occupancy.SHARED),
+                       node("light-1", "light", Occupancy.SHARED)]
     repo.frames = [frame("light-1")]
     assert ids(svc.find_available_devices("u1")) == ["light-1", "light-2"]
 
@@ -269,7 +285,7 @@ def test_FR09_목록은_기기_ID_순이다():
 def test_FR11_목록_항목에_내부_값이_없다():
     svc, *_ = build()
     (item,) = svc.find_available_devices("u1")
-    assert set(item) == {"node_id", "capability", "occupancy", "access", "controls"}
+    assert set(item) == {"node_id", "kind", "occupancy", "access", "actions"}
     text = repr(item)
     assert "u1" not in text and "0.97" not in text and "'p'" not in text
 
@@ -280,8 +296,8 @@ def test_FR11_목록_항목에_내부_값이_없다():
 def test_FR09_공개_기기_상태를_반환한다():
     svc, *_ = build()
     assert svc.get_device_state("anyone", "locker-1") == {
-        "node_id": "locker-1", "capability": "locker", "occupancy": "rental", "state": "available",
-        "online": True, "trusted": True, "access_mode": "open", "controls": None}
+        "node_id": "locker-1", "kind": "locker", "occupancy": "rental", "state": "available",
+        "online": True, "trusted": True, "access_mode": "open", "actions": LOCKER_ACTIONS}
 
 
 def test_FR09_상태_조회는_근접_검사를_하지_않는다():
@@ -300,23 +316,51 @@ def test_FR09_점유_상태는_주체_없이_반환한다(state, expected):
     repo.nodes_list = [node(device_state=state)]
     result = svc.get_device_state("anyone", "locker-1")
     assert result["state"] == expected
-    assert set(result) == {"node_id", "capability", "occupancy", "state", "online", "trusted", "access_mode",
-                           "controls"}
+    assert set(result) == {"node_id", "kind", "occupancy", "state", "online", "trusted", "access_mode",
+                           "actions"}
 
 
 def test_FR09_device_query_speaker_controls():
-    # 스피커의 근접 임계값은 기본이 None 이라 find_available_devices 는 스피커를 빼므로 get_device_state 로 확인한다.
-    capped = Settings(version="v1", speaker_volume_max=10, speaker_default_volume=10)
-    for settings, capability, controls, expected in [
-        (None, Capability.SPEAKER, SpeakerControls(30), {"volume_max": 20}),  # 서버 상한이 더 작다
-        (None, Capability.SPEAKER, SpeakerControls(8), {"volume_max": 8}),  # 발표 상한이 더 작다
-        (capped, Capability.SPEAKER, SpeakerControls(30), {"volume_max": 10}),  # 서버 상한은 설정에서 읽는다
-        (None, Capability.SPEAKER, None, None),  # 제어 정보를 발표하지 않았다
-        (None, Capability.LIGHT, SpeakerControls(30), None),  # 음량 상한은 스피커만 가진다
+    # 인자 스키마의 상한은 선언 값과 param_max 중 작은 값이다. 선언 값은 바꾸지 않는다 (FR-09).
+    capped = Settings(version="v1", param_max={"speaker": {"on": {"volume": 10}}},
+                      param_default={"speaker": {"on": {"volume": 10}}})
+    for settings, controls, expected in [
+        (None, {"volume_max": 30}, 20),  # 서버 상한이 더 작다
+        (None, {"volume_max": 8}, 8),  # 선언 상한이 더 작다
+        (capped, {"volume_max": 30}, 10),  # 서버 상한은 설정에서 읽는다
+        (None, {}, None),  # 인자를 선언하지 않았다
     ]:
         svc, repo, *_ = build(settings=settings)
-        repo.nodes_list = [node("speaker-1", capability, Occupancy.SHARED, speaker_controls=controls)]
-        assert svc.get_device_state("anyone", "speaker-1")["controls"] == expected
+        descriptor = legacy_descriptor("speaker", Occupancy.SHARED, **controls)
+        repo.nodes_list = [node("speaker-1", "speaker", Occupancy.SHARED, descriptor=descriptor)]
+        on, off = svc.get_device_state("anyone", "speaker-1")["actions"]
+        volume = on["input_schema"]["properties"].get("volume")
+        assert (volume and volume["maximum"]) == expected
+        assert set(on) == {"name", "description", "input_schema"} and off["name"] == "off"
+        assert descriptor.action("on").properties.get("volume", {}).get("maximum") == controls.get("volume_max")
+
+
+def test_FR09_device_query_new_kind_actions():
+    # 서버가 모르는 종류도 선언 그대로 동작 목록을 보여 준다 (FR-09, NFR-07).
+    from nearpilot.shared.descriptor import parse_descriptor
+    fan = parse_descriptor({
+        "format": "nearpilot.device/1", "kind": "fan", "occupancy": "shared",
+        "vendor": {"name": "acme", "model": "f1", "firmware": "1.0"},
+        "actions": [
+            {"name": "spin", "description": "팬을 돌린다", "result": {"kind": "signal_output"},
+             "input_schema": {"type": "object", "properties": {"speed": {"type": "integer", "minimum": 1,
+                                                                          "maximum": 5}},
+                              "required": [], "additionalProperties": False}},
+            {"name": "stop", "description": "팬을 멈춘다", "role": "deactivate", "result": {"kind": "signal_output"},
+             "input_schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}},
+        ]})
+    svc, repo, *_ = build(settings=Settings(version="v1", param_max={"fan": {"spin": {"speed": 3}}}))
+    repo.nodes_list = [node("fan-1", "fan", Occupancy.SHARED, descriptor=fan)]
+    state = svc.get_device_state("anyone", "fan-1")
+    assert state["kind"] == "fan"
+    assert [a["name"] for a in state["actions"]] == ["spin", "stop"]
+    assert state["actions"][0]["input_schema"]["properties"]["speed"]["maximum"] == 3
+    assert "acme" not in repr(state) and fan.hash not in repr(state)  # 제작사와 해시는 넣지 않는다 (FR-11)
 
 
 def test_FR09_오프라인_미신뢰_기기도_상태를_보여_준다():
@@ -349,8 +393,8 @@ def test_FR09_비공개_기기를_점유_중인_본인은_조회한다():
     repo.policies["locker-1"] = policy(visibility=Visibility.PRIVATE, mode=AccessMode.RESTRICTED)
     repo.open_sessions = {("someone", "locker-1")}
     assert svc.get_device_state("someone", "locker-1") == {  # 점유 주체 키가 없다
-        "node_id": "locker-1", "capability": "locker", "occupancy": "rental", "state": "occupied",
-        "online": True, "trusted": True, "access_mode": "restricted", "controls": None}
+        "node_id": "locker-1", "kind": "locker", "occupancy": "rental", "state": "occupied",
+        "online": True, "trusted": True, "access_mode": "restricted", "actions": LOCKER_ACTIONS}
     repo.open_sessions = set()  # 세션이 닫혔다
     assert svc.get_device_state("someone", "locker-1") == {"reason_code": "TARGET_UNAVAILABLE"}
 

@@ -10,7 +10,6 @@ import pytest
 
 from nearpilot.db.repositories.execution_store import SqliteExecutionStore
 from nearpilot.db.schema import connect
-from nearpilot.shared.enums import Action
 from nearpilot.shared.errors import StoreNotApplied
 
 from conftest import insert_node, insert_place, insert_request, insert_use_session, insert_user
@@ -32,7 +31,7 @@ def test_NFR03_store_not_applied_on_busy(tmp_path):
     try:
         store = SqliteExecutionStore(conn)
         with pytest.raises(StoreNotApplied):
-            store.link_command("req1", "node1", Action.OPEN)
+            store.link_command("req1", "node1", "open")
     finally:
         conn.close()
         blocker.execute("ROLLBACK")

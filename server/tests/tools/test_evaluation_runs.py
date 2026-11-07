@@ -15,7 +15,7 @@ import pytest
 
 from nearpilot.core.proximity.fit import LabeledRun
 from nearpilot.db.schema import connect
-from nearpilot.shared.enums import Capability, DeviceState, Occupancy, Role, TrustState
+from nearpilot.shared.enums import DeviceState, Occupancy, Role, TrustState
 from nearpilot.shared.models import BeaconKey, RssiFrame
 
 from tools.evaluation.db import open_readonly
@@ -51,9 +51,9 @@ class RunsDb:
                 "INSERT OR IGNORE INTO place (place_id, owner_user_id, name) VALUES (?, 'owner', ?)",
                 (place_id, place_id))
         self.write.execute(
-            "INSERT INTO node (node_id, place_id, capability, occupancy, trust_state, device_state) "
+            "INSERT INTO node (node_id, place_id, kind, occupancy, trust_state, device_state) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (node_id, place_id, Capability.LOCKER.value, Occupancy.RENTAL.value, TrustState.TRUSTED.value,
+            (node_id, place_id, "locker", Occupancy.RENTAL.value, TrustState.TRUSTED.value,
              DeviceState.AVAILABLE.value))
 
     def run(self, collection_id: str, label: str, started_at: datetime, ended_at: datetime | None = None,

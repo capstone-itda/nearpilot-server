@@ -58,21 +58,31 @@ def status_denied(reason: ReasonCode) -> dict[str, Any]:
     return status_response({"reason_code": reason.value})
 
 
-_DEVICE_KEYS = ("node_id", "capability", "occupancy", "access", "controls")
-_STATE_KEYS = ("node_id", "capability", "occupancy", "state", "online", "trusted", "access_mode", "controls")
+# 동작 목록은 이름, 설명, 인자 스키마만 담는다. 제작사 정보와 선언 해시는 넣지 않는다 (FR-09, FR-11).
+_DEVICE_KEYS = ("node_id", "kind", "occupancy", "access", "actions")
+_STATE_KEYS = ("node_id", "kind", "occupancy", "state", "online", "trusted", "access_mode", "actions")
+_ACTION_KEYS = ("name", "description", "input_schema")
+
+
+def _filtered(item: Mapping[str, Any], keys: Sequence[str]) -> dict[str, Any]:
+    """허용 목록의 키만 남긴다. 동작 목록도 항목마다 같은 방식으로 거른다 (FR-11)."""
+    out = {key: item.get(key) for key in keys}
+    if "actions" in out and out["actions"] is not None:
+        out["actions"] = [{key: action.get(key) for key in _ACTION_KEYS} for action in out["actions"]]
+    return out
 
 
 def devices_response(devices: Sequence[Mapping[str, Any]], reason: ReasonCode | None = None) -> dict[str, Any]:
     """후보 목록. 항목마다 허용 목록의 키만 내보낸다 (FR-11)."""
     return {
-        "devices": [{key: device.get(key) for key in _DEVICE_KEYS} for device in devices],
+        "devices": [_filtered(device, _DEVICE_KEYS) for device in devices],
         "reason": reason.value if reason else None,
     }
 
 
 def device_state_response(state: Mapping[str, Any]) -> dict[str, Any]:
     """기기 상태. 성공과 실패의 모양이 같다 (FR-14). 허용 목록 밖의 키는 버린다."""
-    out: dict[str, Any] = {key: state.get(key) for key in _STATE_KEYS}
+    out: dict[str, Any] = _filtered(state, _STATE_KEYS)
     out["reason"] = state.get("reason_code")
     return out
 

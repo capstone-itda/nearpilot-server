@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from _world import NOW, OWNER, VISITOR_A, FakeReadiness, World
 from nearpilot.core.decision.core_service import build_core_service
-from nearpilot.shared.enums import Action, ExecutionStatus, ReasonCode, Verdict
+from nearpilot.shared.enums import ExecutionStatus, ReasonCode, Verdict
 from nearpilot.shared.interfaces import CoreService
 from nearpilot.shared.models import Decision, ExecutionResult
 
@@ -59,7 +59,7 @@ def test_FR09_core_service_built_on_real_db_serves_six_methods():
         assert (d.verdict, d.reason, d.node_id) == (Verdict.OK, ReasonCode.OK, "locker-1")
         assert d.use_id and [c.node_id for c in execution.contexts] == ["locker-1"]
 
-        a = svc.request_access(VISITOR_A, "locker-2", Action.OPEN, "acc-1")
+        a = svc.request_access(VISITOR_A, "locker-2", "open", "acc-1")
         assert (a.verdict, a.reason) == (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_PENDING)
 
         assert svc.get_device_state(OWNER, "locker-4")["node_id"] == "locker-4"

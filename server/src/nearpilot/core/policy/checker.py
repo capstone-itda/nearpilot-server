@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
-from nearpilot.shared.enums import AccessMode, Action, ApprovalStatus, ReasonCode, Verdict
+from nearpilot.shared.enums import AccessMode, ApprovalStatus, ReasonCode, Verdict
 from nearpilot.shared.interfaces import Repository
 from nearpilot.shared.models import ApprovalRecord, PolicyCheckResult
 
@@ -22,16 +22,16 @@ class RepositoryPolicyChecker:
         self._repository = repository
 
     def check(
-        self, user_id: str, node_id: str, action: Action, now: datetime,
-        *, internal_request_id: str | None = None,
+        self, user_id: str, node_id: str, action: str, now: datetime,
+        *, internal_request_id: str | None = None, reoperate: bool = False,
     ) -> PolicyCheckResult:
         try:
             policy = self._repository.current_policy(node_id)
         except LookupError:
             return PolicyCheckResult(verdict=Verdict.DENY, reason=ReasonCode.POLICY_DENIED, policy_version=None)
 
-        # close 는 승인 없이 허용한다. 본인 대여의 재조작만 실행되는 것은 ⑤⑥ 이 확인한다 (FR-14).
-        if policy.mode == AccessMode.OPEN or action is Action.CLOSE:
+        # reoperate 역할의 동작은 승인 없이 허용한다. 본인 대여의 재조작만 실행되는 것은 ⑤⑥ 이 확인한다 (FR-09, FR-14).
+        if policy.mode == AccessMode.OPEN or reoperate:
             return PolicyCheckResult(verdict=Verdict.OK, reason=ReasonCode.OK, policy_version=policy.version)
 
         approval = self._repository.valid_approval(
@@ -59,7 +59,7 @@ class RepositoryPolicyChecker:
 
     @staticmethod
     def _reason_from_history(
-        records: Sequence[ApprovalRecord], action: Action, policy_version: int, now: datetime
+        records: Sequence[ApprovalRecord], action: str, policy_version: int, now: datetime
     ) -> ReasonCode:
         """승인 필요 사유를 고른다 (`architecture.md` §4 "승인 이력과 승인 필요 사유", #60)."""
         current = [r for r in records if r.policy_version == policy_version]

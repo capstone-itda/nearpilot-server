@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nearpilot.shared.enums import Action, ExecutionStatus
+from nearpilot.shared.enums import ExecutionStatus
 
 from conftest import insert_node, insert_place, insert_request, insert_user
 
@@ -33,7 +33,7 @@ def test_FR20_last_succeeded_uses_send_order(store, conn):
     last = store.last_succeeded("light1")
 
     # 실패한 명령은 마지막 제어 상태가 아니다. 다른 기기의 명령도 보지 않는다.
-    assert (last.command_id, last.action, last.status) == ("c2", Action.OFF, ExecutionStatus.SUCCEEDED)
+    assert (last.command_id, last.action, last.status) == ("c2", "off", ExecutionStatus.SUCCEEDED)
 
 
 def test_FR20_last_succeeded_none_without_success(store, conn):

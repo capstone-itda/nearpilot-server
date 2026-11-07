@@ -212,3 +212,57 @@ def test_FR12A_대시보드_설정이_틀리면_ConfigError_빈_섹션과_표가
     raw["dashboard"] = 5
     with pytest.raises(ConfigError, match=r"\[dashboard\]"):
         parse_config(raw, base=tmp_path)
+
+
+# ── 종류별 설정 (specs/core-device-actions/spec.md 결정 4·5) ─────────────────
+
+
+def test_FR09_example_config_kind_tables():
+    s = load_config(SERVER / "config" / "server.example.toml").settings
+    assert s.param_caps("light", "on") == {"brightness": 64} and s.param_caps("speaker", "on") == {"volume": 20}
+    assert s.param_defaults("light", "on") == {"brightness": 64, "color": "#FFFFFF"}
+    assert s.any_allowed_kinds == ("locker",)
+
+
+def test_FR09_new_kind_settings_from_toml(tmp_path):
+    raw = _raw(tmp_path)
+    raw["settings"].update(threshold_fan=0.8, any_allowed_kinds=["locker", "fan"],
+                           param_max={"fan": {"spin": {"speed": 4}}},
+                           param_default={"fan": {"spin": {"speed": 2, "mode": "calm"}}})
+    s = parse_config(raw, base=tmp_path).settings
+    assert (s.threshold_for("fan"), s.threshold_for("locker")) == (0.8, 0.95)
+    assert s.any_allowed_kinds == ("locker", "fan")
+    assert s.param_caps("fan", "spin") == {"speed": 4}
+    assert s.param_caps("light", "on") == {}  # 표를 쓰면 기본값 전체를 대신한다
+    assert s.param_defaults("fan", "spin") == {"speed": 2, "mode": "calm"}
+
+
+def test_FR09_legacy_setting_keys_migrated(tmp_path, caplog):
+    raw = _raw(tmp_path)
+    raw["settings"].update(light_brightness_max=40, light_default_brightness=40, speaker_default_volume=5)
+    with caplog.at_level(logging.WARNING):
+        s = parse_config(raw, base=tmp_path).settings
+    assert s.param_caps("light", "on") == {"brightness": 40}
+    assert s.param_caps("speaker", "on") == {"volume": 20}  # 쓰지 않은 옛 키는 초기 기준이다
+    assert s.param_defaults("light", "on") == {"brightness": 40, "color": "#FFFFFF"}
+    assert s.param_defaults("speaker", "on") == {"volume": 5}
+    assert "settings.light_brightness_max" in caplog.text and "param_max.light.on.brightness" in caplog.text
+    # 같은 값을 두 형식으로 쓰면 거부한다.
+    raw["settings"]["param_max"] = {"light": {"on": {"brightness": 40}}}
+    with pytest.raises(ConfigError, match="param_max"):
+        parse_config(raw, base=tmp_path)
+
+
+@pytest.mark.parametrize("change, key", [
+    ({"threshold_fan": 1.5}, "threshold_fan"),
+    ({"threshold_Fan": 0.5}, "threshold_Fan"),
+    ({"thresholds": {"fan": 0.5}}, "settings.thresholds"),  # 파일에서는 threshold_{kind} 로 쓴다
+    ({"any_allowed_kinds": "locker"}, "any_allowed_kinds"),
+    ({"param_max": {"fan": {"spin": {"speed": "4"}}}}, "param_max.fan.spin.speed"),
+    ({"param_default": {"light": {"on": {"brightness": 100}}}}, "param_default.light.on.brightness"),
+])
+def test_FR09_invalid_kind_settings_stop_startup(tmp_path, change, key):
+    raw = _raw(tmp_path)
+    raw["settings"].update(change)
+    with pytest.raises(ConfigError, match=key.replace(".", r"\.")):
+        parse_config(raw, base=tmp_path)

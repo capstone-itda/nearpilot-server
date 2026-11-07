@@ -16,10 +16,8 @@ import pytest
 from nearpilot.db.audit import SqliteAuditLog
 from nearpilot.db.repositories.dashboard_reads import SqliteDashboardReads
 from nearpilot.shared.enums import (
-    Action,
     ApprovalMode,
     ApprovalStatus,
-    Capability,
     DeviceState,
     ExecutionStatus,
     Occupancy,
@@ -102,11 +100,11 @@ def test_FR12A_대시보드_읽기_장소와_기기(reads, conn):
     assert reads.places() == [DashboardPlace("place-a", "실험실"), DashboardPlace("place-b", "카페")]
     # 시각은 시간대가 있는 datetime이다 (naive datetime과는 == 이 거짓이다)
     assert reads.nodes() == [
-        DashboardNode("node-a", "사물함 1", "place-a", Capability.LOCKER, Occupancy.RENTAL,
+        DashboardNode("node-a", "사물함 1", "place-a", "locker", Occupancy.RENTAL,
                       TrustState.TRUSTED, DeviceState.RESERVED, at(5), "session-a"),
-        DashboardNode("node-b", None, "place-b", Capability.LIGHT, Occupancy.SHARED,
+        DashboardNode("node-b", None, "place-b", "light", Occupancy.SHARED,
                       TrustState.TRUSTED, DeviceState.ACTIVE, None, None),
-        DashboardNode("node-c", None, None, Capability.LIGHT, Occupancy.SHARED,
+        DashboardNode("node-c", None, None, "light", Occupancy.SHARED,
                       TrustState.DISCOVERED, DeviceState.AVAILABLE, None, None),
     ]
 
@@ -195,17 +193,17 @@ def test_FR12A_대시보드_읽기_점유와_승인(reads, repo, conn):
 
     # one_time 은 max_uses 가 없어도 한도가 1이다 (ap-pending, ap-denied)
     assert approvals == [
-        DashboardApproval("ap-pending", "locker-1", "visitor1", "req-ap-pending", Action.OPEN,
+        DashboardApproval("ap-pending", "locker-1", "visitor1", "req-ap-pending", "open",
                           ApprovalStatus.PENDING, at(0), at(10), None, ApprovalMode.ONE_TIME, 0, 1),
-        DashboardApproval("ap-exhausted", "locker-2", "visitor3", "req-ap-exhausted", Action.OPEN,
+        DashboardApproval("ap-exhausted", "locker-2", "visitor3", "req-ap-exhausted", "open",
                           ApprovalStatus.APPROVED, at(5), at(15), at(65), ApprovalMode.TIME_WINDOW, 3, 0),
-        DashboardApproval("ap-held", "locker-2", "visitor1", "req-ap-held", Action.OPEN,
+        DashboardApproval("ap-held", "locker-2", "visitor1", "req-ap-held", "open",
                           ApprovalStatus.APPROVED, at(5), at(15), at(65), ApprovalMode.TIME_WINDOW, 1, 2),
-        DashboardApproval("ap-valid", "locker-2", "visitor2", "req-ap-valid", Action.OPEN,
+        DashboardApproval("ap-valid", "locker-2", "visitor2", "req-ap-valid", "open",
                           ApprovalStatus.APPROVED, at(5), at(15), at(65), ApprovalMode.TIME_WINDOW, 2, 1),
-        DashboardApproval("ap-one-time", "locker-2", "visitor1", "req-ap-one-time", Action.OPEN,
+        DashboardApproval("ap-one-time", "locker-2", "visitor1", "req-ap-one-time", "open",
                           ApprovalStatus.APPROVED, at(6), at(16), at(66), ApprovalMode.ONE_TIME, 0, 1),
-        DashboardApproval("ap-denied", "locker-1", "visitor3", "req-ap-denied", Action.OPEN,
+        DashboardApproval("ap-denied", "locker-1", "visitor3", "req-ap-denied", "open",
                           ApprovalStatus.DENIED, at(10), at(20), None, ApprovalMode.ONE_TIME, 0, 1),
     ]
     # 남은 횟수는 Repository 가 정책 검사에 쓰는 값과 같은 규칙이다
@@ -242,15 +240,15 @@ def test_FR12A_대시보드_읽기_요청_기간과_커서(reads, conn):
     seq = dict(conn.execute("SELECT internal_request_id, rowid FROM request").fetchall())
     assert seq == {"req-b": 1, "req-a": 2, "req-c": 3, "req-internal": 4}
 
-    request_b = DashboardRequest(1, "req-b", "visitor1", "visitor", "nearest:locker", Action.OPEN,
+    request_b = DashboardRequest(1, "req-b", "visitor1", "visitor", "nearest:locker", "open",
                                  None, None, None, None, at(10))
-    request_a = DashboardRequest(2, "req-a", "visitor1", "visitor", "nearest:locker", Action.OPEN,
+    request_a = DashboardRequest(2, "req-a", "visitor1", "visitor", "nearest:locker", "open",
                                  Verdict.OK, ReasonCode.OK, "locker-1",
                                  {"posteriors": {"locker-1": 0.91}, "message": "열었다"}, at(0))
-    request_c = DashboardRequest(3, "req-c", "visitor1", "visitor", "nearest:locker", Action.ON,
+    request_c = DashboardRequest(3, "req-c", "visitor1", "visitor", "nearest:locker", "on",
                                  Verdict.DENY, ReasonCode.POLICY_DENIED, None, None, at(20))
     request_internal = DashboardRequest(4, "req-internal", None, "server_internal", "nearest:locker",
-                                        Action.OFF, None, None, None, None, at(30))
+                                        "off", None, None, None, None, at(30))
 
     # received_at 내림차순, 구간은 [since, until)
     assert reads.requests(None, None) == [request_internal, request_c, request_b, request_a]
@@ -302,11 +300,11 @@ def test_FR12A_대시보드_읽기_명령_감사_RSSI_비콘(reads, conn):
                         send_started_at=ts(2), outcome="succeeded", occurred_at=ts(2.5))
     conn.execute("UPDATE node_command SET evidence = ? WHERE command_id = 'cmd-m'",
                  (json.dumps({"state": "succeeded", "detail": {"door": "open"}}),))
-    command_z = DashboardCommand(1, "cmd-z", "req-1", "locker-1", Action.OPEN, ExecutionStatus.IN_PROGRESS,
+    command_z = DashboardCommand(1, "cmd-z", "req-1", "locker-1", "open", ExecutionStatus.IN_PROGRESS,
                                  "use-1", at(0.5), None, None, {})
-    command_a = DashboardCommand(2, "cmd-a", "req-2", "light-1", Action.ON, ExecutionStatus.NOT_SENT,
+    command_a = DashboardCommand(2, "cmd-a", "req-2", "light-1", "on", ExecutionStatus.NOT_SENT,
                                  None, None, "not_sent", None, {})
-    command_m = DashboardCommand(3, "cmd-m", "req-1", "locker-1", Action.OPEN, ExecutionStatus.SUCCEEDED,
+    command_m = DashboardCommand(3, "cmd-m", "req-1", "locker-1", "open", ExecutionStatus.SUCCEEDED,
                                  "use-1", at(2), "succeeded", at(2.5),
                                  {"state": "succeeded", "detail": {"door": "open"}})
 

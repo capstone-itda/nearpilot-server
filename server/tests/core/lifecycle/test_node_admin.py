@@ -9,7 +9,7 @@ import pytest
 
 from nearpilot.core.lifecycle.node_admin import NodeAdminService
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import Capability, Occupancy, RestartOutcome
+from nearpilot.shared.enums import Occupancy, RestartOutcome
 from nearpilot.shared.interfaces import NodeAdminService as NodeAdminProtocol
 from nearpilot.shared.models import ProvisioningBundle
 
@@ -83,7 +83,7 @@ class Source:
 
 
 BUNDLE = ProvisioningBundle("locker-1", "locker-1", "node-secret", "nearpilot.local", 18883,
-                            Capability.LOCKER, Occupancy.RENTAL)
+                            "locker", Occupancy.RENTAL)
 
 
 def test_FR12A_provisioning_returns_bundle_for_owner(caplog):

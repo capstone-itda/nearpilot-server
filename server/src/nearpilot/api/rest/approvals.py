@@ -46,7 +46,7 @@ def approval_json(approval: OwnerApproval) -> dict[str, Any]:
     return {
         "approval_id": approval.approval_id,
         "node_id": approval.node_id,
-        "action": approval.action.value,
+        "action": approval.action,
         "status": approval.status.value,
         "created_at": _time(approval.created_at),
         "pending_expires_at": _time(approval.pending_until),

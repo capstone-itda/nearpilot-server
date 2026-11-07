@@ -8,14 +8,14 @@ DB 스키마의 전체 필드는 architecture.md §6 과 db 계층이 정의한�
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from math import fsum, isclose, isfinite
 from typing import Any
 
-from nearpilot.shared.config import Settings, is_light_color
-from nearpilot.shared.descriptor import DeviceDescriptor
+from nearpilot.shared.config import Settings
+from nearpilot.shared.frozen import freeze as _freeze
+from nearpilot.shared.descriptor import DeviceDescriptor, is_name
 from nearpilot.shared.enums import (
     RestartOutcome,
     ApprovalDecisionReason,
@@ -30,11 +30,9 @@ from nearpilot.shared.enums import (
     RecoveryOutcome,
     RecoveryReason,
     AccessMode,
-    Action,
     CommandState,
     ApprovalMode,
     ApprovalStatus,
-    Capability,
     CommandOutcome,
     DeviceState,
     EndReason,
@@ -54,34 +52,6 @@ from nearpilot.shared.enums import (
 )
 
 
-class _FrozenDict(dict):
-    """Read-only snapshot that keeps dict JSON and dataclass serialization."""
-
-    def _reject_mutation(self, *args: Any, **kwargs: Any) -> None:
-        raise TypeError("Snapshot mappings cannot be modified")
-
-    __setitem__ = _reject_mutation
-    __delitem__ = _reject_mutation
-    clear = _reject_mutation
-    pop = _reject_mutation
-    popitem = _reject_mutation
-    setdefault = _reject_mutation
-    update = _reject_mutation
-    __ior__ = _reject_mutation
-
-    def __deepcopy__(self, memo: dict[int, Any]) -> _FrozenDict:
-        return _FrozenDict(
-            (deepcopy(key, memo), deepcopy(value, memo))
-            for key, value in self.items()
-        )
-
-
-def _freeze(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return _FrozenDict((key, _freeze(item)) for key, item in value.items())
-    if isinstance(value, (list, tuple)):
-        return tuple(_freeze(item) for item in value)
-    return value
 
 
 # ── 계정·비콘 ───────────────────────────────────────────────────────
@@ -107,116 +77,19 @@ class BeaconKey:
 # ── 노드·정책 ───────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True, slots=True)
-class LightControls:
-    """조명 기기가 발표한 조명 제어 정보 (FR-04, FR-09).
-
-    brightness_max 는 펌웨어가 지키는 채널별 출력 상한이다. color 는 색 지원 여부다.
-    """
-
-    brightness_max: int
-    color: bool
-
-    def __post_init__(self) -> None:
-        if isinstance(self.brightness_max, bool) or not isinstance(self.brightness_max, int):
-            raise ValueError("brightness_max 는 정수여야 한다")
-        if not 1 <= self.brightness_max <= 255:
-            raise ValueError("brightness_max 는 1~255 여야 한다")
-        if not isinstance(self.color, bool):
-            raise ValueError("color 는 불리언이어야 한다")
+def _arguments(value: Mapping[str, Any] | None, where: str) -> Mapping[str, Any] | None:
+    """동작 인자 객체를 불변으로 복사한다. 형식 검사는 판정이 기기 선언으로 한다 (FR-09)."""
+    if value is None:
+        return None
+    if not isinstance(value, Mapping) or not all(isinstance(key, str) for key in value):
+        raise ValueError(f"{where} 는 문자열 키의 객체여야 한다")
+    return _freeze(value)
 
 
-@dataclass(frozen=True, slots=True)
-class LightSetting:
-    """조명 `on` 의 밝기와 색 (FR-09). 각 값은 없을 수 있다.
-
-    방문자 입력(`UseRequest.light`)은 받은 값만 담는다. 서버가 정한 값(`NodeCommand.light`)은 둘 다 담는다.
-    밝기는 0~255 정수, 색은 대문자 `#RRGGBB` 다. 기기별 상한 검사는 판정이 한다.
-    """
-
-    brightness: int | None = None
-    color: str | None = None
-
-    def __post_init__(self) -> None:
-        b = self.brightness
-        if b is not None and (isinstance(b, bool) or not isinstance(b, int) or not 0 <= b <= 255):
-            raise ValueError("brightness 는 0~255 정수여야 한다")
-        if self.color is not None:
-            if not is_light_color(self.color):
-                raise ValueError("color 는 #RRGGBB 여야 한다")
-            object.__setattr__(self, "color", self.color.upper())
-
-    @property
-    def complete(self) -> bool:
-        return self.brightness is not None and self.color is not None
-
-    def to_json(self) -> dict[str, Any]:
-        """저장과 비교에 쓰는 정규화 값. 없는 값은 넣지 않는다."""
-        out: dict[str, Any] = {}
-        if self.brightness is not None:
-            out["brightness"] = self.brightness
-        if self.color is not None:
-            out["color"] = self.color
-        return out
-
-    @classmethod
-    def from_json(cls, data: Mapping[str, Any] | None) -> LightSetting | None:
-        if data is None:
-            return None
-        if not isinstance(data, Mapping) or set(data) - {"brightness", "color"}:
-            raise ValueError(f"조명 설정 형식 오류: {data!r}")
-        return cls(data.get("brightness"), data.get("color"))
-
-
-@dataclass(frozen=True, slots=True)
-class SpeakerControls:
-    """스피커 기기가 발표한 음량 제어 정보 (FR-04, FR-09).
-
-    volume_max 는 펌웨어가 지키는 음량 상한이다. 30 은 DFPlayer 의 전송 범위다.
-    """
-
-    volume_max: int
-
-    def __post_init__(self) -> None:
-        if isinstance(self.volume_max, bool) or not isinstance(self.volume_max, int):
-            raise ValueError("volume_max 는 정수여야 한다")
-        if not 1 <= self.volume_max <= 30:
-            raise ValueError("volume_max 는 1~30 이어야 한다")
-
-
-@dataclass(frozen=True, slots=True)
-class SpeakerSetting:
-    """스피커 `on` 의 음량 (FR-09). 값은 없을 수 있다.
-
-    방문자 입력(`UseRequest.speaker`)은 받은 값만 담는다. 서버가 정한 값(`NodeCommand.speaker`)은 음량을 담는다.
-    음량은 0~30 정수다. 기기별 상한 검사는 판정이 한다.
-    """
-
-    volume: int | None = None
-
-    def __post_init__(self) -> None:
-        v = self.volume
-        if v is not None and (isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= 30):
-            raise ValueError("volume 은 0~30 정수여야 한다")
-
-    @property
-    def complete(self) -> bool:
-        return self.volume is not None
-
-    def to_json(self) -> dict[str, Any]:
-        """저장과 비교에 쓰는 정규화 값. 없는 값은 넣지 않는다."""
-        out: dict[str, Any] = {}
-        if self.volume is not None:
-            out["volume"] = self.volume
-        return out
-
-    @classmethod
-    def from_json(cls, data: Mapping[str, Any] | None) -> SpeakerSetting | None:
-        if data is None:
-            return None
-        if not isinstance(data, Mapping) or set(data) - {"volume"}:
-            raise ValueError(f"스피커 설정 형식 오류: {data!r}")
-        return cls(data.get("volume"))
+def _action_name(value: object, where: str = "action") -> None:
+    """동작 이름 규칙. 기기 선언의 이름 규칙과 같다 (FR-09)."""
+    if not is_name(value):
+        raise ValueError(f"{where} 이름 규칙 오류: {value!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,7 +98,7 @@ class NodeInfo:
 
     node_id: str
     place_id: str | None
-    capability: Capability
+    kind: str  # 기기 선언의 종류 이름 (#245)
     occupancy: Occupancy
     trust_state: TrustState
     device_state: DeviceState
@@ -234,9 +107,6 @@ class NodeInfo:
     release_policy: Mapping[str, Any] = field(default_factory=dict)
     session_id: str | None = None  # 현재 기기 연결 ID. 확인한 연결이 없으면 None
     session_first_seen_at: datetime | None = None  # 현재 연결의 첫 수신 시각
-    # 선언에서 계산한 호환 값이다. PR ② 에서 선언 기반 판정으로 바꾸며 지운다 (iot-device-descriptor spec 결정 7).
-    light_controls: LightControls | None = None  # 조명 제어 정보. 없으면 인자를 받지 않는다 (FR-09)
-    speaker_controls: SpeakerControls | None = None  # 스피커 제어 정보. 없으면 음량을 받지 않는다 (FR-09)
     descriptor: DeviceDescriptor | None = None  # 저장한 기기 선언. 이전 전 행이면 None (FR-04)
     descriptor_hash: str | None = None  # 저장한 선언 해시. 신뢰는 이 값에 묶인다 (FR-04)
 
@@ -262,7 +132,7 @@ class Approval:
     approval_id: str
     node_id: str
     requester_user_id: str
-    action: Action
+    action: str
     policy_id: str
     policy_version: int
     status: ApprovalStatus
@@ -278,7 +148,7 @@ class ApprovalRecord:
     """
 
     approval_id: str
-    action: Action
+    action: str
     policy_version: int
     status: ApprovalStatus
     created_at: datetime
@@ -310,20 +180,42 @@ class PolicyCheckResult:
 
 @dataclass(frozen=True, slots=True)
 class TargetSpec:
+    """대상 지정. `device_kind` 는 근접 지정·전역 할당의 종류 이름이고 명시 지정이면 None 이다 (#245)."""
+
     kind: TargetKind
-    capability: Capability
+    device_kind: str | None
     node_id: str | None = None  # EXPLICIT 일 때만
+
+    def __post_init__(self) -> None:
+        explicit = self.kind is TargetKind.EXPLICIT
+        if explicit != (self.device_kind is None) or explicit != (self.node_id is not None):
+            raise ValueError("명시 지정만 기기 ID 를 담고 종류 이름을 담지 않는다")
+        if self.device_kind is not None and not is_name(self.device_kind):
+            raise ValueError(f"종류 이름 규칙 오류: {self.device_kind!r}")
+        if self.node_id is not None and (not self.node_id.strip() or self.node_id != self.node_id.strip()):
+            raise ValueError("기기 ID 형식 오류")
 
     @classmethod
     def parse(cls, raw: str) -> TargetSpec:
-        """`nearest:locker` · `any:locker` · `locker-1` 를 해석한다. 형식이 틀리면 ValueError."""
+        """`nearest:{kind}` · `any:{kind}` · 기기 ID 를 해석한다. 형식이 틀리면 ValueError.
+
+        콜론이 없으면 기기 ID 그대로인 명시 지정이다. 종류는 저장한 기기에서 읽는다 (spec core-device-actions 결정 2).
+        """
+        if not isinstance(raw, str):
+            raise ValueError("target_spec 은 문자열이어야 한다")
         if ":" in raw:
-            prefix, cap = raw.split(":", 1)
-            return cls(TargetKind(prefix), Capability(cap))
-        cap, sep, num = raw.rpartition("-")
-        if not sep or not num.isdigit():
-            raise ValueError(f"target_spec 형식 오류: {raw!r}")
-        return cls(TargetKind.EXPLICIT, Capability(cap), raw)
+            prefix, kind = raw.split(":", 1)
+            target_kind = TargetKind(prefix)
+            if target_kind is TargetKind.EXPLICIT:
+                raise ValueError(f"target_spec 형식 오류: {raw!r}")
+            return cls(target_kind, kind)
+        return cls(TargetKind.EXPLICIT, None, raw)
+
+    def serialize(self) -> str:
+        """저장하는 `target_spec` 문자열. `parse` 와 짝이다."""
+        if self.kind is TargetKind.EXPLICIT:
+            return self.node_id
+        return f"{self.kind.value}:{self.device_kind}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,12 +225,16 @@ class UseRequest:
     user_id: str
     request_id: str  # 외부 멱등 키, (user_id, request_id) 로 고유
     target: TargetSpec
-    action: Action
+    action: str  # 대상 기기가 선언한 동작 이름 (FR-09)
     host_kind: str | None
     received_at: datetime
     parent_internal_request_id: str | None = None  # 재질문·승인 후 재요청 연결
-    light: LightSetting | None = None  # 조명 `on` 의 받은 인자. 인자가 없으면 None (FR-09)
-    speaker: SpeakerSetting | None = None  # 스피커 `on` 의 받은 인자. 인자가 없으면 None (FR-09)
+    # 방문자가 준 동작 인자. 판정이 기기 선언으로 검사한다. 인자가 없으면 None (FR-09)
+    arguments: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        _action_name(self.action)
+        object.__setattr__(self, "arguments", _arguments(self.arguments, "arguments"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -436,9 +332,11 @@ class ReserveRequest:
     internal_request_id: str
     user_id: str
     node_id: str
-    action: Action
+    action: str
     approval_id: str | None  # 승인이 필요 없으면 None
     release_policy: Mapping[str, Any] = field(default_factory=dict)  # 생성 당시 값 보존
+    # `reoperate` 역할의 동작이다. 본인 ACTIVE 대여가 없으면 USE_NOT_FOUND 이고 새 점유를 만들지 않는다 (FR-09)
+    reoperate_only: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "release_policy", _freeze(self.release_policy))
@@ -486,7 +384,7 @@ class InternalRequest:
 
     internal_request_id: str
     node_id: str
-    action: Action
+    action: str
     cause: InternalRequestCause
     settings: Settings
     created_at: datetime
@@ -508,12 +406,11 @@ class ExecutionContext:
     # ReserveResult.reserved_at 을 그대로 담는다 (#80). 예약 대기는 이 시각부터 잰다.
     # 인계 시각부터 다시 세지 않는다. DB 쓰기가 없는 공용형 open 요청은 None 이다.
     reserved_at: datetime | None = None
-    # 판정이 정한 조명 설정. 조명 제어 정보를 발표한 기기의 `on` 에만 있고 두 값을 모두 담는다 (FR-09).
-    light: LightSetting | None = None
-    # 판정이 정한 스피커 음량. 스피커 제어 정보를 발표한 기기의 `on` 에만 있다 (FR-09).
-    speaker: SpeakerSetting | None = None
+    # 판정이 정한 동작 인자. 생략한 인자를 채운 값이다. 인자가 없으면 None (FR-09).
+    arguments: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "arguments", _arguments(self.arguments, "arguments"))
         internal = self.execution_kind == ExecutionKind.SERVER_INTERNAL
         no_session = self.execution_kind in (ExecutionKind.SHARED, ExecutionKind.SERVER_INTERNAL)
         if no_session != (self.use_id is None):
@@ -558,7 +455,7 @@ class CommandRecord:
     command_id: str
     internal_request_id: str
     node_id: str
-    action: Action
+    action: str
     status: ExecutionStatus
     execution_kind: ExecutionKind = ExecutionKind.RENTAL_INITIAL
     use_id: str | None = None
@@ -569,11 +466,11 @@ class CommandRecord:
     outcome: CommandOutcome | None = None
     occurred_at: datetime | None = None
     evidence: Mapping[str, Any] = field(default_factory=dict)
-    light: LightSetting | None = None  # 명령에 담을 조명 설정. 재전송과 재시작 뒤에도 같다 (FR-09)
-    speaker: SpeakerSetting | None = None  # 명령에 담을 스피커 음량. 재전송과 재시작 뒤에도 같다 (FR-09)
+    arguments: Mapping[str, Any] | None = None  # 명령에 담을 동작 인자. 재전송과 재시작 뒤에도 같다 (FR-09)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "evidence", _freeze(self.evidence))
+        object.__setattr__(self, "arguments", _arguments(self.arguments, "arguments"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -685,12 +582,14 @@ class NodeCommand:
 
     command_id: str
     node_id: str
-    action: Action
+    action: str
     target_session_id: str  # 대상 기기 연결 ID. `NodeInfo.session_id` 에서 가져온다.
     issued_at: datetime
     expires_at: datetime  # issued_at + Settings.exec_timeout_sec
-    light: LightSetting | None = None  # `cmd.parameters`. 서버가 정한 밝기와 색을 모두 담는다 (FR-09)
-    speaker: SpeakerSetting | None = None  # `cmd.parameters`. 서버가 정한 음량을 담는다 (FR-09)
+    arguments: Mapping[str, Any] | None = None  # `cmd.arguments`. 서버가 정한 인자 그대로다 (FR-09)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "arguments", _arguments(self.arguments, "arguments"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -899,7 +798,7 @@ class RecoveryApprovalResult:
 class ApprovalRequest:
     requester_user_id: str
     node_id: str
-    action: Action
+    action: str
     policy_id: str
     policy_version: int
     internal_request_id: str
@@ -949,7 +848,7 @@ class OwnerApproval:
 
     approval_id: str
     node_id: str
-    action: Action
+    action: str
     status: ApprovalStatus
     created_at: datetime
     pending_until: datetime | None  # 대기 신청 만료 시각
@@ -1090,7 +989,7 @@ class DashboardNode:
     node_id: str
     name: str | None  # node.name. 없으면 None
     place_id: str | None
-    capability: Capability
+    capability: str  # 기기 선언의 종류 이름. 키 이름은 PR ③ 에서 바꾼다
     occupancy: Occupancy
     trust_state: TrustState
     device_state: DeviceState
@@ -1118,7 +1017,7 @@ class DashboardApproval:
     node_id: str
     requester_user_id: str
     internal_request_id: str
-    action: Action
+    action: str
     status: ApprovalStatus
     created_at: datetime
     pending_until: datetime | None
@@ -1135,7 +1034,7 @@ class DashboardRequest:
     user_id: str | None  # 서버 내부 요청은 None
     kind: str  # request.request_kind ('visitor' | 'server_internal')
     target_spec: str
-    action: Action
+    action: str
     verdict: Verdict | None
     reason_code: ReasonCode | None
     node_id: str | None
@@ -1152,7 +1051,7 @@ class DashboardCommand:
     command_id: str
     internal_request_id: str
     node_id: str
-    action: Action
+    action: str
     status: ExecutionStatus
     use_id: str | None
     send_started_at: datetime | None
@@ -1221,6 +1120,6 @@ class ProvisioningBundle:
     mqtt_password: str = field(repr=False)
     mqtt_host: str
     mqtt_port: int
-    capability: Capability
+    capability: str  # v2 기기의 종류 이름. PR ④ 에서 묶음에서 뺀다
     occupancy: Occupancy
 

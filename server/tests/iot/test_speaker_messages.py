@@ -1,4 +1,4 @@
-"""FR-04 스피커 announce.controls 해석과 FR-06·FR-09·FR-22 스피커 cmd.parameters 인코딩."""
+"""FR-04 스피커 v2 announce.controls 해석과 FR-06·FR-09·FR-22 스피커 cmd 인자 인코딩."""
 
 import json
 from dataclasses import replace
@@ -7,9 +7,9 @@ from datetime import datetime, timedelta
 import pytest
 
 from nearpilot.iot.messages import MessageValidationError, decode_message, encode_command
-from nearpilot.shared.descriptor import legacy_controls, legacy_descriptor
-from nearpilot.shared.enums import Action, Capability, Occupancy
-from nearpilot.shared.models import LightSetting, NodeCommand, SpeakerControls, SpeakerSetting
+from nearpilot.shared.descriptor import legacy_descriptor
+from nearpilot.shared.enums import Occupancy
+from nearpilot.shared.models import NodeCommand
 
 SESSION = "12345678-1234-1234-1234-123456789abc"
 STAMP = "2026-10-27T03:00:00.123Z"
@@ -25,13 +25,17 @@ def announce(capability="speaker", **extra):
 
 def test_FR04_announce_speaker_controls_to_shared_model():
     report = announce(controls={"volume_max": 20})
-    assert report.descriptor == legacy_descriptor(Capability.SPEAKER, Occupancy.SHARED, volume_max=20)
-    assert legacy_controls(report.descriptor) == (None, 20)
-    for volume_max in (1, 30):  # 범위의 양 끝도 받는다
-        assert legacy_controls(announce(controls={"volume_max": volume_max}).descriptor) == (None, volume_max)
-    assert legacy_controls(announce().descriptor) == (None, None)  # 이전 펌웨어의 발표는 그대로 받는다
+    assert report.descriptor == legacy_descriptor("speaker", Occupancy.SHARED, volume_max=20)
+    def volume_max(descriptor):
+        volume = descriptor.action("on").properties.get("volume")
+        return None if volume is None else volume["maximum"]
+
+    assert volume_max(report.descriptor) == 20
+    for value in (1, 30):  # 범위의 양 끝도 받는다
+        assert volume_max(announce(controls={"volume_max": value}).descriptor) == value
+    assert volume_max(announce().descriptor) is None  # 이전 펌웨어의 발표는 그대로 받는다
     light = announce("light", controls={"brightness_max": 64, "color": True})
-    assert legacy_controls(light.descriptor)[1] is None
+    assert volume_max(light.descriptor) is None
 
 
 @pytest.mark.parametrize("capability, controls", [
@@ -47,32 +51,21 @@ def test_FR04_announce_rejects_bad_speaker_controls(capability, controls):
         announce(capability, controls=controls)
 
 
-def command(action=Action.ON, light=None, speaker=None):
-    return NodeCommand("command-1", "speaker-1", action, SESSION, SENT, RECEIVED, light=light, speaker=speaker)
+def command(action="on", arguments=None):
+    return NodeCommand("command-1", "speaker-1", action, SESSION, SENT, RECEIVED, arguments=arguments)
 
 
 def test_FR06_encode_command_speaker_parameters():
-    data = json.loads(encode_command(command(speaker=SpeakerSetting(12)), schema_version=2))
+    data = json.loads(encode_command(command(arguments={"volume": 12}), schema_version=2))
     assert data["parameters"] == {"volume": 12}
     assert data["action"] == "on"
-    zero = json.loads(encode_command(command(speaker=SpeakerSetting(0)), schema_version=2))
+    zero = json.loads(encode_command(command(arguments={"volume": 0}), schema_version=2))
     assert zero["parameters"] == {"volume": 0} and zero["action"] == "on"
 
 
-@pytest.mark.parametrize("cmd", [
-    command(speaker=SpeakerSetting(None)),
-    command(Action.OFF, speaker=SpeakerSetting(12)), command(Action.OPEN, speaker=SpeakerSetting(12)),
-    command(light=LightSetting(30, "#0000FF"), speaker=SpeakerSetting(12)),
-])
-def test_FR09_encode_command_rejects_bad_speaker(cmd):
-    # 값 없는 설정, on 이 아닌 명령의 인자, 두 기능의 인자를 함께 담은 명령은 보내지 않는다.
-    with pytest.raises(MessageValidationError):
-        encode_command(cmd, schema_version=2)
-
-
 def test_FR22_same_command_same_speaker_parameters():
-    a = encode_command(command(speaker=SpeakerSetting(12)), schema_version=2)
-    assert a == encode_command(replace(command(), speaker=SpeakerSetting(12)), schema_version=2)
+    a = encode_command(command(arguments={"volume": 12}), schema_version=2)
+    assert a == encode_command(replace(command(), arguments={"volume": 12}), schema_version=2)
     # 내용이 다르면 바이트도 다르다. parameters 가 없는 명령과도 다르다.
-    assert a != encode_command(command(speaker=SpeakerSetting(13)), schema_version=2)
+    assert a != encode_command(command(arguments={"volume": 13}), schema_version=2)
     assert a != encode_command(command(), schema_version=2)

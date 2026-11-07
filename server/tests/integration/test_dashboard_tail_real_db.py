@@ -17,7 +17,7 @@ from _runtime import TOKENS, VISITOR_A, VISITOR_B, query, wait_until
 from nearpilot.api.ws.names import PersonNames
 from nearpilot.api.ws.schema import render_event
 from nearpilot.core.dashboard import MonitorTail
-from nearpilot.shared.enums import Action, DeviceState, ReasonCode, Step, Verdict
+from nearpilot.shared.enums import DeviceState, ReasonCode, Step, Verdict
 
 
 class Feed:
@@ -93,7 +93,7 @@ def flow(tmp_path_factory):
         wait_until(lambda: commands_of(world, "ok") == ["succeeded"] and state_of(world, "locker-1") == "ACTIVE")
         tick()
 
-        world.decide("light", VISITOR_B, "nearest:light", {"light-1": 0.9}, Verdict.OK, Action.ON)
+        world.decide("light", VISITOR_B, "nearest:light", {"light-1": 0.9}, Verdict.OK, "on")
         wait_until(lambda: commands_of(world, "light") == ["succeeded"])
         tick()
 
@@ -102,7 +102,7 @@ def flow(tmp_path_factory):
         wait_until(lambda: commands_of(world, "fault") == ["unknown"] and state_of(world, "locker-3") == "FAULT")
         tick()
 
-        world.access("access", VISITOR_A, "light-2", Action.ON)
+        world.access("access", VISITOR_A, "light-2", "on")
         tick()
 
         before = frames(world)
@@ -124,7 +124,7 @@ def test_FR12B_요청_하나의_이벤트가_순서대로_나간다(flow):
     assert types(mine) == ["mcp_call", *["step"] * 7, "posterior", "verdict", "command", "exec_result", "mcp_result"]
     call, *rest = mine
     assert dict(call.fields) == {
-        "requestId": flow.world.requests["ok"], "tool": "request_use", "action": Action.OPEN,
+        "requestId": flow.world.requests["ok"], "tool": "request_use", "action": "open",
         "target": {"kind": "nearest", "capability": "locker"},
     }
     assert [(e.fields["step"], e.fields["result"]) for e in rest if e.type == "step"] == [
@@ -134,7 +134,7 @@ def test_FR12B_요청_하나의_이벤트가_순서대로_나간다(flow):
     assert posterior.fields["posteriors"]["locker-1"] == 0.97 and posterior.fields["threshold"] == 0.5
     assert (verdict.fields["verdict"], verdict.fields["reason"], verdict.fields["nodeId"]) == (
         Verdict.OK, ReasonCode.OK, "locker-1")
-    assert (command.fields["nodeId"], command.fields["action"]) == ("locker-1", Action.OPEN)
+    assert (command.fields["nodeId"], command.fields["action"]) == ("locker-1", "open")
     assert (result.fields["nodeId"], result.fields["result"]) == ("locker-1", "succeeded")
 
     # 두 주기에 걸쳐 나간다: 보내는 중에 판정과 command 까지, 결과가 저장된 뒤에 exec_result 와 mcp_result

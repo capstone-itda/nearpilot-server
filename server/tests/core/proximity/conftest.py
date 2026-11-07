@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from nearpilot.shared.enums import Capability, DeviceState, Occupancy, TrustState
+from nearpilot.shared.enums import DeviceState, Occupancy, TrustState
 from nearpilot.shared.models import BeaconKey, NodeInfo, RssiFrame
 
 T0 = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
@@ -21,10 +21,10 @@ MODEL_ROOT = Path(__file__).resolve().parent / "fixtures" / "models"
 PLACE_A_NODES = ("locker-1", "locker-2", "locker-3", "light-1", "light-2", "speaker-1")
 
 _CAPABILITY_BY_PREFIX = {
-    "locker": Capability.LOCKER,
-    "light": Capability.LIGHT,
-    "mood": Capability.LIGHT,
-    "speaker": Capability.SPEAKER,
+    "locker": "locker",
+    "light": "light",
+    "mood": "light",
+    "speaker": "speaker",
 }
 
 
@@ -33,7 +33,7 @@ def make_node(
     place_id: str = "place-a",
     *,
     trust: TrustState = TrustState.TRUSTED,
-    capability: Capability | None = None,
+    capability: str | None = None,
     device_state: DeviceState = DeviceState.AVAILABLE,
 ) -> NodeInfo:
     """capability가 None이면 node_id 접두어로 정한다 (locker→LOCKER, light/mood→LIGHT, speaker→SPEAKER).
@@ -42,11 +42,11 @@ def make_node(
     """
     if capability is None:
         capability = _CAPABILITY_BY_PREFIX[node_id.partition("-")[0]]
-    occupancy = Occupancy.RENTAL if capability == Capability.LOCKER else Occupancy.SHARED
+    occupancy = Occupancy.RENTAL if capability == "locker" else Occupancy.SHARED
     return NodeInfo(
         node_id=node_id,
         place_id=place_id,
-        capability=capability,
+        kind=capability,
         occupancy=occupancy,
         trust_state=trust,
         device_state=device_state,

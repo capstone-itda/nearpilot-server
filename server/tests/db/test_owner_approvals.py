@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from nearpilot.shared.enums import Action, ApprovalStatus
+from nearpilot.shared.enums import ApprovalStatus
 
 from conftest import add_policy_revision, insert_approval, insert_node, insert_place, insert_policy, insert_user
 
@@ -37,7 +37,7 @@ def test_FR03_pending_for_only_approver(repo, conn):
 
     assert [a.approval_id for a in owner] == ["a1"]
     assert owner[0].node_id == "node1"
-    assert owner[0].action == Action.OPEN
+    assert owner[0].action == "open"
     assert owner[0].status == ApprovalStatus.PENDING
     assert owner[0].pending_until == datetime(2026, 1, 1, 0, 10, tzinfo=timezone.utc)
     assert owner[0].valid_until is None

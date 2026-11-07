@@ -13,6 +13,9 @@ from datetime import timedelta
 import pytest
 
 from _world import NOW, OWNER, SETTINGS, VISITOR_A, VISITOR_B, FakeReadiness, World
+from nearpilot.shared.enums import Occupancy
+from nearpilot.db.repositories._common import descriptor_to_json
+from nearpilot.shared.descriptor import legacy_descriptor
 from nearpilot.api.ws.names import PersonNames
 from nearpilot.api.ws.schema import render_event
 from nearpilot.core.allocation import AllocationWindow
@@ -38,7 +41,6 @@ from nearpilot.db.repositories.execution_store import SqliteExecutionStore
 from nearpilot.db.repositories.repository import SqliteRepository
 from nearpilot.shared.enums import (
     AccessMode,
-    Action,
     AdminWriteOutcome,
     ApprovalMode,
     ApprovalStatus,
@@ -111,14 +113,17 @@ def events_of(world, internal_request_id):
     return request_events(req, audits, commands, subject, occupancy, {})
 
 
+LIGHT = legacy_descriptor("light", Occupancy.SHARED)  # 공용 조명의 v2 템플릿 선언
+
+
 def add_shared_light(world):
     """공용 조명 light-1 (공개, 승인 불필요). World 는 사물함만 심는다."""
     c = world.conn
     c.execute(
-        "INSERT INTO node (node_id, place_id, capability, occupancy, trust_state, device_state, "
-        "exclusive_group, release_policy, last_seen_at) "
-        "VALUES ('light-1', 'p1', 'light', 'shared', 'trusted', 'AVAILABLE', NULL, '{}', ?)",
-        ((NOW - timedelta(seconds=1)).isoformat(),))
+        "INSERT INTO node (node_id, place_id, kind, occupancy, trust_state, device_state, "
+        "exclusive_group, release_policy, last_seen_at, descriptor, descriptor_hash) "
+        "VALUES ('light-1', 'p1', 'light', 'shared', 'trusted', 'AVAILABLE', NULL, '{}', ?, ?, ?)",
+        ((NOW - timedelta(seconds=1)).isoformat(), descriptor_to_json(LIGHT), LIGHT.hash))
     c.execute("INSERT INTO access_policy (policy_id, node_id, current_version) VALUES ('pol-light-1', 'light-1', 1)")
     c.execute(
         "INSERT INTO policy_revision (policy_id, version, visibility, mode, approver_user_id, "
@@ -165,7 +170,7 @@ def busy_user(make_world):
 def ok_shared(make_world):
     w = make_world({"light-1": 0.97})
     add_shared_light(w)
-    return w, w.pipeline.decide(w.request(VISITOR_A, "light-1", action=Action.ON))
+    return w, w.pipeline.decide(w.request(VISITOR_A, "light-1", action="on"))
 
 
 def capacity(make_world):
@@ -188,7 +193,7 @@ def need_approval(make_world):
 
 def approval_exhausted(make_world):
     w = make_world({"locker-2": 0.97})
-    w.access.request_access(VISITOR_A, "locker-2", Action.OPEN, "a1")
+    w.access.request_access(VISITOR_A, "locker-2", "open", "a1")
     approval_id = w.conn.execute("SELECT approval_id FROM approval").fetchone()[0]
     assert w.repo.decide_approval(ApprovalDecisionRequest(approval_id, OWNER, ApprovalStatus.APPROVED, NOW)).succeeded
     assert w.pipeline.decide(w.request(VISITOR_A, "locker-2", "u1")).verdict is Verdict.OK  # 한 번 쓴다
@@ -353,7 +358,7 @@ def test_FR12A_오류_뒤_다시_판정해_앞_단계에서_거부되면_거기�
 
 def test_FR12A_접근_신청의_감사는_정책_행만이라_request_access로_가려진다(make_world):
     w = make_world({"locker-2": 0.97})
-    d = w.access.request_access(VISITOR_A, "locker-2", Action.OPEN, "a1")
+    d = w.access.request_access(VISITOR_A, "locker-2", "open", "a1")
     req, audits, occupancy = read(w, d.internal_request_id)
     assert audits and {a.step for a in audits} == {Step.POLICY}
     assert request_tool(audits) == "request_access"
@@ -386,7 +391,7 @@ def test_FR12B_실제_판정_흐름의_이벤트는_형식_검사를_통과한�
 def started_command(world, decision):
     """OK 판정에 명령을 연결하고 보내기 시작한다 (실제 ExecutionStore)."""
     store = SqliteExecutionStore(world.conn)
-    command = store.link_command(decision.internal_request_id, decision.node_id, Action.OPEN).command
+    command = store.link_command(decision.internal_request_id, decision.node_id, "open").command
     assert store.begin_send(command.command_id).outcome is StoreOutcome.APPLIED
     return store, command
 
@@ -399,7 +404,7 @@ def test_FR12B_실제_명령_진행에_따라_이벤트가_앞에서부터_늘�
     iid = decision.internal_request_id
     store = SqliteExecutionStore(w.conn)
     stages = [events_of(w, iid)]  # 판정 저장
-    command = store.link_command(iid, "locker-1", Action.OPEN).command
+    command = store.link_command(iid, "locker-1", "open").command
     stages.append(events_of(w, iid))  # 명령 연결 (보내기 전)
     assert store.begin_send(command.command_id).outcome is StoreOutcome.APPLIED
     stages.append(events_of(w, iid))  # 보내기 시작
@@ -465,7 +470,7 @@ def test_FR12B_보내지_않고_취소한_명령은_이벤트가_없고_취소_�
     w, decision = ok_rental(make_world)
     iid = decision.internal_request_id
     store = SqliteExecutionStore(w.conn)
-    store.link_command(iid, "locker-1", Action.OPEN)
+    store.link_command(iid, "locker-1", "open")
     evidence = {"source": "node_not_connected", "reason": "NODE_NOT_CONNECTED", "confirmed_at": NOW}
     saved = store.cancel_not_sent(iid, ExecutionStatus.PENDING, ReasonCode.NODE_NOT_CONNECTED, evidence)
     assert saved.outcome is StoreOutcome.APPLIED

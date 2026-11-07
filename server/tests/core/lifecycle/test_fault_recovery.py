@@ -11,7 +11,7 @@ import pytest
 
 from nearpilot.core.lifecycle.fault_recovery import FaultRecoveryService, settlement_digest
 from nearpilot.shared.enums import (
-    ApprovalUsageState, Capability, CommandOutcome, DeviceState, EndReason, ExecutionStatus, Occupancy, RecoveryStatus,
+    ApprovalUsageState, CommandOutcome, DeviceState, EndReason, ExecutionStatus, Occupancy, RecoveryStatus,
     SessionState, StoreConflictReason, StoreOutcome, TrustState,
 )
 from nearpilot.shared.errors import StoreError, StoreNotApplied, StoreOutcomeUnknown
@@ -24,7 +24,7 @@ from nearpilot.shared.models import (
 class RepositoryFake:
     def __init__(self, at):
         self.node = NodeInfo(
-            "locker-1", "place-1", Capability.LOCKER, Occupancy.RENTAL,
+            "locker-1", "place-1", "locker", Occupancy.RENTAL,
             TrustState.TRUSTED, DeviceState.FAULT, None, at, session_id="connection-1",
         )
         self.use = UseSession(
@@ -408,7 +408,7 @@ def test_FR19_unconfirmed_usage_not_released(env):
 
 
 def test_NFR04_shared_fault_has_no_use_session(env):
-    env.repository.node = replace(env.repository.node, capability=Capability.LIGHT, occupancy=Occupancy.SHARED)
+    env.repository.node = replace(env.repository.node, kind="light", occupancy=Occupancy.SHARED)
     saved = record(env, use_id=None)
     assert saved.use_id is None
     assert env.repository.use.state == SessionState.CLOSING

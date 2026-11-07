@@ -10,16 +10,15 @@ import logging
 import sqlite3
 from collections.abc import Mapping
 from contextlib import contextmanager
-from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Protocol
 from uuid import uuid4
 
-from nearpilot.shared.config import Settings
+from nearpilot.shared.config import Settings, settings_from_data, settings_to_data
 from nearpilot.shared.errors import StoreNotApplied, StoreOutcomeUnknown
-from nearpilot.shared.descriptor import DeviceDescriptor, legacy_controls, parse_descriptor
-from nearpilot.shared.enums import Capability, DeviceState, Occupancy, TrustState
-from nearpilot.shared.models import LightControls, LightSetting, NodeInfo, SpeakerControls, SpeakerSetting
+from nearpilot.shared.descriptor import DeviceDescriptor, parse_descriptor
+from nearpilot.shared.enums import DeviceState, Occupancy, TrustState
+from nearpilot.shared.models import NodeInfo
 
 logger = logging.getLogger(__name__)
 
@@ -59,21 +58,29 @@ def from_json(value: str | None) -> dict[str, Any]:
 
 def settings_to_json(settings: Settings) -> str:
     """판정에 적용한 설정 전체를 저장한다. 버전만 저장하지 않는다 (#83)."""
-    return json.dumps(asdict(settings), ensure_ascii=False)
+    return json.dumps(settings_to_data(settings), ensure_ascii=False)
 
 
 def settings_from_json(value: str) -> Settings:
-    """저장한 설정 스냅샷을 그대로 복원한다. 현재 설정으로 채우지 않는다 (#83)."""
-    return Settings(**json.loads(value))
+    """저장한 설정 스냅샷을 복원한다. 현재 설정으로 채우지 않는다 (#83).
+
+    조명·스피커 설정 키가 있던 옛 스냅샷은 `param_max`·`param_default` 로 옮긴다 (FR-22).
+    """
+    return settings_from_data(json.loads(value))
 
 
-def light_to_json(light: LightSetting | None) -> str | None:
-    """명령의 조명 설정 열 값. 키 순서를 고정해서 같은 설정은 같은 문자열이다 (FR-09)."""
-    return None if light is None else json.dumps(light.to_json(), sort_keys=True)
+def arguments_to_json(arguments: Mapping[str, Any] | None) -> str | None:
+    """명령의 동작 인자 열 값. 키 순서를 고정해서 같은 인자는 같은 문자열이다 (FR-09)."""
+    return None if arguments is None else json.dumps(dict(arguments), sort_keys=True, ensure_ascii=False)
 
 
-def light_from_json(value: str | None) -> LightSetting | None:
-    return None if value is None else LightSetting.from_json(json.loads(value))
+def arguments_from_json(value: str | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    data = json.loads(value)
+    if not isinstance(data, dict):
+        raise ValueError(f"명령 인자 형식 오류: {value!r}")
+    return data
 
 
 def descriptor_to_json(descriptor: DeviceDescriptor) -> str:
@@ -87,13 +94,11 @@ def descriptor_from_json(value: str | None) -> DeviceDescriptor | None:
 
 
 def node_from_row(row: sqlite3.Row) -> NodeInfo:
-    """`node` 행 → `NodeInfo`. 조명·스피커 제어 정보는 선언에서 계산한다 (spec 결정 7)."""
-    descriptor = descriptor_from_json(row["descriptor"])
-    light, volume_max = legacy_controls(descriptor)
+    """`node` 행 → `NodeInfo`."""
     return NodeInfo(
         node_id=row["node_id"],
         place_id=row["place_id"],
-        capability=Capability(row["capability"]),
+        kind=row["kind"],
         occupancy=Occupancy(row["occupancy"]),
         trust_state=TrustState(row["trust_state"]),
         device_state=DeviceState(row["device_state"]),
@@ -104,20 +109,9 @@ def node_from_row(row: sqlite3.Row) -> NodeInfo:
         session_first_seen_at=(
             parse_iso(row["session_first_seen_at"]) if row["session_first_seen_at"] else None
         ),
-        light_controls=None if light is None else LightControls(*light),
-        speaker_controls=None if volume_max is None else SpeakerControls(volume_max),
-        descriptor=descriptor,
+        descriptor=descriptor_from_json(row["descriptor"]),
         descriptor_hash=row["descriptor_hash"],
     )
-
-
-def speaker_to_json(speaker: SpeakerSetting | None) -> str | None:
-    """명령의 스피커 음량 열 값. 키 순서를 고정해서 같은 음량은 같은 문자열이다 (FR-09)."""
-    return None if speaker is None else json.dumps(speaker.to_json(), sort_keys=True)
-
-
-def speaker_from_json(value: str | None) -> SpeakerSetting | None:
-    return None if value is None else SpeakerSetting.from_json(json.loads(value))
 
 
 class _JsonlExporter(Protocol):

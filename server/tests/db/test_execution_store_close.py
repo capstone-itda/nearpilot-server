@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from nearpilot.shared.enums import Action, EndReason, StoreConflictReason, StoreOutcome
+from nearpilot.shared.enums import EndReason, StoreConflictReason, StoreOutcome
 
 from conftest import insert_node, insert_place, insert_request, insert_use_session, insert_user
 
@@ -46,7 +46,7 @@ def test_FR20_begin_close_idempotent(store, conn):
 def test_FR19_begin_close_command_in_progress(store, conn):
     _seed_active(conn)
     insert_request(conn, internal_request_id="req-reop", request_id="ext-2")
-    linked = store.link_command("req-reop", "node1", Action.OPEN)
+    linked = store.link_command("req-reop", "node1", "open")
     store.begin_send(linked.command.command_id)
 
     result = store.begin_close("use1", EndReason.RELEASE)
@@ -116,7 +116,7 @@ def test_FR20_finish_close_state_conflict(store, conn):
 def test_FR19_finish_close_command_in_progress(store, conn):
     _seed_active(conn)
     insert_request(conn, internal_request_id="req-reop", request_id="ext-2")
-    linked = store.link_command("req-reop", "node1", Action.OPEN)
+    linked = store.link_command("req-reop", "node1", "open")
     store.begin_close("use1", EndReason.RELEASE)
     # 반납 시작 뒤 구동 명령이 진행 중인 기록을 직접 만든다. 종료 직전 검사가 막는다.
     conn.execute("UPDATE node_command SET status = 'in_progress' WHERE command_id = ?",

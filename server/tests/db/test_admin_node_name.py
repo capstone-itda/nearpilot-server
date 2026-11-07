@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import pytest
 
 from nearpilot.shared.descriptor import legacy_descriptor
-from nearpilot.shared.enums import AdminWriteOutcome, AdminWriteReason, Capability, Occupancy, TrustState
+from nearpilot.shared.enums import AdminWriteOutcome, AdminWriteReason, Occupancy, TrustState
 from nearpilot.shared.interfaces import AdminRepository
 from nearpilot.shared.models import NodeAnnounce
 
@@ -106,13 +106,13 @@ def test_FR12A_기기_발표는_이름을_지우지_않는다(admin, repo, conn)
     admin.set_node_name("node1", "사물함 1")
 
     # 같은 기능을 다시 발표해도, 기능이 바뀌어 신뢰가 되돌아가도 이름은 그대로다
-    repo.upsert_announced_node(_announce("node1", Capability.LOCKER, Occupancy.RENTAL))
+    repo.upsert_announced_node(_announce("node1", "locker", Occupancy.RENTAL))
     assert _name(conn) == "사물함 1"
-    repo.upsert_announced_node(_announce("node1", Capability.LIGHT, Occupancy.SHARED))
-    row = conn.execute("SELECT name, capability, trust_state FROM node WHERE node_id = 'node1'").fetchone()
-    assert (row["name"], row["capability"], row["trust_state"]) == (
-        "사물함 1", Capability.LIGHT.value, TrustState.DISCOVERED.value)
+    repo.upsert_announced_node(_announce("node1", "light", Occupancy.SHARED))
+    row = conn.execute("SELECT name, kind, trust_state FROM node WHERE node_id = 'node1'").fetchone()
+    assert (row["name"], row["kind"], row["trust_state"]) == (
+        "사물함 1", "light", TrustState.DISCOVERED.value)
 
     # 발표로 새로 생긴 기기는 이름이 없다
-    repo.upsert_announced_node(_announce("node2", Capability.LOCKER, Occupancy.RENTAL))
+    repo.upsert_announced_node(_announce("node2", "locker", Occupancy.RENTAL))
     assert _name(conn, "node2") is None

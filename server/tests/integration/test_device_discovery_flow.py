@@ -31,7 +31,7 @@ def test_FR09_discover_same_place_with_low_probabilities_then_request_by_returne
             assert w.broker.commands() == []
 
             # 이름을 세션에 주입하지 않고 조회 결과의 기능으로 기기를 고른다.
-            light = next(n for n in listing["devices"] if n["capability"] == "light")
+            light = next(n for n in listing["devices"] if n["kind"] == "light")
             _, used = await mcp.call("request_use", {
                 "target_spec": light["node_id"], "action": "on", "request_id": "discovered-light",
             }, token=TOKENS[VISITOR_A])

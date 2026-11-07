@@ -11,7 +11,7 @@ import pytest
 from _runtime import make_config
 from nearpilot.runtime.config import ConfigError, ProvisioningConfig, parse_config
 from nearpilot.runtime.provisioning import FleetProvisioningSource, MdnsAdvertiser
-from nearpilot.shared.enums import Capability, Occupancy
+from nearpilot.shared.enums import Occupancy
 from nearpilot.shared.interfaces import ProvisioningSource
 
 SECRET = "node-secret-0123456789"
@@ -47,7 +47,7 @@ def test_NFR12_fleet_source_builds_bundle(fleet):
     bundle = target.bundle("light-1")
     assert (bundle.node_id, bundle.mqtt_user, bundle.mqtt_password, bundle.mqtt_host, bundle.mqtt_port,
             bundle.capability, bundle.occupancy) == (
-        "light-1", "light-1", SECRET, "nearpilot.local", 18883, Capability.LIGHT, Occupancy.SHARED)
+        "light-1", "light-1", SECRET, "nearpilot.local", 18883, "light", Occupancy.SHARED)
     assert SECRET not in repr(bundle)  # repr 에 비밀번호를 쓰지 않는다 (NFR-08)
     locker = target.bundle("locker-1")
     assert (locker.mqtt_user, locker.mqtt_password) == ("acct-locker", "locker-secret")

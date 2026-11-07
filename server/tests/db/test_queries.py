@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 
 import pytest
 
-from nearpilot.shared.enums import Action, Capability
 from nearpilot.shared.models import BeaconKey
 
 from conftest import (
@@ -75,7 +74,7 @@ def test_FR13_nodes_returns_all_regardless_of_trust(conn, repo):
     insert_node(conn, node_id="n2", capability="light", occupancy="shared")
 
     all_nodes = repo.nodes()
-    lockers = repo.nodes(Capability.LOCKER)
+    lockers = repo.nodes("locker")
 
     assert {n.node_id for n in all_nodes} == {"n1", "n2"}
     assert [n.node_id for n in lockers] == ["n1"]
@@ -108,13 +107,13 @@ def test_FR14_valid_approval_scope(conn, repo):
 
     now = datetime(2026, 6, 1, tzinfo=timezone.utc)
 
-    assert repo.valid_approval("u1", "node1", Action.OPEN, 1, now) is not None
+    assert repo.valid_approval("u1", "node1", "open", 1, now) is not None
     # 동작이 다르다
-    assert repo.valid_approval("u1", "node1", Action.ON, 1, now) is None
+    assert repo.valid_approval("u1", "node1", "on", 1, now) is None
     # 정책 버전이 다르다
-    assert repo.valid_approval("u1", "node1", Action.OPEN, 2, now) is None
+    assert repo.valid_approval("u1", "node1", "open", 2, now) is None
     # 요청자가 다르다
-    assert repo.valid_approval("other", "node1", Action.OPEN, 1, now) is None
+    assert repo.valid_approval("other", "node1", "open", 1, now) is None
 
 
 def test_FR14_valid_approval_expired(conn, repo):
@@ -126,7 +125,7 @@ def test_FR14_valid_approval_expired(conn, repo):
 
     now = datetime(2026, 6, 1, tzinfo=timezone.utc)
 
-    assert repo.valid_approval("u1", "node1", Action.OPEN, 1, now) is None
+    assert repo.valid_approval("u1", "node1", "open", 1, now) is None
 
 
 def test_FR14_valid_approval_latest_valid_until(conn, repo):
@@ -144,7 +143,7 @@ def test_FR14_valid_approval_latest_valid_until(conn, repo):
     )
 
     now = datetime(2026, 6, 1, tzinfo=timezone.utc)
-    approval = repo.valid_approval("u1", "node1", Action.OPEN, 1, now)
+    approval = repo.valid_approval("u1", "node1", "open", 1, now)
 
     assert approval.approval_id == "a2"
 

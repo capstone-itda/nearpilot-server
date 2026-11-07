@@ -12,7 +12,9 @@ from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
-from nearpilot.core.decision.pipeline import make_decision, select_candidates, threshold_for
+from nearpilot.core.decision.pipeline import (
+    is_reoperate, make_decision, select_candidates, target_kind, threshold_for,
+)
 from nearpilot.shared.enums import (
     ExecutionKind, ReasonCode, SessionState, Step, TargetKind, TrustState, Verdict,
 )
@@ -93,7 +95,7 @@ class Rechecker:
 
         # ② 대상 — 다른 기기를 고르지 않는다
         explicit = req.target.kind is TargetKind.EXPLICIT
-        candidates = select_candidates(all_nodes, req.target.capability, s, now, place_id)
+        candidates = select_candidates(all_nodes, target_kind(req, all_nodes), s, now, place_id)
         if node_id not in {n.node_id for n in candidates}:
             raise stop(Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE)
 
@@ -101,7 +103,7 @@ class Rechecker:
         p: float | None = None
         prob: dict[str, Any] = {"skipped": True, "reason_detail": "explicit_target"}
         if not explicit:
-            threshold = threshold_for(s, req.target.capability)
+            threshold = threshold_for(s, req.target.device_kind)
             if threshold is None:
                 raise ValueError("임계값 설정이 없다")
             place_nodes = [n for n in all_nodes if n.place_id == place_id]
@@ -113,7 +115,8 @@ class Rechecker:
 
         # ④ 정책 — 이 요청의 ID 를 넘겨 ⑤가 예약한 자기 사용분을 남은 횟수에서 뺀다 (FR-14, FR-19)
         check = self._policy.check(req.user_id, node_id, req.action, now,
-                                   internal_request_id=ctx.internal_request_id)
+                                   internal_request_id=ctx.internal_request_id,
+                                   reoperate=is_reoperate(target, req.action))
         if check.verdict is not Verdict.OK:
             if check.verdict not in (Verdict.NEED_APPROVAL, Verdict.DENY):
                 raise ValueError(f"정책 검사의 알 수 없는 판정: {check.verdict!r}")

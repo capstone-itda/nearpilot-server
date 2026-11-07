@@ -15,10 +15,8 @@ from _dashboard import NOW, OWNER, VISITOR
 from nearpilot.api.ws.names import PersonNames
 from nearpilot.api.ws.schema import EVENT_TYPES, RESPONSE_KINDS, SchemaError, render_event, render_response
 from nearpilot.shared.enums import (
-    Action,
     ApprovalMode,
     ApprovalStatus,
-    Capability,
     DeviceState,
     ExecutionStatus,
     Occupancy,
@@ -145,7 +143,7 @@ EVENT_CASES = [
     ),
     EventCase(
         "mcp_call", "mcp_call",
-        {"requestId": "req-1", "tool": "request_use", "action": Action.OPEN,
+        {"requestId": "req-1", "tool": "request_use", "action": "open",
          "target": {"kind": TargetKind.NEAREST, "capability": "locker", "nodeId": "locker-1"}},
         {"requestId": "req-1", "tool": "request_use",
          "target": {"kind": "nearest", "capability": "locker", "nodeId": "locker-1"}, "action": "open",
@@ -183,7 +181,7 @@ EVENT_CASES = [
     EventCase(
         "transition", "transition",
         {"nodeId": "locker-1", "to": DeviceState.FAULT, "overdue": True,
-         "fault": {"cause": ReasonCode.EXEC_UNKNOWN, "action": Action.OPEN}},
+         "fault": {"cause": ReasonCode.EXEC_UNKNOWN, "action": "open"}},
         {"nodeId": "locker-1", "to": "FAULT", "overdue": True,
          "fault": {"cause": "EXEC_UNKNOWN", "action": "open"}},
         optional=("overdue", "fault"),
@@ -393,7 +391,7 @@ PLACES = {
     "places": [
         {"placeId": "lounge", "placeName": "라운지", "modelVersion": "m1", "calibrationVersion": "c1",
          "devices": [
-             {"nodeId": "locker-1", "name": "사물함 1", "capability": Capability.LOCKER,
+             {"nodeId": "locker-1", "name": "사물함 1", "capability": "locker",
               "occupancy": Occupancy.RENTAL},
              {"nodeId": "light-1", "name": "조명 1", "capability": "light", "occupancy": "shared"},
          ]},
@@ -450,8 +448,8 @@ AUDIT_OUT = [
 ]
 
 HISTORY = [
-    {"requestId": "req-1", "at": NOW, "target": {"kind": TargetKind.NEAREST, "capability": Capability.LOCKER},
-     "action": Action.OPEN, "verdict": Verdict.OK, "nodeId": "locker-1", "outcome": ExecutionStatus.SUCCEEDED,
+    {"requestId": "req-1", "at": NOW, "target": {"kind": TargetKind.NEAREST, "capability": "locker"},
+     "action": "open", "verdict": Verdict.OK, "nodeId": "locker-1", "outcome": ExecutionStatus.SUCCEEDED,
      "code": ReasonCode.OK, "subject": VISITOR},  # str 자리에 온 StrEnum 멤버도 값 문자열로 나간다
     {"requestId": "req-2", "at": EARLY, "target": {"kind": "explicit", "nodeId": "light-1"}, "action": "on",
      "verdict": "ASK", "outcome": "더 가까이 와야 한다", "subject": OWNER},
@@ -465,8 +463,8 @@ HISTORY_OUT = [
 
 # 선택 키를 가능한 한 채운 요청 셋. 값의 앞뒤가 맞는지는 형식 검사의 일이 아니다
 REQUEST = {  # 실행까지 끝난 요청
-    "id": "req-1", "tool": "request_use", "target": {"kind": TargetKind.NEAREST, "capability": Capability.LOCKER},
-    "action": Action.OPEN, "at": NOW, "verdict": Verdict.OK, "reason": ReasonCode.OK,
+    "id": "req-1", "tool": "request_use", "target": {"kind": TargetKind.NEAREST, "capability": "locker"},
+    "action": "open", "at": NOW, "verdict": Verdict.OK, "reason": ReasonCode.OK,
     "steps": [{"result": "pass"}, {"result": "pass"}, {"result": "pass", "detail": "후보 2개"},
               {"result": "pass", "detail": "p=0.97"}, {"result": "pass"}, {"result": "pass"}, {"result": "pass"}],
     "nodeId": "locker-1", "posteriors": {"locker-1": 0.97, "light-1": 0.03}, "threshold": 0.9,
@@ -656,7 +654,7 @@ BAD_RESPONSES = [
     bad_response("place_devices_missing", "places", PLACES, "places.places[0].devices",
                  ("places", 0, "devices"), DROP),
     bad_response("place_nested_enum", "places", PLACES, "places.places[0].devices[1].capability",
-                 ("places", 0, "devices", 1, "capability"), "gate"),
+                 ("places", 0, "devices", 1, "capability"), "Gate!"),  # 종류 이름 규칙 밖
     bad_response("weak_rssi_missing", "places", PLACES, "places.weakRssiDbm", ("weakRssiDbm",), DROP),
     bad_response("weak_rssi_bool_for_num", "places", PLACES, "places.weakRssiDbm", ("weakRssiDbm",), True),
     pytest.param(  # 약한 신호 기준은 응답 전체에 하나다. 장소마다 있는 값은 그것을 대신하지 않는다

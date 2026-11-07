@@ -1,4 +1,4 @@
-"""FR-09 조명 밝기·색 제어의 MCP → CORE → DB → MQTT 경로 (specs/core-light-control/spec.md).
+"""FR-09 조명 `on` 인자의 MCP → CORE → DB → MQTT 경로 (specs/core-device-actions/spec.md).
 
 실제 SQLite·runtime 조립 위에서 시뮬레이터를 fake Paho 로 연결한다. 근접 추정은 fake 로 고정한다.
 """
@@ -67,7 +67,7 @@ def test_FR09_runtime_light_setting_reaches_device(world, caplog):  # noqa: F811
             await asyncio.to_thread(announce_controls, w, RING)
             devices = (await mcp.call("find_available_devices", {}, token=token))[1]
             out = {"devices": devices}
-            out["blue"] = await call({"request_id": "blue", "brightness": 30, "color": "#0000ff"})
+            out["blue"] = await call({"request_id": "blue", "arguments": {"brightness": 30, "color": "#0000ff"}})
             await asyncio.to_thread(wait_until, lambda: [c["status"] for c in w.commands("light-1")]
                                     == ["succeeded"])
             # 저장소가 다시 만든 실행 문맥도 조명 설정을 담아야 결과 인계가 끝나고 뒤 보고가 막히지 않는다.
@@ -76,13 +76,13 @@ def test_FR09_runtime_light_setting_reaches_device(world, caplog):  # noqa: F811
             w.broker.status("light-1")
             await asyncio.to_thread(wait_until, lambda: query(
                 w.db, "SELECT last_seen_at FROM node WHERE node_id = 'light-1'")[0]["last_seen_at"] != seen)
-            out["above"] = await call({"request_id": "above", "brightness": 65})
-            out["bad"] = await call({"request_id": "bad", "brightness": "30"})
-            out["keep"] = await call({"request_id": "keep", "brightness": 10})
+            out["above"] = await call({"request_id": "above", "arguments": {"brightness": 65}})
+            out["bad"] = await call({"request_id": "bad", "arguments": {"brightness": "30"}})
+            out["keep"] = await call({"request_id": "keep", "arguments": {"brightness": 10}})
             await asyncio.to_thread(wait_until, lambda: [c["status"] for c in w.commands("light-1")]
                                     == ["succeeded", "succeeded"])
-            out["conflict"] = await call({"request_id": "blue", "brightness": 31, "color": "#0000FF"})
-            out["repeat"] = await call({"request_id": "blue", "brightness": 30, "color": "#0000FF"})
+            out["conflict"] = await call({"request_id": "blue", "arguments": {"brightness": 31, "color": "#0000ff"}})
+            out["repeat"] = await call({"request_id": "blue", "arguments": {"brightness": 30, "color": "#0000ff"}})
             return out
 
     with caplog.at_level(logging.WARNING):
@@ -90,7 +90,9 @@ def test_FR09_runtime_light_setting_reaches_device(world, caplog):  # noqa: F811
 
     assert "CORE handover failed" not in caplog.text
     light = next(d for d in out["devices"]["devices"] if d["node_id"] == "light-1")
-    assert light["controls"] == RING
+    on = next(a for a in light["actions"] if a["name"] == "on")
+    assert on["input_schema"]["properties"]["brightness"]["maximum"] == 64
+    assert "color" in on["input_schema"]["properties"] and light["kind"] == "light"
     assert out["blue"]["verdict"] == "OK"
     assert (out["above"]["verdict"], out["above"]["reason"]) == ("DENY", "PARAMETER_OUT_OF_RANGE")
     assert (out["bad"]["verdict"], out["bad"]["reason"]) == ("DENY", "INVALID_INPUT")
@@ -101,7 +103,7 @@ def test_FR09_runtime_light_setting_reaches_device(world, caplog):  # noqa: F811
     # 거부한 요청은 명령을 만들지 않는다. 생략한 색은 마지막 성공 on 의 값을 따른다.
     assert [c["parameters"] for c in light_commands(w)] == [
         {"brightness": 30, "color": "#0000FF"}, {"brightness": 10, "color": "#0000FF"}]
-    stored = [json.loads(r["light"]) for r in query(w.db, "SELECT light FROM node_command ORDER BY rowid")]
+    stored = [json.loads(r["arguments"]) for r in query(w.db, "SELECT arguments FROM node_command ORDER BY rowid")]
     assert stored == [c["parameters"] for c in light_commands(w)]
 
 
@@ -117,11 +119,12 @@ def test_FR09_runtime_light_without_controls_stays_plain(world):  # noqa: F811
             plain = (await mcp.call("request_use", {"target_spec": "light-1", "action": "on",
                                                     "request_id": "plain"}, token=token))[1]
             with_args = (await mcp.call("request_use", {"target_spec": "light-1", "action": "on",
-                                                        "request_id": "blue", "brightness": 30},
+                                                        "request_id": "blue", "arguments": {"brightness": 30}},
                                         token=token))[1]
             return plain, with_args
 
     plain, with_args = asyncio.run(scenario())
     assert plain["verdict"] == "OK"
-    assert (with_args["verdict"], with_args["reason"]) == ("DENY", "UNSUPPORTED_PARAMETER")
+    # 인자를 선언하지 않은 조명에 인자를 주면 스키마 위반이다 (FR-09).
+    assert (with_args["verdict"], with_args["reason"]) == ("DENY", "INVALID_INPUT")
     assert ["parameters" in c for c in light_commands(w)] == [False]
