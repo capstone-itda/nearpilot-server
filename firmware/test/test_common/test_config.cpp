@@ -7,8 +7,6 @@
 namespace {
 
 void fill(JsonDocument& doc) {
-    doc["capability"] = "light";
-    doc["occupancy"] = "shared";
     doc["node_id"] = "light-01";
     doc["mqtt_user"] = "node-light-01";
     doc["mqtt_password"] = "test-only";
@@ -44,7 +42,7 @@ void test_NFR08_config_accepts_valid_values() {
 }
 
 void test_FR07_config_has_no_clock_keys() {
-    TEST_ASSERT_EQUAL_UINT32(9, np::CONFIG_KEY_COUNT);
+    TEST_ASSERT_EQUAL_UINT32(7, np::CONFIG_KEY_COUNT);
     for (const char* key : {"time_server", "clock_max_error_sec", "time_trust_ms", "time_resync_ms"})
         TEST_ASSERT_FALSE_MESSAGE(np::isConfigKey(key), key);  // CONFIG_SET answers unknown_key.
     // A configuration stored before #236 still loads; its clock keys are ignored.
@@ -90,36 +88,27 @@ void test_NFR08_config_rejects_invalid_values() {
     TEST_ASSERT_EQUAL_STRING("mqtt_port", np::decodeConfig(doc, out));
 }
 
-void test_FR04_announce_uses_configured_capability() {
-    for (const char* capability : {"locker", "light", "speaker"}) {
-        for (const char* occupancy : {"rental", "shared"}) {
-            JsonDocument settings, announcement;
-            fill(settings);
-            settings["capability"] = capability;
-            settings["occupancy"] = occupancy;
-            np::NodeConfig out;
-            TEST_ASSERT_NULL(np::decodeConfig(settings, out));
-            np::announceConfig(announcement, out);
-            TEST_ASSERT_EQUAL_STRING(capability, announcement["capability"].as<const char*>());
-            TEST_ASSERT_EQUAL_STRING(occupancy, announcement["occupancy"].as<const char*>());
-        }
+// The kind and occupancy are in the built-in declaration, not in the settings (#245, spec decision 9).
+void test_FR04_config_keys_exclude_kind() {
+    const char* keys[] = {"node_id", "mqtt_user", "mqtt_password", "wifi_ssid", "wifi_password", "mqtt_host",
+                          "mqtt_port"};
+    for (const char* key : keys) TEST_ASSERT_TRUE_MESSAGE(np::isConfigKey(key), key);
+    for (const char* key : {"capability", "occupancy", "kind", "descriptor"})
+        TEST_ASSERT_FALSE_MESSAGE(np::isConfigKey(key), key);  // CONFIG_SET answers unknown_key.
+}
+
+// A configuration stored before #245 still loads; its capability and occupancy are ignored, whatever they say.
+void test_FR04_stored_config_with_old_keys_loads() {
+    for (const char* capability : {"locker", "light", "speaker", "unsupported"}) {
+        JsonDocument doc;
+        fill(doc);
+        doc["capability"] = capability;
+        doc["occupancy"] = "rental";
+        np::NodeConfig out;
+        TEST_ASSERT_NULL(np::decodeConfig(doc, out));
+        TEST_ASSERT_EQUAL_STRING("light-01", out.nodeId.c_str());
     }
 }
-
-void rejectsSetting(const char* key) {
-    TEST_ASSERT_TRUE(np::isConfigKey(key));
-    for (const char* invalid : {"", "LIGHT", "unsupported", " light"})
-        TEST_ASSERT_EQUAL_STRING(key, decodeWith(key, invalid));
-    TEST_ASSERT_EQUAL_STRING(key, decodeWith(key, nullptr));
-    JsonDocument doc;
-    fill(doc);
-    doc[key] = 1;
-    np::NodeConfig out;
-    TEST_ASSERT_EQUAL_STRING(key, np::decodeConfig(doc, out));
-}
-
-void test_NFR08_config_rejects_invalid_capability() { rejectsSetting("capability"); }
-void test_NFR08_config_rejects_invalid_occupancy() { rejectsSetting("occupancy"); }
 
 void test_NFR08_config_hex_rejects_nul() {
     std::string out;
@@ -140,8 +129,7 @@ void runConfigTests() {
     RUN_TEST(test_NFR08_config_accepts_valid_values);
     RUN_TEST(test_NFR08_config_rejects_invalid_values);
     RUN_TEST(test_FR07_config_has_no_clock_keys);
-    RUN_TEST(test_FR04_announce_uses_configured_capability);
-    RUN_TEST(test_NFR08_config_rejects_invalid_capability);
-    RUN_TEST(test_NFR08_config_rejects_invalid_occupancy);
+    RUN_TEST(test_FR04_config_keys_exclude_kind);
+    RUN_TEST(test_FR04_stored_config_with_old_keys_loads);
     RUN_TEST(test_NFR08_config_hex_rejects_nul);
 }

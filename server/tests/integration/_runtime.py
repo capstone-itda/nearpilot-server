@@ -165,11 +165,11 @@ class SimBroker:
         users = beacons or {node_id: (VISITOR_A, VISITOR_B) for node_id in node_ids}
         self.nodes: dict[str, SimNode] = {}
         for node_id in node_ids:
-            capability, occupancy = NODES[node_id]
+            capability, _ = NODES[node_id]
             scenario = Scenario(actuation_sec=0.0, beacons=tuple(
                 Beacon(UUID, 1, MINOR[user], -55.0) for user in users.get(node_id, ())))
             store = CommandStore(tmp / "sim" / f"{node_id}.sqlite3")
-            self.nodes[node_id] = SimNode(node_id, capability, occupancy, store, scenario)
+            self.nodes[node_id] = SimNode(node_id, capability, store, scenario)
         self.granted = list(GRANTED)
         self.silent: set[str] = set()  # 상태 보고를 보내지 않는 기기
         self.drop_commands: set[str] = set()  # 명령에 응답하지 않는 기기

@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "descriptor_fixtures.h"
 #include "fake_store.h"
 #include "np_command.h"
 #include "np_executor.h"
@@ -76,7 +77,7 @@ struct ResultFails : FakeStore {
 };
 
 std::string command(const char* id, const char* action = "on") {
-    return std::string("{\"schema_version\":2,\"command_id\":\"") + id + "\",\"node_id\":\"light-01\",\"action\":\"" +
+    return std::string("{\"schema_version\":3,\"command_id\":\"") + id + "\",\"node_id\":\"light-01\",\"action\":\"" +
            action + "\",\"target_session_id\":\"s\",\"issued_at\":\"2026-10-23T00:00:00Z\","
            "\"expires_at\":\"2026-10-23T00:00:30Z\"}";
 }
@@ -150,7 +151,8 @@ void test_FR06_duplicate_after_restart() {
     TEST_ASSERT_EQUAL_UINT32(1, port.checks.size());
 }
 
-void test_FR22_changed_capability_preserves_duplicate() {
+// A firmware update that changes the declaration keeps answering stored commands from their records.
+void test_FR22_changed_descriptor_preserves_duplicate() {
     class ValidatingPort : public FakePort {
     public:
         np::CommandContext context;
@@ -158,7 +160,7 @@ void test_FR22_changed_capability_preserves_duplicate() {
     } port;
     port.context.nodeId = "light-01";
     port.context.session = "s";
-    port.context.capability = "light";
+    port.context.descriptor = &fixtures::light();
     port.context.connected = port.context.clockTrusted = true;
     port.context.nowSec = 1792713610.0;
     FakeStore store;
@@ -167,7 +169,7 @@ void test_FR22_changed_capability_preserves_duplicate() {
     executor.handle(command("a"), false);
     const std::string original = store.slots[0];
     TEST_ASSERT_EQUAL_INT(1, port.actuations);
-    port.context.capability = "locker";
+    port.context.descriptor = &fixtures::locker();
     TEST_ASSERT_NULL(ledger.ownerConflict("light-01"));
     executor.handle(command("a"), false);
     TEST_ASSERT_EQUAL_STRING("succeeded", port.published.back().c_str());
@@ -507,7 +509,7 @@ void test_NFR10_light_ring_scaled_never_exceeds_brightness() {
     }
 }
 
-// Records what the executor hands to the output; parameters must reach it unchanged.
+// Records what the executor hands to the output; arguments must reach it unchanged.
 struct RecordingPort : FakePort {
     np::Actuation last;
     np::OutputResult output(const np::Actuation& request) override {
@@ -519,28 +521,29 @@ struct RecordingPort : FakePort {
 std::string lightCommand(const std::string& id, int brightness, const char* color) {
     std::string base = command(id.c_str());
     base.pop_back();
-    return base + ",\"parameters\":{\"brightness\":" + std::to_string(brightness) + ",\"color\":\"" + color + "\"}}";
+    return base + ",\"arguments\":{\"brightness\":" + std::to_string(brightness) + ",\"color\":\"" + color + "\"}}";
 }
 
 std::string speakerCommand(const std::string& id, int volume) {
     std::string base = command(id.c_str());
     base.pop_back();
-    return base + ",\"parameters\":{\"volume\":" + std::to_string(volume) + "}}";
+    return base + ",\"arguments\":{\"volume\":" + std::to_string(volume) + "}}";
 }
 
-void test_FR09_executor_passes_parameters() {
+void test_FR09_executor_passes_arguments() {
     FakeStore store;
     RecordingPort port;
     np::Ledger ledger(store);
     np::Executor executor(ledger, port, 128, 512);
     executor.handle(lightCommand("a", 30, "#0000FF"), false);
     assertPublished({"accepted", "running", "succeeded"}, port);
-    TEST_ASSERT_TRUE(port.last.light);
+    TEST_ASSERT_TRUE(port.last.hasBrightness);
+    TEST_ASSERT_TRUE(port.last.hasColor);
     TEST_ASSERT_EQUAL_UINT8(30, port.last.brightness);
     TEST_ASSERT_EQUAL_HEX32(0x0000FF, port.last.color);
 }
 
-void test_FR22_parameters_change_conflicts() {
+void test_FR22_arguments_change_conflicts() {
     FakeStore store;
     FakePort port;
     np::Ledger ledger(store);
@@ -551,12 +554,12 @@ void test_FR22_parameters_change_conflicts() {
     TEST_ASSERT_EQUAL_STRING("succeeded", port.published.back().c_str());
     executor.handle(lightCommand("a", 40, "#0000FF"), false);
     TEST_ASSERT_EQUAL_STRING("rejected:COMMAND_ID_CONFLICT", port.published.back().c_str());
-    executor.handle(command("a"), false);  // Dropping the parameters is a different content too.
+    executor.handle(command("a"), false);  // Dropping the arguments is a different content too.
     TEST_ASSERT_EQUAL_STRING("rejected:COMMAND_ID_CONFLICT", port.published.back().c_str());
     TEST_ASSERT_EQUAL_INT(1, port.actuations);
 }
 
-void test_FR19_parameters_command_not_rerun_after_restart() {
+void test_FR19_arguments_command_not_rerun_after_restart() {
     FakeStore store;
     {
         FakePort port;
@@ -573,7 +576,7 @@ void test_FR19_parameters_command_not_rerun_after_restart() {
     TEST_ASSERT_EQUAL_STRING("succeeded", port.published.back().c_str());
 }
 
-void test_FR22_parameters_record_fits() {
+void test_FR22_arguments_record_fits() {
     // A worst-case light record with a later error code stays within the configured record size.
     FakeStore store;
     FakePort port;
@@ -593,22 +596,21 @@ void test_NFR10_speaker_actuation_carries_volume() {
     np::Executor executor(ledger, port, 128, 512);
     executor.handle(speakerCommand("a", 12), false);
     assertPublished({"accepted", "running", "succeeded"}, port);
-    TEST_ASSERT_TRUE(port.last.speaker);
+    TEST_ASSERT_TRUE(port.last.hasVolume);
     TEST_ASSERT_EQUAL_UINT8(12, port.last.volume);
-    TEST_ASSERT_FALSE(port.last.light);
-    executor.handle(speakerCommand("b", 0), false);  // Zero is a volume, not a missing parameter.
-    TEST_ASSERT_TRUE(port.last.speaker);
+    TEST_ASSERT_FALSE(port.last.hasBrightness || port.last.hasColor);
+    executor.handle(speakerCommand("b", 0), false);  // Zero is a volume, not a missing argument.
+    TEST_ASSERT_TRUE(port.last.hasVolume);
     TEST_ASSERT_EQUAL_UINT8(0, port.last.volume);
-    executor.handle(command("c"), false);  // Without parameters it is neither a speaker nor a light request.
-    TEST_ASSERT_FALSE(port.last.speaker);
-    TEST_ASSERT_FALSE(port.last.light);
+    executor.handle(command("c"), false);  // Without arguments the output keeps its own defaults.
+    TEST_ASSERT_FALSE(port.last.hasVolume || port.last.hasBrightness || port.last.hasColor);
     executor.handle(lightCommand("d", 30, "#0000FF"), false);
-    TEST_ASSERT_TRUE(port.last.light);
-    TEST_ASSERT_FALSE(port.last.speaker);
+    TEST_ASSERT_TRUE(port.last.hasBrightness && port.last.hasColor);
+    TEST_ASSERT_FALSE(port.last.hasVolume);
     TEST_ASSERT_EQUAL_INT(4, port.actuations);
 }
 
-void test_FR22_speaker_parameters_change_conflicts() {
+void test_FR22_speaker_arguments_change_conflicts() {
     FakeStore store;
     FakePort port;
     np::Ledger ledger(store);
@@ -619,7 +621,7 @@ void test_FR22_speaker_parameters_change_conflicts() {
     TEST_ASSERT_EQUAL_STRING("succeeded", port.published.back().c_str());
     executor.handle(speakerCommand("a", 13), false);
     TEST_ASSERT_EQUAL_STRING("rejected:COMMAND_ID_CONFLICT", port.published.back().c_str());
-    executor.handle(command("a"), false);  // Dropping the parameters is a different content too.
+    executor.handle(command("a"), false);  // Dropping the arguments is a different content too.
     TEST_ASSERT_EQUAL_STRING("rejected:COMMAND_ID_CONFLICT", port.published.back().c_str());
     TEST_ASSERT_EQUAL_INT(1, port.actuations);
 }
@@ -668,7 +670,7 @@ void test_FR06_evicted_command_does_not_actuate() {
     FakeStore store(1);
     FakePort port;
     port.liveValidation = true;
-    port.live.nodeId = "light-01"; port.live.session = "s"; port.live.capability = "light";
+    port.live.nodeId = "light-01"; port.live.session = "s"; port.live.descriptor = &fixtures::light();
     port.live.clockTrusted = port.live.connected = true;
     np::parseUtc("2026-10-23T00:00:10Z", port.live.nowSec);
     np::Ledger ledger(store);
@@ -700,7 +702,7 @@ void test_FR06_busy_rejection_replaces_expired_record() {
     FakeStore store(1);
     FakePort port;
     port.liveValidation = true;
-    port.live.nodeId = "light-01"; port.live.session = "s"; port.live.capability = "light";
+    port.live.nodeId = "light-01"; port.live.session = "s"; port.live.descriptor = &fixtures::light();
     port.live.clockTrusted = port.live.connected = true;
     np::parseUtc("2026-10-23T00:00:10Z", port.live.nowSec);
     np::Ledger ledger(store);
@@ -752,7 +754,7 @@ void runExecutorTests() {
     RUN_TEST(test_FR06_accepted_running_then_succeeded);
     RUN_TEST(test_FR06_invalid_message_no_actuation);
     RUN_TEST(test_FR06_duplicate_after_restart);
-    RUN_TEST(test_FR22_changed_capability_preserves_duplicate);
+    RUN_TEST(test_FR22_changed_descriptor_preserves_duplicate);
     RUN_TEST(test_FR06_command_id_conflict);
     RUN_TEST(test_FR06_concurrent_commands_busy);
     RUN_TEST(test_FR06_receipt_storage_failure);
@@ -771,12 +773,12 @@ void runExecutorTests() {
     RUN_TEST(test_NFR10_light_ring_color);
     RUN_TEST(test_NFR10_dfplayer_frames);
     RUN_TEST(test_NFR10_light_ring_scaled_never_exceeds_brightness);
-    RUN_TEST(test_FR09_executor_passes_parameters);
-    RUN_TEST(test_FR22_parameters_change_conflicts);
-    RUN_TEST(test_FR19_parameters_command_not_rerun_after_restart);
-    RUN_TEST(test_FR22_parameters_record_fits);
+    RUN_TEST(test_FR09_executor_passes_arguments);
+    RUN_TEST(test_FR22_arguments_change_conflicts);
+    RUN_TEST(test_FR19_arguments_command_not_rerun_after_restart);
+    RUN_TEST(test_FR22_arguments_record_fits);
     RUN_TEST(test_NFR10_speaker_actuation_carries_volume);
-    RUN_TEST(test_FR22_speaker_parameters_change_conflicts);
+    RUN_TEST(test_FR22_speaker_arguments_change_conflicts);
     RUN_TEST(test_FR19_speaker_command_not_rerun_after_restart);
     RUN_TEST(test_FR19_occupancy_display_colors);
     RUN_TEST(test_FR19_occupancy_display_ignores_invalid_messages);

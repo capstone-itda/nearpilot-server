@@ -26,8 +26,6 @@ class ProvisioningApi(baseUrl: String, transport: HttpTransport) {
                 mqttPassword = text("mqtt_password") ?: return null,
                 mqttHost = text("mqtt_host") ?: return null,
                 mqttPort = port,
-                capability = text("capability") ?: return null,
-                occupancy = text("occupancy") ?: return null,
             )
         }
 

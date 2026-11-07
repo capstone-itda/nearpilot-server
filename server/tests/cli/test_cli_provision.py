@@ -46,7 +46,7 @@ def lab(tmp_path: Path) -> Path:
     (folder / "server.toml").write_text(
         '[mqtt]\nhost = "10.0.0.5"\nport = 18883\n', encoding="utf-8")
     (folder / "fleet.json").write_text(json.dumps({"devices": [
-        {"node_id": "light-1", "capability": "light", "occupancy": "shared"}]}), encoding="utf-8")
+        {"node_id": "light-1", "descriptor": "light"}]}), encoding="utf-8")
     (folder / ".env.light-1").write_text("mqtt-secret\n", encoding="utf-8")
     (folder / ".env.wifi.json").write_text(json.dumps({"ssid": "랩", "password": "wifi-secret"}), encoding="utf-8")
     return folder.resolve()

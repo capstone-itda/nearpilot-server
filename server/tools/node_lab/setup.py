@@ -47,7 +47,8 @@ def write_broker_passwords(path: Path, credentials: dict[str, str]) -> None:
                     encoding="utf-8")
 
 
-# Device ID prefix -> (capability, occupancy). Lockers are rental, lights shared (requirements.md).
+# Device ID prefix -> (kind, occupancy). Lockers are rental, lights shared (requirements.md). The kind is also the
+# simulator's declaration template in fleet.json (#245).
 KINDS = {"light": ("light", "shared"), "locker": ("locker", "rental")}
 
 
@@ -136,8 +137,8 @@ stop_timeout_sec = 5.0
     devices = []
     for i, node in enumerate(nodes):
         distance = math.hypot(i * 2.0, 0.5)
-        capability, occupancy = kinds[node]
-        devices.append(dict(node_id=node, place="node-lab", capability=capability, occupancy=occupancy,
+        kind, _ = kinds[node]
+        devices.append(dict(node_id=node, place="node-lab", descriptor=kind,
             username=node, password_file=str(folder / f".env.{node}"),
             store=str(folder / f"sim-{node}.sqlite3"), scenario=dict(actuation_sec=0.1,
                 beacons=[{**beacon, "rssi": -59.0 - 20.0 * math.log10(distance)}])))

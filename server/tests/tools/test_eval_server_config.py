@@ -20,7 +20,7 @@ TOP = ('seed = 1\nmodel_root = "models"\nmodel_version = "v1"\n'
 BEACON = '[beacon]\nuuid = "11111111-2222-3333-4444-555555555555"\nmajor = 1\n'
 OWNER = '[[users]]\nuser_id = "owner"\nrole = "owner"\nminor = 1\n'
 VISITOR = '[[users]]\nuser_id = "visitor-1"\nrole = "visitor"\nminor = 2\n'
-LOCKER = '[[nodes]]\nnode_id = "locker-1"\ncapability = "locker"\noccupancy = "rental"\n'
+LOCKER = '[[nodes]]\nnode_id = "locker-1"\nkind = "locker"\noccupancy = "rental"\n'
 COUNTS = "[counts]\nm3_requests = 10\n"
 ACCEPTANCE = "[acceptance]\nm1_max_wrong_rate = 0.025\nm7_max_median_sec = 1.0\n"
 RSSI = "[rssi]\nnear = -53.0\n"
@@ -78,7 +78,9 @@ def test_NFR13_eval_config_loads_example():
     pytest.param({"users": OWNER + "\n" + VISITOR.replace("minor = 2", "minor = 1")}, "users[1].minor",
                  id="duplicate-minor"),
     pytest.param({"extra": "[server_settings]\nbogus = 1\n"}, "server_settings", id="unknown-server-setting"),
-    pytest.param({"nodes": LOCKER.replace('"locker"', '"door"')}, "nodes[0].capability", id="bad-capability"),
+    pytest.param({"nodes": LOCKER.replace('"locker"', '"door"')}, "nodes[0].kind", id="bad-kind"),
+    pytest.param({"nodes": LOCKER.replace('"rental"', '"shared"')}, "nodes[0].occupancy", id="no-template"),
+    pytest.param({"nodes": LOCKER.replace("kind =", "capability =")}, "capability", id="old-capability-key"),
     pytest.param({"nodes": LOCKER.replace("locker-1", "locker 1")}, "nodes[0].node_id", id="bad-node-id"),
     pytest.param({"beacon": BEACON.replace("11111111-2222-3333-4444-555555555555", "not-a-uuid")}, "beacon.uuid",
                  id="bad-beacon-uuid"),

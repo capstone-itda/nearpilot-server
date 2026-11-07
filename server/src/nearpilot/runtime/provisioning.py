@@ -15,8 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from nearpilot.runtime.config import ProvisioningConfig
-from nearpilot.shared.descriptor import LEGACY_KINDS
-from nearpilot.shared.enums import Occupancy
 from nearpilot.shared.models import ProvisioningBundle
 
 log = logging.getLogger(__name__)
@@ -47,14 +45,7 @@ class FleetProvisioningSource:
         device = next((d for d in devices or () if isinstance(d, dict) and d.get("node_id") == node_id), None)
         if device is None:
             return None
-        try:
-            # v2 펌웨어의 BLE 설정 키다. PR ④ 에서 펌웨어가 선언을 내장하면 묶음에서 뺀다 (#245).
-            capability, occupancy = device["capability"], Occupancy(device["occupancy"])
-            if capability not in LEGACY_KINDS:
-                raise ValueError(capability)
-        except (KeyError, ValueError, TypeError):
-            log.error("기기 목록의 기능·점유 방식이 계약 밖이다: node=%s", node_id)
-            return None
+        # 기기 목록은 접속 정보만 읽는다. 시뮬레이터 항목의 선언(`descriptor`) 같은 다른 키는 보지 않는다 (#245).
         user = device.get("username") or node_id
         raw = device.get("password_file")
         path = Path(raw) if isinstance(raw, str) and raw else self._fleet.parent / f".env.{node_id}"
@@ -67,7 +58,7 @@ class FleetProvisioningSource:
             return None
         if not password or not isinstance(user, str):
             return None
-        return ProvisioningBundle(node_id, user, password, self._host, self._port, capability, occupancy)
+        return ProvisioningBundle(node_id, user, password, self._host, self._port)
 
 
 def _zeroconf() -> Any:

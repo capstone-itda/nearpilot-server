@@ -13,8 +13,7 @@ import org.junit.Test
 /** 앱 BLE 기기 설정의 줄 형식과 응답 해석 (FR-12A, #234, specs/iot-ble-provisioning/spec.md). */
 class ConfigLinesTest {
 
-    private val bundle = ProvisioningBundle(
-        "light-1", "light-1", "node-secret-0123", "nearpilot.local", 18883, "light", "shared")
+    private val bundle = ProvisioningBundle("light-1", "light-1", "node-secret-0123", "nearpilot.local", 18883)
     private val nonce = "0123456789abcdef0123456789abcdef"
 
     @Test
@@ -24,8 +23,8 @@ class ConfigLinesTest {
         assertEquals("CONFIG_BEGIN $nonce", lines.first())
         assertEquals("CONFIG_COMMIT $nonce", lines.last())
         assertEquals(
-            listOf("node_id", "mqtt_user", "mqtt_password", "wifi_ssid", "wifi_password",
-                "mqtt_host", "mqtt_port", "capability", "occupancy"),
+            // 종류와 점유 방식은 기기가 선언한다. 펌웨어는 그 키를 unknown_key로 거부한다 (#245).
+            listOf("node_id", "mqtt_user", "mqtt_password", "wifi_ssid", "wifi_password", "mqtt_host", "mqtt_port"),
             lines.drop(1).dropLast(1).map { it.split(' ')[1] },
         )
         assertTrue("CONFIG_SET wifi_ssid 6c61622d6170" in lines)
@@ -114,7 +113,7 @@ class ConfigLinesTest {
     fun FR12A_api_reads_bundle_with_owner_token() {
         val transport = FakeTransport(HttpResponse(200, """
             {"node_id":"light-1","mqtt_user":"light-1","mqtt_password":"node-secret-0123",
-             "mqtt_host":"nearpilot.local","mqtt_port":18883,"capability":"light","occupancy":"shared"}
+             "mqtt_host":"nearpilot.local","mqtt_port":18883}
         """.trimIndent()))
 
         val result = ProvisioningApi("http://srv", transport).bundle("owner-token", "light-1")

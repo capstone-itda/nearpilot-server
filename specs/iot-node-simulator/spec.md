@@ -5,6 +5,7 @@
 - 요구사항: FR-04, FR-05, FR-06, FR-07, FR-20, NFR-08, NFR-10, NFR-11, NFR-12
 - 따르는 결정: architecture.md에 반영한 #19, #61, #140, 2026-10-26 센서 기반 물리 검증 제외 (#196)
 - 상태: 시뮬레이터와 IOT 내부 전체 연결 시나리오를 구현했다. 2026-10-26 결정에 맞춰 MQTT v2로 바꾸고 가상 물리 관측과 반납 검사 응답을 없앴다. 실행 방법은 `server/tools/node_sim/README.md`에 있다.
+- 바뀐 부분: 기기 목록의 `capability`·`occupancy`와 기능별 동작 표는 `specs/iot-firmware-descriptor/spec.md`의 기기 선언(`descriptor`)으로, `announce`·`cmd`는 v3로 바뀌었다 (#245). 이 문서의 해당 내용은 당시의 기록이다.
 
 ## 1. 왜
 

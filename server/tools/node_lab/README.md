@@ -143,11 +143,10 @@ nearpilot --dir var/node-lab-hardware provision --node light-1 --port COM6
 | MQTT 비밀번호 | 시험 폴더의 `.env.<기기 ID>` |
 | Wi-Fi | `.env.wifi.json` 또는 `--wifi-file` |
 | MQTT 주소·포트 | `server.toml`의 `[mqtt]` |
-| 기기 기능, 점유 방식 | 시험 폴더 `fleet.json`에서 그 기기의 `capability`·`occupancy`. 서버가 등록한 값과 같다 |
 
 - 제품 펌웨어(`firmware/`)만 지원한다. node_lab 펌웨어는 옛 시각 키를 요구하므로 이 도구로 주입하지 않는다.
 - 기기가 모르는 키를 `unknown_key`로 거부하면 저장하지 않고 실패한다.
-- `CONFIG_STATE`에는 기능과 점유 방식이 없다. 두 키는 저장 성공과 재시작으로만 확인하고, 실제 값은 연결 뒤 `announce`에서 본다.
+- 기기의 종류와 점유 방식은 주입하지 않는다. 펌웨어가 내장 선언으로 발표한다 (#245). 기기는 시험 폴더 `fleet.json`에 있어야 한다.
 
 - 비밀번호는 명령 인자로 받지 않는다. `provision.jsonl`과 화면에는 비밀값과 SSID의 바이트 수만 쓴다.
 - 기기는 값을 검사한 뒤 한 번에 저장하고 다시 읽어 확인한다. 그다음 재시작한다. 도구는 `CONFIG?` 응답으로 저장 값을 대조한다.

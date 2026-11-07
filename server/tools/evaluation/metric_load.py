@@ -221,7 +221,7 @@ def _visitors(config: EvalConfig) -> list[str]:
 
 
 def _trusted_lockers(config: EvalConfig) -> list[str]:
-    lockers = [node.node_id for node in config.nodes if node.capability == "locker" and node.trusted]
+    lockers = [node.node_id for node in config.nodes if node.kind == "locker" and node.trusted]
     if not lockers:
         raise EvalConfigError("nodes: trusted 사물함이 한 대 이상 있어야 한다 (지표 3과 7이 사물함을 요청한다)")
     return lockers

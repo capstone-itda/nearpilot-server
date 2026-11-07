@@ -16,11 +16,8 @@ import time
 import tomllib
 from uuid import uuid4
 
-KEYS = ("node_id", "mqtt_user", "mqtt_password", "wifi_ssid", "wifi_password", "mqtt_host", "mqtt_port",
-        "capability", "occupancy")
-# MQTT v1 announce values (architecture.md §5 MQTT 3절); this script runs without the server package.
-CAPABILITIES = frozenset({"locker", "light", "speaker"})
-OCCUPANCIES = frozenset({"rental", "shared"})
+# Connection and Wi-Fi only: the firmware declares its kind and occupancy itself (#245).
+KEYS = ("node_id", "mqtt_user", "mqtt_password", "wifi_ssid", "wifi_password", "mqtt_host", "mqtt_port")
 SECRETS = frozenset({"mqtt_password", "wifi_password"})
 STATE = re.compile(
     r"CONFIG_STATE configured=([01]) generation=(\d+) node=(\S*) mqtt_user=(\S*) mqtt_host=(\S*) "
@@ -35,11 +32,10 @@ def build_values(folder: Path, node: str, *, wifi_file: Path | None = None) -> d
         raise ValueError("시험 목록에 없는 기기다. lab.json의 nodes를 확인한다")
     with (folder / "server.toml").open("rb") as stream:
         server = tomllib.load(stream)
-    # The device announces what the server registered for it, never a value typed at the console.
+    # Only devices the lab registered get an account; the firmware's declaration says what it is.
     fleet = json.loads((folder / "fleet.json").read_text(encoding="utf-8"))
-    device = next((item for item in fleet.get("devices", []) if item.get("node_id") == node), None)
-    if device is None or device.get("capability") not in CAPABILITIES or device.get("occupancy") not in OCCUPANCIES:
-        raise ValueError("fleet.json에 이 기기의 기능·점유 방식이 없거나 계약 밖의 값이다")
+    if not any(item.get("node_id") == node for item in fleet.get("devices", [])):
+        raise ValueError("fleet.json에 이 기기가 없다")
     password_path = folder / f".env.{node}"
     wifi_path = wifi_file or folder / ".env.wifi.json"
     if not password_path.is_file() or not wifi_path.is_file():
@@ -54,8 +50,7 @@ def build_values(folder: Path, node: str, *, wifi_file: Path | None = None) -> d
     return dict(node_id=node, mqtt_user=node,
                 mqtt_password=password_path.read_text(encoding="utf-8").strip(),
                 wifi_ssid=wifi["ssid"], wifi_password=wifi["password"],
-                mqtt_host=host, mqtt_port=str(int(mqtt["port"])),
-                capability=device["capability"], occupancy=device["occupancy"])
+                mqtt_host=host, mqtt_port=str(int(mqtt["port"])))
 
 
 def public_view(values: dict[str, str]) -> dict[str, object]:

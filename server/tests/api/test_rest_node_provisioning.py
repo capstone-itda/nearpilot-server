@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from nearpilot.api.auth.authenticator import Authenticator
 from nearpilot.api.rest.nodes import build_node_admin_router
-from nearpilot.shared.enums import Occupancy, Role
+from nearpilot.shared.enums import Role
 from nearpilot.shared.models import Account, ProvisioningBundle
 from nearpilot.shared.tokens import hash_token
 
@@ -20,7 +20,7 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 NODE = "light-1"
 URL = f"/admin/nodes/{NODE}/provisioning"
 SECRET = "node-secret-abcdef"
-BUNDLE = ProvisioningBundle(NODE, NODE, SECRET, "nearpilot.local", 18883, "light", Occupancy.SHARED)
+BUNDLE = ProvisioningBundle(NODE, NODE, SECRET, "nearpilot.local", 18883)
 
 
 class FakeNodes:
@@ -57,8 +57,7 @@ def test_FR12A_provisioning_route_returns_bundle(client, nodes):
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     assert response.json() == {"node_id": NODE, "mqtt_user": NODE, "mqtt_password": SECRET,
-                               "mqtt_host": "nearpilot.local", "mqtt_port": 18883,
-                               "capability": "light", "occupancy": "shared"}
+                               "mqtt_host": "nearpilot.local", "mqtt_port": 18883}  # 종류·점유 방식은 없다 (#245)
     assert nodes.calls == [(USER, NODE)]
     assert USER not in response.text
 

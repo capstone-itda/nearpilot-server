@@ -383,7 +383,7 @@ def test_NFR03_load_sends_concurrent_requests_and_retransmit_pairs():
     assert sorted(released) == sorted(f"use-{arguments['request_id']}" for _, arguments in sent)  # OK마다 반납한다
 
     visitors = [user.user_id for user in config.users if user.role == "visitor"]
-    lockers = [node.node_id for node in config.nodes if node.capability == "locker" and node.trusted]
+    lockers = [node.node_id for node in config.nodes if node.kind == "locker" and node.trusted]
     near = {user_id: config.rssi["near"] for user_id in visitors}  # trusted 사물함마다 모든 방문자가 near로 들린다
     assert harness.heard == {node.node_id: near if node.node_id in lockers else {} for node in config.nodes}
     assert outcome.raw["lockers"] == lockers
@@ -399,7 +399,7 @@ def test_NFR03_load_rejects_config_without_visitor_or_trusted_locker():
     config = load_eval_config(EXAMPLE)
     no_visitor = dataclasses.replace(config, users=tuple(user for user in config.users if user.role != "visitor"))
     no_locker = dataclasses.replace(
-        config, nodes=tuple(node for node in config.nodes if not (node.capability == "locker" and node.trusted)))
+        config, nodes=tuple(node for node in config.nodes if not (node.kind == "locker" and node.trusted)))
 
     for broken, missing in ((no_visitor, "방문자"), (no_locker, "사물함")):
         with pytest.raises(EvalConfigError, match=missing):
@@ -455,7 +455,7 @@ def test_NFR01_metric7_collects_only_request_use_latency():
     assert [arguments["request_id"] for _, tool, arguments in harness.calls if tool == "request_use"] == [
         "m7-0", "m7-1", "m7-2"]
     visitor = next(user.user_id for user in config.users if user.role == "visitor")
-    target = next(node.node_id for node in config.nodes if node.capability == "locker" and node.trusted)
+    target = next(node.node_id for node in config.nodes if node.kind == "locker" and node.trusted)
     assert {user_id for user_id, _, _ in harness.calls} == {visitor}  # 한 방문자가 보낸다
     assert harness.heard[target] == {visitor: config.rssi["near"]}
     assert [heard for node_id, heard in harness.heard.items() if node_id != target] == [{}] * (len(config.nodes) - 1)

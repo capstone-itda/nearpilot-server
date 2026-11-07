@@ -4,6 +4,7 @@ import java.security.SecureRandom
 
 /**
  * 서버가 주는 기기 접속 설정 묶음 (#234, §5 REST `GET /admin/nodes/{node_id}/provisioning`).
+ * 접속 정보뿐이다. 기기의 종류와 점유 방식은 펌웨어에 내장한 선언에 있다 (#245).
  * 기기 비밀번호를 담으므로 저장하지 않고 화면을 떠나면 버린다. 문자열로 바꿀 때 비밀번호를 쓰지 않는다 (NFR-08).
  */
 data class ProvisioningBundle(
@@ -12,12 +13,9 @@ data class ProvisioningBundle(
     val mqttPassword: String,
     val mqttHost: String,
     val mqttPort: Int,
-    val capability: String,
-    val occupancy: String,
 ) {
     override fun toString(): String =
-        "ProvisioningBundle(nodeId=$nodeId, mqttUser=$mqttUser, mqttHost=$mqttHost, mqttPort=$mqttPort, " +
-            "capability=$capability, occupancy=$occupancy)"
+        "ProvisioningBundle(nodeId=$nodeId, mqttUser=$mqttUser, mqttHost=$mqttHost, mqttPort=$mqttPort)"
 }
 
 /** 기기 응답 줄 하나 (USB 시리얼 주입과 같은 형식, architecture.md §5 "BLE 기기 설정"). */
@@ -60,7 +58,7 @@ object ConfigLines {
         }
     }
 
-    /** NVS 설정 키 9개. USB 주입(`nearpilot provision`)과 같은 값이다. */
+    /** NVS 설정 키 7개. USB 주입(`nearpilot provision`)과 같은 값이다. */
     fun values(bundle: ProvisioningBundle, ssid: String, password: String): List<Pair<String, String>> = listOf(
         "node_id" to bundle.nodeId,
         "mqtt_user" to bundle.mqttUser,
@@ -69,11 +67,9 @@ object ConfigLines {
         "wifi_password" to password,
         "mqtt_host" to bundle.mqttHost,
         "mqtt_port" to bundle.mqttPort.toString(),
-        "capability" to bundle.capability,
-        "occupancy" to bundle.occupancy,
     )
 
-    /** BEGIN, SET 9개, COMMIT 순서. 각 줄은 기대한 응답을 받은 뒤에 보낸다. */
+    /** BEGIN, SET 7개, COMMIT 순서. 각 줄은 기대한 응답을 받은 뒤에 보낸다. */
     fun plan(bundle: ProvisioningBundle, ssid: String, password: String, nonce: String): List<ConfigStep> {
         val sets = values(bundle, ssid, password).map { (key, value) ->
             val bytes = value.toByteArray(Charsets.UTF_8).size

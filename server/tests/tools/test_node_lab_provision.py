@@ -1,10 +1,9 @@
-"""FR-13 FR-22 NFR-08 NFR-12 USB provisioning of the product firmware (9 keys, no clock values since #236)."""
+"""FR-13 FR-22 NFR-08 NFR-12 USB provisioning of the product firmware (7 keys: no clock values since #236,
+no capability or occupancy since #245)."""
 import json
 
 import pytest
 
-from nearpilot.shared.descriptor import LEGACY_KINDS
-from nearpilot.shared.enums import Occupancy
 from tools.node_lab import provision
 
 MQTT_SECRET = "mqtt-secret-0123456789abcdef"
@@ -19,7 +18,7 @@ def lab(tmp_path):
     (folder / "server.toml").write_text(
         '[mqtt]\nhost = "10.0.0.5"\nport = 18883\n', encoding="utf-8")
     (folder / "fleet.json").write_text(json.dumps({"devices": [
-        {"node_id": "light-1", "capability": "light", "occupancy": "shared"}]}), encoding="utf-8")
+        {"node_id": "light-1", "descriptor": "light"}]}), encoding="utf-8")
     (folder / ".env.light-1").write_text(MQTT_SECRET + "\n", encoding="utf-8")
     (folder / ".env.wifi.json").write_text(json.dumps({"ssid": "랩 핫스팟", "password": WIFI_SECRET}),
                                            encoding="utf-8")
@@ -96,9 +95,9 @@ def test_NFR08_provision_requires_password_files(lab):
 
 
 def test_NFR12_provision_sends_no_clock_values(lab):
-    """#236: the firmware takes its clock over MQTT, so only the nine connection keys are injected."""
+    """#236: the firmware takes its clock over MQTT, so only the seven connection keys are injected (#245)."""
     prepared = values(lab)
-    assert tuple(prepared) == provision.KEYS and len(provision.KEYS) == 9
+    assert tuple(prepared) == provision.KEYS and len(provision.KEYS) == 7
     assert not {"time_server", "clock_max_error_sec", "time_trust_ms", "time_resync_ms"} & set(prepared)
     assert (prepared["mqtt_host"], prepared["mqtt_port"]) == ("10.0.0.5", "18883")
 
@@ -132,27 +131,23 @@ def test_FR22_provision_fails_on_reject_or_mismatch(lab, device, reason):
         assert not any(line.startswith("CONFIG_COMMIT") for line in device.written)
 
 
-def test_FR04_provision_uses_fleet_capability(lab):
+def test_FR04_provision_injects_connection_only(lab):
+    """The firmware declares its kind and occupancy; the injected keys are connection and Wi-Fi only (#245)."""
     prepared = values(lab)
-    assert (prepared["capability"], prepared["occupancy"]) == ("light", "shared")
-    # v2 펌웨어의 BLE 설정 키다. 서버의 v2 템플릿 종류와 같다 (PR ④ 에서 묶음에서 뺀다).
-    assert provision.CAPABILITIES == LEGACY_KINDS
-    assert provision.OCCUPANCIES == {item.value for item in Occupancy}
+    assert tuple(prepared) == provision.KEYS
+    assert "capability" not in prepared and "occupancy" not in prepared
     device = FakeDevice()
     run(device, prepared)
-    assert device.staged["capability"] == "light" and device.staged["occupancy"] == "shared"
-    for fleet in ({"devices": []},
-                  {"devices": [{"node_id": "light-1", "capability": "lamp", "occupancy": "shared"}]},
-                  {"devices": [{"node_id": "light-1", "capability": "light"}]}):
-        (lab / "fleet.json").write_text(json.dumps(fleet), encoding="utf-8")
-        with pytest.raises(ValueError, match="fleet.json"):
-            values(lab)
+    assert set(device.staged) == set(provision.KEYS)
+    (lab / "fleet.json").write_text(json.dumps({"devices": [{"node_id": "light-2"}]}), encoding="utf-8")
+    with pytest.raises(ValueError, match="fleet.json"):
+        values(lab)
 
 
 def test_FR04_provision_fails_on_unknown_key(lab):
     """A firmware that does not know a key (node_lab, an old build) fails instead of being half-configured."""
     prepared = values(lab)
-    for key in ("capability", "mqtt_host"):
+    for key in ("mqtt_port", "mqtt_host"):
         device = FakeDevice(unknown={key})
         with pytest.raises(ValueError, match="거부"):
             run(device, prepared)

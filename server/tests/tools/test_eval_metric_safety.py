@@ -484,7 +484,7 @@ class FakeHarness:
             if (user in self.heard.get(node.node_id, {}) and self._listed(node)
                     and self._state(node.node_id) == DeviceState.AVAILABLE):
                 needs = (node.mode == AccessMode.RESTRICTED
-                         and self._approval(user, node.node_id, ACTION[node.capability]) != "valid")
+                         and self._approval(user, node.node_id, ACTION[node.kind]) != "valid")
                 devices.append({"node_id": node.node_id, "access": "approval_required" if needs else "operable"})
         return {"devices": devices}
 
@@ -500,10 +500,10 @@ class FakeHarness:
         self.request_ids.append(arguments["request_id"])
         self.heard_at_request[arguments["request_id"]] = {node_id: dict(users) for node_id, users in self.heard.items()}
         capability = arguments["target_spec"].split(":", 1)[1]
-        heard = [node for node in self.config.nodes if node.capability == capability
+        heard = [node for node in self.config.nodes if node.kind == capability
                  and user in self.heard.get(node.node_id, {}) and self._listed(node)]
         if not heard and "beaconless" in self.bugs:
-            heard = [node for node in self.config.nodes if node.capability == capability and self._listed(node)][:1]
+            heard = [node for node in self.config.nodes if node.kind == capability and self._listed(node)][:1]
         if not heard:
             return reply(Verdict.DENY, ReasonCode.BEACON_NOT_SEEN)
         node, action = heard[0], arguments["action"]
