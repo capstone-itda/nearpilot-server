@@ -14,7 +14,7 @@ const person = (id: string, near?: string): Person => ({
   beaconSeen: near !== undefined, rssi: near ? { [near]: -50 } : {}, near
 });
 const request = (r: Partial<RequestProgress> = {}): RequestProgress => ({
-  id: 'r-1', personId: 'a', tool: 'request_use', target: { kind: 'nearest', capability: 'light' }, action: 'on', at: '14:00:00', steps: [], ...r
+  id: 'r-1', personId: 'a', tool: 'request_use', target: { kind: 'nearest', deviceKind: 'light' }, action: 'on', at: '14:00:00', steps: [], ...r
 });
 const state = (people: Person[], r?: RequestProgress): MonitorState => ({ ...initialState(PLACES), people, request: r });
 
@@ -230,7 +230,7 @@ describe('nextFocus', () => {
   });
 
   it('FR12B 장소가 셋 이상이면 작은 방은 주 장소가 아닌 장소 중 사람이 있는 첫 장소다', () => {
-    const attic: PlaceInfo = { placeId: 'attic', placeName: '다락', modelVersion: 'v1', calibrationVersion: 'cal-0', devices: [{ nodeId: 'x-1', name: '등', capability: 'light', occupancy: 'shared' }] };
+    const attic: PlaceInfo = { placeId: 'attic', placeName: '다락', modelVersion: 'v1', calibrationVersion: 'cal-0', devices: [{ nodeId: 'x-1', name: '등', deviceKind: 'light', occupancy: 'shared' }] };
     const f = nextFocus(undefined, state([person('a', 'x-1'), person('b', 'mood-1'), person('c', 'locker-1')]), [LOUNGE, SIDE_ROOM, attic]);
     expect(f).toMatchObject({ primary: 'lounge', inset: 'side-room' });
   });

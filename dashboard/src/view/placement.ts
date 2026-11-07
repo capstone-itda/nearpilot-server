@@ -1,7 +1,7 @@
 // 무대 위에서 기기 글자, 사람, 이름표, 콜아웃이 서로 겹치지 않는 자리를 고른다.
 // 기기와 사람은 평면 배치를 아이소메트릭으로 투영해 그리고(iso.ts), 글자는 투영한 무대 좌표에 똑바로 쓴다.
 // 그래서 겹침은 무대 좌표의 상자로 잰다. 배치는 이 PC에서 자유롭게 바뀌므로 고정 좌표 대신 장애물을 피해서 찾는다.
-import type { Capability, Spot } from '../model/types';
+import type { DeviceKind, Spot } from '../model/types';
 import { GRID, ROOM } from './arrange';
 import { ROOM_ISO, iso } from './iso';
 
@@ -34,11 +34,14 @@ export function textWidth(s: string, size: number): number {
 /** 기기 본체의 평면 크기와 높이 (평면 단위) */
 export const DEVICE_W = 60;
 export const DEVICE_D = 36;
-export const DEVICE_H: Record<Capability, number> = { locker: 110, speaker: 56, light: 84 };
+export const DEVICE_H: Record<string, number> = { locker: 110, speaker: 56, light: 84 };
+/** 사물함·조명·스피커 밖의 종류는 앞면 부품 없는 상자다. 높이는 표시용이다 (spec 결정 5) */
+export const OTHER_DEVICE_H = 70;
+export const deviceHeight = (kind: DeviceKind) => (Object.hasOwn(DEVICE_H, kind) ? DEVICE_H[kind] : OTHER_DEVICE_H);
 
 /** 기기 본체가 무대에서 차지하는 상자 */
-export function deviceBody(x: number, y: number, cap: Capability): Rect {
-  const h = DEVICE_H[cap];
+export function deviceBody(x: number, y: number, kind: DeviceKind): Rect {
+  const h = deviceHeight(kind);
   const pts = [[x - DEVICE_W / 2, y - DEVICE_D / 2], [x + DEVICE_W / 2, y - DEVICE_D / 2], [x - DEVICE_W / 2, y + DEVICE_D / 2], [x + DEVICE_W / 2, y + DEVICE_D / 2]]
     .flatMap(([a, b]) => [ROOM_ISO.P(a, b, 0), ROOM_ISO.P(a, b, h)]);
   return { x1: Math.min(...pts.map((p) => p.x)), x2: Math.max(...pts.map((p) => p.x)), y1: Math.min(...pts.map((p) => p.y)), y2: Math.max(...pts.map((p) => p.y)) };

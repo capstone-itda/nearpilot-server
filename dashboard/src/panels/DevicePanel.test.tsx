@@ -2,10 +2,10 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DataCtx } from '../data/context';
-import { PLACES } from '../data/mock/fixtures';
+import { DECLARATIONS, PLACES } from '../data/mock/fixtures';
 import { SCENES } from '../data/mock/story';
 import { createMockSource } from '../data/mock/mockSource';
-import type { ReasonCode } from '../model/types';
+import type { PlaceInfo, ReasonCode } from '../model/types';
 import { DevicePanel } from './DevicePanel';
 
 function renderFault(cause: ReasonCode) {
@@ -42,5 +42,44 @@ describe('DevicePanel 여러 장소', () => {
     expect(screen.getByRole('heading', { name: /무드등/ })).toBeTruthy();
     expect(screen.getByText('공용형 · shared')).toBeTruthy();
     expect(screen.getByText('켜기 · 끄기')).toBeTruthy();
+  });
+});
+
+describe('DevicePanel 기기 선언', () => {
+  const FAN_PLACE: PlaceInfo = {
+    placeId: 'lab', placeName: '실험실', modelVersion: 'm', calibrationVersion: 'c',
+    devices: [{
+      nodeId: 'fan-1', name: '선풍기', deviceKind: 'fan', occupancy: 'shared',
+      vendor: { name: 'acme', model: 'f1', firmware: '1.0.3' },
+      actions: [{ name: 'spin', description: '팬을 돌린다' }, { name: 'stop', description: '팬을 멈춘다', role: 'deactivate' }],
+      descriptorHash: '0123456789abcdef'.repeat(4)
+    }]
+  };
+  const show = (places: PlaceInfo[], nodeId: string, scene: 'idle' | 'fault' = 'idle') => render(
+    <DataCtx.Provider value={{ source: createMockSource({ scene }), places, snapshot: SCENES[scene](), personName: (id) => id, deviceName: (id) => id }}>
+      <DevicePanel nodeId={nodeId} onClose={() => {}} />
+    </DataCtx.Provider>
+  );
+
+  it('FR12A 제작사·모델·펌웨어, 동작과 역할, 선언 해시 전체를 보인다', () => {
+    show([FAN_PLACE], 'fan-1');
+    expect(screen.getByText('fan · fan')).toBeTruthy();
+    expect(screen.getByText('acme · f1 · 1.0.3')).toBeTruthy();
+    expect(screen.getByText('spin')).toBeTruthy();  // 동작 이름은 선언 그대로
+    expect(screen.getByText('spin · stop')).toBeTruthy();  // 기기 절의 동작 행: 모르는 동작은 이름 그대로
+    expect(screen.getByText('팬을 돌린다')).toBeTruthy();
+    expect(screen.getByText('팬을 멈춘다 · 끄기 역할')).toBeTruthy();
+    expect(screen.getByText('0123456789abcdef'.repeat(4))).toBeTruthy();  // 줄이지 않는다 (FR-13)
+  });
+  it('FR12A 사물함은 열기 · 닫기이고 닫기는 재조작 역할이다', () => {
+    show(PLACES, 'locker-1');
+    expect(screen.getByText('열기 · 닫기')).toBeTruthy();
+    expect(screen.getByText('사물함을 잠근다. 반납이 아니다 · 재조작')).toBeTruthy();
+    expect(screen.getByText(DECLARATIONS.locker.descriptorHash)).toBeTruthy();
+  });
+  it('FR12A 고장 격리된 기기도 선언을 보인다', () => {
+    show(PLACES, 'locker-2', 'fault');
+    expect(screen.getByText('기기 선언')).toBeTruthy();
+    expect(screen.getByText(DECLARATIONS.locker.descriptorHash)).toBeTruthy();
   });
 });

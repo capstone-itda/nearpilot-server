@@ -4,7 +4,7 @@ import type { AuditStep, HistoryQuery, Verdict } from '../model/types';
 import { DataTable, FilterBar, NoteBox, Section, Td, TdLink, TdMono, VerdictTag, Zone } from '../components/common';
 import { Loading, Panel } from '../components/Panel';
 import { useData, useQuery } from '../data/context';
-import { ACTION_NAME, CAPABILITY_NAME, REASON_TEXT, VERDICT_LABEL, targetCode } from '../view/text';
+import { REASON_TEXT, VERDICT_LABEL, actionName, kindName, targetCode } from '../view/text';
 
 type Close = { onClose: () => void };
 
@@ -136,7 +136,7 @@ export function HistoryPanel({ onClose, onOpenRequest }: Close & { onOpenRequest
             cells: [
               <TdMono key="t" v={h.at} />,
               <TdLink key="p" main={personName(h.personId)} onClick={() => onOpenRequest(h.requestId)} />,
-              <Td key="r" main={`${h.target.kind === 'explicit' && h.target.nodeId ? deviceName(h.target.nodeId) : CAPABILITY_NAME[h.target.capability ?? 'locker']} ${ACTION_NAME[h.action]}`} sub={`${targetCode(h.target)} · ${h.action}`} />,
+              <Td key="r" main={`${h.target.kind === 'explicit' && h.target.nodeId ? deviceName(h.target.nodeId) : kindName(h.target.deviceKind ?? 'locker')} ${actionName(h.action)}`} sub={`${targetCode(h.target)} · ${h.action}`} />,
               <td key="v"><VerdictTag verdict={h.verdict} /></td>,
               <Td key="d" main={h.nodeId ? deviceName(h.nodeId) : '—'} sub={h.nodeId ?? '대상 없음'} />,
               <Td key="o" main={h.outcome} sub={h.code} />

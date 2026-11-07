@@ -6,7 +6,7 @@ import type { Spot } from '../model/types';
 import { GRID, ROOM, facing, frontOf, snap } from '../view/arrange';
 import { MARK_H, MARK_W, PERSON_R, planIn, type InsetView } from '../view/inset';
 import { ISO_K, ROOM_ISO, iso, kernel, unIso, type Kernel } from '../view/iso';
-import { DEVICE_D, DEVICE_H, DEVICE_LABEL_H, DEVICE_W, HEAD_R, PERSON_Z, RSSI_W, SLAB_H, WALL_H, deviceBody, labelBox } from '../view/placement';
+import { DEVICE_D, DEVICE_H, DEVICE_LABEL_H, DEVICE_W, HEAD_R, PERSON_Z, RSSI_W, SLAB_H, WALL_H, deviceBody, deviceHeight, labelBox } from '../view/placement';
 import type { StageDeviceView, StageView, StageVisitorView } from '../view/stage';
 import { FIT, ZOOM_MAX, ZOOM_STEP, isFit, panBy, viewBoxOf, zoomAt, type ZoomView } from '../view/zoom';
 import { Icon } from './common';
@@ -68,7 +68,7 @@ function Flow({ on, tone, points }: { on: boolean; tone: string; points: Spot[] 
 /** 기기 본체: 상자 세 면과 앞면의 부품. 켜진 기기는 유리(문, 스피커 망, 등)가 빛난다. */
 function DeviceFigure({ d }: { d: StageDeviceView }) {
   const K = ROOM_ISO;
-  const h = DEVICE_H[d.capability];
+  const h = deviceHeight(d.deviceKind);
   const x0 = d.x - DEVICE_W / 2, y0 = d.y - DEVICE_D / 2;
   const f = K.box(x0, y0, 0, DEVICE_W, DEVICE_D, h);
   const front = K.FRONT(x0, y0 + DEVICE_D, h);
@@ -78,12 +78,12 @@ function DeviceFigure({ d }: { d: StageDeviceView }) {
       <path className="np-iso__face" d={f.side} />
       <path className="np-iso__face" d={f.front} />
       <path className="np-iso__face np-iso__top" d={f.top} />
-      {d.capability === 'locker' ? (
+      {d.deviceKind === 'locker' ? (
         <>
           <g transform={front}><rect className="np-iso__glass" x="7" y="8" width="46" height={h - 16} rx="2" /><rect className="np-iso__detail-fill" x="44" y={h / 2 - 8} width="3" height="16" /></g>
           <g transform={side}>{[0, 1, 2, 3].map((i) => <path key={i} className="np-iso__detail" d={`M8 ${14 + i * 6}H28`} />)}</g>
         </>
-      ) : d.capability === 'speaker' ? (
+      ) : d.deviceKind === 'speaker' ? (
         <>
           <g transform={front}><circle className="np-iso__glass" cx="30" cy={h / 2} r="17" /><circle className="np-iso__detail" cx="30" cy={h / 2} r="7" /></g>
           <g transform={side}>{[0, 1, 2].map((i) => <path key={i} className="np-iso__detail" d={`M8 ${14 + i * 8}H28`} />)}</g>
@@ -121,7 +121,7 @@ function Device({ d, edit, calm }: { d: StageDeviceView; edit?: DeviceEditProps;
   return (
     <g className={quiet ? 'np-stage__device' : 'np-stage__device np-flash'} data-component="StageDevice" data-spot={`${d.x} ${d.y}`} data-tone={d.tone} data-dim={b(d.dim)} data-on={b(!d.hidden)} {...editAttrs}>
       {edit ? <rect className="np-stage__hit" x={d.body.x1 - 12} y={d.body.y1 - 12} width={d.body.x2 - d.body.x1 + 24} height={d.body.y2 - d.body.y1 + 24} /> : null}
-      {d.capability === 'light' ? <LightFigure d={d} /> : <DeviceFigure d={d} />}
+      {d.deviceKind === 'light' ? <LightFigure d={d} /> : <DeviceFigure d={d} />}
       <text className="np-stage__label" x={l.x} y={l.y + 19} data-anchor="middle">{d.name}</text>
       <text className="np-stage__device-status" x={l.x} y={l.y + DEVICE_LABEL_H - 6} data-anchor="middle">{d.status}</text>
     </g>
@@ -480,7 +480,7 @@ export function Stage({ v, edit, zoom, inset, locked, onInset }: {
   };
   const moved = (d: StageDeviceView, s: Spot): StageDeviceView => {
     const f = frontOf(s);
-    const body = deviceBody(s.x, s.y, d.capability);
+    const body = deviceBody(s.x, s.y, d.deviceKind);
     const dx = (body.x1 + body.x2) / 2 - (d.body.x1 + d.body.x2) / 2, dy = body.y2 - d.body.y2;
     return { ...d, x: s.x, y: s.y, fx: f.x, fy: f.y, wall: facing(s), body, label: { ...d.label, x: d.label.x + dx, y: d.label.y + dy } };
   };

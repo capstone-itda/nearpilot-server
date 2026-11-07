@@ -989,12 +989,14 @@ class DashboardNode:
     node_id: str
     name: str | None  # node.name. 없으면 None
     place_id: str | None
-    capability: str  # 기기 선언의 종류 이름. 키 이름은 PR ③ 에서 바꾼다
+    kind: str  # 기기 선언의 종류 이름
     occupancy: Occupancy
     trust_state: TrustState
     device_state: DeviceState
     last_seen_at: datetime | None
     session_id: str | None
+    descriptor: DeviceDescriptor | None = None  # 저장한 기기 선언. 이전 실패 행은 None
+    descriptor_hash: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

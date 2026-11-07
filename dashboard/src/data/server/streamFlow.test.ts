@@ -12,7 +12,7 @@ afterEach(() => { vi.useRealTimers(); });
 
 const AT = '2026-10-24T05:28:10.123+00:00';
 const BEACON = { type: 'beacon', at: AT, personId: 'p1', pseudonym: '방문자 A', letter: 'A', role: 'visitor', seen: true };
-const CALL = { type: 'mcp_call', at: AT, requestId: 'r1', personId: 'p1', tool: 'request_use', target: { kind: 'nearest', capability: 'locker' }, action: 'open' };
+const CALL = { type: 'mcp_call', at: AT, requestId: 'r1', personId: 'p1', tool: 'request_use', target: { kind: 'nearest', deviceKind: 'locker' }, action: 'open' };
 const VERDICT_OK = { type: 'verdict', at: AT, requestId: 'r1', verdict: 'OK', reason: 'OK', nodeId: 'locker-1' };
 const VERDICT_APPROVAL = { type: 'verdict', at: AT, requestId: 'r1', verdict: 'NEED_APPROVAL', reason: 'APPROVAL_REQUIRED', nodeId: 'locker-1' };
 const COMMAND = { type: 'command', at: AT, requestId: 'r1', nodeId: 'locker-1', action: 'open' };

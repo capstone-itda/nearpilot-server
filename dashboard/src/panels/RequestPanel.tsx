@@ -3,7 +3,7 @@ import { isDecided, type DecidedRequest, type RequestProgress, type Verdict } fr
 import { KeyValue, ProbBars, Section, StepList, Timeline, VerdictTag, type StepRowResult } from '../components/common';
 import { Panel } from '../components/Panel';
 import { useData } from '../data/context';
-import { OUTPUT_COMPLETE, ACTION_NAME, ACTION_VERB, CAPABILITY_NAME, CIRCLED, STEP_SHORT, VERDICT_LABEL, approvalText, reasonText, requestTitle, toolCall } from '../view/text';
+import { OUTPUT_COMPLETE, actionName, actionVerb, kindName, CIRCLED, STEP_SHORT, VERDICT_LABEL, approvalText, reasonText, requestTitle, toolCall } from '../view/text';
 
 const STOP_RESULT: Record<Verdict, StepRowResult> = { OK: 'pass', ASK: 'ask', NEED_APPROVAL: 'appr', BUSY: 'fail', DENY: 'fail' };
 
@@ -47,7 +47,7 @@ const ACCESS_END_TEXT: Record<NonNullable<RequestProgress['accessEnd']>, string>
 export function RequestPanel({ r, onClose }: { r: RequestProgress; onClose: () => void }) {
   const { personName, deviceName, places, snapshot } = useData();
   const devices = places.flatMap((p) => p.devices);
-  const cap = CAPABILITY_NAME[r.target.capability ?? devices.find((d) => d.nodeId === r.nodeId)?.capability ?? 'locker'];
+  const cap = kindName(r.target.deviceKind ?? devices.find((d) => d.nodeId === r.nodeId)?.deviceKind ?? 'locker');
   const d: DecidedRequest | undefined = isDecided(r) ? r : undefined;
   const rows: [StepRowResult, string, string][] = r.steps.map((s) =>
     s.result === 'pass' ? ['pass', '통과', s.detail ?? '']
@@ -67,11 +67,11 @@ export function RequestPanel({ r, onClose }: { r: RequestProgress; onClose: () =
       </Section>
       {r.verdict === 'OK' && r.nodeId ? (
         <Section title="실행 결과">
-          <KeyValue rows={[['명령', `${deviceName(r.nodeId)} ${ACTION_NAME[r.action]}`], ['결과', execText(r)]]} />
+          <KeyValue rows={[['명령', `${deviceName(r.nodeId)} ${actionName(r.action)}`], ['결과', execText(r)]]} />
         </Section>
       ) : null}
       {showBars ? (
-        <Section title={`어느 ${cap} 앞일까`} hint={`가장 높은 확률이 기준선을 넘어야 ${ACTION_VERB[r.action]}`}>
+        <Section title={`어느 ${cap} 앞일까`} hint={`가장 높은 확률이 기준선을 넘어야 ${actionVerb(r.action)}`}>
           <ProbBars rows={devices.filter((d) => r.posteriors![d.nodeId] !== undefined).map((d) => [d.name, r.posteriors![d.nodeId], d.nodeId === post[0][0] ? 'ask' : 'muted'])} threshold={r.threshold!} />
         </Section>
       ) : null}

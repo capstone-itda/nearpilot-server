@@ -1,14 +1,32 @@
-// MON-05 기기 상세: 상태, 고장 격리 원인, 대여 초과
+// MON-05 기기 상세: 상태, 고장 격리 원인, 대여 초과, 기기 선언
 import { KeyValue, NoteBox, Section, StateStrip, Timeline, VerdictTag } from '../components/common';
 import { Loading, Panel } from '../components/Panel';
 import { useData, useQuery } from '../data/context';
-import { ACTION_NAME, DEVICE_STATE_NAME } from '../view/text';
+import type { DeviceInfo } from '../model/types';
+import { DEVICE_STATE_NAME, ROLE_NAME, actionName, kindName } from '../view/text';
+
+/**
+ * 기기가 발표한 선언: 제작사, 동작(이름, 설명, 역할), 선언 해시 (FR-12A).
+ * 소유자는 이 값을 확인하고 시드 스크립트로 신뢰한다. 해시는 줄이지 않는다 (FR-13).
+ */
+function DeclarationSection({ dev }: { dev: DeviceInfo }) {
+  return (
+    <Section title="기기 선언">
+      <KeyValue rows={[
+        ['종류', `${kindName(dev.deviceKind)} · ${dev.deviceKind}`],
+        ['제작사', `${dev.vendor.name} · ${dev.vendor.model} · ${dev.vendor.firmware}`],
+        ...dev.actions.map((a): [string, string] => [a.name, `${a.description}${a.role ? ` · ${ROLE_NAME[a.role]}` : ''}`]),
+        ['선언 해시', dev.descriptorHash, true]
+      ]} />
+    </Section>
+  );
+}
 
 function FaultBody({ nodeId }: { nodeId: string }) {
   const { snapshot } = useData();
   const st = snapshot.devices.find((d) => d.nodeId === nodeId);
   const f = st?.fault;
-  const cmd = f?.action ? `${ACTION_NAME[f.action]} 명령` : '명령';
+  const cmd = f?.action ? `${actionName(f.action)} 명령` : '명령';
   const cause = !f ? '' : f.cause === 'EXEC_UNKNOWN' ? `${cmd}의 결과를 몰라서` : f.cause === 'EXEC_FAILED' ? `기기가 ${cmd} 실패를 알려서` : `기기 이상(${f.cause})으로`;
   const why = f ? `${cause} 후보에서 빼고 격리했어요` : '후보에서 빼고 격리했어요';
   return (
@@ -63,10 +81,15 @@ export function DevicePanel({ nodeId, onClose }: { nodeId: string; onClose: () =
         <Section title="상태"><StateStrip current={state} tone="accent" /></Section>
         <Section title="기기">
           <KeyValue rows={[['코드', nodeId, true], ['방식', dev?.occupancy === 'shared' ? '공용형 · shared' : '대여형 · rental'], ['연결', st?.online ? '연결됨' : '연결 끊김'], ['신뢰', st?.trust ?? '—', true],
-            ['동작', dev ? (dev.capability === 'locker' ? ACTION_NAME.open : `${ACTION_NAME.on} · ${ACTION_NAME.off}`) : '—']]} />
+            ['동작', dev ? dev.actions.map((a) => actionName(a.name)).join(' · ') : '—']]} />
         </Section>
       </>
     );
   }
-  return <Panel kind="device" cap="기기 상세 · MON-05" title={deviceName(nodeId)} tag={tag} onClose={onClose}>{body}</Panel>;
+  return (
+    <Panel kind="device" cap="기기 상세 · MON-05" title={deviceName(nodeId)} tag={tag} onClose={onClose}>
+      {body}
+      {dev ? <DeclarationSection dev={dev} /> : null}
+    </Panel>
+  );
 }

@@ -112,7 +112,11 @@ class DashboardQueryService:
     # ── DashboardQueries ─────────────────────────────────────────────
 
     def places(self) -> Mapping[str, Any]:
-        """장소마다 그 장소의 기기를 node_id 순으로 담는다. 장소 없는 기기는 뺀다."""
+        """장소마다 그 장소의 기기를 node_id 순으로 담는다. 장소 없는 기기와 선언 없는 기기는 뺀다.
+
+        기기 정보는 저장한 기기 선언 그대로다 (FR-12A). 선언 없는 기기는 판정 후보도 아니고,
+        형식 표의 필수 키를 채울 값이 없다 (spec 결정 1).
+        """
         models = self._models()
         with self._open_reads() as reads:
             places, nodes = reads.places(), reads.nodes()
@@ -126,11 +130,9 @@ class DashboardQueryService:
                 "modelVersion": NO_MODEL if version is None else version.model_version,
                 "calibrationVersion": NO_MODEL if version is None else version.calib_version,
                 "devices": [
-                    {
-                        "nodeId": node.node_id, "name": node_name(names, node.node_id),
-                        "capability": node.capability, "occupancy": node.occupancy,
-                    }
-                    for node in nodes if node.place_id == place.place_id
+                    _device_info(node, node_name(names, node.node_id))
+                    for node in nodes
+                    if node.place_id == place.place_id and node.descriptor is not None
                 ],
             })
         return {"weakRssiDbm": self._weak_rssi_dbm, "places": rows}
@@ -452,6 +454,22 @@ def fault_of(row: DashboardAudit | None) -> ReasonCode:
         evidence = row.payload.get("evidence")
         return fault_cause(evidence if isinstance(evidence, Mapping) else {})
     return ReasonCode.TARGET_UNAVAILABLE
+
+
+def _device_info(node: DashboardNode, name: str) -> dict[str, Any]:
+    """장소 목록의 기기 한 대. 동작은 선언 순서이고 `role` 은 있을 때만 넣는다 (spec 결정 2)."""
+    descriptor = node.descriptor
+    assert descriptor is not None
+    actions = []
+    for spec in descriptor.actions:
+        action: dict[str, Any] = {"name": spec.name, "description": spec.description}
+        if spec.role is not None:
+            action["role"] = spec.role
+        actions.append(action)
+    return {
+        "nodeId": node.node_id, "name": name, "deviceKind": node.kind, "occupancy": node.occupancy,
+        "vendor": descriptor.vendor.to_json(), "actions": actions, "descriptorHash": node.descriptor_hash,
+    }
 
 
 def _names(nodes: Iterable[DashboardNode]) -> dict[str, str]:

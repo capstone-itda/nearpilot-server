@@ -143,7 +143,7 @@ def test_FR12B_요청_이벤트의_필드와_시각():
     assert call.at == T0 and call.subject == VISITOR
     assert dict(call.fields) == {
         "requestId": "i1", "tool": "request_use", "target": {"kind": TargetKind.NEAREST,
-                                                             "capability": "locker"},
+                                                             "deviceKind": "locker"},
         "action": "open"}
     steps = [e for e in events if e.type == "step"]
     assert [dict(e.fields) for e in steps][:2] == [
@@ -334,10 +334,10 @@ def test_FR12B_도구_대상은_저장된_표기에서_만든다():
 
 
 def test_FR12B_target_of():
-    assert target_of("nearest:locker") == {"kind": TargetKind.NEAREST, "capability": "locker"}
-    assert target_of("any:locker") == {"kind": TargetKind.ANY, "capability": "locker"}
+    assert target_of("nearest:locker") == {"kind": TargetKind.NEAREST, "deviceKind": "locker"}
+    assert target_of("any:locker") == {"kind": TargetKind.ANY, "deviceKind": "locker"}
     assert target_of("light-1") == {"kind": TargetKind.EXPLICIT, "nodeId": "light-1"}
-    assert target_of("nearest:door") == {"kind": TargetKind.NEAREST, "capability": "door"}
+    assert target_of("nearest:door") == {"kind": TargetKind.NEAREST, "deviceKind": "door"}
     for raw in ("nearest:Door", "somewhere:locker", "nearest:", ""):
         with pytest.raises(ValueError):
             target_of(raw)
@@ -348,7 +348,7 @@ def test_FR12B_target_of():
 
 def node(device_state: DeviceState = DeviceState.ACTIVE, node_id: str = "locker-1") -> DashboardNode:
     return DashboardNode(
-        node_id=node_id, name="사물함 1", place_id="p1", capability="locker", occupancy=Occupancy.RENTAL,
+        node_id=node_id, name="사물함 1", place_id="p1", kind="locker", occupancy=Occupancy.RENTAL,
         trust_state=TrustState.TRUSTED, device_state=device_state, last_seen_at=at(1), session_id="s1")
 
 

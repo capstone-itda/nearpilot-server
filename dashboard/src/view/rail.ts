@@ -1,7 +1,7 @@
 // 모니터 상태 → 흐름 레일 다섯 단계. 쉬운 말이 크게, 코드는 보조 글자로.
 // 서버의 확인 네 칸은 무대의 서버 랙이 보이고(serverChecks), 레일은 한 줄로 줄인다.
 import { isDecided, type DeviceInfo, type PlaceInfo, type RequestProgress, type MonitorState } from '../model/types';
-import { OUTPUT_COMPLETE, ACTION_NAME, CIRCLED, STEP_SHORT, approvalText, josa, reasonText, requestTitle, toolCall } from './text';
+import { OUTPUT_COMPLETE, CIRCLED, STEP_SHORT, actionName, approvalText, josa, reasonText, requestTitle, toolCall } from './text';
 
 export type CheckResult = 'pass' | 'fail' | 'wait' | 'unsure' | 'none' | 'skip';
 export type StepTone = 'accent' | 'ok' | 'ask' | 'appr' | 'busy' | 'deny';
@@ -38,7 +38,7 @@ const findDevice = (places: PlaceInfo[], nodeId: string | undefined): DeviceInfo
 /** 공용형인가: 고른 기기가 있으면 그 기기, 없으면 요청 장소(모르면 모든 장소)에서 요청한 기능의 첫 기기 */
 function shared(r: RequestProgress, places: PlaceInfo[], placeId: string | undefined): boolean {
   const pool = places.filter((p) => !placeId || p.placeId === placeId).flatMap((p) => p.devices);
-  return (findDevice(places, r.nodeId)?.occupancy ?? pool.find((d) => d.capability === r.target.capability)?.occupancy) === 'shared';
+  return (findDevice(places, r.nodeId)?.occupancy ?? pool.find((d) => d.deviceKind === r.target.deviceKind)?.occupancy) === 'shared';
 }
 
 /**
@@ -88,7 +88,7 @@ export function railView(s: MonitorState, places: PlaceInfo[], mirroredPersonId:
   }
   const name = findDevice(places, r.nodeId)?.name ?? '';
   const who = s.people.find((p) => p.id === r.personId)?.pseudonym ?? '방문자';
-  const act = ACTION_NAME[r.action];
+  const act = actionName(r.action);
   const nodeAct = `${r.nodeId} · ${r.action}`;
   const head = { mode: 'live' as const, title: `${who} · ${requestTitle(r, (id) => findDevice(places, id)?.name ?? id)}`, meta: r.at, code: toolCall(r) };
 

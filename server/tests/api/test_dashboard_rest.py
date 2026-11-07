@@ -13,7 +13,7 @@ import pytest
 from fastapi import FastAPI
 
 from _dashboard import NOW, OWNER, OWNER_TOKEN, VISITOR, VISITOR_TOKEN, FakeAccounts, FakeQueries, FakeSnapshot
-from _dashboard import WsClient, authenticator, http_request, run, settings
+from _dashboard import WsClient, authenticator, declaration, http_request, run, settings
 from _mcp_client import FakeCore
 from nearpilot.api.mcp.server import build_app
 from nearpilot.api.ws.hub import MonitorHub
@@ -202,16 +202,16 @@ def test_FR12A_장소_조회는_등록된_장소를_모두_돌려준다():
         "places": [
             {"placeId": "lounge", "placeName": "라운지", "modelVersion": "model-1", "calibrationVersion": "cal-1",
              "devices": [
-                 {"nodeId": "locker-1", "name": "사물함 1", "capability": "locker", "occupancy": "rental"},
-                 {"nodeId": "locker-2", "name": "사물함 2", "capability": "locker", "occupancy": "rental"},
-                 {"nodeId": "locker-3", "name": "사물함 3", "capability": "locker", "occupancy": "rental"},
-                 {"nodeId": "light-1", "name": "조명 1", "capability": "light", "occupancy": "shared"},
-                 {"nodeId": "light-2", "name": "조명 2", "capability": "light", "occupancy": "shared"},
-                 {"nodeId": "light-3", "name": "조명 3", "capability": "light", "occupancy": "shared"},
-                 {"nodeId": "speaker-1", "name": "스피커 1", "capability": "speaker", "occupancy": "shared"},
+                 {"nodeId": "locker-1", "name": "사물함 1", "deviceKind": "locker", "occupancy": "rental", **declaration("locker")},
+                 {"nodeId": "locker-2", "name": "사물함 2", "deviceKind": "locker", "occupancy": "rental", **declaration("locker")},
+                 {"nodeId": "locker-3", "name": "사물함 3", "deviceKind": "locker", "occupancy": "rental", **declaration("locker")},
+                 {"nodeId": "light-1", "name": "조명 1", "deviceKind": "light", "occupancy": "shared", **declaration("light")},
+                 {"nodeId": "light-2", "name": "조명 2", "deviceKind": "light", "occupancy": "shared", **declaration("light")},
+                 {"nodeId": "light-3", "name": "조명 3", "deviceKind": "light", "occupancy": "shared", **declaration("light")},
+                 {"nodeId": "speaker-1", "name": "스피커 1", "deviceKind": "speaker", "occupancy": "shared", **declaration("speaker")},
              ]},
             {"placeId": "side-room", "placeName": "옆방", "modelVersion": "model-2", "calibrationVersion": "cal-2",
-             "devices": [{"nodeId": "mood-1", "name": "무드등", "capability": "light", "occupancy": "shared"}]},
+             "devices": [{"nodeId": "mood-1", "name": "무드등", "deviceKind": "light", "occupancy": "shared", **declaration("light")}]},
         ],
     }
     assert rig.queries.calls == [("places", ())]

@@ -207,10 +207,10 @@ describe('railView 여러 장소', () => {
 
   it('FR12B 고른 기기가 없으면 공용 판정은 요청 장소의 같은 기능 기기로 정한다', () => {
     const place = (id: string, occupancy: 'rental' | 'shared'): PlaceInfo =>
-      ({ placeId: id, placeName: id, modelVersion: 'v', calibrationVersion: 'c', devices: [{ nodeId: `${id}-1`, name: `${id} 등`, capability: 'light', occupancy }] });
+      ({ placeId: id, placeName: id, modelVersion: 'v', calibrationVersion: 'c', devices: [{ nodeId: `${id}-1`, name: `${id} 등`, deviceKind: 'light', occupancy }] });
     const places = [place('a', 'rental'), place('b', 'shared')];
     const s = SCENES.flow();
-    s.request = { ...s.request!, verdict: 'DENY', reason: 'POLICY_DENIED', nodeId: undefined, execution: undefined, target: { kind: 'nearest', capability: 'light' }, steps: Array(7).fill({ result: 'skip' }) };
+    s.request = { ...s.request!, verdict: 'DENY', reason: 'POLICY_DENIED', nodeId: undefined, execution: undefined, target: { kind: 'nearest', deviceKind: 'light' }, steps: Array(7).fill({ result: 'skip' }) };
     expect(serverChecks(s.request, places, 'b')[3]).toEqual(['none', '공용형 생략']);
     expect(serverChecks(s.request, places, 'a')[3]).toEqual(['none', '비었는지']);
     // 요청 장소를 모르면 모든 장소의 첫 같은 기능 기기를 쓴다

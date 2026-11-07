@@ -1,6 +1,6 @@
 # 대시보드의 기기 선언 표시
 
-- 상태: 진행 중
+- 상태: 완료
 - 담당: 작업 지시자 (대시보드 서버 조회·스트림, 대시보드 화면 연결 구현)
 - 요구사항: FR-12A, FR-12B, FR-13
 - 따르는 결정: #245 (decision PR #246). `architecture.md` §4 "기기 자기 선언의 후속 반영"의 세 번째 단계다. 앞 단계는 `specs/iot-device-descriptor/spec.md`, `specs/core-device-actions/spec.md`다.
@@ -72,8 +72,8 @@
 | 선언의 종류가 사물함·조명·스피커가 아님 | 서버는 그대로 보낸다. 화면은 종류 이름을 그대로 쓰고 기본 상자로 그린다 | `test_FR12A_places_unknown_kind`, `map.test.ts`, `text.test.ts`, `stage.test.ts` |
 | 서버가 형식 표 밖의 종류·동작 이름, 해시를 보냄 | 서버 스키마 검사가 `SchemaError`로 막는다. 화면 어댑터는 조회 오류로 알리고 이벤트는 그 이벤트만 버린다 | `test_dashboard_schema.py`, `map.test.ts` |
 | 선언 해시가 바뀌어 `discovered`가 됨 | 장소 목록은 새 해시를, 점검과 기기 상세는 `discovered`를 보인다 | `test_FR13_places_show_new_hash_after_redeclare` |
-| 명시 지정 요청의 이력 | `target`에 `deviceKind`가 없고 `nodeId`가 있다 | `test_FR12B_target_device_kind` |
-| 저장된 옛 대상 표기(`nearest:locker`) | 같은 파서로 읽어 `deviceKind`로 보낸다 | `test_FR12B_target_device_kind` |
+| 명시 지정 요청의 이력 | `target`에 `deviceKind`가 없고 `nodeId`가 있다 | `test_FR12B_target_of` |
+| 저장된 옛 대상 표기(`nearest:locker`) | 같은 파서로 읽어 `deviceKind`로 보낸다 | `test_FR12B_target_of` |
 | 화면이 모르는 동작(`close`, 선언한 다른 이름)의 스트림 이벤트 | 버리지 않는다. 동작 이름 그대로 보인다 | `map.test.ts`, `text.test.ts` |
 
 ## 6. 결정
@@ -83,9 +83,10 @@
 3. 서버 스키마는 `deviceKind`와 동작 이름을 이름 규칙(`^[a-z][a-z0-9_]*$`, 32바이트 이하)으로, `descriptorHash`를 64자리 소문자 16진수로, `role`을 `reoperate`·`deactivate`로 검사한다. 제작사 값과 설명은 문자열만 검사한다 — 선언 검증(`parse_descriptor`)이 길이를 이미 막았다.
 4. 화면 모델의 종류와 동작은 닫힌 목록 대신 이름 문자열이다. 아는 이름(사물함·조명·스피커, 열기·닫기·켜기·끄기)만 쉬운 말로 바꾸고 모르는 이름은 그대로 보인다 — 새 종류를 화면 코드 수정 없이 보인다 (NFR-07의 취지).
 5. 무대는 사물함·조명·스피커만 고유 그림으로 그리고, 그 밖의 종류는 앞면 부품이 없는 상자로 그린다. 상자 높이는 스피커와 사물함 사이 값(70)이다 — 표시용 배치이고 실제 크기가 아니다.
-6. 기기 상세의 "동작" 행은 선언의 동작 이름을 쉬운 말로 잇는다. 그 아래 "선언" 절에 제작사·모델·펌웨어, 동작(이름, 설명, 역할), 선언 해시 전체를 보인다. 상태와 관계없이(고장 격리, 대여 중 포함) 보인다.
+6. 기기 상세의 "동작" 행은 선언의 동작 이름을 쉬운 말로 잇는다. 패널 끝의 "기기 선언" 절에 종류, 제작사·모델·펌웨어(한 줄), 동작마다 이름과 설명·역할, 선언 해시 전체를 보인다. 상태와 관계없이(고장 격리, 대여 중 포함) 보인다 — 절에 안내 문구를 두지 않고 제작사 정보를 한 줄로 합쳐, 가장 긴 대여 중 패널도 1366×768에서 패널 안 스크롤 없이 들어간다 (구현 중 발견. e2e 화면 검사).
 7. 목 데이터의 선언은 v2 선언 템플릿(`legacy_descriptor`)과 같은 값과 해시를 쓴다 — 목 화면이 실제 서버의 기존 기기와 같은 해시를 보인다.
 8. 화면의 사유 코드 문구에 `UNSUPPORTED_ACTION`, `UNSUPPORTED_PARAMETER`, `PARAMETER_OUT_OF_RANGE`를 서버 문구(`core/dashboard/text.py`)와 같게 더한다 — 선언 기반 판정의 거부 사유가 코드 그대로 보이지 않게 한다.
+9. 실제 조립 서버 통합 시험의 시드(`tests/integration/_runtime.py`)는 기기 행에 시뮬레이터가 발표하는 v2 템플릿 선언과 해시를 넣는다 — 운영에서 기기 행은 발표로만 생겨 선언이 있다. 선언 없는 시드 기기는 결정 1로 장소 목록에서 빠진다 (구현 중 발견).
 
 ## 7. 가정
 
@@ -98,11 +99,15 @@
 | FR-12A | `tests/core/dashboard/test_dashboard_queries.py::test_FR12A_places_show_declaration` | 장소 목록의 `deviceKind`, `vendor`, `actions`(역할 선택), `descriptorHash` |
 | FR-12A | `tests/core/dashboard/test_dashboard_queries.py::test_FR12A_places_unknown_kind` | 선언한 새 종류를 그대로 보낸다 |
 | FR-12A | `tests/core/dashboard/test_dashboard_queries.py::test_FR12A_places_skip_node_without_descriptor` | 선언 없는 기기를 빼고 점검에는 남긴다 |
-| FR-12A | `tests/db/test_dashboard_reads.py` | 저장한 선언과 해시를 읽는다 |
 | FR-12A | `tests/api/test_dashboard_schema.py` | 장소 목록의 새 키 검사와 거부 경로 |
-| FR-12A | `tests/api/test_dashboard_rest.py` | 실제 DB로 조립한 서버의 장소 목록 응답 |
-| FR-12B | `tests/core/dashboard/test_events.py::test_FR12B_target_device_kind` | 근접·전역은 `deviceKind`, 명시는 `nodeId` |
+| FR-12A | `tests/api/test_dashboard_rest.py` | 조회 처리기의 장소 목록 응답 |
+| FR-12A | `tests/integration/test_dashboard_queries_real_db.py`, `tests/integration/test_dashboard_server.py` | 실제 조립 서버의 장소 목록이 시드한 기기를 모두 담는다 |
+| FR-12B | `tests/core/dashboard/test_events.py::test_FR12B_target_of` | 근접·전역은 `deviceKind`, 명시는 `nodeId` |
 | FR-13 | `tests/integration/test_dashboard_descriptor_flow.py::test_FR13_places_show_new_hash_after_redeclare` | 선언이 바뀐 발표 뒤 장소 목록의 새 해시와 `discovered` |
+| FR-12A | `tests/integration/test_dashboard_descriptor_flow.py::test_FR12A_places_show_vendor_change_with_same_hash` | 제작사 정보만 바뀐 발표 뒤 같은 해시, 새 제작사 정보, 신뢰 유지 |
+| FR-12A | `tests/db/test_dashboard_reads.py::test_FR12A_dashboard_reads_declaration` | 저장한 선언과 해시를 읽고, 선언 없는 행은 None |
 | FR-12A | `dashboard/src/data/server/map.test.ts` | 새 키 변환, 모르는 종류·동작 수용, 형식 밖 값 거부 |
 | FR-12A | `dashboard/src/panels/DevicePanel.test.tsx` | 기기 상세의 선언 절 |
-| FR-12A | `dashboard/src/view/text.test.ts` | 아는 이름의 쉬운 말과 모르는 이름의 그대로 표시 |
+| FR-12A | `dashboard/src/view/text.test.ts` | 아는 이름의 쉬운 말과 모르는 이름의 그대로 표시, 새 사유 코드 문구 |
+| FR-12A | `dashboard/src/view/stage.test.ts` | 새 종류의 기본 상자 높이와 근접 대상 |
+| FR-12A, FR-12B | `dashboard/e2e/` (Playwright) | 기기 상세 패널을 포함한 모든 장면이 네 해상도·두 테마에서 넘치지 않는다. 가짜 서버의 장소 목록에 선언 키가 있다 |
