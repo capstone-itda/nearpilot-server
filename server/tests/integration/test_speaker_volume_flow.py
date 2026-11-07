@@ -1,4 +1,4 @@
-"""FR-09 스피커 음량 제어의 MCP → CORE → DB → MQTT 경로 (specs/core-speaker-volume/spec.md).
+"""FR-09 스피커 `on` 인자의 MCP → CORE → DB → MQTT 경로 (specs/core-device-actions/spec.md).
 
 실제 SQLite·runtime 조립 위에서 시뮬레이터를 fake Paho 로 연결한다. 근접 추정은 fake 로 고정한다.
 스피커의 근접 임계값이 없어서 요청 대상은 명시 지정 speaker-1 이다.
@@ -55,7 +55,10 @@ def speaker_commands(w):
 
 
 def test_FR09_runtime_schema_uses_speaker_volume_max(world):  # noqa: F811
-    """설정의 `speaker_volume_max`가 조립 서버의 `request_use` 스키마까지 닿는다."""
+    """옛 설정 키 `speaker_volume_max`는 `param_max.speaker.on.volume`으로 읽는다 (§1.2).
+
+    `request_use` 스키마는 종류와 관계없이 같다. 상한은 조회 응답의 인자 스키마가 알린다 (FR-09).
+    """
     w = world(settings={"speaker_volume_max": 15, "speaker_default_volume": 15})
     app = create_app(w.runtime)
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}).encode()
@@ -67,7 +70,9 @@ def test_FR09_runtime_schema_uses_speaker_volume_max(world):  # noqa: F811
 
     status, text = asyncio.run(scenario())
     tool = next(t for t in json.loads(text)["result"]["tools"] if t["name"] == "request_use")
-    assert status == 200 and tool["inputSchema"]["properties"]["volume"]["maximum"] == 15
+    assert status == 200 and "volume" not in tool["inputSchema"]["properties"]
+    assert w.runtime.config.settings.param_caps("speaker", "on") == {"volume": 15}
+    assert w.runtime.config.settings.param_defaults("speaker", "on") == {"volume": 15}
 
 
 def test_FR09_runtime_speaker_volume_reaches_device(world, caplog):  # noqa: F811
@@ -85,7 +90,7 @@ def test_FR09_runtime_speaker_volume_reaches_device(world, caplog):  # noqa: F81
             await asyncio.to_thread(w.ready, "speaker-1")
             await asyncio.to_thread(announce_controls, w, CONTROLS)
             out = {"state": (await mcp.call("get_device_state", {"node_id": "speaker-1"}, token=token))[1]}
-            out["loud"] = await call({"request_id": "loud", "volume": 12})
+            out["loud"] = await call({"request_id": "loud", "arguments": {"volume": 12}})
             await asyncio.to_thread(wait_succeeded, w, 1)
             # 저장소가 다시 만든 실행 문맥도 음량을 담아야 결과 인계가 끝나고 뒤 보고가 막히지 않는다.
             seen = query(w.db, "SELECT last_seen_at FROM node WHERE node_id = 'speaker-1'")[0]["last_seen_at"]
@@ -95,7 +100,7 @@ def test_FR09_runtime_speaker_volume_reaches_device(world, caplog):  # noqa: F81
                 w.db, "SELECT last_seen_at FROM node WHERE node_id = 'speaker-1'")[0]["last_seen_at"] != seen)
             out["keep"] = await call({"request_id": "keep"})
             await asyncio.to_thread(wait_succeeded, w, 2)
-            out["above"] = await call({"request_id": "above", "volume": 21})
+            out["above"] = await call({"request_id": "above", "arguments": {"volume": 21}})
             out["off"] = await call({"request_id": "off", "action": "off"})
             await asyncio.to_thread(wait_succeeded, w, 3)
             return out
@@ -104,7 +109,8 @@ def test_FR09_runtime_speaker_volume_reaches_device(world, caplog):  # noqa: F81
         out = asyncio.run(scenario())
 
     assert "CORE handover failed" not in caplog.text
-    assert out["state"]["controls"] == CONTROLS
+    on = next(a for a in out["state"]["actions"] if a["name"] == "on")
+    assert on["input_schema"]["properties"]["volume"]["maximum"] == 20
     assert out["loud"]["verdict"] == "OK"
     assert out["keep"]["verdict"] == "OK"
     assert (out["above"]["verdict"], out["above"]["reason"]) == ("DENY", "PARAMETER_OUT_OF_RANGE")
@@ -115,8 +121,8 @@ def test_FR09_runtime_speaker_volume_reaches_device(world, caplog):  # noqa: F81
     assert [(c["action"], c.get("parameters")) for c in commands] == [
         ("on", {"volume": 12}), ("on", {"volume": 12}), ("off", None)]
     assert "parameters" not in commands[-1]
-    stored = [json.loads(r["speaker"]) if r["speaker"] else None
-              for r in query(w.db, "SELECT speaker FROM node_command ORDER BY rowid")]
+    stored = [json.loads(r["arguments"]) if r["arguments"] else None
+              for r in query(w.db, "SELECT arguments FROM node_command ORDER BY rowid")]
     assert stored == [c.get("parameters") for c in commands]
 
 
@@ -132,13 +138,14 @@ def test_FR09_runtime_speaker_without_controls_stays_plain(world):  # noqa: F811
             plain = (await mcp.call("request_use", {"target_spec": "speaker-1", "action": "on",
                                                     "request_id": "plain"}, token=token))[1]
             with_args = (await mcp.call("request_use", {"target_spec": "speaker-1", "action": "on",
-                                                        "request_id": "loud", "volume": 12},
+                                                        "request_id": "loud", "arguments": {"volume": 12}},
                                         token=token))[1]
             return plain, with_args
 
     plain, with_args = asyncio.run(scenario())
     assert plain["verdict"] == "OK"
-    assert (with_args["verdict"], with_args["reason"]) == ("DENY", "UNSUPPORTED_PARAMETER")
+    # 인자를 선언하지 않은 스피커에 인자를 주면 스키마 위반이다 (FR-09).
+    assert (with_args["verdict"], with_args["reason"]) == ("DENY", "INVALID_INPUT")
     assert ["parameters" in c for c in speaker_commands(w)] == [False]
 
 
@@ -156,9 +163,9 @@ def test_FR22_runtime_same_request_id_other_volume_conflicts(world):  # noqa: F8
         async with app.router.lifespan_context(app):
             await asyncio.to_thread(w.ready, "speaker-1")
             await asyncio.to_thread(announce_controls, w, CONTROLS)
-            first = await call({"request_id": "r1", "volume": 12})
-            other = await call({"request_id": "r1", "volume": 13})
-            repeat = await call({"request_id": "r1", "volume": 12})
+            first = await call({"request_id": "r1", "arguments": {"volume": 12}})
+            other = await call({"request_id": "r1", "arguments": {"volume": 13}})
+            repeat = await call({"request_id": "r1", "arguments": {"volume": 12}})
             return first, other, repeat
 
     first, other, repeat = asyncio.run(scenario())

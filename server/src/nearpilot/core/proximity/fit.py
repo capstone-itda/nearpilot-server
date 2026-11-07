@@ -22,7 +22,7 @@ from typing import Any
 
 from nearpilot.core.proximity.filter import compute_posteriors
 from nearpilot.core.proximity.model import NodeModel, ProximityModel
-from nearpilot.shared.enums import Capability, DeviceState, Occupancy, TrustState
+from nearpilot.shared.enums import DeviceState, Occupancy, TrustState
 from nearpilot.shared.models import BeaconKey, NodeInfo, RssiFrame
 
 NONE_LABEL: str = "none"  # 수집 라벨 "어느 기기 앞도 아님"
@@ -292,7 +292,7 @@ def validation_log_loss(
         NodeInfo(
             node_id=node_id,
             place_id=layout.place_id,
-            capability=Capability.LIGHT,
+            kind="light",
             occupancy=Occupancy.SHARED,
             trust_state=TrustState.TRUSTED,
             device_state=DeviceState.AVAILABLE,

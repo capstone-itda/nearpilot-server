@@ -37,7 +37,7 @@ from typing import Any
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    AccessMode, ApprovalMode, Capability, DeviceState, EndReason, ExecutionStatus, Occupancy, ReasonCode, RecoveryStatus,
+    AccessMode, ApprovalMode, DeviceState, EndReason, ExecutionStatus, Occupancy, ReasonCode, RecoveryStatus,
     Role, SessionState, Verdict)
 from tools.evaluation.harness import Harness
 from tools.evaluation.metric_load import _actuated, _hear, _release, _run_parallel
@@ -53,7 +53,7 @@ _LEAVE_SCENARIOS = ("leave", "rental_overrun")  # 서버가 점유를 닫을 수
 _FAULT_SCENARIOS = ("no_response", "command_failed", "result_unknown")  # 기기가 FAULT가 되는 시나리오
 _UNFINISHED_SCENARIOS = (*_FAULT_SCENARIOS, "pending_command_release")  # 방문자의 반납이 일반 반납이 되면 안 되는 시나리오
 
-_ACTION = {Capability.LOCKER: "open", Capability.LIGHT: "on", Capability.SPEAKER: "on"}  # 기기 종류마다 요청하는 동작
+_ACTION = {"locker": "open", "light": "on", "speaker": "on"}  # 기기 종류마다 요청하는 동작
 _APPROVAL_REQUIRED = "approval_required"  # `find_available_devices`의 `access` 값 (MCP 계약)
 _STRANGER = "unregistered"  # 틀린 토큰으로 보낼 때 쓰는 가짜 사용자 ID
 _NORMAL = {"final": "succeeded", "drop_final_result": False, "result_delay_sec": None}  # 장애를 걷은 시뮬레이터 시나리오

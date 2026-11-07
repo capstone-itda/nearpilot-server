@@ -7,10 +7,10 @@ import copy
 import pytest
 
 from nearpilot.shared.descriptor import (
-    ArgumentProblem, DescriptorError, descriptor_hash, legacy_controls, legacy_descriptor,
+    ArgumentProblem, DescriptorError, capped_schema, descriptor_hash, is_name, legacy_descriptor, normalize_arguments,
     parse_descriptor, validate_arguments,
 )
-from nearpilot.shared.enums import ActionRole, Capability, Occupancy
+from nearpilot.shared.enums import ActionRole, Occupancy
 
 
 def light() -> dict:
@@ -218,31 +218,45 @@ def test_FR04_descriptor_hash_rules():
 
 def test_FR04_v2_templates():
     """v2 템플릿은 spec 결정 3의 선언이다. 제어 정보가 다르면 해시도 다르다."""
-    ring = legacy_descriptor(Capability.LIGHT, Occupancy.SHARED, brightness_max=64, color=True)
+    ring = legacy_descriptor("light", Occupancy.SHARED, brightness_max=64, color=True)
     assert ring.action("on").description == "조명을 켜고 밝기와 색을 정한다"
     assert ring.action("on").properties["brightness"]["maximum"] == 64
     assert ring.action("on").properties["color"]["pattern"] == "^#[0-9A-Fa-f]{6}$"
     assert ring.action("off").role is ActionRole.DEACTIVATE
     assert ring.vendor.to_json() == {"name": "nearpilot", "model": "light", "firmware": "v2"}
-    plain = legacy_descriptor(Capability.LIGHT, Occupancy.SHARED)
+    plain = legacy_descriptor("light", Occupancy.SHARED)
     assert plain.action("on").properties == {} and plain.hash != ring.hash
-    box = legacy_descriptor(Capability.LOCKER, Occupancy.RENTAL)
+    box = legacy_descriptor("locker", Occupancy.RENTAL)
     assert [(a.name, a.role) for a in box.actions] == [("open", None), ("close", ActionRole.REOPERATE)]
-    speaker = legacy_descriptor(Capability.SPEAKER, Occupancy.SHARED, volume_max=20)
+    speaker = legacy_descriptor("speaker", Occupancy.SHARED, volume_max=20)
     assert speaker.action("on").properties["volume"] == {"type": "integer", "minimum": 0, "maximum": 20}
-    for capability, occupancy in [(Capability.LOCKER, Occupancy.SHARED), (Capability.LIGHT, Occupancy.RENTAL)]:
+    for capability, occupancy in [("locker", Occupancy.SHARED), ("light", Occupancy.RENTAL),
+                                  ("fan", Occupancy.SHARED)]:  # v2 기능 밖의 종류는 템플릿이 없다
         with pytest.raises(DescriptorError):
             legacy_descriptor(capability, occupancy)
 
 
-def test_FR04_legacy_controls_from_descriptor():
-    """PR ② 전까지 판정이 쓰는 조명·스피커 제어 정보 (spec 결정 7)."""
-    assert legacy_controls(None) == (None, None)
-    assert legacy_controls(parse_descriptor(light())) == ((64, True), None)
-    assert legacy_controls(legacy_descriptor(Capability.LIGHT, Occupancy.SHARED)) == (None, None)
-    assert legacy_controls(legacy_descriptor(Capability.SPEAKER, Occupancy.SHARED, volume_max=30)) == (None, 30)
-    huge = with_change(light(), ("actions", 0, "input_schema", "properties", "brightness", "maximum"), 1000)
-    assert legacy_controls(parse_descriptor(huge)) == (None, None)
+def test_FR09_normalize_and_capped_schema():
+    """판정의 `#RRGGBB` 정규화와 조회 응답의 인자 상한 (specs/core-device-actions/spec.md 결정 7·8)."""
+    on = parse_descriptor(light()).action("on")
+    assert normalize_arguments(on, {"brightness": 3, "color": "#00ff0a"}) == {"brightness": 3, "color": "#00FF0A"}
+    other = with_change(light(), ("actions", 0, "input_schema", "properties", "color"),
+                        {"type": "string", "maxLength": 7})
+    assert normalize_arguments(parse_descriptor(other).action("on"), {"color": "#00ff0a"}) == {"color": "#00ff0a"}
+    schema = capped_schema(on, {"brightness": 20, "color": 5, "missing": 1})
+    assert schema["properties"]["brightness"]["maximum"] == 20
+    assert "maximum" not in schema["properties"]["color"]  # 숫자 인자만 상한을 둔다
+    assert capped_schema(on, {"brightness": 100})["properties"]["brightness"]["maximum"] == 64
+    assert on.properties["brightness"]["maximum"] == 64  # 선언 값은 바꾸지 않는다
+    assert capped_schema(on, None) == on.to_json()["input_schema"]
+
+
+@pytest.mark.parametrize(("value", "ok"), [
+    ("on", True), ("spin_up", True), ("a" * 32, True), ("a" * 33, False), ("On", False), ("1on", False),
+    ("", False), ("on-off", False), (None, False), (3, False),
+])
+def test_FR09_name_rule(value, ok):
+    assert is_name(value) is ok
 
 
 def test_FR06_validate_arguments():

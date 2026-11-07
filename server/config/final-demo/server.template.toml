@@ -4,9 +4,17 @@ version = "final-demo-2"
 threshold_locker = 0.8
 threshold_light = 0.8
 threshold_speaker = 0.8
-light_brightness_max = 64
-light_default_brightness = 64
-light_default_color = "#FFFFFF"
+
+[settings.param_max.light.on]
+brightness = 64
+[settings.param_max.speaker.on]
+volume = 20
+
+[settings.param_default.light.on]
+brightness = 64
+color = "#FFFFFF"
+[settings.param_default.speaker.on]
+volume = 20
 
 [runtime]
 

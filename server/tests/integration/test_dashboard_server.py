@@ -40,7 +40,7 @@ from nearpilot.runtime import DashboardConfig, Runtime, create_app
 from nearpilot.runtime.database import ThreadDatabase
 from nearpilot.runtime.tasks import NotAccepting
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import Action, ApprovalMode, Verdict
+from nearpilot.shared.enums import ApprovalMode, Verdict
 from nearpilot.shared.models import Decision, TargetSpec, UseRequest
 from tools.evaluation.proximity import Metrics, metric_rows
 from tools.evaluation.report import write_report
@@ -122,11 +122,11 @@ class Server:
     def frames(self) -> int:
         return query(self.db, "SELECT count(*) c FROM rssi_observation")[0]["c"]
 
-    def use(self, user_id: str, target: str, request_id: str, action: Action = Action.OPEN) -> Decision:
+    def use(self, user_id: str, target: str, request_id: str, action: str = "open") -> Decision:
         return self.runtime.core.request_use(UseRequest(
             user_id, request_id, TargetSpec.parse(target), action, None, datetime.now(timezone.utc)))
 
-    def access(self, user_id: str, node_id: str, action: Action, request_id: str) -> Decision:
+    def access(self, user_id: str, node_id: str, action: str, request_id: str) -> Decision:
         return self.runtime.core.request_access(user_id, node_id, action, request_id)
 
     def commands(self, node_id: str) -> list[str]:
@@ -232,14 +232,14 @@ def flow(tmp_path_factory):
 
             # 방문자 A 가 사물함을, 방문자 B 가 공용 조명을 연다. 결과가 저장되면 mcp_result 가 온다
             for name, user_id, target, action in (
-                ("open", VISITOR_A, "locker-1", Action.OPEN), ("light", VISITOR_B, "light-1", Action.ON),
+                ("open", VISITOR_A, "locker-1", "open"), ("light", VISITOR_B, "light-1", "on"),
             ):
                 decisions[name] = server.use(user_id, target, name, action)
                 assert decisions[name].verdict is Verdict.OK, name
                 stream.pull_until(has_result(decisions[name].internal_request_id))
 
             # 승인이 필요한 기기의 접근 신청
-            decisions["access"] = server.access(VISITOR_A, "light-2", Action.ON, "access")
+            decisions["access"] = server.access(VISITOR_A, "light-2", "on", "access")
             assert decisions["access"].verdict is Verdict.NEED_APPROVAL
             stream.pull_until(lambda events: any(e["type"] == "approval" for e in events))
 

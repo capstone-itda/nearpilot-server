@@ -7,16 +7,94 @@
 
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass
+from collections.abc import Mapping
+from copy import deepcopy
+from dataclasses import dataclass, field
 from math import isfinite
+from typing import Any
 
-_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
+from nearpilot.shared.descriptor import is_name
+from nearpilot.shared.frozen import freeze, thaw
+
+# 근접 임계값을 필드로 두는 종류다. 그 밖의 종류는 `thresholds` 에 둔다 (spec core-device-actions 결정 4).
+_THRESHOLD_FIELDS = {"locker": "threshold_locker", "light": "threshold_light", "speaker": "threshold_speaker"}
+
+# 인자 상한과 기본값의 초기 기준. 기존 조명·스피커 설정과 같은 값이다 (requirements.md §1.2).
+# 64 는 light-1 의 보드 5V 전원에서 흰색 점등을 확인한 값이다.
+# 20 은 커패시터 없는 speaker-1 에서 담당자가 정한 값이다. 커패시터를 달기 전에는 올리지 않는다.
+_PARAM_MAX = {"light": {"on": {"brightness": 64}}, "speaker": {"on": {"volume": 20}}}
+_PARAM_DEFAULT = {"light": {"on": {"brightness": 64, "color": "#FFFFFF"}}, "speaker": {"on": {"volume": 20}}}
+
+# 옛 설정 키 → 새 경로 (requirements.md §1.2 "기존 ... 은 이 형식으로 옮긴다")
+LEGACY_PARAM_KEYS = {
+    "light_brightness_max": ("param_max", "light", "on", "brightness"),
+    "light_default_brightness": ("param_default", "light", "on", "brightness"),
+    "light_default_color": ("param_default", "light", "on", "color"),
+    "speaker_volume_max": ("param_max", "speaker", "on", "volume"),
+    "speaker_default_volume": ("param_default", "speaker", "on", "volume"),
+}
 
 
-def is_light_color(value: object) -> bool:
-    """`#RRGGBB` 16진 문자열인가 (FR-09). 대소문자는 구분하지 않는다."""
-    return isinstance(value, str) and _COLOR.fullmatch(value) is not None
+def migrate_settings_table(table: Mapping[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """설정 파일 표나 저장한 스냅샷을 `Settings` 인자로 바꾼다. 옮긴 옛 키 목록도 반환한다.
+
+    - 필드가 아닌 `threshold_{kind}` 키는 `thresholds` 로 모은다.
+    - 옛 키 5개는 `param_max`·`param_default` 의 같은 자리로 옮긴다. 같은 표에 새 형식이 함께 있으면 거부한다.
+    형식이 틀리면 ValueError 다. 값의 검증은 `Settings` 가 한다.
+    """
+    out = dict(table)
+    thresholds = dict(out.pop("thresholds", None) or {})
+    for key in list(out):
+        if key.startswith("threshold_") and key not in _FIELD_NAMES:
+            kind = key[len("threshold_"):]
+            if kind in thresholds:
+                raise ValueError(f"{key} 를 두 번 썼다")
+            thresholds[kind] = out.pop(key)
+    if thresholds:
+        out["thresholds"] = thresholds
+    legacy = tuple(key for key in LEGACY_PARAM_KEYS if key in out)
+    for section in sorted({LEGACY_PARAM_KEYS[key][0] for key in legacy}):
+        if section in out:
+            raise ValueError(f"{section} 와 옛 키 {', '.join(sorted(legacy))} 를 함께 쓸 수 없다")
+    for key in legacy:
+        section, kind, action, arg = LEGACY_PARAM_KEYS[key]
+        if section not in out:
+            out[section] = deepcopy(_PARAM_MAX if section == "param_max" else _PARAM_DEFAULT)
+        out[section].setdefault(kind, {}).setdefault(action, {})[arg] = out.pop(key)
+    return out, legacy
+
+
+def _number(value: object) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and isfinite(value)
+
+
+def _check_threshold(name: str, value: object) -> None:
+    if value is None:
+        return
+    if not _number(value):
+        raise ValueError(f"{name} 는 유한한 숫자 또는 None 이어야 한다")
+    if not 0.0 < value <= 1.0:
+        raise ValueError(f"{name} 는 (0, 1] 범위여야 한다: {value}")
+
+
+def _check_param_table(name: str, table: object, leaf: str) -> None:
+    """`{kind: {action: {arg: 값}}}` 모양과 이름 규칙을 검사한다."""
+    if not isinstance(table, Mapping):
+        raise ValueError(f"{name} 는 표여야 한다")
+    for kind, actions in table.items():
+        if not is_name(kind) or not isinstance(actions, Mapping):
+            raise ValueError(f"{name}.{kind} 형식 오류")
+        for action, args in actions.items():
+            if not is_name(action) or not isinstance(args, Mapping):
+                raise ValueError(f"{name}.{kind}.{action} 형식 오류")
+            for arg, value in args.items():
+                where = f"{name}.{kind}.{action}.{arg}"
+                if not is_name(arg):
+                    raise ValueError(f"{where} 이름 오류")
+                if leaf == "number" and not _number(value):
+                    raise ValueError(f"{where} 는 유한한 숫자여야 한다")
+                if leaf == "scalar" and not (isinstance(value, (str, bool)) or _number(value)):
+                    raise ValueError(f"{where} 는 문자열, 숫자, 불리언이어야 한다")
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +106,9 @@ class Settings:
     threshold_light: float = 0.75
     # 스피커 수치는 미결이다. None 은 미설정이며 실행을 허가하지 않는다 (#61).
     threshold_speaker: float | None = None
+    # 위 세 종류 밖의 근접 임계값. 설정 파일에서는 `threshold_{kind}` 로 쓴다 (FR-17, #245).
+    # 없거나 None 이면 그 종류의 근접 지정과 전역 할당을 허가하지 않는다. 판정은 `threshold_for` 로만 읽는다.
+    thresholds: Mapping[str, float | None] = field(default_factory=dict)
     # 이전 설정과 저장된 스냅샷을 읽기 위한 호환 필드다. 명시 지정 판정에는 쓰지 않는다 (FR-17).
     threshold_explicit_locker: float | None = None
     threshold_explicit_light: float | None = None
@@ -44,6 +125,8 @@ class Settings:
 
     # 전역 할당 대기 구간 (FR-23)
     allocation_window_ms: int = 500
+    # 전역 할당(`any:{kind}`)을 받는 종류 (FR-23, #245)
+    any_allowed_kinds: tuple[str, ...] = ("locker",)
 
     # ── 시간 설정 (시연용 초기 기준) ──
     beacon_recent_sec: float = 3.0  # ① 최근 비콘 기준 T: 서버가 받은 유효 관측의 최근 구간 (FR-15)
@@ -62,19 +145,33 @@ class Settings:
     dedup_entry_limit: int = 100_000  # 신규 조작 접수 제한: 서버 전체 중복 방지 항목 수
     retention_cleanup_interval_sec: int = 60  # 정리 주기: 서버 조립이 시작할 때와 이 간격마다 부른다 (#164)
 
-    # ── 조명 설정 (FR-09) ──
-    # 서버가 허가하는 밝기 상한. 기기가 발표한 상한과 비교해서 작은 값을 k 로 쓴다.
-    # 64 는 light-1 의 보드 5V 전원에서 흰색 점등을 확인한 값이다.
-    light_brightness_max: int = 64
-    light_default_brightness: int = 64  # 앞선 조명 설정이 없을 때 생략한 밝기
-    light_default_color: str = "#FFFFFF"  # 앞선 조명 설정이 없을 때 생략한 색
+    # ── 동작 인자 (FR-09, #245) ──
+    # `{kind: {action: {arg: 값}}}`. 상한은 선언의 maximum 과 작은 값을 쓴다. 기본값은 앞선 성공 명령이 없을 때 쓴다.
+    param_max: Mapping[str, Mapping[str, Mapping[str, int | float]]] = field(
+        default_factory=lambda: deepcopy(_PARAM_MAX))
+    param_default: Mapping[str, Mapping[str, Mapping[str, Any]]] = field(
+        default_factory=lambda: deepcopy(_PARAM_DEFAULT))
 
-    # ── 스피커 음량 (FR-09) ──
-    # 20 은 커패시터 없는 speaker-1 에서 담당자가 정한 값이다. 커패시터를 달기 전에는 올리지 않는다.
-    speaker_volume_max: int = 20  # 1~30. 기기가 발표한 상한과 비교해서 작은 값을 k 로 쓴다
-    speaker_default_volume: int = 20  # 0 이상 speaker_volume_max 이하. 앞선 음량이 없을 때 쓴다
+    def threshold_for(self, kind: str | None) -> float | None:
+        """근접 지정과 전역 할당의 임계값. 없으면 None 이고 허가하지 않는다 (FR-17). 명시 지정에는 쓰지 않는다."""
+        if kind is None:
+            return None
+        name = _THRESHOLD_FIELDS.get(kind)
+        return getattr(self, name) if name is not None else self.thresholds.get(kind)
+
+    def param_caps(self, kind: str, action: str) -> Mapping[str, int | float]:
+        """인자별 서버 상한. 없으면 빈 맵이다 (FR-09)."""
+        return self.param_max.get(kind, {}).get(action, {})
+
+    def param_defaults(self, kind: str, action: str) -> Mapping[str, Any]:
+        """생략한 인자의 기본값. 없으면 빈 맵이다 (FR-09)."""
+        return self.param_default.get(kind, {}).get(action, {})
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "thresholds", freeze(self.thresholds))
+        object.__setattr__(self, "param_max", freeze(self.param_max))
+        object.__setattr__(self, "param_default", freeze(self.param_default))
+        object.__setattr__(self, "any_allowed_kinds", freeze(self.any_allowed_kinds))
         for name in (
             "threshold_locker", "threshold_light", "rssi_frame_sec",
             "leave_absent_sec", "leave_grace_sec", "allocation_window_ms",
@@ -95,12 +192,25 @@ class Settings:
                 "request_dedup_ttl_sec", "dedup_entry_limit", "retention_cleanup_interval_sec",
             ) and not isinstance(v, int):
                 raise ValueError(f"{name} 는 정수여야 한다: {v}")
-        v = self.threshold_speaker
-        if v is not None:
-            if isinstance(v, bool) or not isinstance(v, (int, float)) or not isfinite(v):
-                raise ValueError("threshold_speaker 는 유한한 숫자 또는 None 이어야 한다")
-            if not 0.0 < v <= 1.0:
-                raise ValueError(f"threshold_speaker 는 (0, 1] 범위여야 한다: {v}")
+        _check_threshold("threshold_speaker", self.threshold_speaker)
+        if not isinstance(self.thresholds, Mapping):
+            raise ValueError("thresholds 는 표여야 한다")
+        for kind, v in self.thresholds.items():
+            if not is_name(kind) or kind in _THRESHOLD_FIELDS:
+                raise ValueError(f"threshold_{kind} 는 쓸 수 없는 종류 이름이다")
+            _check_threshold(f"threshold_{kind}", v)
+        if not isinstance(self.any_allowed_kinds, tuple) or not all(map(is_name, self.any_allowed_kinds)):
+            raise ValueError("any_allowed_kinds 는 종류 이름의 목록이어야 한다")
+        if len(set(self.any_allowed_kinds)) != len(self.any_allowed_kinds):
+            raise ValueError("any_allowed_kinds 에 같은 종류가 두 번 있다")
+        _check_param_table("param_max", self.param_max, "number")
+        _check_param_table("param_default", self.param_default, "scalar")
+        for kind, actions in self.param_default.items():
+            for action, args in actions.items():
+                caps = self.param_caps(kind, action)
+                for arg, value in args.items():
+                    if _number(value) and arg in caps and value > caps[arg]:
+                        raise ValueError(f"param_default.{kind}.{action}.{arg} 는 param_max 이하여야 한다")
         for name, general in (
             ("threshold_explicit_locker", "threshold_locker"),
             ("threshold_explicit_light", "threshold_light"),
@@ -139,24 +249,6 @@ class Settings:
             v = getattr(self, name)
             if v <= 0:
                 raise ValueError(f"{name} 는 양수여야 한다: {v}")
-        for name in ("light_brightness_max", "light_default_brightness"):
-            v = getattr(self, name)
-            if isinstance(v, bool) or not isinstance(v, int):
-                raise ValueError(f"{name} 는 정수여야 한다: {v!r}")
-        if not 1 <= self.light_brightness_max <= 255:
-            raise ValueError(f"light_brightness_max 는 1~255 여야 한다: {self.light_brightness_max}")
-        if not 0 <= self.light_default_brightness <= self.light_brightness_max:
-            raise ValueError("light_default_brightness 는 0 이상 light_brightness_max 이하여야 한다")
-        if not is_light_color(self.light_default_color) or self.light_default_color != self.light_default_color.upper():
-            raise ValueError(f"light_default_color 는 대문자 #RRGGBB 여야 한다: {self.light_default_color!r}")
-        for name in ("speaker_volume_max", "speaker_default_volume"):
-            v = getattr(self, name)
-            if isinstance(v, bool) or not isinstance(v, int):
-                raise ValueError(f"{name} 는 정수여야 한다: {v!r}")
-        if not 1 <= self.speaker_volume_max <= 30:
-            raise ValueError(f"speaker_volume_max 는 1~30 이어야 한다: {self.speaker_volume_max}")
-        if not 0 <= self.speaker_default_volume <= self.speaker_volume_max:
-            raise ValueError("speaker_default_volume 은 0 이상 speaker_volume_max 이하여야 한다")
         if self.leave_grace_sec < 0:
             raise ValueError(f"leave_grace_sec 는 0 이상이어야 한다: {self.leave_grace_sec}")
         if self.allocation_window_ms < 0:
@@ -169,3 +261,19 @@ class Settings:
         # 상태 보고 주기보다 짧은 온라인 유지 시간은 정상 기기를 오프라인으로 만든다
         if self.online_ttl_sec < self.status_report_sec:
             raise ValueError("online_ttl_sec 는 status_report_sec 이상이어야 한다")
+
+
+_FIELD_NAMES = frozenset(Settings.__dataclass_fields__)
+
+
+def settings_to_data(settings: Settings) -> dict[str, Any]:
+    """감사 기록에 남길 설정 전체 (#83). JSON 으로 바로 쓸 수 있는 값이다."""
+    return {name: thaw(getattr(settings, name)) for name in Settings.__dataclass_fields__}
+
+
+def settings_from_data(data: Mapping[str, Any]) -> Settings:
+    """저장한 설정 스냅샷을 복원한다. 옛 형식은 새 형식으로 옮긴다 (FR-22). 현재 설정으로 채우지 않는다."""
+    table, _ = migrate_settings_table(data)
+    if "any_allowed_kinds" in table:
+        table["any_allowed_kinds"] = tuple(table["any_allowed_kinds"])
+    return Settings(**table)

@@ -15,7 +15,7 @@ from test_server_assembly import world  # noqa: F401  (fixture)
 
 from nearpilot.runtime import create_app
 from nearpilot.shared.descriptor import legacy_descriptor
-from nearpilot.shared.enums import Capability, Occupancy
+from nearpilot.shared.enums import Occupancy
 
 RING = {"brightness_max": 64, "color": True}
 
@@ -39,12 +39,13 @@ def test_FR04_v2_and_v3_nodes_share_one_server(world):  # noqa: F811
     app = create_app(w.runtime)
     mcp = McpCaller(app)
     token = TOKENS[VISITOR_A]
-    template = legacy_descriptor(Capability.LIGHT, Occupancy.SHARED, **RING)
+    template = legacy_descriptor("light", Occupancy.SHARED, **RING)
     upgraded = template.to_json() | {"vendor": {"name": "nearpilot", "model": "light-ring", "firmware": "3.0.0"}}
 
     async def request(node_id, request_id, **arguments):
+        extra = {"arguments": arguments} if arguments else {}
         return (await mcp.call("request_use", {"target_spec": node_id, "action": "on",
-                                               "request_id": request_id, **arguments}, token=token))[1]
+                                               "request_id": request_id, **extra}, token=token))[1]
 
     async def scenario():
         async with app.router.lifespan_context(app):

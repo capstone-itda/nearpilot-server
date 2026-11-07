@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from nearpilot.api.auth.authenticator import Authenticator
 from nearpilot.api.rest.nodes import build_node_admin_router
-from nearpilot.shared.enums import Capability, Occupancy, Role
+from nearpilot.shared.enums import Occupancy, Role
 from nearpilot.shared.models import Account, ProvisioningBundle
 from nearpilot.shared.tokens import hash_token
 
@@ -20,7 +20,7 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 NODE = "light-1"
 URL = f"/admin/nodes/{NODE}/provisioning"
 SECRET = "node-secret-abcdef"
-BUNDLE = ProvisioningBundle(NODE, NODE, SECRET, "nearpilot.local", 18883, Capability.LIGHT, Occupancy.SHARED)
+BUNDLE = ProvisioningBundle(NODE, NODE, SECRET, "nearpilot.local", 18883, "light", Occupancy.SHARED)
 
 
 class FakeNodes:

@@ -18,7 +18,7 @@ from nearpilot.api.ws.settings import DashboardSettings
 from nearpilot.core.admin import DefaultAdminService
 from nearpilot.core.approval import OwnerApprovalService
 from nearpilot.runtime import DashboardConfig, Runtime, create_app
-from nearpilot.shared.enums import Action, Role
+from nearpilot.shared.enums import Role
 from nearpilot.shared.models import ApprovalRequest
 
 
@@ -46,7 +46,7 @@ def _server(tmp_path, *, dashboard=False, collect_only=False):
 
 def _pending(server):
     return server.runtime.db.repository().create_approval_request(ApprovalRequest(
-        requester_user_id=VISITOR_A, node_id="locker-2", action=Action.OPEN,
+        requester_user_id=VISITOR_A, node_id="locker-2", action="open",
         policy_id="pol-locker-2", policy_version=1, internal_request_id="rest-access",
         created_at=server.now, settings=server.cfg.settings)).approval_id
 

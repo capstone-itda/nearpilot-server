@@ -27,11 +27,11 @@ class LeakyServices:
                         node_id=node_id, use_id="leak")
 
     def find_available_devices(self, user_id):
-        return [{"node_id": "locker-1", "capability": "locker", "occupancy": "rental",
+        return [{"node_id": "locker-1", "kind": "locker", "occupancy": "rental",
                  "access": "operable", "holder": user_id, "place_id": "p1", "p": 0.9}]
 
     def get_device_state(self, user_id, node_id):
-        return {"node_id": node_id, "capability": "locker", "occupancy": "rental", "state": "in_use",
+        return {"node_id": node_id, "kind": "locker", "occupancy": "rental", "state": "in_use",
                 "online": True, "trusted": True, "access_mode": "open", "holder": user_id}
 
     def release_use(self, user_id, use_id):
@@ -63,7 +63,7 @@ def test_FR11_core_service_mcp_response_allowlist():
         assert _SECRET not in text and "internal-secret" not in text and "p1" not in text
         assert "p_max" not in resp and "holder" not in resp
     assert responses[1]["use_id"] is None  # 승인 요청은 실행 허가가 아니다
-    assert set(responses[2]["devices"][0]) == {"node_id", "capability", "occupancy", "access", "controls"}
+    assert set(responses[2]["devices"][0]) == {"node_id", "kind", "occupancy", "access", "actions"}
 
 
 def test_FR09_core_service_exception_reaches_mcp_guard():

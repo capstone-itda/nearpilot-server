@@ -12,8 +12,8 @@ from nearpilot.iot.mqtt.connection import IncomingReport
 from nearpilot.iot.mqtt.delivery import DeliveryConfig, ReportDelivery
 from nearpilot.shared.config import Settings
 from nearpilot.shared.descriptor import legacy_descriptor
-from nearpilot.shared.enums import Action, Capability, CommandOutcome, Occupancy, Step
-from nearpilot.shared.models import LightSetting, NodeCommand
+from nearpilot.shared.enums import CommandOutcome, Occupancy, Step
+from nearpilot.shared.models import NodeCommand
 
 S1 = "11111111-1111-1111-1111-111111111111"
 S2 = "22222222-2222-2222-2222-222222222222"
@@ -40,7 +40,7 @@ def v2_announce(*, session=S1, seq=1, controls=None):
 
 def v3_announce(*, session=S1, seq=1, descriptor=None):
     if descriptor is None:
-        descriptor = legacy_descriptor(Capability.LIGHT, Occupancy.SHARED, **RING).to_json()
+        descriptor = legacy_descriptor("light", Occupancy.SHARED, **RING).to_json()
     return report("announce", dict(schema_version=3, node_id="light-1", session_id=session, seq=seq,
                                    sent_at=iso(T0), descriptor=descriptor))
 
@@ -102,13 +102,13 @@ def world():
     return sink, audit, delivery, connection, gateway
 
 
-def command(command_id="command-1", *, session=S1, action=Action.ON, light=None):
-    return NodeCommand(command_id, "light-1", action, session, T0, T0 + timedelta(seconds=3), light=light)
+def command(command_id="command-1", *, session=S1, action="on", arguments=None):
+    return NodeCommand(command_id, "light-1", action, session, T0, T0 + timedelta(seconds=3), arguments=arguments)
 
 
 def test_FR04_rejected_announce_audited_once(world):
     _, audit, delivery, _, _ = world
-    bad = legacy_descriptor(Capability.LIGHT, Occupancy.SHARED).to_json()
+    bad = legacy_descriptor("light", Occupancy.SHARED).to_json()
     bad["actions"][1].pop("role")  # shared 기기에 deactivate 가 없다
     for _ in range(3):  # retained 발표가 다시 와도 감사는 한 번이다 (spec 결정 12)
         delivery.process(v3_announce(descriptor=bad))
@@ -149,12 +149,12 @@ def test_FR06_announce_for_tracks_latest_per_connection(world):
 def test_FR06_command_outside_descriptor_not_sent(world):
     _, _, delivery, connection, gateway = world
     delivery.process(v3_announce())
-    over = command(light=LightSetting(65, "#FFFFFF"))  # 선언 상한 64를 넘는다
+    over = command(arguments={"brightness": 65, "color": "#FFFFFF"})  # 선언 상한 64를 넘는다
     assert gateway.send(over, 1).outcome is CommandOutcome.NOT_SENT
-    undeclared = command("command-2", action=Action.OPEN)
+    undeclared = command("command-2", action="open")
     assert gateway.send(undeclared, 1).outcome is CommandOutcome.NOT_SENT
     assert connection.publications == []
-    ok = command("command-3", light=LightSetting(64, "#FFFFFF"))
+    ok = command("command-3", arguments={"brightness": 64, "color": "#FFFFFF"})
     assert gateway.send(ok, 1).outcome is CommandOutcome.SUCCEEDED
     assert len(connection.publications) == 1
 
@@ -171,9 +171,9 @@ def test_FR06_command_follows_announced_version(world):
     _, _, delivery, connection, gateway = world
     delivery.process(v2_announce(controls=RING))
     delivery.process(v3_announce(session=S2))
-    setting = LightSetting(30, "#00FF00")
-    assert gateway.send(command("command-1", light=setting), 1).outcome is CommandOutcome.SUCCEEDED
-    assert gateway.send(command("command-2", session=S2, light=setting), 1).outcome is CommandOutcome.SUCCEEDED
+    setting = {"brightness": 30, "color": "#00FF00"}
+    assert gateway.send(command("command-1", arguments=setting), 1).outcome is CommandOutcome.SUCCEEDED
+    assert gateway.send(command("command-2", session=S2, arguments=setting), 1).outcome is CommandOutcome.SUCCEEDED
     v2, v3 = connection.publications
     assert (v2["schema_version"], v2["parameters"]) == (2, {"brightness": 30, "color": "#00FF00"})
     assert (v3["schema_version"], v3["arguments"]) == (3, {"brightness": 30, "color": "#00FF00"})

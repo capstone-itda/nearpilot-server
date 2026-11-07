@@ -8,7 +8,7 @@ import pytest
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, ApprovalUsageState, Capability, CommandOutcome, DeviceState,
+    ApprovalUsageState, CommandOutcome, DeviceState,
     ExecutionKind, ExecutionStatus, Occupancy, RecoveryBlocker, RecoveryOutcome,
     RecoveryReason, RecoveryStatus, StoreOutcome, TargetKind, TrustState,
 )
@@ -20,8 +20,8 @@ from nearpilot.shared.models import (
 )
 
 NOW = datetime(2026, 10, 13)
-REQUEST = UseRequest('u1', 'r1', TargetSpec(TargetKind.EXPLICIT, Capability.LOCKER, 'locker-1'),
-                     Action.OPEN, 'chatgpt', NOW)
+REQUEST = UseRequest('u1', 'r1', TargetSpec(TargetKind.EXPLICIT, None, 'locker-1'),
+                     "open", 'chatgpt', NOW)
 EVIDENCE = RecoveryEvidence('ev1', 'connection-1', NOW, CommandOutcome.SUCCEEDED, True)
 SETTLEMENT = RecoverySettlement('rec1', 'locker-1', 'owner', NOW, 'digest1',
                                 DeviceState.FAULT, RecoveryStatus.READY,
@@ -75,7 +75,7 @@ def test_FR19_recovery_session_end_is_complete_or_absent():
 
 
 def test_FR19_restore_bundle_freezes_record_lists_and_preserves_times():
-    node = NodeInfo('locker-1', 'place1', Capability.LOCKER, Occupancy.RENTAL,
+    node = NodeInfo('locker-1', 'place1', "locker", Occupancy.RENTAL,
                     TrustState.TRUSTED, DeviceState.FAULT, None, NOW)
     record = RecoveryRecord('rec1', 'locker-1', ('ir1',), ('cmd1',), None, NOW, RecoveryStatus.READY)
     records = [record]

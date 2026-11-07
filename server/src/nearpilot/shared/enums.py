@@ -57,9 +57,10 @@ class ReasonCode(StrEnum):
     # ③
     LOW_CONFIDENCE = "LOW_CONFIDENCE"  # ASK: 사후확률이 임계값 미만
     MOVE_CLOSER = "MOVE_CLOSER"  # ASK: 근접 지정·전역 할당의 실행 직전 대상 확률 부족
-    # ③ 대상 확정 뒤 조명 설정·스피커 음량 검사 (FR-09). 판정은 DENY 와 함께 반환한다.
-    UNSUPPORTED_PARAMETER = "UNSUPPORTED_PARAMETER"  # 대상 기기가 받은 인자를 지원하지 않는다
-    PARAMETER_OUT_OF_RANGE = "PARAMETER_OUT_OF_RANGE"  # 밝기나 음량이 기기별 상한 k 를 넘는다
+    # ③ 대상 확정 뒤 기기 선언으로 하는 동작·인자 검사 (FR-09). 판정은 DENY 와 함께 반환한다.
+    UNSUPPORTED_ACTION = "UNSUPPORTED_ACTION"  # 대상 기기가 선언하지 않은 동작
+    UNSUPPORTED_PARAMETER = "UNSUPPORTED_PARAMETER"  # 기기가 자기 선언으로 인자를 거부했다
+    PARAMETER_OUT_OF_RANGE = "PARAMETER_OUT_OF_RANGE"  # 인자가 선언 범위나 param_max 를 벗어난다
     # ④
     APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
     POLICY_DENIED = "POLICY_DENIED"
@@ -95,17 +96,10 @@ class ReasonCode(StrEnum):
 # ── 요청 ────────────────────────────────────────────────────────────
 
 
-class Action(StrEnum):
-    OPEN = "open"
-    CLOSE = "close"  # 사물함 닫기. 본인 대여의 재조작으로만 실행하고 반납이 아니다
-    ON = "on"
-    OFF = "off"
-
-
 class TargetKind(StrEnum):
-    NEAREST = "nearest"  # nearest:locker
-    EXPLICIT = "explicit"  # locker-1
-    ANY = "any"  # any:locker (FR-23)
+    NEAREST = "nearest"  # nearest:{kind}
+    EXPLICIT = "explicit"  # 기기 ID
+    ANY = "any"  # any:{kind} (FR-23)
 
 
 # ── 계정·노드 (requirements.md §1.3) ──────────────────────────────────────────
@@ -114,13 +108,6 @@ class TargetKind(StrEnum):
 class Role(StrEnum):
     VISITOR = "visitor"
     OWNER = "owner"
-
-
-class Capability(StrEnum):
-    LOCKER = "locker"
-    LIGHT = "light"
-    SPEAKER = "speaker"  # on 은 재생, off 는 정지 (#61)
-    # gate/pass 는 향후 확장 예약값 (architecture.md §6)
 
 
 class Occupancy(StrEnum):
@@ -237,7 +224,7 @@ class RejectCode(StrEnum):
     INVALID_MESSAGE = "INVALID_MESSAGE"
     STORAGE_ERROR = "STORAGE_ERROR"
     DEVICE_BUSY = "DEVICE_BUSY"  # 다른 구동 명령이 진행 중이다. 이번 명령의 미접수·미실행이다.
-    UNSUPPORTED_PARAMETER = "UNSUPPORTED_PARAMETER"  # 조명 설정이나 스피커 음량을 지원하지 않거나 출력 상한을 넘는다 (FR-09)
+    UNSUPPORTED_PARAMETER = "UNSUPPORTED_PARAMETER"  # 인자가 기기 선언의 인자 스키마를 벗어난다 (FR-09)
 
 
 class CommandState(StrEnum):

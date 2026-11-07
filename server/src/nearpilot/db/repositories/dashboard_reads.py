@@ -14,11 +14,9 @@ from datetime import datetime
 
 from nearpilot.db.repositories._common import from_json, iso, parse_iso
 from nearpilot.shared.enums import (
-    Action,
     ApprovalMode,
     ApprovalStatus,
     ApprovalUsageState,
-    Capability,
     CommandOutcome,
     DeviceState,
     ExecutionStatus,
@@ -74,7 +72,7 @@ def _request_from_row(row: sqlite3.Row) -> DashboardRequest:
         user_id=row["user_id"],
         kind=row["request_kind"],
         target_spec=row["target_spec"],
-        action=Action(row["action"]),
+        action=row["action"],
         verdict=Verdict(row["verdict"]) if row["verdict"] else None,
         reason_code=ReasonCode(row["reason_code"]) if row["reason_code"] else None,
         node_id=row["node_id"],
@@ -89,7 +87,7 @@ def _command_from_row(row: sqlite3.Row) -> DashboardCommand:
         command_id=row["command_id"],
         internal_request_id=row["internal_request_id"],
         node_id=row["node_id"],
-        action=Action(row["action"]),
+        action=row["action"],
         status=ExecutionStatus(row["status"]),
         use_id=row["use_id"],
         send_started_at=_time(row["send_started_at"]),
@@ -126,7 +124,7 @@ class SqliteDashboardReads:
 
     def nodes(self) -> Sequence[DashboardNode]:
         rows = self._conn.execute(
-            "SELECT node_id, name, place_id, capability, occupancy, trust_state, device_state, "
+            "SELECT node_id, name, place_id, kind, occupancy, trust_state, device_state, "
             "last_seen_at, session_id FROM node ORDER BY node_id"
         ).fetchall()
         return [
@@ -134,7 +132,7 @@ class SqliteDashboardReads:
                 node_id=row["node_id"],
                 name=row["name"],
                 place_id=row["place_id"],
-                capability=Capability(row["capability"]),
+                capability=row["kind"],
                 occupancy=Occupancy(row["occupancy"]),
                 trust_state=TrustState(row["trust_state"]),
                 device_state=DeviceState(row["device_state"]),
@@ -195,7 +193,7 @@ class SqliteDashboardReads:
                 node_id=row["node_id"],
                 requester_user_id=row["requester_user_id"],
                 internal_request_id=row["internal_request_id"],
-                action=Action(row["action"]),
+                action=row["action"],
                 status=ApprovalStatus(row["status"]),
                 created_at=parse_iso(row["created_at"]),
                 pending_until=_time(row["pending_until"]),

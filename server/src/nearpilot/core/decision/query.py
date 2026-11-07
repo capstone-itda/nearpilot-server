@@ -3,6 +3,7 @@
 등록 비콘의 최근 수신으로 장소를 확인하고, 같은 장소의 사용 가능한 공개 기기를 조회한다.
 기기별 근접 확률은 실행 판정에서 검사한다. 조회만 하고 저장소를 바꾸지 않는다.
 응답에는 사용자 ID, 점유 주체, 근접 확률, 장소 ID를 넣지 않는다 (FR-11, NFR-08).
+기기마다 종류와 동작 목록(이름, 설명, 인자 스키마)을 담는다. 제작사 정보와 선언 해시는 넣지 않는다 (FR-09, FR-11).
 """
 
 from __future__ import annotations
@@ -14,9 +15,8 @@ from typing import Any
 
 from nearpilot.core.decision.pipeline import select_candidates
 from nearpilot.shared.config import Settings
+from nearpilot.shared.descriptor import capped_schema
 from nearpilot.shared.enums import (
-    Action,
-    Capability,
     DeviceState,
     ReasonCode,
     TrustState,
@@ -27,13 +27,6 @@ from nearpilot.shared.interfaces import ExecutionReadiness, PolicyChecker, Repos
 from nearpilot.shared.models import NodeInfo
 
 log = logging.getLogger(__name__)
-
-# 조작 가능·승인 필요를 나누는 정책 검사의 동작 (기능별 기본 동작)
-_DEFAULT_ACTION: dict[Capability, Action] = {
-    Capability.LOCKER: Action.OPEN,
-    Capability.LIGHT: Action.ON,
-    Capability.SPEAKER: Action.ON,
-}
 
 _OPERABLE = "operable"
 _APPROVAL_REQUIRED = "approval_required"
@@ -77,27 +70,30 @@ class DeviceQueryService:
             raise ValueError("비콘을 본 기기의 장소가 하나로 정해지지 않는다")
         place_id = places.pop()
         found: list[dict[str, Any]] = []
-        for capability in Capability:
-            candidates = select_candidates(
-                all_nodes, capability, s, now, place_id, self._readiness.can_execute)
-            for node in candidates:
-                if node.device_state is not DeviceState.AVAILABLE:
-                    continue
-                access = self._access(user_id, node, now)
-                if access is not None:
-                    found.append({
-                        "node_id": node.node_id, "capability": node.capability.value,
-                        "occupancy": node.occupancy.value, "access": access,
-                        "controls": self._controls(node)})
+        for node in select_candidates(all_nodes, None, s, now, place_id, self._readiness.can_execute):
+            if node.device_state is not DeviceState.AVAILABLE:
+                continue
+            access = self._access(user_id, node, now)
+            if access is not None:
+                found.append({
+                    "node_id": node.node_id, "kind": node.kind,
+                    "occupancy": node.occupancy.value, "access": access,
+                    "actions": self._actions(node)})
         found.sort(key=lambda item: item["node_id"])
         return found
 
     def _access(self, user_id: str, node: NodeInfo, now: datetime) -> str | None:
-        """조작 가능·승인 필요. 숨길 기기는 None 이다. 한 기기의 오류는 그 기기만 뺀다."""
+        """조작 가능·승인 필요. 숨길 기기는 None 이다. 한 기기의 오류는 그 기기만 뺀다.
+
+        정책 검사의 동작은 기기가 선언한 첫 번째 역할 없는 동작이다. 없으면 숨긴다 (spec core-device-actions 결정 9).
+        """
+        action = _first_plain_action(node)
+        if action is None:
+            return None
         try:
             if self._repo.current_policy(node.node_id).visibility is not Visibility.PUBLIC:
                 return None
-            check = self._policy.check(user_id, node.node_id, _DEFAULT_ACTION[node.capability], now)
+            check = self._policy.check(user_id, node.node_id, action, now)
         except Exception:  # noqa: BLE001 - 알 수 없는 오류는 보여 주지 않는다
             log.exception("기기 정책 조회 중 예외: %s", node.node_id)
             return None
@@ -120,33 +116,39 @@ class DeviceQueryService:
                 return _unavailable()  # 없는 기기와 구분하지 않는다
         return {
             "node_id": node.node_id,
-            "capability": node.capability.value,
+            "kind": node.kind,
             "occupancy": node.occupancy.value,
             "state": _state_of(node.device_state),
             "online": self._online(node, now),
             "trusted": node.trust_state is TrustState.TRUSTED,
             "access_mode": policy.mode.value,
-            "controls": self._controls(node),
+            "actions": self._actions(node),
         }
 
-    def _controls(self, node: NodeInfo) -> dict[str, Any] | None:
-        """기기 제어 정보. 조명은 밝기 상한과 색, 스피커는 음량 상한이다.
+    def _actions(self, node: NodeInfo) -> list[dict[str, Any]]:
+        """기기 선언의 동작 목록. 인자 스키마의 상한은 선언 값과 `param_max` 중 작은 값이다 (FR-09).
 
-        상한은 발표 값과 서버 상한 중 작은 값이다 (FR-09). 없으면 None 이다.
+        역할, 제작사 정보, 선언 해시는 넣지 않는다 (FR-11). 선언이 없으면 빈 목록이다.
         """
-        speaker = node.speaker_controls
-        if speaker is not None and node.capability is Capability.SPEAKER:
-            return {"volume_max": min(speaker.volume_max, self._settings.speaker_volume_max)}
-        controls = node.light_controls
-        if controls is None or node.capability is not Capability.LIGHT:
-            return None
-        return {"brightness_max": min(controls.brightness_max, self._settings.light_brightness_max),
-                "color": controls.color}
+        if node.descriptor is None:
+            return []
+        return [
+            {"name": spec.name, "description": spec.description,
+             "input_schema": capped_schema(spec, self._settings.param_caps(node.kind, spec.name))}
+            for spec in node.descriptor.actions
+        ]
 
     def _online(self, node: NodeInfo, now: datetime) -> bool:
         if node.last_seen_at is None:
             return False
         return now - node.last_seen_at <= timedelta(seconds=self._settings.online_ttl_sec)
+
+
+def _first_plain_action(node: NodeInfo) -> str | None:
+    """역할이 없는 첫 동작. 새 점유를 시작하는 일반 동작이다 (FR-09)."""
+    if node.descriptor is None:
+        return None
+    return next((spec.name for spec in node.descriptor.actions if spec.role is None), None)
 
 
 def _state_of(state: DeviceState) -> str:

@@ -43,7 +43,7 @@ def insert_node(
     trust_state="trusted", device_state="ACTIVE", session_id=None,
 ):
     conn.execute(
-        "INSERT INTO node (node_id, place_id, capability, occupancy, trust_state, device_state, "
+        "INSERT INTO node (node_id, place_id, kind, occupancy, trust_state, device_state, "
         "exclusive_group, release_policy, session_id, session_first_seen_at, last_seen_at) "
         "VALUES (?, ?, ?, ?, ?, ?, NULL, '{}', ?, NULL, NULL)",
         (node_id, place_id, capability, occupancy, trust_state, device_state, session_id),

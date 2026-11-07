@@ -14,7 +14,7 @@ import pytest
 from nearpilot.core.lifecycle.release import ReleaseService
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Capability, DeviceState, EndReason, Occupancy, ReasonCode,
+    DeviceState, EndReason, Occupancy, ReasonCode,
     SessionState, StoreConflictReason, StoreOutcome, TrustState, Verdict,
 )
 from nearpilot.shared.errors import StoreNotApplied, StoreOutcomeUnknown
@@ -41,7 +41,7 @@ class RepositoryFake:
             rental_due_at=clock() + timedelta(seconds=10),
         )}
         self.node_infos = {"locker-1": NodeInfo(
-            "locker-1", "place-1", Capability.LOCKER, Occupancy.RENTAL,
+            "locker-1", "place-1", "locker", Occupancy.RENTAL,
             TrustState.TRUSTED, DeviceState.ACTIVE, None, clock(), session_id="connection-1",
         )}
 

@@ -19,7 +19,6 @@ from nearpilot.core.dashboard.text import (
     timeline_command,
 )
 from nearpilot.shared.enums import (
-    Action,
     DeviceState,
     ExecutionStatus,
     ReasonCode,
@@ -40,7 +39,7 @@ def audit(step: Step, payload: dict, seq: int = 1) -> DashboardAudit:
         created_at=T0 + timedelta(seconds=seq))
 
 
-def request(verdict: Verdict | None, reason: ReasonCode | None, action: Action = Action.OPEN) -> DashboardRequest:
+def request(verdict: Verdict | None, reason: ReasonCode | None, action: str = "open") -> DashboardRequest:
     return DashboardRequest(
         seq=1, internal_request_id="i1", user_id="user-1", kind="visitor", target_spec="nearest:locker",
         action=action, verdict=verdict, reason_code=reason, node_id="locker-1", decision_context=None,
@@ -48,7 +47,7 @@ def request(verdict: Verdict | None, reason: ReasonCode | None, action: Action =
 
 
 def command(
-    seq: int, status: ExecutionStatus, result: str | None, *, action: Action = Action.OPEN,
+    seq: int, status: ExecutionStatus, result: str | None, *, action: str = "open",
     evidence: dict | None = None,
 ) -> DashboardCommand:
     return DashboardCommand(
@@ -230,14 +229,14 @@ def test_FR12A_기기_이름이_없으면_ID를_쓴다():
 @pytest.mark.parametrize(
     ("status", "result", "action", "expected"),
     [
-        pytest.param(ExecutionStatus.SUCCEEDED, "succeeded", Action.OPEN, "제어 신호 출력 완료 · ACTIVE", id="제어 신호 출력 완료"),
-        pytest.param(ExecutionStatus.SUCCEEDED, "succeeded", Action.ON, "제어 신호 출력 완료 · ACTIVE", id="제어 신호 출력 완료"),
-        pytest.param(ExecutionStatus.SUCCEEDED, "succeeded", Action.OFF, "제어 신호 출력 완료 · ACTIVE", id="제어 신호 출력 완료"),
-        pytest.param(ExecutionStatus.FAILED, "failed", Action.OPEN, "실패 · 고장 격리", id="실패"),
-        pytest.param(ExecutionStatus.UNKNOWN, "unknown", Action.OPEN, "결과 불명 · 고장 격리", id="결과 불명"),
-        pytest.param(ExecutionStatus.REJECTED, "rejected", Action.OPEN, "거절 · 실행 안 함", id="기기가 거절"),
-        pytest.param(ExecutionStatus.NOT_SENT, "not_sent", Action.OPEN, None, id="보내지 않고 취소"),
-        pytest.param(ExecutionStatus.IN_PROGRESS, None, Action.OPEN, None, id="결과 기다림"),
+        pytest.param(ExecutionStatus.SUCCEEDED, "succeeded", "open", "제어 신호 출력 완료 · ACTIVE", id="제어 신호 출력 완료"),
+        pytest.param(ExecutionStatus.SUCCEEDED, "succeeded", "on", "제어 신호 출력 완료 · ACTIVE", id="제어 신호 출력 완료"),
+        pytest.param(ExecutionStatus.SUCCEEDED, "succeeded", "off", "제어 신호 출력 완료 · ACTIVE", id="제어 신호 출력 완료"),
+        pytest.param(ExecutionStatus.FAILED, "failed", "open", "실패 · 고장 격리", id="실패"),
+        pytest.param(ExecutionStatus.UNKNOWN, "unknown", "open", "결과 불명 · 고장 격리", id="결과 불명"),
+        pytest.param(ExecutionStatus.REJECTED, "rejected", "open", "거절 · 실행 안 함", id="기기가 거절"),
+        pytest.param(ExecutionStatus.NOT_SENT, "not_sent", "open", None, id="보내지 않고 취소"),
+        pytest.param(ExecutionStatus.IN_PROGRESS, None, "open", None, id="결과 기다림"),
     ],
 )
 def test_FR12A_대여_타임라인_명령_문구(status, result, action, expected):
@@ -252,11 +251,11 @@ def test_FR12A_대여_타임라인_명령_문구(status, result, action, expecte
     [
         pytest.param(request(Verdict.OK, ReasonCode.OK), [command(1, ExecutionStatus.SUCCEEDED, "succeeded")],
                      ("제어 신호 출력 완료", None), id="제어 신호 출력 완료"),
-        pytest.param(request(Verdict.OK, ReasonCode.OK, Action.ON),
-                     [command(1, ExecutionStatus.SUCCEEDED, "succeeded", action=Action.ON)], ("제어 신호 출력 완료", None),
+        pytest.param(request(Verdict.OK, ReasonCode.OK, "on"),
+                     [command(1, ExecutionStatus.SUCCEEDED, "succeeded", action="on")], ("제어 신호 출력 완료", None),
                      id="제어 신호 출력 완료"),
-        pytest.param(request(Verdict.OK, ReasonCode.OK, Action.OFF),
-                     [command(1, ExecutionStatus.SUCCEEDED, "succeeded", action=Action.OFF)], ("제어 신호 출력 완료", None),
+        pytest.param(request(Verdict.OK, ReasonCode.OK, "off"),
+                     [command(1, ExecutionStatus.SUCCEEDED, "succeeded", action="off")], ("제어 신호 출력 완료", None),
                      id="제어 신호 출력 완료"),
         pytest.param(request(Verdict.OK, ReasonCode.OK), [command(1, ExecutionStatus.UNKNOWN, "unknown")],
                      ("결과 불명 → 고장 격리", ReasonCode.EXEC_UNKNOWN), id="결과 불명"),

@@ -26,7 +26,7 @@ from nearpilot.db.repositories._common import deferred_transaction
 from nearpilot.db.repositories.dashboard_reads import SqliteDashboardReads
 from nearpilot.db.schema import connect
 from nearpilot.runtime import Runtime
-from nearpilot.shared.enums import Action, Verdict
+from nearpilot.shared.enums import Verdict
 from nearpilot.shared.models import TargetSpec, UseRequest
 
 # 근접 지정 임계값을 0.5 로 낮춘다. 0.97 은 넘고 0.3 은 모자란다. 응답하지 않는 기기는 1 초 뒤 결과 불명이 된다.
@@ -85,7 +85,7 @@ class DashboardWorld:
         self.holders = tuple(self.runtime.services.shared_light.holders())
         return self._stack.__exit__(*exc_info)
 
-    def decide(self, name, user_id, target, posteriors, verdict, action=Action.OPEN):
+    def decide(self, name, user_id, target, posteriors, verdict, action="open"):
         """근접 확률을 `posteriors` 로 고정하고 `request_use` 를 부른다. 판정이 `verdict` 가 아니면 `AssertionError`."""
         self.proximity.posteriors = posteriors
         decision = self.runtime.core.request_use(UseRequest(
@@ -147,7 +147,7 @@ def build_dashboard_world(tmp: Path) -> DashboardWorld:
         world.decide("ask", VISITOR_B, "nearest:locker", {"locker-2": 0.3}, Verdict.ASK)
         world.broker.drop_commands = {"locker-3"}  # 결과가 오지 않는다
         world.decide("fault", VISITOR_B, "nearest:locker", {"locker-3": 0.97}, Verdict.DENY)
-        world.decide("light", VISITOR_B, "nearest:light", {"light-1": 0.9}, Verdict.OK, Action.ON)
-        world.access("access", VISITOR_A, "light-2", Action.ON)
+        world.decide("light", VISITOR_B, "nearest:light", {"light-1": 0.9}, Verdict.OK, "on")
+        world.access("access", VISITOR_A, "light-2", "on")
         wait_until(world.runtime.services.shared_light.holders)  # 켠 사람이 유지 대상자로 보일 때까지
     return world

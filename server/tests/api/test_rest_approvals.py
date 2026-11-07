@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from nearpilot.api.auth.authenticator import Authenticator
 from nearpilot.api.rest.approvals import build_approval_router
-from nearpilot.shared.enums import Action, ApprovalDecisionReason, ApprovalStatus, Role
+from nearpilot.shared.enums import ApprovalDecisionReason, ApprovalStatus, Role
 from nearpilot.shared.models import Account, OwnerApproval, OwnerApprovalResult
 from nearpilot.shared.tokens import hash_token
 
@@ -18,9 +18,9 @@ NOW = datetime(2026, 1, 1, 0, 5, tzinfo=timezone.utc)
 TOKEN = "token-owner"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 PENDING = OwnerApproval(
-    "a1", "locker-1", Action.OPEN, ApprovalStatus.PENDING, NOW, NOW + timedelta(minutes=10), None)
+    "a1", "locker-1", "open", ApprovalStatus.PENDING, NOW, NOW + timedelta(minutes=10), None)
 APPROVED = OwnerApproval(
-    "a1", "locker-1", Action.OPEN, ApprovalStatus.APPROVED, NOW, NOW + timedelta(minutes=10),
+    "a1", "locker-1", "open", ApprovalStatus.APPROVED, NOW, NOW + timedelta(minutes=10),
     NOW + timedelta(hours=1))
 
 
@@ -82,7 +82,7 @@ def _item(approval: OwnerApproval) -> dict:
     return {
         "approval_id": approval.approval_id,
         "node_id": approval.node_id,
-        "action": approval.action.value,
+        "action": approval.action,
         "status": approval.status.value,
         "created_at": approval.created_at.isoformat(),
         "pending_expires_at": approval.pending_until.isoformat(),

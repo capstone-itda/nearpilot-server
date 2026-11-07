@@ -11,7 +11,7 @@ from nearpilot.iot.messages import (
 )
 from nearpilot.shared.descriptor import legacy_descriptor
 from nearpilot.shared.enums import (
-    Action, CommandState, Capability, DeviceState, NodeResultState, Occupancy,
+    CommandState, DeviceState, NodeResultState, Occupancy,
 )
 from nearpilot.shared.models import (
     BeaconKey, NodeAnnounce, NodeCommand, NodeResult, NodeStatus, RssiFrame,
@@ -44,7 +44,7 @@ def decode(kind, data=None):
 
 def test_FR04_announce_to_shared_model():
     assert decode("announce") == NodeAnnounce(**COMMON,
-        descriptor=legacy_descriptor(Capability.LOCKER, Occupancy.RENTAL), schema_version=2)
+        descriptor=legacy_descriptor("locker", Occupancy.RENTAL), schema_version=2)
 
 
 @pytest.mark.parametrize("capability,occupancy", [
@@ -222,10 +222,10 @@ def test_FR20_release_check_result_topic_rejected():
 
 
 def command():
-    return NodeCommand("command-1", "locker-1", Action.OPEN, SESSION, SENT, RECEIVED)
+    return NodeCommand("command-1", "locker-1", "open", SESSION, SENT, RECEIVED)
 
 
-@pytest.mark.parametrize("action", list(Action))
+@pytest.mark.parametrize("action", ["open", "close", "on", "off", "spin_up"])
 def test_FR06_encode_preserves_command(action):
     data = json.loads(encode_command(replace(command(), action=action), schema_version=2))
     assert datetime.fromisoformat(data.pop("issued_at")) == SENT

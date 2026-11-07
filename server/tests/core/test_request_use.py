@@ -9,7 +9,6 @@ import pytest
 from nearpilot.core.decision.service import RequestUseService
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action,
     ExecutionKind,
     ExecutionStatus,
     ReasonCode,
@@ -25,7 +24,7 @@ from nearpilot.shared.models import (
 )
 
 NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-REQ = UseRequest("u1", "r1", TargetSpec.parse("nearest:locker"), Action.OPEN, "claude", NOW)
+REQ = UseRequest("u1", "r1", TargetSpec.parse("nearest:locker"), "open", "claude", NOW)
 OK = Decision("i1", "r1", Verdict.OK, ReasonCode.OK, node_id="locker-1", use_id="use-1", p_max=0.97)
 CTX = ExecutionContext("i1", REQ, "locker-1", "use-1", None, Settings(version="v1"))
 
@@ -67,7 +66,7 @@ class FakeStore:
 
 
 def record(status, use_id="use-1") -> CommandRecord:
-    return CommandRecord("c1", "i1", "locker-1", Action.OPEN, status, use_id=use_id)
+    return CommandRecord("c1", "i1", "locker-1", "open", status, use_id=use_id)
 
 
 def build(decision=OK, ctx=CTX, result=None, rec=None):
@@ -252,7 +251,7 @@ def test_FR11_중단_사유의_내부_원인을_공개하지_않는다(reason):
 
 
 def not_sent(evidence) -> CommandRecord:
-    return CommandRecord("c1", "i1", "locker-1", Action.OPEN, ExecutionStatus.NOT_SENT,
+    return CommandRecord("c1", "i1", "locker-1", "open", ExecutionStatus.NOT_SENT,
                          use_id="use-1", evidence=evidence)
 
 

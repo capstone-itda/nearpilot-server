@@ -13,8 +13,9 @@ from nearpilot.core.lifecycle.release import ReleaseService
 from nearpilot.core.lifecycle.restore import RestoreService
 from nearpilot.core.lifecycle.shared_light import SharedLightService
 from nearpilot.shared.config import Settings
+from nearpilot.shared.descriptor import DescriptorError, legacy_descriptor
 from nearpilot.shared.enums import (
-    Action, CommandState, ApprovalUsageState, Capability, CommandOutcome, DeviceState,
+    CommandState, ApprovalUsageState, CommandOutcome, DeviceState,
     EndReason, ExecutionKind, ExecutionStatus, Occupancy, ReasonCode, RecoveryStatus, SessionState,
     StoreOutcome, TrustState, Verdict,
 )
@@ -26,11 +27,19 @@ from nearpilot.shared.models import (
 )
 
 
+def _template(kind, occupancy):
+    try:
+        return legacy_descriptor(kind, occupancy)
+    except DescriptorError:
+        return None
+
+
 class RepositoryFake:
     def __init__(self, at):
         self.items = {"locker-1": NodeInfo(
-            "locker-1", "place-1", Capability.LOCKER, Occupancy.RENTAL,
+            "locker-1", "place-1", "locker", Occupancy.RENTAL,
             TrustState.TRUSTED, DeviceState.AVAILABLE, None, at, session_id="connection-1",
+            descriptor=legacy_descriptor("locker", Occupancy.RENTAL),
         )}
         self.sessions = {}
         self.error = None
@@ -38,7 +47,7 @@ class RepositoryFake:
     def nodes(self, capability=None):
         if self.error:
             raise self.error
-        return tuple(n for n in self.items.values() if capability is None or n.capability == capability)
+        return tuple(n for n in self.items.values() if capability is None or n.kind == capability)
 
     def session(self, use_id):
         return self.sessions.get(use_id)
@@ -165,7 +174,7 @@ class StoreFake:
         """재시작 전 마지막 성공 명령. 조명과 스피커는 켜기에 성공했다고 둔다."""
         if not node_id.startswith(("light", "speaker")):
             return None
-        return CommandRecord("last-on", "request-last-on", node_id, Action.ON, ExecutionStatus.SUCCEEDED,
+        return CommandRecord("last-on", "request-last-on", node_id, "on", ExecutionStatus.SUCCEEDED,
                              ExecutionKind.SHARED)
 
     def recovery(self, recovery_id):
@@ -228,7 +237,7 @@ def advance(env, seconds):
 def command(env, status=ExecutionStatus.IN_PROGRESS, *, shared=False, age=20):
     node_id = "light-1" if shared else "locker-1"
     kind = ExecutionKind.SHARED if shared else ExecutionKind.RENTAL_INITIAL
-    record = CommandRecord("command-1", "request-1", node_id, Action.ON if shared else Action.OPEN,
+    record = CommandRecord("command-1", "request-1", node_id, "on" if shared else "open",
                            status, kind, None if shared else "use-1", "usage-1",
                            env.clock() - timedelta(seconds=age),
                            send_started_at=env.clock() - timedelta(seconds=age - 1)
@@ -250,19 +259,21 @@ def rental(env, state=SessionState.ACTIVE):
 
 def light(env):
     env.repository.items["light-1"] = replace(env.repository.items["locker-1"], node_id="light-1",
-                                             capability=Capability.LIGHT, occupancy=Occupancy.SHARED)
+                                             kind="light", occupancy=Occupancy.SHARED,
+                                             descriptor=legacy_descriptor("light", Occupancy.SHARED))
 
 
 def speaker(env, node_id="speaker-1", occupancy=Occupancy.SHARED):
     env.repository.items[node_id] = replace(env.repository.items["locker-1"], node_id=node_id,
-                                            capability=Capability.SPEAKER, occupancy=occupancy)
+                                            kind="speaker", occupancy=occupancy,
+                                            descriptor=_template("speaker", occupancy))
 
 
 def pending_request(env, *, shared=False, age=20, verdict=Verdict.OK):
     """명령에 연결되기 전의 예약 요청. verdict가 None이면 판정이 비었다."""
     node_id = "light-1" if shared else "locker-1"
     request = UseRequest("visitor-1", "external-1", TargetSpec.parse(node_id),
-                         Action.ON if shared else Action.OPEN, "test", env.clock())
+                         "on" if shared else "open", "test", env.clock())
     decision = None if verdict is None else Decision(
         "request-1", "external-1", verdict, ReasonCode.OK if verdict == Verdict.OK else ReasonCode.INTERNAL_ERROR)
     record = PendingRequestRecord("request-1", request, "digest",
@@ -956,7 +967,7 @@ def test_FR07_restore_late_success_keeps_fault(env):
     env.service.restore()
     assert env.repository.items["locker-1"].device_state == DeviceState.FAULT
     ctx = ExecutionContext("request-1", UseRequest("visitor-1", "external-1", TargetSpec.parse("locker-1"),
-        Action.OPEN, "test", saved.reserved_at), "locker-1", "use-1", "usage-1", Settings(),
+        "open", "test", saved.reserved_at), "locker-1", "use-1", "usage-1", Settings(),
         reserved_at=saved.reserved_at)
     execution = ExecutionService(repository=env.repository, store=env.store, rechecker=None, gateway=None,
         clock=env.clock, lock_for=lambda node_id: RLock(), can_execute=env.service.can_execute,

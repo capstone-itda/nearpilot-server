@@ -238,7 +238,7 @@ class Harness:
             target = next((n for n in nodes if n.node_id == node_id), None)
             if len(beacons) != 1 or target is None:
                 return False
-            threshold = getattr(settings, f"threshold_{target.capability.value}")
+            threshold = settings.threshold_for(target.kind)
             if threshold is None:
                 return False
             place_nodes = [n for n in nodes if n.place_id == target.place_id]

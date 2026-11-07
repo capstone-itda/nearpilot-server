@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import pytest
 
 from nearpilot.db.repositories.dashboard_reads import SqliteDashboardReads
-from nearpilot.shared.enums import Action, ReserveOutcome
+from nearpilot.shared.enums import ReserveOutcome
 from nearpilot.shared.models import ReserveRequest
 
 from conftest import (
@@ -39,7 +39,7 @@ def _approved(conn, approval_mode, max_uses):
 
 def _remaining(conn, repo):
     """남은 횟수를 읽는 세 곳의 값: (valid_approval, approvals_in_scope, 대시보드)."""
-    valid = repo.valid_approval("u1", "node1", Action.OPEN, 1, NOW)
+    valid = repo.valid_approval("u1", "node1", "open", 1, NOW)
     [record] = repo.approvals_in_scope("u1", "node1")
     [dashboard] = SqliteDashboardReads(conn).approvals()
     return valid.remaining_uses, record.remaining_uses, dashboard.remaining_uses
@@ -80,7 +80,7 @@ def test_FR14_valid_approval_excludes_own_request_usage(
     for n, internal_request_id in enumerate(holders):
         insert_approval_usage(conn, f"usage{n}", "appr1", internal_request_id, state="reserved")
 
-    approval = repo.valid_approval("u1", "node1", Action.OPEN, 1, NOW, internal_request_id=given)
+    approval = repo.valid_approval("u1", "node1", "open", 1, NOW, internal_request_id=given)
 
     assert approval.remaining_uses == expected
     # 승인 이력(사유 고르기)의 남은 횟수는 요청을 가리지 않고 센다
@@ -103,7 +103,7 @@ def _shared_light(conn, approval_mode, max_uses):
 def _reserve_outcomes(repo, count):
     return [
         repo.reserve_if_free(ReserveRequest(
-            internal_request_id=f"req{n}", user_id="u1", node_id="light1", action=Action.ON, approval_id="appr1",
+            internal_request_id=f"req{n}", user_id="u1", node_id="light1", action="on", approval_id="appr1",
         )).outcome
         for n in range(1, count + 1)
     ]

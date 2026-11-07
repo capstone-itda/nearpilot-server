@@ -7,22 +7,21 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from nearpilot.db.repositories.retention import SqliteRetentionStore
 from nearpilot.db.repositories._common import (
-    descriptor_to_json, from_json, immediate_transaction, iso, new_id, node_from_row, parse_iso,
+    arguments_from_json, descriptor_to_json, from_json, immediate_transaction, iso, new_id, node_from_row, parse_iso,
     settings_to_json, to_json,
 )
 from nearpilot.shared.enums import (
     AccessMode,
-    Action,
     ApprovalDecisionReason,
     ApprovalMode,
     ApprovalStatus,
     ApprovalUsageState,
-    Capability,
     DeviceState,
     EndReason,
     ExecutionStatus,
@@ -34,7 +33,6 @@ from nearpilot.shared.enums import (
     Step,
     StoreConflictReason,
     StoreOutcome,
-    TargetKind,
     TrustState,
     Verdict,
     Visibility,
@@ -51,7 +49,6 @@ from nearpilot.shared.models import (
     ApprovalRequestResult,
     BeaconKey,
     Decision,
-    LightSetting,
     DecisionRecord,
     NodeAnnounce,
     NodeInfo,
@@ -61,7 +58,6 @@ from nearpilot.shared.models import (
     ReserveRequest,
     ReserveResult,
     RssiFrame,
-    SpeakerSetting,
     StoreResult,
     TargetSpec,
     UseRequest,
@@ -137,39 +133,26 @@ class SqliteRepository:
 
     # ── ② 후보 (FR-13) ──────────────────────────────────────────────
 
-    def nodes(self, capability: Capability | None = None) -> Sequence[NodeInfo]:
-        if capability is None:
+    def nodes(self, kind: str | None = None) -> Sequence[NodeInfo]:
+        if kind is None:
             rows = self._conn.execute("SELECT * FROM node").fetchall()
         else:
-            rows = self._conn.execute(
-                "SELECT * FROM node WHERE capability = ?", (capability.value,)
-            ).fetchall()
+            rows = self._conn.execute("SELECT * FROM node WHERE kind = ?", (kind,)).fetchall()
         return [self._node_from_row(row) for row in rows]
 
     def _node_from_row(self, row: sqlite3.Row) -> NodeInfo:
         return node_from_row(row)
 
-    def last_light_setting(self, node_id: str) -> LightSetting | None:
+    def last_success_arguments(self, node_id: str, action: str) -> Mapping[str, Any] | None:
         row = self._conn.execute(
-            # 순서 기준은 `ExecutionStore.last_succeeded`와 같은 서버의 전송 시작 시각이다 (FR-20).
-            "SELECT light FROM node_command WHERE node_id = ? AND status = ? AND action = ? "
+            # 순서 기준은 `ExecutionStore.last_succeeded`와 같은 서버의 전송 시작 시각이다 (FR-09, FR-20).
+            "SELECT arguments FROM node_command WHERE node_id = ? AND status = ? AND action = ? "
             "ORDER BY send_started_at DESC, rowid DESC LIMIT 1",
-            (node_id, ExecutionStatus.SUCCEEDED.value, Action.ON.value),
+            (node_id, ExecutionStatus.SUCCEEDED.value, action),
         ).fetchone()
-        if row is None or row["light"] is None:
+        if row is None:
             return None
-        return LightSetting.from_json(from_json(row["light"]))
-
-    def last_speaker_setting(self, node_id: str) -> SpeakerSetting | None:
-        row = self._conn.execute(
-            # 순서 기준은 `last_light_setting`과 같다. 서버의 전송 시작 시각이다 (FR-20).
-            "SELECT speaker FROM node_command WHERE node_id = ? AND status = ? AND action = ? "
-            "ORDER BY send_started_at DESC, rowid DESC LIMIT 1",
-            (node_id, ExecutionStatus.SUCCEEDED.value, Action.ON.value),
-        ).fetchone()
-        if row is None or row["speaker"] is None:
-            return None
-        return SpeakerSetting.from_json(from_json(row["speaker"]))
+        return arguments_from_json(row["arguments"])
 
     # ── ④ 정책 (FR-14) ──────────────────────────────────────────────
 
@@ -197,7 +180,7 @@ class SqliteRepository:
         )
 
     def valid_approval(
-        self, user_id: str, node_id: str, action: Action, policy_version: int, now: datetime,
+        self, user_id: str, node_id: str, action: str, policy_version: int, now: datetime,
         *, internal_request_id: str | None = None,
     ) -> Approval | None:
         row = self._conn.execute(
@@ -208,7 +191,7 @@ class SqliteRepository:
             "WHERE a.requester_user_id = ? AND a.node_id = ? AND a.action = ? AND a.policy_version = ? "
             "AND a.status = ? AND a.valid_until IS NOT NULL AND a.valid_until > ? "
             "ORDER BY a.valid_until DESC, a.approval_id ASC LIMIT 1",
-            (user_id, node_id, action.value, policy_version, ApprovalStatus.APPROVED.value, iso(now)),
+            (user_id, node_id, action, policy_version, ApprovalStatus.APPROVED.value, iso(now)),
         ).fetchone()
         if row is None:
             return None
@@ -216,7 +199,7 @@ class SqliteRepository:
             approval_id=row["approval_id"],
             node_id=row["node_id"],
             requester_user_id=row["requester_user_id"],
-            action=Action(row["action"]),
+            action=row["action"],
             policy_id=row["policy_id"],
             policy_version=row["policy_version"],
             status=ApprovalStatus(row["status"]),
@@ -244,7 +227,7 @@ class SqliteRepository:
         return [
             ApprovalRecord(
                 approval_id=row["approval_id"],
-                action=Action(row["action"]),
+                action=row["action"],
                 policy_version=row["policy_version"],
                 status=ApprovalStatus(row["status"]),
                 created_at=parse_iso(row["created_at"]),
@@ -346,9 +329,7 @@ class SqliteRepository:
             return self._insert_new_request(req, input_digest, target_spec)
 
     def _serialize_target(self, target: TargetSpec) -> str:
-        if target.kind == TargetKind.EXPLICIT and target.node_id:
-            return target.node_id
-        return f"{target.kind.value}:{target.capability.value}"
+        return target.serialize()
 
     def _insert_new_request(self, req: UseRequest, input_digest: str, target_spec: str) -> RequestLink:
         """한도(`dedup_entry_limit`) 이상이면 만료 ID를 비우고 다시 센다 (FR-22).
@@ -372,7 +353,7 @@ class SqliteRepository:
             "VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
             (
                 internal_request_id, req.user_id, stored_request_id, input_digest,
-                req.parent_internal_request_id, target_spec, req.action.value,
+                req.parent_internal_request_id, target_spec, req.action,
                 req.host_kind, iso(req.received_at),
             ),
         )
@@ -561,12 +542,12 @@ class SqliteRepository:
         kind, occupancy = descriptor.kind, descriptor.occupancy.value
         with immediate_transaction(self._conn):
             row = self._conn.execute(
-                "SELECT capability, occupancy, descriptor, descriptor_hash FROM node WHERE node_id = ?",
+                "SELECT kind, occupancy, descriptor, descriptor_hash FROM node WHERE node_id = ?",
                 (announce.node_id,),
             ).fetchone()
             if row is None:
                 self._conn.execute(
-                    "INSERT INTO node (node_id, place_id, capability, occupancy, trust_state, "
+                    "INSERT INTO node (node_id, place_id, kind, occupancy, trust_state, "
                     "device_state, exclusive_group, release_policy, descriptor, descriptor_hash) "
                     "VALUES (?, NULL, ?, ?, ?, ?, NULL, '{}', ?, ?)",
                     (announce.node_id, kind, occupancy, TrustState.DISCOVERED.value,
@@ -575,7 +556,7 @@ class SqliteRepository:
                 return
             old_hash = row["descriptor_hash"]
             if old_hash is None:
-                same = row["capability"] == kind and row["occupancy"] == occupancy
+                same = row["kind"] == kind and row["occupancy"] == occupancy
             else:
                 same = old_hash == new_hash
             if same:
@@ -594,14 +575,14 @@ class SqliteRepository:
                     })
                 return
             self._conn.execute(
-                "UPDATE node SET capability = ?, occupancy = ?, descriptor = ?, descriptor_hash = ?, "
+                "UPDATE node SET kind = ?, occupancy = ?, descriptor = ?, descriptor_hash = ?, "
                 "trust_state = ? WHERE node_id = ?",
                 (kind, occupancy, stored, new_hash, TrustState.DISCOVERED.value, announce.node_id),
             )
             self._announce_audit(announce, {
                 "previous_descriptor_hash": old_hash,
                 "descriptor_hash": new_hash,
-                "previous_kind": row["capability"],
+                "previous_kind": row["kind"],
                 "kind": kind,
                 "previous_occupancy": row["occupancy"],
                 "occupancy": occupancy,
@@ -640,7 +621,7 @@ class SqliteRepository:
                 "AND status = ? AND pending_until > ? "
                 "ORDER BY created_at DESC LIMIT 1",
                 (
-                    req.requester_user_id, req.node_id, req.action.value, req.policy_version,
+                    req.requester_user_id, req.node_id, req.action, req.policy_version,
                     ApprovalStatus.PENDING.value, iso(req.created_at),
                 ),
             ).fetchone()
@@ -661,7 +642,7 @@ class SqliteRepository:
                 "VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, 0)",
                 (
                     approval_id, req.node_id, req.requester_user_id, req.internal_request_id,
-                    req.action.value, req.policy_id, req.policy_version, ApprovalStatus.PENDING.value,
+                    req.action, req.policy_id, req.policy_version, ApprovalStatus.PENDING.value,
                     iso(req.created_at), iso(pending_until),
                 ),
             )
@@ -781,7 +762,7 @@ class SqliteRepository:
         return OwnerApproval(
             approval_id=row["approval_id"],
             node_id=row["node_id"],
-            action=Action(row["action"]),
+            action=row["action"],
             status=ApprovalStatus(row["status"]),
             created_at=parse_iso(row["created_at"]),
             pending_until=parse_iso(row["pending_until"]) if row["pending_until"] else None,
@@ -839,9 +820,9 @@ class SqliteRepository:
                     reserved_at=parse_iso(reserved_at_iso),
                 )
 
-            # close 는 본인 대여의 재조작으로만 실행한다. 빈 기기·타인 점유·공용형에 세션을 만들지 않고,
-            # 타인 점유와 대여 없음을 구분하지 않는다 (FR-19, FR-21).
-            if req.action is Action.CLOSE:
+            # reoperate 역할의 동작은 본인 대여의 재조작으로만 실행한다. 빈 기기·타인 점유·공용형에 세션을
+            # 만들지 않고, 타인 점유와 대여 없음을 구분하지 않는다 (FR-09, FR-19, FR-21).
+            if req.reoperate_only:
                 return ReserveResult(outcome=ReserveOutcome.USE_NOT_FOUND)
 
             if node["occupancy"] == Occupancy.SHARED.value:

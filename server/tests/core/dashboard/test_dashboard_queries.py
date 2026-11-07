@@ -17,10 +17,8 @@ from nearpilot.core.dashboard import DashboardQueryService, ModelVersions, fault
 from nearpilot.core.lifecycle.shared_light import SharedHolder
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action,
     ApprovalMode,
     ApprovalStatus,
-    Capability,
     DeviceState,
     ExecutionStatus,
     NodeResultState,
@@ -53,7 +51,7 @@ VISITOR_ID, VISITOR2_ID, OWNER_ID = "user-visitor-1", "user-visitor-2", "user-ow
 VISITOR = Subject(VISITOR_ID, Role.VISITOR)
 VISITOR2 = Subject(VISITOR2_ID, Role.VISITOR)
 OWNER = Subject(OWNER_ID, Role.OWNER)
-LOCKER_TARGET = {"kind": TargetKind.NEAREST, "capability": Capability.LOCKER}
+LOCKER_TARGET = {"kind": TargetKind.NEAREST, "capability": "locker"}
 
 
 def ago(seconds: float) -> datetime:
@@ -65,7 +63,7 @@ def ago(seconds: float) -> datetime:
 
 def make_node(
     node_id: str = "locker-1", *, name: str | None = None, place_id: str | None = "place-1",
-    capability: Capability = Capability.LOCKER, occupancy: Occupancy = Occupancy.RENTAL,
+    capability: str = "locker", occupancy: Occupancy = Occupancy.RENTAL,
     trust: TrustState = TrustState.TRUSTED, state: DeviceState = DeviceState.AVAILABLE,
     last_seen: datetime | None = ago(5), session_id: str | None = "conn-1",
 ) -> DashboardNode:
@@ -84,7 +82,7 @@ def make_approval(
     approval_id: str, *, status: ApprovalStatus = ApprovalStatus.APPROVED, created: datetime = ago(3600),
     pending_until: datetime | None = None, valid_until: datetime | None = None, used: int = 0,
     remaining: int | None = None, node_id: str = "locker-1", user_id: str = VISITOR_ID,
-    action: Action = Action.OPEN, mode: ApprovalMode = ApprovalMode.ONE_TIME,
+    action: str = "open", mode: ApprovalMode = ApprovalMode.ONE_TIME,
 ) -> DashboardApproval:
     return DashboardApproval(approval_id, node_id, user_id, f"req-{approval_id}", action, status, created,
                              pending_until, valid_until, mode, used, remaining)
@@ -93,7 +91,7 @@ def make_approval(
 def make_request(
     rid: str, seq: int = 1, *, kind: str = "visitor", user_id: str = VISITOR_ID,
     verdict: Verdict | None = Verdict.OK, reason: ReasonCode | None = ReasonCode.OK,
-    node_id: str | None = "locker-1", target: str = "nearest:locker", action: Action = Action.OPEN,
+    node_id: str | None = "locker-1", target: str = "nearest:locker", action: str = "open",
     received: datetime = ago(600),
 ) -> DashboardRequest:
     if kind == "server_internal":  # 서버 내부 요청은 사용자도 판정도 저장하지 않는다
@@ -103,7 +101,7 @@ def make_request(
 
 def make_command(
     rid: str, seq: int = 1, *, status: ExecutionStatus = ExecutionStatus.SUCCEEDED, node_id: str = "locker-1",
-    action: Action = Action.OPEN, use_id: str | None = None, started: datetime | None = None,
+    action: str = "open", use_id: str | None = None, started: datetime | None = None,
     outcome: str | None = "succeeded", occurred: datetime | None = None, evidence: dict | None = None,
 ) -> DashboardCommand:
     return DashboardCommand(seq, f"cmd-{seq}", rid, node_id, action, status, use_id, started, outcome, occurred,
@@ -307,8 +305,8 @@ def test_FR12A_이름이_없는_기기는_ID를_이름으로_쓴다():
         places=[DashboardPlace("place-2", "옆방"), DashboardPlace("place-1", "라운지")],
         nodes=[
             make_node("locker-2"), make_node("mood-1", name="무드등", place_id="place-2",
-                                             capability=Capability.LIGHT, occupancy=Occupancy.SHARED),
-            make_node("light-1", name="조명 1", capability=Capability.LIGHT, occupancy=Occupancy.SHARED),
+                                             capability="light", occupancy=Occupancy.SHARED),
+            make_node("light-1", name="조명 1", capability="light", occupancy=Occupancy.SHARED),
             make_node("locker-1", name="사물함 1"),
         ],
     )
@@ -318,12 +316,12 @@ def test_FR12A_이름이_없는_기기는_ID를_이름으로_쓴다():
     assert result["weakRssiDbm"] == -82.5
     assert [(p["placeId"], p["placeName"]) for p in result["places"]] == [("place-1", "라운지"), ("place-2", "옆방")]
     assert result["places"][0]["devices"] == [  # node_id 순이다
-        {"nodeId": "light-1", "name": "조명 1", "capability": Capability.LIGHT, "occupancy": Occupancy.SHARED},
-        {"nodeId": "locker-1", "name": "사물함 1", "capability": Capability.LOCKER, "occupancy": Occupancy.RENTAL},
-        {"nodeId": "locker-2", "name": "locker-2", "capability": Capability.LOCKER, "occupancy": Occupancy.RENTAL},
+        {"nodeId": "light-1", "name": "조명 1", "capability": "light", "occupancy": Occupancy.SHARED},
+        {"nodeId": "locker-1", "name": "사물함 1", "capability": "locker", "occupancy": Occupancy.RENTAL},
+        {"nodeId": "locker-2", "name": "locker-2", "capability": "locker", "occupancy": Occupancy.RENTAL},
     ]
     assert result["places"][1]["devices"] == [
-        {"nodeId": "mood-1", "name": "무드등", "capability": Capability.LIGHT, "occupancy": Occupancy.SHARED},
+        {"nodeId": "mood-1", "name": "무드등", "capability": "light", "occupancy": Occupancy.SHARED},
     ]
 
 
@@ -359,7 +357,7 @@ def test_FR12A_점유_목록은_대여와_공용_유지_대상자다():
         nodes=[
             make_node("locker-1", state=DeviceState.ACTIVE), make_node("locker-2", state=DeviceState.RESERVED),
             make_node("locker-3", state=DeviceState.CLOSING), make_node("locker-4", state=DeviceState.FAULT),
-            make_node("light-1", capability=Capability.LIGHT, occupancy=Occupancy.SHARED),
+            make_node("light-1", capability="light", occupancy=Occupancy.SHARED),
         ],
         sessions=[
             make_session("use-4", node_id="locker-4", user_id=OWNER_ID, reserved=ago(300)),
@@ -494,7 +492,7 @@ def history_world() -> FakeReads:
         make_request("req-pending", 5, verdict=None, reason=None, node_id=None, received=ago(90)),
         make_request("req-access", 6, verdict=Verdict.NEED_APPROVAL, reason=ReasonCode.APPROVAL_REQUIRED,
                      received=ago(80)),
-        make_request("req-internal", 7, kind="server_internal", node_id="light-1", action=Action.OFF,
+        make_request("req-internal", 7, kind="server_internal", node_id="light-1", action="off",
                      target="light-1", received=ago(70)),
         make_request("req-purged", 8, received=ago(60)),  # 보존 정리로 감사 행이 지워졌다
     ]
@@ -521,15 +519,15 @@ def test_FR12A_이력은_방문자_request_use_가운데_판정이_저장된_요
 
     assert rows == [
         {"subject": VISITOR, "requestId": "req-unknown", "at": ago(100), "target": LOCKER_TARGET,
-         "action": Action.OPEN, "verdict": Verdict.OK, "nodeId": "locker-3", "outcome": "결과 불명 → 고장 격리",
+         "action": "open", "verdict": Verdict.OK, "nodeId": "locker-3", "outcome": "결과 불명 → 고장 격리",
          "code": ReasonCode.EXEC_UNKNOWN},
         {"subject": VISITOR2, "requestId": "req-busy", "at": ago(400), "target": LOCKER_TARGET,
-         "action": Action.OPEN, "verdict": Verdict.BUSY, "nodeId": "locker-2", "outcome": "실행 안 함",
+         "action": "open", "verdict": Verdict.BUSY, "nodeId": "locker-2", "outcome": "실행 안 함",
          "code": ReasonCode.DEVICE_BUSY},
         {"subject": VISITOR2, "requestId": "req-ask", "at": ago(500), "target": LOCKER_TARGET,
-         "action": Action.OPEN, "verdict": Verdict.ASK, "nodeId": "locker-1", "outcome": "다시 질문",
+         "action": "open", "verdict": Verdict.ASK, "nodeId": "locker-1", "outcome": "다시 질문",
          "code": ReasonCode.LOW_CONFIDENCE},
-        {"subject": VISITOR, "requestId": "req-ok", "at": ago(600), "target": LOCKER_TARGET, "action": Action.OPEN,
+        {"subject": VISITOR, "requestId": "req-ok", "at": ago(600), "target": LOCKER_TARGET, "action": "open",
          "verdict": Verdict.OK, "nodeId": "locker-1", "outcome": "제어 신호 출력 완료"},
     ]
 
@@ -570,7 +568,7 @@ def test_FR12A_접근_신청_요청은_이력에_없다():
 def test_FR12A_이력과_신뢰도는_방문자가_아닌_요청을_판정이_있어도_뺀다():
     received = ago(50)
     # 서버 내부 요청은 판정을 저장하지 않는다. 저장돼 있어도 방문자 요청이 아니면 센 적이 없다
-    internal = DashboardRequest(2, "req-internal", None, "server_internal", "light-1", Action.OFF, Verdict.OK,
+    internal = DashboardRequest(2, "req-internal", None, "server_internal", "light-1", "off", Verdict.OK,
                                 ReasonCode.OK, "light-1", None, received)
     reads = FakeReads(
         requests=[make_request("req-use", 1, received=ago(60)), internal],
@@ -663,7 +661,7 @@ def test_FR12A_이력_기간의_시간대를_주지_않으면_서버_지역_시�
 
 def test_FR12A_없는_요청은_None():
     reads = FakeReads(
-        requests=[make_request("req-internal", kind="server_internal", node_id="light-1", action=Action.OFF)],
+        requests=[make_request("req-internal", kind="server_internal", node_id="light-1", action="off")],
         audits=trail("req-internal", ago(600), (Step.EXEC, {"event": "record_result", "outcome": "succeeded"})),
     )
     service = make_service(reads)
@@ -689,7 +687,7 @@ def test_FR12A_요청_한_건은_단계_결과와_근접_실행_접근_신청을
             make_approval("after", created=ago(100)),  # 요청보다 늦게 만든 승인
             make_approval("same-time", created=received),  # 같은 순간에 만든 승인은 먼저가 아니다
             make_approval("other-user", created=ago(700), user_id=VISITOR2_ID),
-            make_approval("other-action", created=ago(650), action=Action.ON),
+            make_approval("other-action", created=ago(650), action="on"),
             make_approval("other-node", created=ago(640), node_id="locker-2"),
         ],
     )
@@ -698,7 +696,7 @@ def test_FR12A_요청_한_건은_단계_결과와_근접_실행_접근_신청을
 
     steps = result.pop("steps")
     assert result == {
-        "subject": VISITOR, "id": "req-ok", "tool": "request_use", "target": LOCKER_TARGET, "action": Action.OPEN,
+        "subject": VISITOR, "id": "req-ok", "tool": "request_use", "target": LOCKER_TARGET, "action": "open",
         "at": received, "verdict": Verdict.OK, "reason": ReasonCode.OK, "nodeId": "locker-1",
         "posteriors": {"locker-1": 0.91, "locker-2": 0.05}, "threshold": 0.5, "execution": ExecutionStatus.SUCCEEDED,
         "accessRequestedAt": ago(900), "accessEnd": "approved",  # 승인은 대기 기한이 있어도 만료 시각이 없다
@@ -968,7 +966,7 @@ def rich_world() -> FakeReads:
     return FakeReads(
         places=[DashboardPlace("place-1", "라운지"), DashboardPlace("place-2", "옆방")],
         nodes=[
-            make_node("light-1", name="조명 1", capability=Capability.LIGHT, occupancy=Occupancy.SHARED),
+            make_node("light-1", name="조명 1", capability="light", occupancy=Occupancy.SHARED),
             make_node("locker-1", name="사물함 1", state=DeviceState.ACTIVE),
             make_node("locker-2", state=DeviceState.FAULT, last_seen=ago(40)),
             make_node("locker-3", place_id="place-2", state=DeviceState.CLOSING),
@@ -996,7 +994,7 @@ def rich_world() -> FakeReads:
             make_request("req-run", 6, user_id=VISITOR2_ID, node_id="locker-3", received=ago(60)),
             make_request("req-pending", 7, user_id=VISITOR2_ID, verdict=None, reason=None, node_id=None,
                          received=ago(30)),
-            make_request("req-internal", 8, kind="server_internal", node_id="light-1", action=Action.OFF,
+            make_request("req-internal", 8, kind="server_internal", node_id="light-1", action="off",
                          target="light-1", received=ago(20)),
             make_request("req-old", 9, verdict=None, reason=None, received=T0 - timedelta(minutes=10)),
         ],
@@ -1016,7 +1014,7 @@ def rich_world() -> FakeReads:
                          started=ago(299), occurred=ago(295)),
             make_command("req-run", 3, node_id="locker-3", status=ExecutionStatus.IN_PROGRESS, outcome=None,
                          started=ago(55)),
-            make_command("req-internal", 4, node_id="light-1", action=Action.OFF,
+            make_command("req-internal", 4, node_id="light-1", action="off",
                          status=ExecutionStatus.IN_PROGRESS, outcome=None, started=ago(19)),
         ],
         evidence={"locker-2": unknown_audit},
@@ -1056,7 +1054,7 @@ def test_FR12B_지금_상태는_기기_비콘_승인_진행_중_요청이다():
     assert (approval.subject, approval.at, dict(approval.fields)) == (
         VISITOR, ago(100), {"requestId": "req-ap-pending", "nodeId": "locker-2", "kind": "requested"})
     assert {e.fields["requestId"] for e in run if "requestId" in e.fields} == {"req-run"}
-    assert run[0].subject == VISITOR2 and run[-1].fields["action"] == Action.OPEN
+    assert run[0].subject == VISITOR2 and run[-1].fields["action"] == "open"
     assert pending.subject == VISITOR2 and pending.fields["requestId"] == "req-pending"
     assert internal.subject is None and internal.fields["requestId"] == "req-internal"
     assert VISITOR_ID not in "".join(strings([dict(e.fields) for e in events]))
@@ -1086,9 +1084,9 @@ def test_FR12B_진행_중이_아닌_요청과_옛_요청은_지금_상태에_없
 
 def test_FR12B_끝난_서버_내부_요청은_진행_중이_아니다():
     reads = FakeReads(
-        nodes=[make_node("light-1", capability=Capability.LIGHT, occupancy=Occupancy.SHARED)],
-        requests=[make_request("req-internal", kind="server_internal", node_id="light-1", action=Action.OFF)],
-        commands=[make_command("req-internal", 1, node_id="light-1", action=Action.OFF, outcome="succeeded",
+        nodes=[make_node("light-1", capability="light", occupancy=Occupancy.SHARED)],
+        requests=[make_request("req-internal", kind="server_internal", node_id="light-1", action="off")],
+        commands=[make_command("req-internal", 1, node_id="light-1", action="off", outcome="succeeded",
                                started=ago(9), occurred=ago(8))],
         audits=trail("req-internal", ago(10), (Step.EXEC, {"event": "record_result", "outcome": "succeeded"})),
     )

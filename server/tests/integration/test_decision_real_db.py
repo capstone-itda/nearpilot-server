@@ -149,6 +149,5 @@ def test_FR11_호스트_응답에_내부_값이_없다():
 
 
 def _open():
-    from nearpilot.shared.enums import Action
-
-    return Action.OPEN
+    
+    return "open"

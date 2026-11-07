@@ -8,9 +8,8 @@ import pytest
 
 from nearpilot.core.decision.recheck import Rechecker
 from nearpilot.shared.config import Settings
+from nearpilot.shared.descriptor import DescriptorError, legacy_descriptor
 from nearpilot.shared.enums import (
-    Action,
-    Capability,
     DeviceState,
     ExecutionKind,
     Occupancy,
@@ -37,17 +36,29 @@ BEACON = BeaconKey("u", 1, 1)
 
 def node(node_id="locker-1", **kw) -> NodeInfo:
     base = dict(
-        node_id=node_id, place_id="p", capability=Capability.LOCKER, occupancy=Occupancy.RENTAL,
+        node_id=node_id, place_id="p", kind="locker", occupancy=Occupancy.RENTAL,
         trust_state=TrustState.TRUSTED, device_state=DeviceState.RESERVED,  # 자기 예약
         exclusive_group="g", last_seen_at=NOW - timedelta(seconds=1),
     )
     base.update(kw)
+    if "capability" in base:
+        base["kind"] = base.pop("capability")
+    if "descriptor" not in base:
+        base["descriptor"] = template(base["kind"], base["occupancy"])
     return NodeInfo(**base)
+
+def template(kind, occupancy):
+    """종류와 점유 방식의 v2 템플릿 선언. 역할 규칙에 맞지 않는 조합이면 None 이다."""
+    try:
+        return legacy_descriptor(kind, occupancy)
+    except DescriptorError:
+        return None
+
 
 
 def anchor() -> NodeInfo:
     """비콘을 본 기기. 후보가 아닌 종류(조명)로 두어서 후보 조건과 분리한다."""
-    return node("anchor-1", occupancy=Occupancy.SHARED, capability=Capability.LIGHT,
+    return node("anchor-1", occupancy=Occupancy.SHARED, capability="light",
                 device_state=DeviceState.AVAILABLE)
 
 
@@ -58,7 +69,7 @@ def frame(node_id="locker-1") -> RssiFrame:
 def ctx(use_id="use-1", node_id="locker-1", target="nearest:locker",
         kind=ExecutionKind.RENTAL_INITIAL, settings=None, usage_id=None) -> ExecutionContext:
     req = UseRequest(user_id="u1", request_id="r1", target=TargetSpec.parse(target),
-                     action=Action.OPEN, host_kind="claude", received_at=NOW - timedelta(seconds=4))
+                     action="open", host_kind="claude", received_at=NOW - timedelta(seconds=4))
     return ExecutionContext("i1", req, node_id, use_id, usage_id, settings or Settings(version="v1"),
                             execution_kind=kind)
 
@@ -123,7 +134,7 @@ class FakePolicy:
         self.calls = []
         self.request_ids = []
 
-    def check(self, user_id, node_id, action, now, *, internal_request_id=None):
+    def check(self, user_id, node_id, action, now, *, internal_request_id=None, reoperate=False):
         self.calls.append(node_id)
         self.request_ids.append(internal_request_id)
         return self.result
@@ -136,7 +147,7 @@ class OwnUsagePolicy(FakePolicy):
         super().__init__(PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED, 2))
         self.own = own
 
-    def check(self, user_id, node_id, action, now, *, internal_request_id=None):
+    def check(self, user_id, node_id, action, now, *, internal_request_id=None, reoperate=False):
         exhausted = super().check(user_id, node_id, action, now, internal_request_id=internal_request_id)
         if internal_request_id == self.own:
             return PolicyCheckResult(Verdict.OK, ReasonCode.OK, 2, approval_id="a1")

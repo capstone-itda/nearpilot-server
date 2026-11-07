@@ -3,7 +3,8 @@ import json
 
 import pytest
 
-from nearpilot.shared.enums import Capability, Occupancy
+from nearpilot.shared.descriptor import LEGACY_KINDS
+from nearpilot.shared.enums import Occupancy
 from tools.node_lab import provision
 
 MQTT_SECRET = "mqtt-secret-0123456789abcdef"
@@ -134,7 +135,8 @@ def test_FR22_provision_fails_on_reject_or_mismatch(lab, device, reason):
 def test_FR04_provision_uses_fleet_capability(lab):
     prepared = values(lab)
     assert (prepared["capability"], prepared["occupancy"]) == ("light", "shared")
-    assert provision.CAPABILITIES == {item.value for item in Capability}
+    # v2 펌웨어의 BLE 설정 키다. 서버의 v2 템플릿 종류와 같다 (PR ④ 에서 묶음에서 뺀다).
+    assert provision.CAPABILITIES == LEGACY_KINDS
     assert provision.OCCUPANCIES == {item.value for item in Occupancy}
     device = FakeDevice()
     run(device, prepared)

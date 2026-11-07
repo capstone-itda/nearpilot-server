@@ -15,10 +15,8 @@ from nearpilot.api.ws.schema import render_event
 from nearpilot.core.dashboard import MonitorTail
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action,
     ApprovalMode,
     ApprovalStatus,
-    Capability,
     DeviceState,
     ExecutionStatus,
     Occupancy,
@@ -57,7 +55,7 @@ def at(seconds: float) -> datetime:
 
 def make_node(
     node_id: str = "locker-1", *, state: DeviceState = DeviceState.AVAILABLE, occupancy: Occupancy = Occupancy.RENTAL,
-    capability: Capability = Capability.LOCKER, name: str | None = None,
+    capability: str = "locker", name: str | None = None,
 ) -> DashboardNode:
     return DashboardNode(node_id, name, "place-1", capability, occupancy, TrustState.TRUSTED, state, at(-1), "conn-1")
 
@@ -74,13 +72,13 @@ def make_approval(
     pending_until: datetime | None = at(600), valid_until: datetime | None = None, node_id: str = "locker-2",
     user_id: str = VISITOR_ID,
 ) -> DashboardApproval:
-    return DashboardApproval(approval_id, node_id, user_id, f"req-{approval_id}", Action.OPEN, status, created,
+    return DashboardApproval(approval_id, node_id, user_id, f"req-{approval_id}", "open", status, created,
                              pending_until, valid_until, ApprovalMode.ONE_TIME, 0, None)
 
 
 def make_request(
     rid: str, seq: int, *, kind: str = "visitor", user_id: str = VISITOR_ID, verdict: Verdict | None = Verdict.OK,
-    reason: ReasonCode | None = ReasonCode.OK, node_id: str | None = "locker-1", action: Action = Action.OPEN,
+    reason: ReasonCode | None = ReasonCode.OK, node_id: str | None = "locker-1", action: str = "open",
     received: datetime = T0,
 ) -> DashboardRequest:
     if kind == "server_internal":  # 서버 내부 요청은 사용자도 판정도 저장하지 않고 target_spec 에 기기 ID 를 둔다
@@ -90,7 +88,7 @@ def make_request(
 
 def make_command(
     rid: str, seq: int = 1, *, status: ExecutionStatus = ExecutionStatus.PENDING, node_id: str = "locker-1",
-    action: Action = Action.OPEN, started: datetime | None = None, outcome: str | None = None,
+    action: str = "open", started: datetime | None = None, outcome: str | None = None,
     occurred: datetime | None = None,
 ) -> DashboardCommand:
     return DashboardCommand(seq, f"cmd-{rid}", rid, node_id, action, status, None, started, outcome, occurred, {})
@@ -363,7 +361,7 @@ def test_FR12B_요청의_이벤트는_저장되는_대로_늘어나고_같은_�
     reads.command_rows.append(make_command("r1", status=ExecutionStatus.IN_PROGRESS, started=at(2)))
     tail.tick()
     assert [(e.type, e.fields["nodeId"], e.fields["action"]) for e in feed.take()] == [
-        ("command", "locker-1", Action.OPEN)]
+        ("command", "locker-1", "open")]
 
     # 결과가 저장됐다. 요청이 끝나서 추적을 마친다
     edit(reads.command_rows, lambda c: True, status=ExecutionStatus.SUCCEEDED, outcome="succeeded", occurred_at=at(3))
@@ -378,19 +376,19 @@ def test_FR12B_요청의_이벤트는_저장되는_대로_늘어나고_같은_�
 
 
 def test_FR12B_서버_내부_요청은_도구_호출로_발행하지_않는다():
-    light = make_node("light-1", state=DeviceState.ACTIVE, occupancy=Occupancy.SHARED, capability=Capability.LIGHT)
+    light = make_node("light-1", state=DeviceState.ACTIVE, occupancy=Occupancy.SHARED, capability="light")
     reads = FakeReads(nodes=[light])
     tail, feed, _ = make_tail(reads)
     tail.start()
 
-    reads.request_rows.append(make_request("off", 1, kind="server_internal", node_id="light-1", action=Action.OFF))
+    reads.request_rows.append(make_request("off", 1, kind="server_internal", node_id="light-1", action="off"))
     tail.tick()
     assert feed.take() == []  # 요청 행이 먼저 저장되고 명령 행은 조금 뒤에 붙는다. 그동안 추적을 끝내지 않는다
 
     reads.command_rows.append(make_command("off", status=ExecutionStatus.IN_PROGRESS, node_id="light-1",
-                                           action=Action.OFF, started=at(1)))
+                                           action="off", started=at(1)))
     tail.tick()
-    assert [(e.type, e.fields["action"]) for e in feed.take()] == [("command", Action.OFF)]
+    assert [(e.type, e.fields["action"]) for e in feed.take()] == [("command", "off")]
 
     edit(reads.command_rows, lambda c: True, status=ExecutionStatus.SUCCEEDED, outcome="succeeded", occurred_at=at(2))
     tail.tick()

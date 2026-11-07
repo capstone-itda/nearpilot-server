@@ -22,7 +22,6 @@ from nearpilot.api.ws.settings import DashboardSettings
 from nearpilot.runtime import DashboardConfig, Runtime, create_app
 from nearpilot.runtime.assembly import _LateRestService
 from nearpilot.runtime.tasks import NotAccepting
-from nearpilot.shared.enums import Action
 from nearpilot.shared.models import TargetSpec, UseRequest
 
 RECOVERY = "/admin/nodes/locker-1/recovery"
@@ -164,7 +163,7 @@ def test_NFR04_runtime_recovery_flow(tmp_path):
         wait_until(lambda: _frames(db) > before)
         broker.drop_commands = {"locker-1"}
         runtime.core.request_use(UseRequest(
-            VISITOR_A, "r1", TargetSpec.parse("locker-1"), Action.OPEN, None, datetime.now(timezone.utc)))
+            VISITOR_A, "r1", TargetSpec.parse("locker-1"), "open", None, datetime.now(timezone.utc)))
         wait_until(lambda: _command_statuses(db) == ["unknown"] and _device_state(db) == "FAULT")
 
         # 복구 건이 생겼다. 명령 처리 대기 보고가 오기 전에는 준비되지 않았다

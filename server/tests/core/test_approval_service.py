@@ -7,13 +7,13 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from nearpilot.core.approval import OwnerApprovalService
-from nearpilot.shared.enums import Action, ApprovalDecisionReason, ApprovalStatus
+from nearpilot.shared.enums import ApprovalDecisionReason, ApprovalStatus
 from nearpilot.shared.errors import StoreError
 from nearpilot.shared.models import ApprovalDecisionResult, OwnerApproval
 
 NOW = datetime(2026, 1, 1, 0, 5, tzinfo=timezone.utc)
 PENDING = OwnerApproval(
-    "a1", "locker-1", Action.OPEN, ApprovalStatus.PENDING, NOW - timedelta(minutes=5),
+    "a1", "locker-1", "open", ApprovalStatus.PENDING, NOW - timedelta(minutes=5),
     NOW + timedelta(minutes=5), None,
 )
 

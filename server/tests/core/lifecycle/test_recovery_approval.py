@@ -16,7 +16,7 @@ from nearpilot.core.lifecycle.fault_recovery import (
 )
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, CommandState, ApprovalUsageState, Capability, CommandOutcome, DeviceState, EndReason,
+    CommandState, ApprovalUsageState, CommandOutcome, DeviceState, EndReason,
     ExecutionKind, ExecutionStatus, Occupancy, RecoveryBlocker, RecoveryOutcome, RecoveryReason,
     RecoveryStatus, SessionState, StoreOutcome, TrustState,
 )
@@ -29,7 +29,7 @@ from nearpilot.shared.models import (
 
 class RepositoryFake:
     def __init__(self, at):
-        self.node = NodeInfo("locker-1", "place-1", Capability.LOCKER, Occupancy.RENTAL,
+        self.node = NodeInfo("locker-1", "place-1", "locker", Occupancy.RENTAL,
                              TrustState.TRUSTED, DeviceState.FAULT, None, at, session_id="connection-1")
         self.use = UseSession("use-1", "request-1", "locker-1", SessionState.ACTIVE, rental_due_at=at)
         self.owner_calls = []
@@ -114,7 +114,7 @@ def env():
 
 
 def fault(env, *, outcome=ExecutionStatus.UNKNOWN, attempted=True, use=True):
-    command = CommandRecord("command-1", "request-1", "locker-1", Action.OPEN, outcome,
+    command = CommandRecord("command-1", "request-1", "locker-1", "open", outcome,
                             ExecutionKind.RENTAL_INITIAL, "use-1" if use else None, "usage-1",
                             env.clock() - timedelta(seconds=30), send_attempted=attempted,
                             outcome=None if outcome in (ExecutionStatus.PENDING, ExecutionStatus.IN_PROGRESS)

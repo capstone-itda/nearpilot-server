@@ -16,13 +16,11 @@ from typing import Any
 
 from nearpilot.db.repositories._common import (
     deferred_transaction, from_json, immediate_transaction, iso,
-    light_from_json, light_to_json, new_id, node_from_row, parse_iso, settings_from_json, settings_to_json,
-    speaker_from_json, speaker_to_json, to_json,
+    arguments_from_json, arguments_to_json, new_id, node_from_row, parse_iso, settings_from_json,
+    settings_to_json, to_json,
 )
 from nearpilot.shared.enums import (
-    Action,
     ApprovalUsageState,
-    Capability,
     CommandOutcome,
     DeviceState,
     EndReason,
@@ -48,7 +46,6 @@ from nearpilot.shared.models import (
     Decision,
     ExecutionContext,
     InternalRequest,
-    LightSetting,
     NodeInfo,
     PendingRequestRecord,
     RecoveryCompletion,
@@ -57,7 +54,6 @@ from nearpilot.shared.models import (
     RecoverySettlement,
     RestoreBundle,
     RestoredSession,
-    SpeakerSetting,
     StoreResult,
     TargetSpec,
     UseRequest,
@@ -91,8 +87,8 @@ class SqliteExecutionStore:
     # ── 실행 (#17 1단계) ────────────────────────────────────────────
 
     def link_command(
-        self, internal_request_id: str, node_id: str, action: Action, light: LightSetting | None = None,
-        speaker: SpeakerSetting | None = None,
+        self, internal_request_id: str, node_id: str, action: str,
+        arguments: Mapping[str, Any] | None = None,
     ) -> StoreResult:
         with immediate_transaction(self._conn):
             existing = self._conn.execute(
@@ -136,12 +132,12 @@ class SqliteExecutionStore:
             self._conn.execute(
                 "INSERT INTO node_command (command_id, internal_request_id, node_id, action, status, "
                 "execution_kind, use_id, usage_id, reserved_at, send_started_at, send_attempted, "
-                "outcome, occurred_at, evidence, light, speaker) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, NULL, '{}', ?, ?)",
+                "outcome, occurred_at, evidence, arguments) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, NULL, '{}', ?)",
                 (
-                    command_id, internal_request_id, node_id, action.value, ExecutionStatus.PENDING.value,
-                    execution_kind.value, use_id, usage_id, request_row["received_at"], light_to_json(light),
-                    speaker_to_json(speaker),
+                    command_id, internal_request_id, node_id, action, ExecutionStatus.PENDING.value,
+                    execution_kind.value, use_id, usage_id, request_row["received_at"],
+                    arguments_to_json(arguments),
                 ),
             )
             return StoreResult(
@@ -150,7 +146,7 @@ class SqliteExecutionStore:
                     command_id=command_id, internal_request_id=internal_request_id, node_id=node_id,
                     action=action, status=ExecutionStatus.PENDING, execution_kind=execution_kind,
                     use_id=use_id, usage_id=usage_id, reserved_at=parse_iso(request_row["received_at"]),
-                    light=light, speaker=speaker,
+                    arguments=arguments,
                 ),
             )
 
@@ -171,9 +167,10 @@ class SqliteExecutionStore:
             if existing is not None:
                 if (
                     existing["node_id"] == req.node_id
-                    and existing["action"] == req.action.value
+                    and existing["action"] == req.action
                     and existing["internal_cause"] == req.cause.value
-                    and existing["settings_json"] == settings_to_json(req.settings)
+                    # 옛 형식 스냅샷과 새 형식이 같은 값이면 같은 요청이다 (spec core-device-actions 결정 13)
+                    and settings_from_json(existing["settings_json"]) == req.settings
                 ):
                     return StoreResult(outcome=StoreOutcome.ALREADY_APPLIED)
                 return StoreResult(
@@ -184,7 +181,7 @@ class SqliteExecutionStore:
                 "input_digest, node_id, target_spec, action, internal_cause, received_at, settings_json) "
                 "VALUES (?, NULL, 'server_internal', NULL, '', ?, ?, ?, ?, ?, ?)",
                 (
-                    req.internal_request_id, req.node_id, req.node_id, req.action.value,
+                    req.internal_request_id, req.node_id, req.node_id, req.action,
                     req.cause.value, iso(req.created_at), settings_to_json(req.settings),
                 ),
             )
@@ -238,7 +235,7 @@ class SqliteExecutionStore:
         ).fetchone()
 
     def _refuse_closed_rental(
-        self, internal_request_id: str, node_id: str, action: Action, reserved_at: str
+        self, internal_request_id: str, node_id: str, action: str, reserved_at: str
     ) -> StoreResult:
         """재조작 판정 뒤 연결 전에 반납이 대여를 닫았다. 연결을 거부하고 `NOT_SENT` 명령을 남긴다 (FR-19).
 
@@ -255,7 +252,7 @@ class SqliteExecutionStore:
             "outcome, occurred_at, evidence) "
             "VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, 0, ?, ?, ?)",
             (
-                command_id, internal_request_id, node_id, action.value, ExecutionStatus.NOT_SENT.value,
+                command_id, internal_request_id, node_id, action, ExecutionStatus.NOT_SENT.value,
                 ExecutionKind.RENTAL_REOPERATION.value, usage_row["usage_id"] if usage_row else None,
                 reserved_at, CommandOutcome.NOT_SENT.value, iso(datetime.now(timezone.utc)),
                 to_json({"source": "link_command", "reason": ReasonCode.USE_NOT_FOUND.value}),
@@ -820,8 +817,8 @@ class SqliteExecutionStore:
         """
         try:
             command_row = self._conn.execute(
-                "SELECT internal_request_id, node_id, use_id, usage_id, execution_kind, reserved_at, light, "
-                "speaker FROM node_command WHERE command_id = ?",
+                "SELECT internal_request_id, node_id, use_id, usage_id, execution_kind, reserved_at, "
+                "arguments FROM node_command WHERE command_id = ?",
                 (command_id,),
             ).fetchone()
             if command_row is None:
@@ -856,15 +853,14 @@ class SqliteExecutionStore:
                 parse_iso(command_row["reserved_at"])
                 if command_row["reserved_at"] and not no_reservation else None
             ),
-            light=light_from_json(command_row["light"]),
-            speaker=speaker_from_json(command_row["speaker"]),
+            arguments=arguments_from_json(command_row["arguments"]),
         )
 
     @staticmethod
     def _internal_request_from_row(row: sqlite3.Row, internal_request_id: str) -> InternalRequest:
         return InternalRequest(
             internal_request_id=internal_request_id, node_id=row["node_id"],
-            action=Action(row["action"]), cause=InternalRequestCause(row["internal_cause"]),
+            action=row["action"], cause=InternalRequestCause(row["internal_cause"]),
             settings=settings_from_json(row["settings_json"]), created_at=parse_iso(row["received_at"]),
         )
 
@@ -874,7 +870,7 @@ class SqliteExecutionStore:
             command_id=row["command_id"],
             internal_request_id=row["internal_request_id"],
             node_id=row["node_id"],
-            action=Action(row["action"]),
+            action=row["action"],
             status=ExecutionStatus(row["status"]),
             execution_kind=ExecutionKind(row["execution_kind"]),
             use_id=row["use_id"],
@@ -885,8 +881,7 @@ class SqliteExecutionStore:
             outcome=CommandOutcome(row["outcome"]) if row["outcome"] else None,
             occurred_at=parse_iso(row["occurred_at"]) if row["occurred_at"] else None,
             evidence=from_json(row["evidence"]),
-            light=light_from_json(row["light"]),
-            speaker=speaker_from_json(row["speaker"]),
+            arguments=arguments_from_json(row["arguments"]),
         )
 
     # ── 복원 조회 (#17 6단계) ────────────────────────────────────────
@@ -1056,7 +1051,7 @@ class SqliteExecutionStore:
     def _use_request_from_row(row: sqlite3.Row) -> UseRequest:
         return UseRequest(
             user_id=row["user_id"], request_id=row["request_id"],
-            target=TargetSpec.parse(row["target_spec"]), action=Action(row["action"]),
+            target=TargetSpec.parse(row["target_spec"]), action=row["action"],
             host_kind=row["host_kind"], received_at=parse_iso(row["received_at"]),
             parent_internal_request_id=row["parent_internal_request_id"],
         )

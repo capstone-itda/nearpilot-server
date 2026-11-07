@@ -13,7 +13,7 @@ from nearpilot.iot.mqtt import (
     DeliveryConfig, MqttCommandGateway, MqttConfig, MqttConnection, ReportDelivery,
 )
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import Action, CommandOutcome, NodeResultState
+from nearpilot.shared.enums import CommandOutcome, NodeResultState
 from nearpilot.shared.models import NodeCommand
 from tools.node_sim import (
     Beacon, BrokerConfig, CommandStore, Credentials, Scenario, SimDevice, SimNode,
@@ -103,7 +103,7 @@ def sims(broker, tmp_path):
         device.stop()
 
 
-def command(session, command_id="command-1", node="node-a", action=Action.OPEN):
+def command(session, command_id="command-1", node="node-a", action="open"):
     now = datetime.now(timezone.utc)
     return NodeCommand(command_id, node, action, session, now, now + timedelta(seconds=3))
 

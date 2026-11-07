@@ -74,7 +74,7 @@ def insert_node(
     last_seen_at=None,
 ):
     conn.execute(
-        "INSERT INTO node (node_id, place_id, capability, occupancy, trust_state, device_state, "
+        "INSERT INTO node (node_id, place_id, kind, occupancy, trust_state, device_state, "
         "exclusive_group, release_policy, session_id, session_first_seen_at, last_seen_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?)",
         (

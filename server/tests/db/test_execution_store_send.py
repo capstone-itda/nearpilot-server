@@ -11,7 +11,6 @@ import pytest
 from nearpilot.db.repositories.execution_store import SqliteExecutionStore
 from nearpilot.db.schema import connect
 from nearpilot.shared.enums import (
-    Action,
     CommandOutcome,
     EndReason,
     ExecutionKind,
@@ -54,7 +53,7 @@ def _seed_reoperation(conn):
 
 def test_FR19_begin_send_applied(store, conn):
     _seed_initial(conn)
-    linked = store.link_command("req1", "node1", Action.OPEN)
+    linked = store.link_command("req1", "node1", "open")
 
     result = store.begin_send(linked.command.command_id)
 
@@ -66,7 +65,7 @@ def test_FR19_begin_send_applied(store, conn):
 
 def test_FR19_begin_send_idempotent(store, conn):
     _seed_initial(conn)
-    linked = store.link_command("req1", "node1", Action.OPEN)
+    linked = store.link_command("req1", "node1", "open")
     first = store.begin_send(linked.command.command_id)
 
     second = store.begin_send(linked.command.command_id)
@@ -78,10 +77,10 @@ def test_FR19_begin_send_idempotent(store, conn):
 
 def test_FR19_begin_send_command_in_progress(store, conn):
     _seed_reoperation(conn)
-    command_a = store.link_command("req-reop", "node1", Action.OPEN).command
+    command_a = store.link_command("req-reop", "node1", "open").command
     store.begin_send(command_a.command_id)
     insert_request(conn, internal_request_id="req-reop-2", request_id="ext-3")
-    command_b = store.link_command("req-reop-2", "node1", Action.ON).command
+    command_b = store.link_command("req-reop-2", "node1", "on").command
 
     result = store.begin_send(command_b.command_id)
 
@@ -91,7 +90,7 @@ def test_FR19_begin_send_command_in_progress(store, conn):
 
 def test_FR19_begin_send_state_conflict(store, conn):
     _seed_initial(conn, device_state="CLOSING", session_state="CLOSING")
-    linked = store.link_command("req1", "node1", Action.OPEN)
+    linked = store.link_command("req1", "node1", "open")
 
     result = store.begin_send(linked.command.command_id)
 
@@ -101,7 +100,7 @@ def test_FR19_begin_send_state_conflict(store, conn):
 
 def test_FR19_begin_send_after_cancel_conflict(store, conn):
     _seed_initial(conn)
-    linked = store.link_command("req1", "node1", Action.OPEN)
+    linked = store.link_command("req1", "node1", "open")
     store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.RECHECK_FAILED, {"source": "test"})
 
     result = store.begin_send(linked.command.command_id)
@@ -114,7 +113,7 @@ def test_NFR03_begin_send_cancel_race(tmp_path):
     db_path = str(tmp_path / "race.db")
     setup_conn = connect(db_path)
     _seed_reoperation(setup_conn)
-    command_id = SqliteExecutionStore(setup_conn).link_command("req-reop", "node1", Action.OPEN).command.command_id
+    command_id = SqliteExecutionStore(setup_conn).link_command("req-reop", "node1", "open").command.command_id
     setup_conn.close()
 
     outcomes: list[StoreOutcome] = []
@@ -178,7 +177,7 @@ def test_FR19_link_command_after_cancel_conflict(store, conn):
     _seed_initial(conn)
     store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.RECHECK_FAILED, {"source": "test"})
 
-    result = store.link_command("req1", "node1", Action.OPEN)
+    result = store.link_command("req1", "node1", "open")
 
     assert result.outcome == StoreOutcome.CONFLICT
     count = conn.execute("SELECT COUNT(*) AS n FROM node_command WHERE internal_request_id = 'req1'").fetchone()
@@ -190,7 +189,7 @@ def test_FR19_cancel_not_sent_cancels_reservation_made_after_cancel(store, repo,
     _seed_initial(conn)
     store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.INTERNAL_ERROR, {"source": "test"})
     again = repo.reserve_if_free(ReserveRequest(
-        internal_request_id="req1", user_id="u1", node_id="node1", action=Action.OPEN, approval_id=None,
+        internal_request_id="req1", user_id="u1", node_id="node1", action="open", approval_id=None,
     ))
     assert again.use_id not in (None, "use1")
 
@@ -215,7 +214,7 @@ def test_FR19_cancel_not_sent_releases_usage_reserved_after_cancel(store, repo, 
     insert_approval(conn, approval_id="appr1", node_id="light1", internal_request_id="approval-req")
     insert_request(conn, internal_request_id="req1", node_id="light1", action="on")
     reserve = ReserveRequest(
-        internal_request_id="req1", user_id="u1", node_id="light1", action=Action.ON, approval_id="appr1",
+        internal_request_id="req1", user_id="u1", node_id="light1", action="on", approval_id="appr1",
     )
     first = repo.reserve_if_free(reserve)
     store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.INTERNAL_ERROR, {"source": "test"})
@@ -241,7 +240,7 @@ def test_FR19_link_command_reoperation_after_close_conflict(store, repo, conn, a
             state="consumed",
         )
     reserved = repo.reserve_if_free(ReserveRequest(
-        internal_request_id="req-reop", user_id="u1", node_id="node1", action=Action.OPEN,
+        internal_request_id="req-reop", user_id="u1", node_id="node1", action="open",
         approval_id="approval1" if approved else None,
     ))
     assert reserved.outcome == ReserveOutcome.REOPERATING
@@ -251,7 +250,7 @@ def test_FR19_link_command_reoperation_after_close_conflict(store, repo, conn, a
         closed_at = datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc)
         assert store.finish_close("use1", closed_at, EndReason.RELEASE).outcome == StoreOutcome.APPLIED
 
-    result = store.link_command("req-reop", "node1", Action.OPEN)
+    result = store.link_command("req-reop", "node1", "open")
 
     assert result.outcome == StoreOutcome.CONFLICT
     assert result.conflict_reason == StoreConflictReason.STATE_CONFLICT
@@ -293,7 +292,7 @@ def test_FR19_link_command_reoperation_after_close_conflict(store, repo, conn, a
     assert conn.execute("SELECT device_state FROM node WHERE node_id = 'node1'").fetchone()["device_state"] == device_state
 
     changes = conn.total_changes
-    again = store.link_command("req-reop", "node1", Action.OPEN)
+    again = store.link_command("req-reop", "node1", "open")
 
     # 같은 요청의 재호출은 그 명령을 돌려준다. 쓰는 것이 없다.
     assert again.outcome == StoreOutcome.ALREADY_APPLIED
@@ -303,7 +302,7 @@ def test_FR19_link_command_reoperation_after_close_conflict(store, repo, conn, a
 
 def test_FR19_cancel_not_sent_idempotent(store, conn):
     _seed_initial(conn)
-    linked = store.link_command("req1", "node1", Action.OPEN)
+    linked = store.link_command("req1", "node1", "open")
     first = store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.RECHECK_FAILED, {"source": "test"})
 
     second = store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.RECHECK_FAILED, {"source": "test"})
@@ -316,7 +315,7 @@ def test_FR19_cancel_not_sent_idempotent(store, conn):
 
 def test_FR19_cancel_not_sent_state_conflict(store, conn):
     _seed_initial(conn)
-    linked = store.link_command("req1", "node1", Action.OPEN)
+    linked = store.link_command("req1", "node1", "open")
     store.begin_send(linked.command.command_id)
 
     result = store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.RECHECK_FAILED, {"source": "test"})
@@ -328,7 +327,7 @@ def test_FR19_cancel_not_sent_state_conflict(store, conn):
 
 def test_FR19_cancel_not_sent_initial_rental(store, conn):
     _seed_initial(conn)
-    linked = store.link_command("req1", "node1", Action.OPEN)
+    linked = store.link_command("req1", "node1", "open")
 
     result = store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.RECHECK_FAILED, {"source": "test"})
 
@@ -347,7 +346,7 @@ def test_FR19_cancel_not_sent_reoperation_scope(store, conn):
     insert_policy(conn, policy_id="policy1", node_id="node1")
     insert_approval(conn, approval_id="approval1", node_id="node1", internal_request_id="req-reop")
     insert_approval_usage(conn, usage_id="usage1", approval_id="approval1", internal_request_id="req-reop")
-    linked = store.link_command("req-reop", "node1", Action.OPEN)
+    linked = store.link_command("req-reop", "node1", "open")
 
     result = store.cancel_not_sent(
         "req-reop", ExecutionStatus.PENDING, ReasonCode.RECHECK_FAILED, {"source": "test"}
@@ -373,7 +372,7 @@ def test_FR19_cancel_not_sent_evidence_with_datetime(store, conn):
     `current.evidence != attempt.cancel`로 저장을 확인하는 검증을 통과한다.
     """
     _seed_initial(conn)
-    linked = store.link_command("req1", "node1", Action.OPEN)
+    linked = store.link_command("req1", "node1", "open")
     evidence = {"source": "recheck", "confirmed_at": datetime(2026, 1, 1, tzinfo=timezone.utc)}
 
     first = store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.RECHECK_FAILED, evidence)
@@ -388,7 +387,7 @@ def test_FR19_cancel_not_sent_evidence_with_datetime(store, conn):
 
 def test_FR19_cancel_not_sent_result_exists_conflict(store, conn):
     _seed_initial(conn)
-    linked = store.link_command("req1", "node1", Action.OPEN)
+    linked = store.link_command("req1", "node1", "open")
     store.begin_send(linked.command.command_id)
     # record_result는 3단계에서 구현한다. 결과가 이미 있는 상태를 직접 만든다.
     conn.execute(

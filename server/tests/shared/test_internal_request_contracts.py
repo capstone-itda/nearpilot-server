@@ -7,13 +7,13 @@ import pytest
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, Capability, ExecutionKind, InternalRequestCause, TargetKind,
+    ExecutionKind, InternalRequestCause, TargetKind,
 )
 from nearpilot.shared.interfaces import ExecutionStore
 from nearpilot.shared.models import ExecutionContext, InternalRequest, TargetSpec, UseRequest
 
 NOW = datetime(2026, 10, 15)
-INTERNAL = InternalRequest("ir-off", "light-1", Action.OFF, InternalRequestCause.LEAVE_OFF, Settings(), NOW)
+INTERNAL = InternalRequest("ir-off", "light-1", "off", InternalRequestCause.LEAVE_OFF, Settings(), NOW)
 
 
 def test_FR20_internal_request_has_no_user():
@@ -23,12 +23,12 @@ def test_FR20_internal_request_has_no_user():
 def test_FR20_server_internal_context_carries_internal_request_only():
     ctx = ExecutionContext("ir-off", None, "light-1", None, None, Settings(),
                            internal_request=INTERNAL, execution_kind=ExecutionKind.SERVER_INTERNAL)
-    assert ctx.request is None and ctx.internal_request.action == Action.OFF
+    assert ctx.request is None and ctx.internal_request.action == "off"
 
 
 @pytest.mark.parametrize("changes", [
-    {"request": UseRequest("u1", "r1", TargetSpec(TargetKind.NEAREST, Capability.LIGHT),
-                           Action.OFF, None, NOW)},
+    {"request": UseRequest("u1", "r1", TargetSpec(TargetKind.NEAREST, "light"),
+                           "off", None, NOW)},
     {"internal_request": None},
     {"usage_id": "usage-1"},
     {"use_id": "use-1"},
@@ -44,7 +44,7 @@ def test_FR20_server_internal_context_rejects_visitor_links(changes):
 
 
 def test_FR20_visitor_context_cannot_carry_internal_request():
-    req = UseRequest("u1", "r1", TargetSpec(TargetKind.NEAREST, Capability.LIGHT), Action.ON, None, NOW)
+    req = UseRequest("u1", "r1", TargetSpec(TargetKind.NEAREST, "light"), "on", None, NOW)
     with pytest.raises(ValueError):
         ExecutionContext("ir-off", req, "light-1", None, None, Settings(),
                          internal_request=INTERNAL, execution_kind=ExecutionKind.SHARED)

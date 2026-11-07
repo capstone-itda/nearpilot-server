@@ -22,29 +22,24 @@ from nearpilot.api.mcp.response import (
     denied_response, device_state_denied, device_state_response, devices_response, host_response,
     status_denied, status_response,
 )
-from nearpilot.shared.config import is_light_color
-from nearpilot.shared.enums import Action, Capability, ReasonCode
+from nearpilot.shared.descriptor import is_name
+from nearpilot.shared.enums import ReasonCode
 from nearpilot.shared.interfaces import CoreService
-from nearpilot.shared.models import Account, LightSetting, SpeakerSetting, TargetSpec, UseRequest
+from nearpilot.shared.models import Account, TargetSpec, UseRequest
 
 log = logging.getLogger(__name__)
 
 _TOOL_DESCRIPTION = (
-    "기기 사용을 요청한다. target_spec 은 nearest:locker, locker-1 형식이고 "
-    "action 은 open, close, on, off 중 하나다. close 는 본인이 대여 중인 사물함을 닫는다. 반납이 아니다. "
-    "조명(nearest:light, light-1)의 on 에만 선택 인자 brightness 와 color 를 쓸 수 있다. "
-    "brightness 는 0 이상 k 이하의 정수다. k 는 find_available_devices 나 get_device_state 의 "
-    "controls.brightness_max 다. color 는 #RRGGBB 형식이고, controls.color 가 true 인 기기만 받는다. "
-    "범위 밖 값과 지원하지 않는 인자는 실행하지 않고 거부한다. 생략한 인자는 그 조명의 마지막 설정을 유지한다. "
-    "이미 켜진 조명에도 on 으로 밝기와 색을 바꾼다. 끄려면 brightness 0 대신 off 를 쓴다. "
-    "스피커(speaker-1)의 on 에만 선택 인자 volume 을 쓸 수 있다. "
-    "volume 은 0 이상 k 이하의 정수이고 k 는 controls.volume_max 다. 범위 밖 값은 거부한다. "
-    "생략하면 마지막 음량을 유지한다. 재생 중인 스피커에도 on 으로 음량을 바꾼다. 멈추려면 off 를 쓴다. "
-    "같은 요청을 다시 보낼 때는 같은 request_id 와 같은 인자를 쓴다."
+    "기기 사용을 요청한다. target_spec 은 nearest:{kind}(가장 가까운 기기), 기기 ID(예: locker-1), "
+    "any:{kind}(허용된 종류의 전역 배정) 중 하나다. action 은 find_available_devices 나 get_device_state 가 "
+    "돌려준 그 기기의 actions[].name 중 하나다. 각 동작의 description 이 하는 일을 설명한다. "
+    "선택 인자 arguments 는 객체이고, 그 동작의 actions[].input_schema 를 따른다. "
+    "범위 밖 값과 스키마에 맞지 않는 인자는 실행하지 않고 거부한다. 생략한 인자는 그 기기의 마지막 성공값이나 "
+    "서버 기본값으로 채운다. 같은 요청을 다시 보낼 때는 같은 request_id 와 같은 인자를 쓴다."
 )
 
 _ACCESS_DESCRIPTION = (
-    "제한 기기의 접근 승인을 요청한다. node_id 는 locker-1 형식이고 action 은 open, on, off 중 하나다. "
+    "제한 기기의 접근 승인을 요청한다. node_id 는 기기 ID 이고 action 은 그 기기의 actions[].name 중 하나다. "
     "승인 요청은 실행 허가가 아니다. 소유자가 승인한 뒤 request_use 를 호출한다. "
     "같은 요청을 다시 보낼 때는 같은 request_id 를 쓴다."
 )
@@ -52,7 +47,7 @@ _RELEASE_DESCRIPTION = "본인의 사용(use_id)을 종료한다. 반납 검사�
 _STATUS_DESCRIPTION = "본인의 사용(use_id) 상태와 종료 이력을 조회한다."
 _DEVICES_DESCRIPTION = (
     "등록 비콘의 최근 수신으로 확인한 같은 장소의 공개·온라인·미점유 기기를 조회한다. "
-    "기기 이름을 모르면 이 도구로 node_id 와 capability 를 먼저 확인한다. "
+    "기기 이름을 모르면 이 도구로 node_id, kind, actions 를 먼저 확인한다. "
     "기기별 근접 확률은 목록을 제한하지 않는다. 비콘 수신이 없으면 빈 목록이다. "
     "access 가 operable 이면 사용을 요청할 수 있고 approval_required 이면 승인이 필요하다. "
     "조회는 실행 허가가 아니다. 실제 실행은 request_use 가 지정 방식에 따라 별도로 판정한다."
@@ -79,55 +74,38 @@ def _transport_security(public_hosts: Sequence[str]) -> TransportSecuritySetting
     )
 
 
-def _light_input(target: TargetSpec, action: Action, brightness: Any, color: Any) -> LightSetting | None:
-    """조명 설정 인자의 자료형, 형식, 대상 기능과 동작을 검사한다 (FR-09). 틀리면 ValueError.
+def _action(action: Any) -> str:
+    """동작 이름 규칙만 검사한다. 기기가 선언했는지는 판정이 검사한다 (FR-09). 틀리면 ValueError."""
+    if not is_name(action):
+        raise ValueError("action 형식 오류")
+    return action
 
-    문자열 숫자, 실수, 불리언을 정수로 바꾸지 않는다. 기기별 지원과 상한은 판정이 검사한다.
+
+def _arguments(arguments: Any) -> dict | None:
+    """`arguments` 가 객체인지만 검사한다 (FR-09). 안쪽은 판정이 기기 선언으로 검사한다. 틀리면 ValueError.
+
+    문자열 숫자, 실수, 불리언을 바꾸지 않는다.
     """
-    if brightness is None and color is None:
+    if arguments is None:
         return None
-    if target.capability is not Capability.LIGHT or action is not Action.ON:
-        raise ValueError("조명 on 이 아닌 요청의 인자")
-    if brightness is not None and (type(brightness) is not int or not 0 <= brightness <= 255):
-        raise ValueError("brightness 형식 오류")
-    if color is not None and not is_light_color(color):
-        raise ValueError("color 형식 오류")
-    return LightSetting(brightness, color)
-
-
-def _speaker_input(target: TargetSpec, action: Action, volume: Any) -> SpeakerSetting | None:
-    """스피커 음량 인자의 자료형, 범위, 대상 기능과 동작을 검사한다 (FR-09). 틀리면 ValueError.
-
-    문자열 숫자, 실수, 불리언을 정수로 바꾸지 않는다. 기기별 지원과 상한은 판정이 검사한다.
-    """
-    if volume is None:
-        return None
-    if target.capability is not Capability.SPEAKER or action is not Action.ON:
-        raise ValueError("스피커 on 이 아닌 요청의 인자")
-    if type(volume) is not int or not 0 <= volume <= 30:
-        raise ValueError("volume 형식 오류")
-    return SpeakerSetting(volume)
+    if not isinstance(arguments, dict) or not all(isinstance(key, str) for key in arguments):
+        raise ValueError("arguments 는 객체여야 한다")
+    return arguments
 
 
 def build_app(
     core: CoreService, authenticator: Authenticator, clock: Callable[[], datetime],
-    *, public_hosts: Sequence[str] = (), light_brightness_max: int = 255, speaker_volume_max: int = 30,
+    *, public_hosts: Sequence[str] = (),
 ) -> Starlette:
     mcp = MCPServer("nearpilot")
-    # 스키마는 형식만 알린다. 값은 Any 로 받아서 SDK 가 자료형을 바꾸지 않게 하고 직접 검사한다.
-    brightness_schema = WithJsonSchema({
-        "type": "integer", "minimum": 0, "maximum": light_brightness_max,
-        "description": "조명 밝기. 0 이상 controls.brightness_max 이하의 정수. 조명 on 에만 쓴다."})
-    color_schema = WithJsonSchema({
-        "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$",
-        "description": "조명 색. #RRGGBB. controls.color 가 true 인 조명의 on 에만 쓴다."})
-    volume_schema = WithJsonSchema({
-        "type": "integer", "minimum": 0, "maximum": speaker_volume_max,
-        "description": "스피커 음량. 0 이상 controls.volume_max 이하의 정수. 스피커 on 에만 쓴다."})
+    # 도구 입력 스키마는 기기 종류와 관계없이 같다 (FR-09). 값은 Any 로 받아서 SDK 가 자료형을 바꾸지 않게 하고
+    # 직접 검사한다. 동작별 인자 스키마는 조회 응답의 actions[].input_schema 가 알린다.
+    arguments_schema = WithJsonSchema({
+        "type": "object",
+        "description": "동작 인자. 대상 기기 actions[].input_schema 를 따른다. 인자가 없으면 생략한다."})
 
     async def request_use(
-        target_spec: str, action: str, request_id: str, ctx: Context,
-        brightness: Any = None, color: Any = None, volume: Any = None,
+        target_spec: str, action: str, request_id: str, ctx: Context, arguments: Any = None,
     ) -> dict:
         try:
             account = _account_of(ctx)
@@ -136,13 +114,10 @@ def build_app(
             try:
                 if not request_id:
                     raise ValueError("request_id 가 비었다")
-                target, act = TargetSpec.parse(target_spec), Action(action)
                 req = UseRequest(
                     user_id=account.user_id, request_id=request_id,
-                    target=target, action=act,
-                    host_kind=None, received_at=clock(),
-                    light=_light_input(target, act, brightness, color),
-                    speaker=_speaker_input(target, act, volume))
+                    target=TargetSpec.parse(target_spec), action=_action(action),
+                    host_kind=None, received_at=clock(), arguments=_arguments(arguments))
             except ValueError:
                 return denied_response(ReasonCode.INVALID_INPUT, request_id)
             # 판정과 실행 인계는 동기 함수다. 이벤트 루프를 막지 않는다.
@@ -151,11 +126,8 @@ def build_app(
             log.exception("request_use 도구 처리 중 예외")
             return denied_response(ReasonCode.INTERNAL_ERROR, request_id)
 
-    # 상한은 설정 값이라 주석 문자열로 쓸 수 없다. 평가한 주석 객체로 바꾼 뒤 도구로 등록한다.
-    request_use.__annotations__.update(
-        brightness=Annotated[Any, brightness_schema, Field(default=None)],
-        color=Annotated[Any, color_schema, Field(default=None)],
-        volume=Annotated[Any, volume_schema, Field(default=None)])
+    # 스키마는 주석 문자열로 쓸 수 없다. 평가한 주석 객체로 바꾼 뒤 도구로 등록한다.
+    request_use.__annotations__.update(arguments=Annotated[Any, arguments_schema, Field(default=None)])
     mcp.tool(name="request_use", description=_TOOL_DESCRIPTION)(request_use)
 
     @mcp.tool(name="request_access", description=_ACCESS_DESCRIPTION)
@@ -167,7 +139,7 @@ def build_app(
             try:
                 if not node_id or not request_id:
                     raise ValueError("node_id 나 request_id 가 비었다")
-                act = Action(action)
+                act = _action(action)
             except ValueError:
                 return denied_response(ReasonCode.INVALID_INPUT, request_id)
             decision = await asyncio.to_thread(

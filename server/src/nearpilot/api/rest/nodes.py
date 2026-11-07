@@ -77,7 +77,7 @@ def build_node_admin_router(nodes: NodeAdminService, authenticator: Authenticato
         return JSONResponse({
             "node_id": bundle.node_id, "mqtt_user": bundle.mqtt_user, "mqtt_password": bundle.mqtt_password,
             "mqtt_host": bundle.mqtt_host, "mqtt_port": bundle.mqtt_port,
-            "capability": bundle.capability.value, "occupancy": bundle.occupancy.value,
+            "capability": bundle.capability, "occupancy": bundle.occupancy.value,
         }, headers={"Cache-Control": "no-store"})
 
     return router

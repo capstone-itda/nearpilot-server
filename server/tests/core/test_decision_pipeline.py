@@ -10,9 +10,8 @@ from nearpilot.core.decision.core_service import build_core_service
 from nearpilot.core.decision.digest import input_digest
 from nearpilot.core.decision.pipeline import DecisionPipeline
 from nearpilot.shared.config import Settings
+from nearpilot.shared.descriptor import DescriptorError, legacy_descriptor
 from nearpilot.shared.enums import (
-    Action,
-    Capability,
     DeviceState,
     Occupancy,
     ExecutionKind,
@@ -42,14 +41,26 @@ NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 BEACON = BeaconKey("u", 1, 1)
 
 
-def node(node_id="locker-1", occ=Occupancy.RENTAL, cap=Capability.LOCKER, **kw) -> NodeInfo:
+def node(node_id="locker-1", occ=Occupancy.RENTAL, cap="locker", **kw) -> NodeInfo:
     base = dict(
-        node_id=node_id, place_id="p", capability=cap, occupancy=occ,
+        node_id=node_id, place_id="p", kind=cap, occupancy=occ,
         trust_state=TrustState.TRUSTED, device_state=DeviceState.AVAILABLE,
         exclusive_group="g", last_seen_at=NOW - timedelta(seconds=1),
     )
     base.update(kw)
+    if "capability" in base:
+        base["kind"] = base.pop("capability")
+    if "descriptor" not in base:
+        base["descriptor"] = template(base["kind"], base["occupancy"])
     return NodeInfo(**base)
+
+def template(kind, occupancy):
+    """종류와 점유 방식의 v2 템플릿 선언. 역할 규칙에 맞지 않는 조합이면 None 이다."""
+    try:
+        return legacy_descriptor(kind, occupancy)
+    except DescriptorError:
+        return None
+
 
 
 def frame(node_id="locker-1") -> RssiFrame:
@@ -58,10 +69,10 @@ def frame(node_id="locker-1") -> RssiFrame:
 
 def anchor() -> NodeInfo:
     """비콘을 본 기기. 후보가 아닌 종류(조명)로 두어서 후보 조건과 분리한다."""
-    return node("anchor-1", Occupancy.SHARED, Capability.LIGHT)
+    return node("anchor-1", Occupancy.SHARED, "light")
 
 
-def request(target="nearest:locker", request_id="r1", action=Action.OPEN, **kw) -> UseRequest:
+def request(target="nearest:locker", request_id="r1", action="open", **kw) -> UseRequest:
     return UseRequest(
         user_id="u1", request_id=request_id, target=TargetSpec.parse(target),
         action=action, host_kind="claude", received_at=NOW, **kw,
@@ -141,7 +152,7 @@ class FakePolicy:
         self.calls = []
         self.request_ids = []
 
-    def check(self, user_id, node_id, action, now, *, internal_request_id=None):
+    def check(self, user_id, node_id, action, now, *, internal_request_id=None, reoperate=False):
         self.calls.append(node_id)
         self.request_ids.append(internal_request_id)
         return self.result
@@ -154,7 +165,7 @@ class OwnUsagePolicy(FakePolicy):
         super().__init__(PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED, 1))
         self.own = own
 
-    def check(self, user_id, node_id, action, now, *, internal_request_id=None):
+    def check(self, user_id, node_id, action, now, *, internal_request_id=None, reoperate=False):
         exhausted = super().check(user_id, node_id, action, now, internal_request_id=internal_request_id)
         if internal_request_id == self.own:
             return PolicyCheckResult(Verdict.OK, ReasonCode.OK, 1, approval_id="a1")
@@ -273,7 +284,7 @@ def test_FR18_후보가_없으면_NO_CANDIDATE():
     {"device_state": DeviceState.FAULT},
     {"last_seen_at": None},
     {"last_seen_at": NOW - timedelta(seconds=999)},
-    {"capability": Capability.LIGHT},
+    {"capability": "light"},
 ])
 def test_FR18_조건을_못_채운_기기는_후보가_아니다(kw):
     pipe, repo, prox, pol, audit = build()
@@ -389,7 +400,7 @@ def test_FR18_FR19_점유_실패는_reserve_if_free_결과를_따른다(outcome,
 
 def shared_build(policy=None):
     pipe, repo, prox, pol, audit = build({"light-1": 0.99}, policy=policy)
-    repo.nodes_list = [node("light-1", Occupancy.SHARED, Capability.LIGHT)]
+    repo.nodes_list = [node("light-1", Occupancy.SHARED, "light")]
     repo.frames = [frame("light-1")]
     repo.reserve_use_id = None
     return pipe, repo, prox, pol, audit
@@ -397,7 +408,7 @@ def shared_build(policy=None):
 
 def test_FR18_FR19_공용형도_reserve_if_free를_호출하고_세션은_없다():
     pipe, repo, *_ = shared_build()
-    d, ctx = pipe.decide_for_execution(request("nearest:light", action=Action.ON))
+    d, ctx = pipe.decide_for_execution(request("nearest:light", action="on"))
     assert (d.verdict, d.node_id, d.use_id) == (Verdict.OK, "light-1", None)
     assert len(repo.reserved) == 1
     assert ctx.execution_kind is ExecutionKind.SHARED and ctx.use_id is None
@@ -407,7 +418,7 @@ def test_FR18_공용형_승인_사용분_ID를_점유_요청에_넘기고_인계
     pol = FakePolicy(PolicyCheckResult(Verdict.OK, ReasonCode.OK, 1, approval_id="a1"))
     pipe, repo, *_ = shared_build(pol)
     repo.reserve_usage_id = "usage-1"
-    d, ctx = pipe.decide_for_execution(request("nearest:light", action=Action.ON))
+    d, ctx = pipe.decide_for_execution(request("nearest:light", action="on"))
     assert d.verdict is Verdict.OK and repo.reserved[0].approval_id == "a1"
     assert ctx.usage_id == "usage-1"
 
@@ -415,7 +426,7 @@ def test_FR18_공용형_승인_사용분_ID를_점유_요청에_넘기고_인계
 def test_FR18_공용형에_세션이_돌아오면_OK가_되지_않는다():
     pipe, repo, *_ = shared_build()
     repo.reserve_use_id = "use-1"
-    d = pipe.decide(request("nearest:light", action=Action.ON))
+    d = pipe.decide(request("nearest:light", action="on"))
     assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
 
 
@@ -463,7 +474,7 @@ def test_FR18_다른_계정의_같은_request_id는_서로_다른_요청으로_�
 
     repo.link_request = link
     a = pipe.decide(request())
-    other = UseRequest("u2", "r1", TargetSpec.parse("nearest:locker"), Action.OPEN, "claude", NOW)
+    other = UseRequest("u2", "r1", TargetSpec.parse("nearest:locker"), "open", "claude", NOW)
     b = pipe.decide(other)
     assert a.internal_request_id != b.internal_request_id
     assert [r.internal_request_id for r in repo.reserved] == ["i1", "i2"]
@@ -471,7 +482,7 @@ def test_FR18_다른_계정의_같은_request_id는_서로_다른_요청으로_�
 
 def test_FR18_digest는_request_id_received_at_host_kind에_영향받지_않는다():
     a = input_digest(request(request_id="r1"))
-    b = input_digest(UseRequest("u1", "r2", TargetSpec.parse("nearest:locker"), Action.OPEN,
+    b = input_digest(UseRequest("u1", "r2", TargetSpec.parse("nearest:locker"), "open",
                                 "chatgpt", NOW + timedelta(hours=1)))
     assert a == b
 
@@ -479,7 +490,7 @@ def test_FR18_digest는_request_id_received_at_host_kind에_영향받지_않는�
 def test_FR18_digest는_대상_동작_원요청이_다르면_달라진다():
     base = input_digest(request())
     assert input_digest(request("locker-1")) != base
-    assert input_digest(request(action=Action.ON)) != base
+    assert input_digest(request(action="on")) != base
     assert input_digest(request(parent_internal_request_id="p")) != base
 
 
@@ -605,9 +616,9 @@ def test_FR17_명시_지정은_임계값이_없어도_근접을_부르지_않고
 
 def test_FR18_스피커_임계값이_없으면_INVALID_INPUT():
     pipe, repo, prox, pol, audit = build(settings=Settings())
-    repo.nodes_list = [node("speaker-1", Occupancy.SHARED, Capability.SPEAKER)]
+    repo.nodes_list = [node("speaker-1", Occupancy.SHARED, "speaker")]
     repo.frames = [frame("speaker-1")]
-    d = pipe.decide(request("nearest:speaker", action=Action.ON))
+    d = pipe.decide(request("nearest:speaker", action="on"))
     assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INVALID_INPUT)
     assert prox.calls == []
 
@@ -646,10 +657,10 @@ def test_FR19_명시_지정도_점유_충돌을_거부한다(outcome, reason):
 
 def test_FR17_스피커_명시_지정은_일반_임계값이_없어도_정책을_검사한다():
     pipe, repo, prox, pol, audit = build(settings=Settings())
-    repo.nodes_list = [node("speaker-1", Occupancy.SHARED, Capability.SPEAKER)]
+    repo.nodes_list = [node("speaker-1", Occupancy.SHARED, "speaker")]
     repo.frames = [frame("speaker-1")]
     repo.reserve_use_id = None
-    d = pipe.decide(request("speaker-1", action=Action.ON))
+    d = pipe.decide(request("speaker-1", action="on"))
     assert (d.verdict, d.node_id, d.p_max) == (Verdict.OK, "speaker-1", None)
     assert prox.calls == [] and pol.calls == ["speaker-1"]
 
@@ -670,16 +681,16 @@ def test_FR19_close는_본인_대여의_재조작으로_인계하고_세션을_�
     pipe, repo, prox, *_ = build()
     repo.reserve_outcome = ReserveOutcome.REOPERATING
     repo.reserve_use_id = "use-old"
-    d, ctx = pipe.decide_for_execution(request(action=Action.CLOSE))
+    d, ctx = pipe.decide_for_execution(request(action="close"))
     assert (d.verdict, d.use_id) == (Verdict.OK, "use-old")
     assert ctx.execution_kind is ExecutionKind.RENTAL_REOPERATION
-    assert repo.reserved[0].action is Action.CLOSE and prox.calls  # 근접 검사를 open 과 같이 한다
+    assert repo.reserved[0].action == "close" and prox.calls  # 근접 검사를 open 과 같이 한다
 
 
 def test_FR19_FR21_본인_대여가_없는_close는_USE_NOT_FOUND이고_인계하지_않는다():
     pipe, repo, *_ = build()
     repo.reserve_outcome = ReserveOutcome.USE_NOT_FOUND
-    d, ctx = pipe.decide_for_execution(request(action=Action.CLOSE))
+    d, ctx = pipe.decide_for_execution(request(action="close"))
     assert (d.verdict, d.reason, d.use_id) == (Verdict.DENY, ReasonCode.USE_NOT_FOUND, None)
     assert ctx is None
 
@@ -955,7 +966,7 @@ class FakeWindow:
         self.requests = []
         self.error: Exception | None = None
 
-    def submit(self, request):
+    def submit(self, request, group=""):
         self.requests.append(request)
         if self.error:
             raise self.error
@@ -969,7 +980,7 @@ class PerNodePolicy(FakePolicy):
         super().__init__()
         self.by_node = by_node or {}
 
-    def check(self, user_id, node_id, action, now, *, internal_request_id=None):
+    def check(self, user_id, node_id, action, now, *, internal_request_id=None, reoperate=False):
         self.calls.append(node_id)
         self.request_ids.append(internal_request_id)
         return self.by_node.get(node_id, self.result)

@@ -8,7 +8,6 @@ from datetime import datetime, timedelta, timezone
 from nearpilot.db.repositories.execution_store import SqliteExecutionStore
 from nearpilot.db.schema import connect
 from nearpilot.shared.enums import (
-    Action,
     ApprovalUsageState,
     CommandOutcome,
     DeviceState,
@@ -47,7 +46,7 @@ def _seed_faulted_rental(conn, store):
     insert_policy(conn, policy_id="policy1", node_id="node1")
     insert_approval(conn, approval_id="approval1", node_id="node1", internal_request_id="req1")
     insert_approval_usage(conn, usage_id="usage1", approval_id="approval1", internal_request_id="req1")
-    linked = store.link_command("req1", "node1", Action.OPEN)
+    linked = store.link_command("req1", "node1", "open")
     store.begin_send(linked.command.command_id)
     store.record_result(linked.command.command_id, CommandOutcome.UNKNOWN, _NOW, None, {"source": "test"})
     return linked.command.command_id

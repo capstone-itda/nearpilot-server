@@ -23,7 +23,7 @@ from _runtime import (
 )
 from nearpilot.runtime import Runtime
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import Action, Verdict
+from nearpilot.shared.enums import Verdict
 from nearpilot.shared.models import TargetSpec, UseRequest
 from tools.node_sim import Beacon, BrokerConfig, CommandStore, Credentials, Scenario, SimDevice, SimNode
 
@@ -106,7 +106,7 @@ def test_NFR12_runtime_real_broker_restart(broker, tmp_path, caplog):
                 wait_until(lambda: first.services.restore.can_execute(NODE), timeout=10)
                 wait_until(lambda: query(cfg.database.path, "SELECT count(*) c FROM rssi_observation")[0]["c"])
                 decision = first.core.request_use(UseRequest(
-                    VISITOR_A, "real-1", TargetSpec.parse(NODE), Action.OPEN, None,
+                    VISITOR_A, "real-1", TargetSpec.parse(NODE), "open", None,
                     datetime.now(timezone.utc)))
                 assert decision.verdict is Verdict.OK, decision
                 assert node.actuations == 1

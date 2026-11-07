@@ -45,7 +45,7 @@ from nearpilot.runtime.database import ThreadDatabase
 from nearpilot.runtime.provisioning import FleetProvisioningSource, MdnsAdvertiser
 from nearpilot.runtime.tasks import CallGate, Late, NodeLocks, NotAccepting, PeriodicTask
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import Action, ExecutionStatus
+from nearpilot.shared.enums import ExecutionStatus
 from nearpilot.shared.interfaces import (
     AdminService, ApprovalService, CoreService, ProximityEstimator, RecoveryService, RetentionStore,
 )
@@ -121,7 +121,7 @@ class GuardedCore:
     def get_device_state(self, user_id: str, node_id: str):
         return self._call("get_device_state", user_id, node_id)
 
-    def request_access(self, user_id: str, node_id: str, action: Action, request_id: str) -> Decision:
+    def request_access(self, user_id: str, node_id: str, action: str, request_id: str) -> Decision:
         return self._call("request_access", user_id, node_id, action, request_id)
 
     def request_use(self, req: UseRequest) -> Decision:

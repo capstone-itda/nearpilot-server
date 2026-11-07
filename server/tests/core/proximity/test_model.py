@@ -23,7 +23,7 @@ from nearpilot.core.proximity import (
     load_model,
     load_models,
 )
-from nearpilot.shared.enums import Capability, DeviceState, Occupancy, TrustState
+from nearpilot.shared.enums import DeviceState, Occupancy, TrustState
 
 from .conftest import (
     BEACON,
@@ -293,8 +293,8 @@ def test_FR16_helpers_match_fixture_models():
 
     nodes = place_a_nodes()
     assert [node.node_id for node in nodes] == list(PLACE_A_NODES)
-    assert [node.capability for node in nodes] == (
-        [Capability.LOCKER] * 3 + [Capability.LIGHT] * 2 + [Capability.SPEAKER]
+    assert [node.kind for node in nodes] == (
+        ["locker"] * 3 + ["light"] * 2 + ["speaker"]
     )
     assert [node.occupancy for node in nodes] == [Occupancy.RENTAL] * 3 + [Occupancy.SHARED] * 3
     assert {node.place_id for node in nodes} == {"place-a"}
@@ -312,12 +312,12 @@ def test_FR16_helpers_match_fixture_models():
         place_a_nodes(**{"locker-9": TrustState.REVOKED})
 
     mood = make_node("mood-1", "place-b")
-    assert (mood.place_id, mood.capability, mood.occupancy) == ("place-b", Capability.LIGHT, Occupancy.SHARED)
+    assert (mood.place_id, mood.kind, mood.occupancy) == ("place-b", "light", Occupancy.SHARED)
     custom = make_node(
-        "locker-1", trust=TrustState.DISCOVERED, capability=Capability.LIGHT, device_state=DeviceState.FAULT,
+        "locker-1", trust=TrustState.DISCOVERED, capability="light", device_state=DeviceState.FAULT,
     )
-    assert (custom.trust_state, custom.capability, custom.occupancy, custom.device_state) == (
-        TrustState.DISCOVERED, Capability.LIGHT, Occupancy.SHARED, DeviceState.FAULT,
+    assert (custom.trust_state, custom.kind, custom.occupancy, custom.device_state) == (
+        TrustState.DISCOVERED, "light", Occupancy.SHARED, DeviceState.FAULT,
     )
 
     frame = make_frame("locker-1", -60.0, T0)

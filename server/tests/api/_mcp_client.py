@@ -16,6 +16,12 @@ NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 TOKEN_A, TOKEN_B = "tok-A", "tok-B"
 HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
 
+_NO_ARGUMENTS = {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
+LOCKER_ACTIONS = [
+    {"name": "open", "description": "사물함을 연다", "input_schema": _NO_ARGUMENTS},
+    {"name": "close", "description": "사물함을 잠근다. 반납이 아니다", "input_schema": _NO_ARGUMENTS},
+]
+
 
 class FakeAccounts:
     def __init__(self):
@@ -41,11 +47,11 @@ class FakeCore:
                                          use_id="use-1", message="반납을 완료했다.")
         self.status = {"use_id": "use-1", "state": "ACTIVE", "rental_due_at": NOW,
                        "overtime_sec": 0.0, "closed_at": None}
-        self.devices = [{"node_id": "locker-1", "capability": "locker", "occupancy": "rental",
-                         "access": "operable", "controls": None}]
-        self.device_state = {"node_id": "locker-1", "capability": "locker", "occupancy": "rental",
+        self.devices = [{"node_id": "locker-1", "kind": "locker", "occupancy": "rental",
+                         "access": "operable", "actions": LOCKER_ACTIONS}]
+        self.device_state = {"node_id": "locker-1", "kind": "locker", "occupancy": "rental",
                              "state": "available", "online": True, "trusted": True,
-                             "access_mode": "open", "controls": None}
+                             "access_mode": "open", "actions": LOCKER_ACTIONS}
         self.device_calls, self.state_calls = [], []
         self.error: Exception | None = None
         self.decision = Decision("internal-1", "r1", Verdict.OK, ReasonCode.OK, node_id="locker-1",

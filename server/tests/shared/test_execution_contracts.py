@@ -7,8 +7,6 @@ import pytest
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action,
-    Capability,
     CommandOutcome,
     EndReason,
     ExecutionStatus,
@@ -40,7 +38,7 @@ from nearpilot.shared.models import (
 
 NOW = datetime(2026, 10, 9)
 REQUEST = UseRequest(
-    "u1", "req-1", TargetSpec(TargetKind.NEAREST, Capability.LOCKER), Action.OPEN, "claude", NOW
+    "u1", "req-1", TargetSpec(TargetKind.NEAREST, "locker"), "open", "claude", NOW
 )
 CONTEXT = ExecutionContext("ir-1", REQUEST, "locker-1", "use-1", None, Settings())
 
@@ -97,7 +95,7 @@ def test_fr18_fake_rechecker_and_service_satisfy_protocols():
 
 
 def test_fr19_fake_store_satisfies_protocol():
-    record = CommandRecord("cmd-1", "ir-1", "locker-1", Action.OPEN, ExecutionStatus.PENDING)
+    record = CommandRecord("cmd-1", "ir-1", "locker-1", "open", ExecutionStatus.PENDING)
 
     class FakeStore:
         def link_command(self, internal_request_id, node_id, action, light=None):

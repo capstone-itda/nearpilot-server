@@ -19,7 +19,7 @@ from nearpilot.core.proximity.files import AcceptanceSettings
 from nearpilot.core.proximity.filter import compute_posteriors
 from nearpilot.core.proximity.fit import NONE_LABEL, AnchorLayout, LabeledRun, PlaceLayout, run_frames
 from nearpilot.core.proximity.model import ProximityModel
-from nearpilot.shared.enums import Capability, DeviceState, Occupancy, TrustState
+from nearpilot.shared.enums import DeviceState, Occupancy, TrustState
 from nearpilot.shared.models import NodeInfo
 
 
@@ -74,7 +74,7 @@ def collect_samples(model: ProximityModel, runs: Sequence[LabeledRun], *, bin_se
         NodeInfo(
             node_id=node_id,
             place_id=model.place_id,
-            capability=Capability.LIGHT,
+            kind="light",
             occupancy=Occupancy.SHARED,
             trust_state=TrustState.TRUSTED,
             device_state=DeviceState.AVAILABLE,

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from nearpilot.core.dashboard import StepState, proximity, request_steps, request_tool, responded_at
-from nearpilot.shared.enums import Action, Occupancy, ReasonCode, Step, Verdict
+from nearpilot.shared.enums import Occupancy, ReasonCode, Step, Verdict
 from nearpilot.shared.models import DashboardAudit, DashboardRequest
 
 T0 = datetime(2026, 10, 24, 14, 0, 0, tzinfo=timezone.utc)
@@ -32,7 +32,7 @@ def trail(*steps: tuple[Step, dict]) -> list[DashboardAudit]:
 def request(verdict: Verdict | None, reason: ReasonCode | None, node_id: str | None = "locker-1") -> DashboardRequest:
     return DashboardRequest(
         seq=1, internal_request_id="i1", user_id="user-1", kind="visitor", target_spec="nearest:locker",
-        action=Action.OPEN, verdict=verdict, reason_code=reason, node_id=node_id, decision_context=None,
+        action="open", verdict=verdict, reason_code=reason, node_id=node_id, decision_context=None,
         received_at=T0)
 
 

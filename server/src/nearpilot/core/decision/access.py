@@ -16,7 +16,6 @@ from nearpilot.core.decision.digest import input_digest
 from nearpilot.core.decision.pipeline import make_decision
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action,
     ApprovalStatus,
     ReasonCode,
     Step,
@@ -58,7 +57,7 @@ class AccessRequestService:
         self._clock = clock
         self._new_id = new_id
 
-    def request_access(self, user_id: str, node_id: str, action: Action, request_id: str) -> Decision:
+    def request_access(self, user_id: str, node_id: str, action: str, request_id: str) -> Decision:
         now = self._clock()
         try:
             target = TargetSpec.parse(node_id)

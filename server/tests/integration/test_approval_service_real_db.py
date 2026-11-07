@@ -8,14 +8,14 @@ from __future__ import annotations
 from datetime import timedelta
 
 from nearpilot.core.approval import OwnerApprovalService
-from nearpilot.shared.enums import Action, ApprovalDecisionReason, ApprovalStatus, Verdict
+from nearpilot.shared.enums import ApprovalDecisionReason, ApprovalStatus, Verdict
 
 from _world import NOW, OWNER, VISITOR_A, VISITOR_B, World
 
 
 def _setup(clock=lambda: NOW):
     world = World()
-    decision = world.access.request_access(VISITOR_A, "locker-2", Action.OPEN, "a1")
+    decision = world.access.request_access(VISITOR_A, "locker-2", "open", "a1")
     assert decision.verdict is Verdict.NEED_APPROVAL
     return world, OwnerApprovalService(world.repo, clock)
 

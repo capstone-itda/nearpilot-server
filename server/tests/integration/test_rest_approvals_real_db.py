@@ -16,7 +16,7 @@ from nearpilot.api.rest.approvals import build_approval_router
 from nearpilot.core.approval import OwnerApprovalService
 from nearpilot.db.repositories.repository import SqliteRepository
 from nearpilot.db.schema import connect
-from nearpilot.shared.enums import Action, Verdict
+from nearpilot.shared.enums import Verdict
 from nearpilot.shared.tokens import hash_token
 
 from _world import NOW, OWNER, VISITOR_A, World
@@ -65,7 +65,7 @@ def test_FR03_approval_rest_with_real_db(tmp_path):
     path = tmp_path / "nearpilot.db"
     world = World(db_path=str(path))
     try:
-        decision = world.access.request_access(VISITOR_A, "locker-2", Action.OPEN, "a1")
+        decision = world.access.request_access(VISITOR_A, "locker-2", "open", "a1")
         assert decision.verdict is Verdict.NEED_APPROVAL
         for user_id in (OWNER, VISITOR_A):
             world.conn.execute(

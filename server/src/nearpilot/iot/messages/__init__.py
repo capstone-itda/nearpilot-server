@@ -19,25 +19,24 @@ from datetime import datetime, timedelta
 from uuid import UUID
 
 from nearpilot.shared.descriptor import (
-    ANNOUNCE_MAX_BYTES, DescriptorError, DeviceDescriptor, legacy_descriptor, parse_descriptor,
+    ANNOUNCE_MAX_BYTES, LEGACY_KINDS, DescriptorError, DeviceDescriptor, is_name, legacy_descriptor,
+    parse_descriptor,
 )
 from nearpilot.shared.enums import (
-    Action, Capability, CommandState, DeviceState, NodeResultState, Occupancy, RejectCode,
+    CommandState, DeviceState, NodeResultState, Occupancy, RejectCode,
 )
 from nearpilot.shared.models import (
     BeaconKey, NodeAnnounce, NodeCommand, NodeResult, NodeStatus, RssiFrame,
 )
 
 __all__ = ["SCHEMA_VERSION", "DESCRIPTOR_SCHEMA_VERSION", "COMMAND_SCHEMA_VERSIONS",
-           "MessageValidationError", "command_arguments", "decode_message", "decode_time_request",
+           "MessageValidationError", "decode_message", "decode_time_request",
            "encode_command", "encode_occupancy", "encode_restart", "encode_time"]
 
 SCHEMA_VERSION = 2  # announce·cmd 밖의 모든 메시지
 DESCRIPTOR_SCHEMA_VERSION = 3  # 기기 선언을 담는 announce 와 arguments 를 담는 cmd (#245)
 ANNOUNCE_SCHEMA_VERSIONS = frozenset({SCHEMA_VERSION, DESCRIPTOR_SCHEMA_VERSION})  # 전환 기간
 COMMAND_SCHEMA_VERSIONS = ANNOUNCE_SCHEMA_VERSIONS
-# PR ② 전까지 판정·조회·대시보드가 Capability 열거형을 쓴다. 그 밖의 종류는 받지 않는다 (spec 결정 6).
-_SUPPORTED_KINDS = frozenset(capability.value for capability in Capability)
 REQUEST_ID_MAX = 64  # time_request.request_id 의 최대 길이 (iot-mqtt-time-sync spec 5절)
 
 
@@ -131,17 +130,19 @@ def _legacy_descriptor(data: dict) -> DeviceDescriptor:
 
     `controls`는 `light`, `speaker` 기기만 보낸다. 기능마다 정한 키가 모두 맞아야 한다 (FR-04, FR-09).
     """
-    capability =_enum(Capability, data.get("capability"), "capability")
+    capability = data.get("capability")
+    if not isinstance(capability, str) or capability not in LEGACY_KINDS:
+        _fail("capability")
     occupancy = _enum(Occupancy, data.get("occupancy"), "occupancy")
     controls: dict = {}
     if "controls" in data:
         raw = _object(data["controls"], "controls")
-        if capability is Capability.SPEAKER:
+        if capability == "speaker":
             if set(raw) != {"volume_max"}:
                 _fail("controls")
             controls = dict(volume_max=_integer(raw["volume_max"], "controls.volume_max", 1, 30))
         else:
-            if capability is not Capability.LIGHT or set(raw) != {"brightness_max", "color"}:
+            if capability != "light" or set(raw) != {"brightness_max", "color"}:
                 _fail("controls")
             if not isinstance(raw["color"], bool):
                 _fail("controls.color")
@@ -161,8 +162,6 @@ def _descriptor(data: dict, raw_size: int) -> DeviceDescriptor:
         descriptor = parse_descriptor(data.get("descriptor"))
     except DescriptorError as error:
         raise MessageValidationError(f"Invalid device descriptor: {error}") from None
-    if descriptor.kind not in _SUPPORTED_KINDS:
-        raise MessageValidationError("Invalid device descriptor: kind not supported yet")
     return descriptor
 
 
@@ -301,28 +300,6 @@ def _outbound(request: NodeCommand, schema_version: int = SCHEMA_VERSION) -> dic
         expires_at=_wire_time(request.expires_at, "expires_at"))
 
 
-def command_arguments(command: NodeCommand) -> dict | None:
-    """The command's action arguments, or None for a command without arguments.
-
-    Until PR ② the decision hands light and speaker settings separately; both map to the
-    same keys as v3 `arguments` (architecture.md §5 MQTT 3절).
-    """
-    light, speaker = command.light, command.speaker
-    if light is not None and speaker is not None:
-        _fail("arguments")  # 한 명령에는 기능 하나의 인자만 담는다.
-    if light is not None:
-        # 서버가 정한 밝기와 색을 모두 보낸다. 조명 on 에만 담는다 (FR-09).
-        if not light.complete or command.action is not Action.ON:
-            _fail("arguments")
-        return {"brightness": light.brightness, "color": light.color}
-    if speaker is not None:
-        # 서버가 정한 음량을 보낸다. 스피커 on 에만 담는다 (FR-09).
-        if not speaker.complete or command.action is not Action.ON:
-            _fail("arguments")
-        return {"volume": speaker.volume}
-    return None
-
-
 def encode_command(command: NodeCommand, *, schema_version: int) -> bytes:
     """Encode only MQTT command fields; preserve IDs and validity times.
 
@@ -332,10 +309,14 @@ def encode_command(command: NodeCommand, *, schema_version: int) -> bytes:
     if schema_version not in COMMAND_SCHEMA_VERSIONS:
         _fail("schema_version")
     data = _outbound(command, schema_version)
-    data.update(command_id=_string(command.command_id, "command_id"),
-                action=_enum(Action, command.action, "action").value)
-    arguments = command_arguments(command)
-    if arguments is not None:
+    if not is_name(command.action):
+        _fail("action")
+    data.update(command_id=_string(command.command_id, "command_id"), action=command.action)
+    if command.arguments is not None:
+        # 판정이 정한 인자를 바꾸지 않고 보낸다. v2 `parameters`와 키가 같다 (architecture.md §5 MQTT 3절).
+        # 키 순서를 고정해서 재시작 뒤 저장소에서 읽은 같은 명령도 같은 바이트다 (FR-22).
+        arguments = {key: command.arguments[key] for key in sorted(command.arguments)}
+        _finite_json(arguments)
         data["arguments" if schema_version == DESCRIPTOR_SCHEMA_VERSION else "parameters"] = arguments
     return json.dumps(data, allow_nan=False).encode("utf-8")
 

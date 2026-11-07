@@ -104,7 +104,7 @@ def test_FR12A_schema_migration_0006_adds_node_name(tmp_path):
         assert conn.execute("PRAGMA user_version").fetchone()[0] == len(files)
         row = conn.execute("SELECT * FROM node WHERE node_id = 'node1'").fetchone()
         assert row["name"] is None  # 기존 행의 이름은 NULL이다
-        assert (row["capability"], row["trust_state"], row["device_state"]) == ("locker", "trusted", "AVAILABLE")
+        assert (row["kind"], row["trust_state"], row["device_state"]) == ("locker", "trusted", "AVAILABLE")
         conn.execute("UPDATE node SET name = '사물함 1' WHERE node_id = 'node1'")
         assert conn.execute("SELECT name FROM node").fetchone()["name"] == "사물함 1"
     finally:

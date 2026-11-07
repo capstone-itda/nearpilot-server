@@ -28,7 +28,7 @@ from types import MappingProxyType
 from typing import Any
 
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import AccessMode, ApprovalMode, Capability, Occupancy, Role
+from nearpilot.shared.enums import AccessMode, ApprovalMode, Occupancy, Role
 
 # 기기 ID는 MQTT 토픽, Mosquitto 계정 이름, ACL, 파일 이름에 그대로 쓰인다.
 _NODE_ID = re.compile(r"[A-Za-z0-9._-]+")
@@ -256,12 +256,15 @@ def _users(value: Any, problems: list[str]) -> tuple[UserSpec, ...]:
     return tuple(user for _, user in users)
 
 
+_SIM_KINDS = ("locker", "light", "speaker")
+
+
 def _nodes(value: Any, problems: list[str]) -> tuple[NodeSpec, ...]:
     rows = _rows(value, "nodes", _NODE_KEYS, _OPTIONAL_NODE_KEYS, problems)
     nodes = []
     for where, row in rows:
         node_id = _take(problems, f"{where}.node_id", _node_id, row.get("node_id"))
-        capability = _take(problems, f"{where}.capability", partial(_member, Capability), row.get("capability"))
+        capability = _take(problems, f"{where}.capability", _kind, row.get("capability"))
         occupancy = _take(problems, f"{where}.occupancy", partial(_member, Occupancy), row.get("occupancy"))
         mode = _take(problems, f"{where}.mode", partial(_member, AccessMode), row.get("mode", "open"))
         trusted = _take(problems, f"{where}.trusted", _boolean, row.get("trusted", True))
@@ -279,6 +282,13 @@ def _node_id(value: Any) -> str:
     if isinstance(value, str) and _NODE_ID.fullmatch(value):
         return value
     raise ValueError(f"영문자, 숫자, `.`, `_`, `-`로만 이뤄진 이름이어야 한다 ({value!r:.40})")
+
+
+def _kind(value: Any) -> str:
+    """시뮬레이터 기기의 종류. 시뮬레이터는 v2 기능 세 가지만 흉내 낸다."""
+    if value in _SIM_KINDS:
+        return value
+    raise ValueError(f"{', '.join(_SIM_KINDS)} 중 하나여야 한다 ({value!r:.40})")
 
 
 def _member(enum: type, value: Any) -> str:

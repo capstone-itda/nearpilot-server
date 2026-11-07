@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from nearpilot.runtime.config import ProvisioningConfig
-from nearpilot.shared.enums import Capability, Occupancy
+from nearpilot.shared.descriptor import LEGACY_KINDS
+from nearpilot.shared.enums import Occupancy
 from nearpilot.shared.models import ProvisioningBundle
 
 log = logging.getLogger(__name__)
@@ -47,8 +48,11 @@ class FleetProvisioningSource:
         if device is None:
             return None
         try:
-            capability, occupancy = Capability(device["capability"]), Occupancy(device["occupancy"])
-        except (KeyError, ValueError):
+            # v2 펌웨어의 BLE 설정 키다. PR ④ 에서 펌웨어가 선언을 내장하면 묶음에서 뺀다 (#245).
+            capability, occupancy = device["capability"], Occupancy(device["occupancy"])
+            if capability not in LEGACY_KINDS:
+                raise ValueError(capability)
+        except (KeyError, ValueError, TypeError):
             log.error("기기 목록의 기능·점유 방식이 계약 밖이다: node=%s", node_id)
             return None
         user = device.get("username") or node_id

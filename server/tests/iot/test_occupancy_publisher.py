@@ -6,14 +6,14 @@ from datetime import datetime, timezone
 
 from nearpilot.iot.mqtt.connection import NotReady, PublishUncertain
 from nearpilot.iot.mqtt.occupancy import OccupancyPublisher
-from nearpilot.shared.enums import Capability, DeviceState, Occupancy, TrustState
+from nearpilot.shared.enums import DeviceState, Occupancy, TrustState
 from nearpilot.shared.models import NodeInfo
 
 NOW = datetime(2026, 10, 27, 7, 0, tzinfo=timezone.utc)
 
 
 def node(node_id="locker-1", state=DeviceState.AVAILABLE, **changes):
-    info = NodeInfo(node_id, "lab", Capability.LOCKER, Occupancy.RENTAL, TrustState.TRUSTED, state,
+    info = NodeInfo(node_id, "lab", "locker", Occupancy.RENTAL, TrustState.TRUSTED, state,
                     None, NOW)
     return replace(info, **changes)
 
@@ -48,7 +48,7 @@ def test_FR19_occupancy_published_once_per_state_change():
 
 def test_FR19_occupancy_only_for_trusted_rental_nodes():
     occupancy, connection = publisher([
-        node("light-1", occupancy=Occupancy.SHARED, capability=Capability.LIGHT),
+        node("light-1", occupancy=Occupancy.SHARED, kind="light"),
         node("locker-2", trust_state=TrustState.DISCOVERED),
         node("locker-3", trust_state=TrustState.REVOKED),
         node("locker-4", state=DeviceState.RESERVED)])

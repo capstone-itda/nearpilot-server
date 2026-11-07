@@ -6,9 +6,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from nearpilot.shared.enums import (
-    Action,
     CommandState,
-    Capability,
     CommandOutcome,
     DeviceState,
     EndReason,
@@ -117,7 +115,7 @@ def test_fr07_status_and_command_result_do_not_judge_safety():
 
 def test_fr06_node_command_targets_a_session_and_expires():
     command = NodeCommand(
-        "cmd-1", "locker-1", Action.OPEN, "sess-1", NOW, NOW + timedelta(seconds=3),
+        "cmd-1", "locker-1", "open", "sess-1", NOW, NOW + timedelta(seconds=3),
     )
     assert command.target_session_id == "sess-1"
     assert command.issued_at < command.expires_at
@@ -137,7 +135,7 @@ def test_fr20_use_session_has_no_check_criteria():
 
 def test_fr04_node_info_exposes_current_session():
     node = NodeInfo(
-        "locker-1", None, Capability.LOCKER, Occupancy.RENTAL,
+        "locker-1", None, "locker", Occupancy.RENTAL,
         TrustState.TRUSTED, DeviceState.AVAILABLE, None, None,
     )
     assert node.session_id is None

@@ -16,9 +16,7 @@ from datetime import datetime
 from typing import Any, Mapping, Protocol, runtime_checkable
 
 from nearpilot.shared.enums import (
-    Action,
     ApprovalStatus,
-    Capability,
     CommandOutcome,
     EndReason,
     ExecutionStatus,
@@ -63,7 +61,6 @@ from nearpilot.shared.models import (
     ExecutionContext,
     ExecutionResult,
     InternalRequest,
-    LightSetting,
     NodeAnnounce,
     NodeCommand,
     NodeInfo,
@@ -76,7 +73,6 @@ from nearpilot.shared.models import (
     ReserveRequest,
     ReserveResult,
     RssiFrame,
-    SpeakerSetting,
     StoreResult,
     UseRequest,
     UseSession,
@@ -116,9 +112,14 @@ class PolicyChecker(Protocol):
     """
 
     def check(
-        self, user_id: str, node_id: str, action: Action, now: datetime,
-        *, internal_request_id: str | None = None,
-    ) -> PolicyCheckResult: ...
+        self, user_id: str, node_id: str, action: str, now: datetime,
+        *, internal_request_id: str | None = None, reoperate: bool = False,
+    ) -> PolicyCheckResult:
+        """`reoperate` 는 판정이 기기 선언에서 읽은 동작 역할이다. 재조작은 승인 없이 허용한다 (FR-09).
+
+        본인 대여의 재조작만 실행되는 것은 ⑤⑥ 이 확인한다. 정책이 없는 기기는 그대로 거부한다.
+        """
+        ...
 
 
 @runtime_checkable
@@ -165,30 +166,23 @@ class Repository(Protocol):
     def rssi_since(self, beacons: Sequence[BeaconKey], since: datetime) -> Sequence[RssiFrame]: ...
 
     # ② 후보
-    def nodes(self, capability: Capability | None = None) -> Sequence[NodeInfo]: ...
+    def nodes(self, kind: str | None = None) -> Sequence[NodeInfo]: ...
 
     def upsert_announced_node(self, announce: NodeAnnounce) -> None:
         """기능 발표를 반영한다 (FR-04). 발표는 신뢰 부여가 아니다.
 
-        처음 보는 node_id 는 DISCOVERED 로 만든다. 내용이 같은 재발표는 신뢰 상태를 바꾸지 않는다.
-        기능이나 점유 방식이 다르면 새 값으로 바꾸고 신뢰 상태를 DISCOVERED 로 되돌린다.
+        처음 보는 node_id 는 DISCOVERED 로 만든다. 선언 해시가 같은 재발표는 신뢰 상태를 바꾸지 않는다.
+        선언 해시가 다르면 새 선언으로 바꾸고 신뢰 상태를 DISCOVERED 로 되돌린다.
         되돌린 변경은 같은 트랜잭션에서 감사 로그에 남긴다.
-        조명 제어 정보만 바뀌면 신뢰 상태를 유지하고 새 값과 감사 로그를 저장한다 (FR-04).
-        스피커 제어 정보만 바뀌어도 신뢰 상태를 유지하고 새 값과 감사 로그를 저장한다 (FR-04).
+        `vendor` 만 바뀌면 신뢰 상태를 유지하고 새 값과 감사 로그를 저장한다 (FR-04).
         """
         ...
 
-    def last_light_setting(self, node_id: str) -> LightSetting | None:
-        """기기의 마지막 조명 설정 (FR-09). 전송 시작이 가장 늦은 `succeeded` `on` 명령의 설정이다.
+    def last_success_arguments(self, node_id: str, action: str) -> Mapping[str, Any] | None:
+        """같은 기기·같은 동작의 마지막 성공 명령의 인자 (FR-09).
 
-        그런 명령이 없거나 그 명령에 설정이 없으면 None 이다. 판정은 None 이면 설정 기본값을 쓴다.
-        """
-        ...
-
-    def last_speaker_setting(self, node_id: str) -> SpeakerSetting | None:
-        """기기의 마지막 스피커 음량 (FR-09). 전송 시작이 가장 늦은 `succeeded` `on` 명령의 음량이다.
-
-        그런 명령이 없거나 그 명령에 음량이 없으면 None 이다. 판정은 None 이면 설정 기본값을 쓴다.
+        전송 시작이 가장 늦은 `succeeded` 명령이다. 그런 명령이 없거나 인자가 없으면 None 이다.
+        판정은 None 이면 `param_default` 를 쓴다.
         """
         ...
 
@@ -208,7 +202,7 @@ class Repository(Protocol):
     def current_policy(self, node_id: str) -> PolicyRevision: ...
 
     def valid_approval(
-        self, user_id: str, node_id: str, action: Action, policy_version: int, now: datetime,
+        self, user_id: str, node_id: str, action: str, policy_version: int, now: datetime,
         *, internal_request_id: str | None = None,
     ) -> Approval | None:
         """시간상 유효한 승인 하나를 반환한다. 없으면 `None` 이다 (FR-14).
@@ -309,13 +303,12 @@ class ExecutionStore(Protocol):
     """
 
     def link_command(
-        self, internal_request_id: str, node_id: str, action: Action,
-        light: LightSetting | None = None, speaker: SpeakerSetting | None = None,
+        self, internal_request_id: str, node_id: str, action: str,
+        arguments: Mapping[str, Any] | None = None,
     ) -> StoreResult:
         """요청의 명령을 연결한다. 이미 있으면 기존 명령과 진행 상태를 반환한다. 키: internal_request_id
 
-        light 는 판정이 정한 조명 설정이다. 명령 기록에 함께 저장하고 `CommandRecord.light` 로 돌려준다 (FR-09).
-        speaker 는 판정이 정한 스피커 음량이다. 명령 기록에 함께 저장하고 `CommandRecord.speaker` 로 돌려준다 (FR-09).
+        arguments 는 판정이 정한 동작 인자다. 명령 기록에 함께 저장하고 `CommandRecord.arguments` 로 돌려준다 (FR-09).
         """
         ...
 
@@ -600,7 +593,7 @@ class CoreService(Protocol):
 
     def get_device_state(self, user_id: str, node_id: str) -> Mapping[str, Any]: ...
 
-    def request_access(self, user_id: str, node_id: str, action: Action, request_id: str) -> Decision: ...
+    def request_access(self, user_id: str, node_id: str, action: str, request_id: str) -> Decision: ...
 
     def request_use(self, req: UseRequest) -> Decision: ...
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from nearpilot.shared.enums import Action, StoreOutcome
+from nearpilot.shared.enums import StoreOutcome
 
 from conftest import (
     insert_approval,
@@ -27,7 +27,7 @@ def test_NFR04_isolate_device_applied(store, conn):
     insert_policy(conn, policy_id="policy1", node_id="node1")
     insert_approval(conn, approval_id="approval1", node_id="node1", internal_request_id="req1")
     insert_approval_usage(conn, usage_id="usage1", approval_id="approval1", internal_request_id="req1", state="held")
-    linked = store.link_command("req1", "node1", Action.OPEN)
+    linked = store.link_command("req1", "node1", "open")
 
     result = store.isolate_device("node1", {"source": "sensor_fault"})
 

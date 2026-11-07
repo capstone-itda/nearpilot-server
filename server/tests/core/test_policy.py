@@ -9,7 +9,6 @@ import pytest
 from nearpilot.core.policy import RepositoryPolicyChecker
 from nearpilot.shared.enums import (
     AccessMode,
-    Action,
     ApprovalMode,
     ApprovalStatus,
     ReasonCode,
@@ -78,7 +77,7 @@ def _restricted_policy(node_id="node1", version=1, approver_user_id="owner1"):
     )
 
 
-def _approval(remaining_uses, approval_id="appr1", action=Action.OPEN, policy_version=1):
+def _approval(remaining_uses, approval_id="appr1", action="open", policy_version=1):
     return Approval(
         approval_id=approval_id, node_id="node1", requester_user_id="u1", action=action,
         policy_id="policy1", policy_version=policy_version,
@@ -88,7 +87,7 @@ def _approval(remaining_uses, approval_id="appr1", action=Action.OPEN, policy_ve
 
 
 def _record(
-    approval_id, status, created_at=NOW, action=Action.OPEN, policy_version=1,
+    approval_id, status, created_at=NOW, action="open", policy_version=1,
     pending_until=None, valid_until=None, remaining_uses=None,
 ):
     return ApprovalRecord(
@@ -103,7 +102,7 @@ def test_FR14_policy_missing_deny():
     repo = FakePolicyRepository(policy=None)
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.verdict == Verdict.DENY
     assert result.reason == ReasonCode.POLICY_DENIED
@@ -115,7 +114,7 @@ def test_FR14_policy_open_ok():
     repo = FakePolicyRepository(policy=_open_policy(version=3))
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.verdict == Verdict.OK
     assert result.reason == ReasonCode.OK
@@ -128,16 +127,19 @@ def test_FR14_close_needs_no_approval_on_restricted_policy():
     repo = FakePolicyRepository(policy=_restricted_policy(version=2))
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.CLOSE, NOW)
+    result = checker.check("u1", "node1", "close", NOW, reoperate=True)
 
     # 승인 사용분을 예약하지 않는다. 본인 대여 확인은 ⑤⑥ 몫이다
     assert (result.verdict, result.reason, result.policy_version, result.approval_id) == (
         Verdict.OK, ReasonCode.OK, 2, None)
     assert repo.valid_approval_calls == []
+    # 동작 이름이 아니라 판정이 넘긴 역할로 정한다 (FR-09, #245).
+    assert checker.check("u1", "node1", "close", NOW).verdict is Verdict.NEED_APPROVAL
+    assert checker.check("u1", "node1", "relock", NOW, reoperate=True).verdict is Verdict.OK
 
 
 def test_FR14_close_without_policy_denied():
-    result = RepositoryPolicyChecker(FakePolicyRepository(policy=None)).check("u1", "node1", Action.CLOSE, NOW)
+    result = RepositoryPolicyChecker(FakePolicyRepository(policy=None)).check("u1", "node1", "close", NOW)
 
     assert (result.verdict, result.reason) == (Verdict.DENY, ReasonCode.POLICY_DENIED)
 
@@ -146,7 +148,7 @@ def test_FR14_policy_valid_approval_ok():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=_approval(remaining_uses=2))
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.verdict == Verdict.OK
     assert result.reason == ReasonCode.OK
@@ -158,7 +160,7 @@ def test_FR14_check_valid_approval_unlimited_uses():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=_approval(remaining_uses=None))
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.verdict == Verdict.OK
     assert result.approval_id == "appr1"
@@ -169,7 +171,7 @@ def test_FR14_check_exhausted():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=_approval(remaining_uses=0))
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.verdict == Verdict.NEED_APPROVAL
     assert result.reason == ReasonCode.APPROVAL_EXHAUSTED
@@ -180,7 +182,7 @@ def test_FR14_reason_required_no_history():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=None, approvals=[])
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.verdict == Verdict.NEED_APPROVAL
     assert result.reason == ReasonCode.APPROVAL_REQUIRED
@@ -192,17 +194,17 @@ def test_FR14_reason_required_old_version():
     repo = FakePolicyRepository(policy=_restricted_policy(version=2), approval=None, approvals=approvals)
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.reason == ReasonCode.APPROVAL_REQUIRED
 
 
 def test_FR14_reason_action_not_allowed():
-    approvals = [_record("a1", ApprovalStatus.APPROVED, action=Action.ON, remaining_uses=5)]
+    approvals = [_record("a1", ApprovalStatus.APPROVED, action="on", remaining_uses=5)]
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=None, approvals=approvals)
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.reason == ReasonCode.ACTION_NOT_ALLOWED
 
@@ -212,7 +214,7 @@ def test_FR14_reason_pending():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=None, approvals=approvals)
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.reason == ReasonCode.APPROVAL_PENDING
 
@@ -225,7 +227,7 @@ def test_FR14_reason_pending_over_older_denied():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=None, approvals=approvals)
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.reason == ReasonCode.APPROVAL_PENDING
 
@@ -235,7 +237,7 @@ def test_FR14_reason_request_expired():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=None, approvals=approvals)
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.reason == ReasonCode.APPROVAL_REQUEST_EXPIRED
 
@@ -245,7 +247,7 @@ def test_FR14_reason_rejected():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=None, approvals=approvals)
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.reason == ReasonCode.APPROVAL_REJECTED
 
@@ -257,7 +259,7 @@ def test_FR14_reason_expired():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=None, approvals=approvals)
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.reason == ReasonCode.APPROVAL_EXPIRED
 
@@ -269,7 +271,7 @@ def test_FR14_reason_exhausted():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=None, approvals=approvals)
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.reason == ReasonCode.APPROVAL_EXHAUSTED
 
@@ -281,7 +283,7 @@ def test_FR14_reason_expired_before_exhausted():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=None, approvals=approvals)
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.reason == ReasonCode.APPROVAL_EXPIRED
 
@@ -297,7 +299,7 @@ def test_FR14_reason_latest_wins():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=None, approvals=approvals)
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.reason == ReasonCode.APPROVAL_REJECTED
 
@@ -310,7 +312,7 @@ def test_FR14_reason_tie_deterministic():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=None, approvals=approvals)
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     # 생성 시각이 같으면 approval_id 오름차순의 마지막("b-later-id")을 고른다.
     assert result.reason == ReasonCode.APPROVAL_REJECTED
@@ -323,7 +325,7 @@ def test_FR14_reason_lookup_error_raises():
     checker = RepositoryPolicyChecker(repo)
 
     with pytest.raises(RuntimeError):
-        checker.check("u1", "node1", Action.OPEN, NOW)
+        checker.check("u1", "node1", "open", NOW)
 
 
 def test_FR11_policy_result_has_no_user():
@@ -335,7 +337,7 @@ def test_FR14_check_does_not_write():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=_approval(remaining_uses=1))
     checker = RepositoryPolicyChecker(repo)
 
-    result = checker.check("u1", "node1", Action.OPEN, NOW)
+    result = checker.check("u1", "node1", "open", NOW)
 
     assert result.verdict == Verdict.OK
 
@@ -344,7 +346,7 @@ def test_FR18_check_does_not_substitute_node():
     repo = FakePolicyRepository(policy=_restricted_policy(node_id="node1"), approval=_approval(remaining_uses=1))
     checker = RepositoryPolicyChecker(repo)
 
-    checker.check("u1", "node1", Action.OPEN, NOW)
+    checker.check("u1", "node1", "open", NOW)
 
     assert repo.current_policy_calls == ["node1"]
     assert all(call[1] == "node1" for call in repo.valid_approval_calls)
@@ -354,7 +356,7 @@ def test_FR14_check_passes_policy_version_to_valid_approval():
     repo = FakePolicyRepository(policy=_restricted_policy(version=5), approval=None, approvals=[])
     checker = RepositoryPolicyChecker(repo)
 
-    checker.check("u1", "node1", Action.OPEN, NOW)
+    checker.check("u1", "node1", "open", NOW)
 
     assert repo.valid_approval_calls[0][3] == 5
 
@@ -364,7 +366,7 @@ def test_FR14_check_uses_single_valid_approval():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=approval)
     checker = RepositoryPolicyChecker(repo)
 
-    checker.check("u1", "node1", Action.OPEN, NOW)
+    checker.check("u1", "node1", "open", NOW)
 
     assert len(repo.valid_approval_calls) == 1
 
@@ -374,7 +376,7 @@ def test_FR14_check_passes_internal_request_id():
     repo = FakePolicyRepository(policy=_restricted_policy(), approval=_approval(remaining_uses=1))
     checker = RepositoryPolicyChecker(repo)
 
-    checker.check("u1", "node1", Action.OPEN, NOW)
-    checker.check("u1", "node1", Action.OPEN, NOW, internal_request_id="req-1")
+    checker.check("u1", "node1", "open", NOW)
+    checker.check("u1", "node1", "open", NOW, internal_request_id="req-1")
 
     assert repo.valid_approval_request_ids == [None, "req-1"]

@@ -7,7 +7,7 @@ import json
 import pytest
 
 from nearpilot.shared.enums import (
-    Action, ApprovalUsageState, ExecutionKind, ExecutionStatus, ReasonCode, RecoveryStatus, SessionState,
+    ApprovalUsageState, ExecutionKind, ExecutionStatus, ReasonCode, RecoveryStatus, SessionState,
 )
 from nearpilot.shared.models import ReserveRequest
 
@@ -34,7 +34,7 @@ def test_FR19_restore_pending_bundle(store, conn):
     insert_request(conn, internal_request_id="req1")
     insert_use_session(conn, use_id="use1", internal_request_id="req1", state="RESERVED")
     conn.execute("UPDATE request SET verdict = 'OK', reason_code = 'OK', node_id = 'node1' WHERE internal_request_id = 'req1'")
-    store.link_command("req1", "node1", Action.OPEN)  # PENDING 명령
+    store.link_command("req1", "node1", "open")  # PENDING 명령
 
     bundles = store.restore_pending()
 
@@ -80,7 +80,7 @@ def test_FR19_restore_pending_uses_new_reservation_after_cancel(store, repo, con
     insert_node(conn, node_id="node1", occupancy="rental")
     insert_request(conn, internal_request_id="req1", verdict="OK", reason_code="OK", node_id="node1")
     reserve = ReserveRequest(
-        internal_request_id="req1", user_id="u1", node_id="node1", action=Action.OPEN, approval_id=None,
+        internal_request_id="req1", user_id="u1", node_id="node1", action="open", approval_id=None,
     )
     repo.reserve_if_free(reserve)
     store.cancel_not_sent("req1", ExecutionStatus.PENDING, ReasonCode.INTERNAL_ERROR, {"source": "decision_error"})
@@ -243,7 +243,7 @@ def test_FR19_restore_pending_excludes_resolved_node(store, conn):
     insert_request(conn, internal_request_id="req1")
     insert_use_session(conn, use_id="use1", internal_request_id="req1", state="ACTIVE")
     conn.execute("UPDATE request SET verdict = 'OK', reason_code = 'OK', node_id = 'node1' WHERE internal_request_id = 'req1'")
-    linked = store.link_command("req1", "node1", Action.OPEN)
+    linked = store.link_command("req1", "node1", "open")
     store.begin_send(linked.command.command_id)
     conn.execute(
         "UPDATE node_command SET status = 'succeeded', outcome = 'succeeded' WHERE command_id = ?",

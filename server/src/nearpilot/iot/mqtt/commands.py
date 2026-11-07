@@ -15,7 +15,7 @@ import math
 import threading
 import time
 
-from nearpilot.iot.messages import MessageValidationError, command_arguments, encode_command
+from nearpilot.iot.messages import MessageValidationError, encode_command
 from nearpilot.iot.mqtt.connection import NotReady
 from nearpilot.iot.mqtt.delivery import ReportDelivery
 from nearpilot.shared.descriptor import validate_arguments
@@ -83,9 +83,8 @@ class MqttCommandGateway:
                       command.node_id)
             return self._server_result(command, CommandOutcome.NOT_SENT)
         try:
-            arguments = command_arguments(command)
-            spec = announce.descriptor.action(str(command.action))
-            if spec is None or validate_arguments(spec, arguments) is not None:
+            spec = announce.descriptor.action(command.action)
+            if spec is None or validate_arguments(spec, command.arguments) is not None:
                 # The server checks again with the stored descriptor before sending (FR-06).
                 log.error("Command not sent: action or arguments outside the descriptor, node=%s",
                           command.node_id)

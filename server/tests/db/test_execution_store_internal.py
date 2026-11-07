@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
-    Action, CommandOutcome, ExecutionKind, ExecutionStatus, InternalRequestCause, StoreOutcome,
+    CommandOutcome, ExecutionKind, ExecutionStatus, InternalRequestCause, StoreOutcome,
 )
 from nearpilot.shared.models import InternalRequest
 
@@ -16,7 +16,7 @@ from conftest import insert_node, insert_place, insert_user
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
-def _request(internal_request_id="int-1", node_id="light1", action=Action.OFF, settings=None):
+def _request(internal_request_id="int-1", node_id="light1", action="off", settings=None):
     return InternalRequest(
         internal_request_id=internal_request_id, node_id=node_id, action=action,
         cause=InternalRequestCause.LEAVE_OFF, settings=settings or Settings(), created_at=NOW,
@@ -71,7 +71,7 @@ def test_FR20_server_internal_command_flow(conn, store):
     _setup_shared(conn)
     store.link_internal_request(_request())
 
-    link_result = store.link_command("int-1", "light1", Action.OFF)
+    link_result = store.link_command("int-1", "light1", "off")
     command = link_result.command
 
     assert command.execution_kind == ExecutionKind.SERVER_INTERNAL
@@ -95,7 +95,7 @@ def test_FR20_execution_context_server_internal(conn, store):
     _setup_shared(conn)
     settings = Settings(version="int-settings")
     store.link_internal_request(_request(settings=settings))
-    command = store.link_command("int-1", "light1", Action.OFF).command
+    command = store.link_command("int-1", "light1", "off").command
 
     ctx = store.execution_context(command.command_id)
 
@@ -104,7 +104,7 @@ def test_FR20_execution_context_server_internal(conn, store):
     assert ctx.internal_request is not None
     assert ctx.internal_request.internal_request_id == "int-1"
     assert ctx.internal_request.node_id == "light1"
-    assert ctx.internal_request.action == Action.OFF
+    assert ctx.internal_request.action == "off"
     assert ctx.internal_request.cause == InternalRequestCause.LEAVE_OFF
     assert ctx.internal_request.settings == settings
     assert ctx.execution_kind == ExecutionKind.SERVER_INTERNAL
@@ -117,7 +117,7 @@ def test_FR21_server_internal_hidden(conn, store):
     _setup_shared(conn)
     store.link_internal_request(_request())
 
-    command = store.link_command("int-1", "light1", Action.OFF).command
+    command = store.link_command("int-1", "light1", "off").command
 
     assert command.use_id is None
     assert conn.execute("SELECT COUNT(*) AS c FROM use_session").fetchone()["c"] == 0

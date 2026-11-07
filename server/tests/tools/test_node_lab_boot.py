@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from nearpilot.shared.enums import (
-    Action, Capability, DeviceState, Occupancy, ReasonCode, RecoveryOutcome, RecoveryReason, RecoveryStatus,
+    DeviceState, Occupancy, ReasonCode, RecoveryOutcome, RecoveryReason, RecoveryStatus,
     TrustState, Verdict,
 )
 from nearpilot.shared.models import Decision, NodeInfo, RecoveryApprovalResult, RecoveryReadiness
@@ -87,11 +87,11 @@ def test_FR13_lab_logs_readiness_changes_only():
     lab._readiness = {}
     lab.config = SimpleNamespace(settings=SimpleNamespace(online_ttl_sec=15))
     current = datetime(2026, 10, 23, tzinfo=timezone.utc)
-    node = NodeInfo("light-1", "node-lab", Capability.LIGHT, Occupancy.SHARED, TrustState.TRUSTED,
+    node = NodeInfo("light-1", "node-lab", "light", Occupancy.SHARED, TrustState.TRUSTED,
                     DeviceState.AVAILABLE, None, current, session_id="s1")
     for _ in range(3):
         lab.report_readiness(node, ready=True, blockers=(), current=current)
-    faulted = NodeInfo("light-1", "node-lab", Capability.LIGHT, Occupancy.SHARED, TrustState.TRUSTED,
+    faulted = NodeInfo("light-1", "node-lab", "light", Occupancy.SHARED, TrustState.TRUSTED,
                        DeviceState.FAULT, None, current, session_id="s1")
     lab.report_readiness(faulted, ready=False, blockers=("current_status",), current=current)
     lab.report_readiness(faulted, ready=False, blockers=("current_status",),
@@ -155,7 +155,7 @@ def test_FR19_lab_open_targets_nearest_locker_and_release_uses_last_use():
     lab = console_lab()
     lab.use("open")
     request = lab.runtime.core.requests[-1]
-    assert (request.target.capability, request.action) == (Capability.LOCKER, Action.OPEN)
+    assert (request.target.device_kind, request.action) == ("locker", "open")
     lab.release()
     assert lab.runtime.core.releases == [("lab-visitor", "use-1")]
     assert lab.last_use_id is None
@@ -168,7 +168,7 @@ def test_FR09_lab_close_targets_nearest_locker_and_keeps_use():
     lab.use("open")
     lab.use("close")
     request = lab.runtime.core.requests[-1]
-    assert (request.target.capability, request.action) == (Capability.LOCKER, Action.CLOSE)
+    assert (request.target.device_kind, request.action) == ("locker", "close")
     assert lab.last_use_id is not None  # 닫기는 반납이 아니다
 
 

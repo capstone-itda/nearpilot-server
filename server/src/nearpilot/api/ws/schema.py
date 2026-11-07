@@ -10,11 +10,10 @@ from math import isfinite
 from typing import Any
 
 from nearpilot.api.ws.names import Person, PersonNames
+from nearpilot.shared.descriptor import is_name
 from nearpilot.shared.enums import (
-    Action,
     ApprovalMode,
     ApprovalStatus,
-    Capability,
     DeviceState,
     ExecutionStatus,
     Occupancy,
@@ -95,6 +94,13 @@ def _lit(*allowed: str) -> _Check:
         return str(value)
 
     return check
+
+
+def _name(value: Any, path: str, names: PersonNames) -> str:
+    """기기 선언의 종류·동작 이름 규칙 `^[a-z][a-z0-9_]*$` (#245). 새 종류와 동작도 받는다."""
+    if not is_name(value):
+        raise SchemaError(path)
+    return str(value)
 
 
 def _enum(cls: type[StrEnum]) -> _Check:
@@ -256,8 +262,8 @@ def _obj(shape: _Shape) -> _Check:
 
 # 이벤트 (architecture.md §5 WebSocket 형식 표)
 
-_TARGET = _shape(_req("kind", _enum(TargetKind)), _opt("capability", _enum(Capability)), _opt("nodeId", _str))
-_FAULT = _shape(_req("cause", _enum(ReasonCode)), _opt("action", _enum(Action)))
+_TARGET = _shape(_req("kind", _enum(TargetKind)), _opt("capability", _name), _opt("nodeId", _str))
+_FAULT = _shape(_req("cause", _enum(ReasonCode)), _opt("action", _name))
 _AUDIT_ROW = _shape(
     _req("id", _str),
     _req("at", _time),
@@ -283,7 +289,7 @@ _EVENTS: dict[str, _Shape] = {
         _req("requestId", _str),
         _req("tool", _lit(*_TOOLS)),
         _opt("target", _obj(_TARGET)),
-        _opt("action", _enum(Action)),
+        _opt("action", _name),
         person=_person_id,
     ),
     "step": _shape(
@@ -299,7 +305,7 @@ _EVENTS: dict[str, _Shape] = {
         _req("reason", _enum(ReasonCode)),
         _opt("nodeId", _str),
     ),
-    "command": _shape(_req("requestId", _str), _req("nodeId", _str), _req("action", _enum(Action))),
+    "command": _shape(_req("requestId", _str), _req("nodeId", _str), _req("action", _name)),
     "exec_result": _shape(
         _req("requestId", _str), _req("nodeId", _str),
         _req("result", _lit("succeeded", "failed", "rejected", "unknown")),
@@ -325,7 +331,7 @@ _EVENTS: dict[str, _Shape] = {
 _DEVICE_INFO = _shape(
     _req("nodeId", _str),
     _req("name", _str),
-    _req("capability", _enum(Capability)),
+    _req("capability", _name),
     _req("occupancy", _enum(Occupancy)),
 )
 _PLACE_INFO = _shape(
@@ -380,7 +386,7 @@ _HISTORY_ROW = _shape(
     _req("requestId", _str),
     _req("at", _time),
     _req("target", _obj(_TARGET)),
-    _req("action", _enum(Action)),
+    _req("action", _name),
     _req("verdict", _enum(Verdict)),
     _opt("nodeId", _str),
     _req("outcome", _str),
@@ -392,7 +398,7 @@ _REQUEST_PROGRESS = _shape(
     _req("id", _str),
     _req("tool", _lit("request_use")),
     _req("target", _obj(_TARGET)),
-    _req("action", _enum(Action)),
+    _req("action", _name),
     _req("at", _time),
     _opt("verdict", _enum(Verdict)),
     _opt("reason", _enum(ReasonCode)),

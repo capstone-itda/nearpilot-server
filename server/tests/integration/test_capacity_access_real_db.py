@@ -11,7 +11,7 @@ from nearpilot.core.decision.pipeline import DecisionPipeline
 from nearpilot.core.policy.checker import RepositoryPolicyChecker
 from nearpilot.db.audit import SqliteAuditLog
 from nearpilot.db.repositories.repository import SqliteRepository
-from nearpilot.shared.enums import Action, ReasonCode, Verdict
+from nearpilot.shared.enums import ReasonCode, Verdict
 
 
 @pytest.fixture
@@ -53,7 +53,7 @@ def test_FR18_FR22_full_capacity_denial_is_saved_without_reservation(capacity_wo
 def test_FR22_full_capacity_denies_access_request_without_approval(capacity_world):
     world, repo, access, _ = capacity_world
     fill(world, repo)
-    decision = access.request_access(VISITOR_A, "locker-2", Action.OPEN, "approval-1")
+    decision = access.request_access(VISITOR_A, "locker-2", "open", "approval-1")
     assert (decision.verdict, decision.reason) == (Verdict.DENY, ReasonCode.CAPACITY_EXCEEDED)
     assert decision.request_id == "approval-1"
     assert world.count("SELECT COUNT(*) FROM approval") == 0

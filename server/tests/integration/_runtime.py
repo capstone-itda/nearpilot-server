@@ -102,7 +102,7 @@ def seed(db_path: Path, *, modes: Mapping[str, str] | None = None,
         for node_id, (capability, occupancy) in nodes.items():
             policy = "{}"
             conn.execute(
-                "INSERT INTO node (node_id, place_id, capability, occupancy, trust_state, device_state, "
+                "INSERT INTO node (node_id, place_id, kind, occupancy, trust_state, device_state, "
                 "exclusive_group, release_policy) VALUES (?, 'place-a', ?, ?, 'trusted', 'AVAILABLE', NULL, ?)",
                 (node_id, capability, occupancy, policy))
             conn.execute("INSERT INTO access_policy (policy_id, node_id, current_version) VALUES (?, ?, 1)",

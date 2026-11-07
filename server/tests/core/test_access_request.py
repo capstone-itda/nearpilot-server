@@ -11,10 +11,8 @@ from nearpilot.core.decision.access import AccessRequestService
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
     AccessMode,
-    Action,
     ApprovalMode,
     ApprovalStatus,
-    Capability,
     DeviceState,
     Occupancy,
     ReasonCode,
@@ -40,7 +38,7 @@ NODE = "locker-1"
 
 
 def node(node_id=NODE) -> NodeInfo:
-    return NodeInfo(node_id, "p", Capability.LOCKER, Occupancy.RENTAL, TrustState.TRUSTED,
+    return NodeInfo(node_id, "p", "locker", Occupancy.RENTAL, TrustState.TRUSTED,
                     DeviceState.AVAILABLE, "g", NOW)
 
 
@@ -117,7 +115,7 @@ def build(policy_result=NEED):
     return svc, repo, pol, audit
 
 
-def ask(svc, user="visitor", node_id=NODE, action=Action.OPEN, request_id="r1") -> Decision:
+def ask(svc, user="visitor", node_id=NODE, action="open", request_id="r1") -> Decision:
     return svc.request_access(user, node_id, action, request_id)
 
 
@@ -127,10 +125,10 @@ def test_FR03_승인이_필요하면_신청을_만든다():
     assert (d.verdict, d.reason, d.node_id, d.use_id) == (
         Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_PENDING, NODE, None)
     (req,) = repo.approval_calls
-    assert (req.requester_user_id, req.node_id, req.action) == ("visitor", NODE, Action.OPEN)
+    assert (req.requester_user_id, req.node_id, req.action) == ("visitor", NODE, "open")
     assert (req.policy_id, req.policy_version, req.internal_request_id) == ("pol", 3, "i1")
     assert req.created_at == NOW and req.settings == Settings()
-    assert pol.calls == [("visitor", NODE, Action.OPEN, NOW)]
+    assert pol.calls == [("visitor", NODE, "open", NOW)]
     assert audit.events[-1].step is Step.POLICY and audit.events[-1].payload["created"] is True
     (saved, record) = repo.saved[0]
     assert saved == d and record.policy_version == 3
@@ -163,7 +161,8 @@ def test_FR09_승인이_필요_없으면_신청을_만들지_않는다():
     assert repo.approval_calls == []
 
 
-@pytest.mark.parametrize("raw", ["", "locker", "nearest:locker", "locker-x", "door-1"])
+# 콜론 없는 값은 기기 ID 다. 형식 오류는 빈 값과 근접 지정·전역 할당 표기다 (spec core-device-actions 결정 2).
+@pytest.mark.parametrize("raw", ["", "nearest:locker", "any:locker", "nearest:", " locker-1"])
 def test_FR09_node_id_형식_오류는_거부한다(raw):
     svc, repo, *_ = build()
     d = ask(svc, node_id=raw)

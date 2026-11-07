@@ -19,10 +19,8 @@ from nearpilot.core.dashboard import (
     transition_event,
 )
 from nearpilot.shared.enums import (
-    Action,
     ApprovalMode,
     ApprovalStatus,
-    Capability,
     DeviceState,
     ExecutionStatus,
     Occupancy,
@@ -64,7 +62,7 @@ def trail(*steps: tuple[Step, dict], start: int = 1) -> list[DashboardAudit]:
 
 def request(
     verdict: Verdict | None, reason: ReasonCode | None, node_id: str | None = "locker-1", *,
-    kind: str = "visitor", target_spec: str = "nearest:locker", action: Action = Action.OPEN,
+    kind: str = "visitor", target_spec: str = "nearest:locker", action: str = "open",
 ) -> DashboardRequest:
     return DashboardRequest(
         seq=1, internal_request_id="i1", user_id=None if kind == "server_internal" else SECRET, kind=kind,
@@ -75,7 +73,7 @@ def request(
 def command(
     seq: int = 1, status: ExecutionStatus = ExecutionStatus.PENDING, *, started: int | None = None,
     outcome: str | None = None, occurred: int | None = None, node_id: str = "locker-1",
-    action: Action = Action.OPEN, evidence: dict | None = None,
+    action: str = "open", evidence: dict | None = None,
 ) -> DashboardCommand:
     return DashboardCommand(
         seq=seq, command_id=f"c{seq}", internal_request_id="i1", node_id=node_id, action=action, status=status,
@@ -145,8 +143,8 @@ def test_FR12B_요청_이벤트의_필드와_시각():
     assert call.at == T0 and call.subject == VISITOR
     assert dict(call.fields) == {
         "requestId": "i1", "tool": "request_use", "target": {"kind": TargetKind.NEAREST,
-                                                             "capability": Capability.LOCKER},
-        "action": Action.OPEN}
+                                                             "capability": "locker"},
+        "action": "open"}
     steps = [e for e in events if e.type == "step"]
     assert [dict(e.fields) for e in steps][:2] == [
         {"requestId": "i1", "step": Step.DEDUP, "result": "pass"},  # ⓪ 은 감사 행이 없어 detail 키가 없다
@@ -162,7 +160,7 @@ def test_FR12B_요청_이벤트의_필드와_시각():
     assert dict(verdict.fields) == {"requestId": "i1", "verdict": Verdict.OK, "reason": ReasonCode.OK,
                                     "nodeId": "locker-1"}
     assert verdict.at == at(6)
-    assert dict(by_type["command"].fields) == {"requestId": "i1", "nodeId": "locker-1", "action": Action.OPEN}
+    assert dict(by_type["command"].fields) == {"requestId": "i1", "nodeId": "locker-1", "action": "open"}
     assert by_type["command"].at == at(10)
     assert dict(by_type["exec_result"].fields) == {"requestId": "i1", "nodeId": "locker-1", "result": "succeeded"}
     assert by_type["exec_result"].at == at(12)
@@ -206,7 +204,7 @@ def test_FR12B_공용_OK는_점유_단계를_발행하지_않는다():
 
 
 def test_FR12B_서버_내부_요청과_접근_신청은_명령만():
-    internal = request(Verdict.OK, ReasonCode.OK, kind="server_internal", target_spec="locker-1", action=Action.OPEN)
+    internal = request(Verdict.OK, ReasonCode.OK, kind="server_internal", target_spec="locker-1", action="open")
     rows = trail((Step.CLOSE, {"event": "finish_close", "use_id": "u1", "check_id": "c1", "evidence": {}}))
     events = request_events(internal, rows, [DONE], None, Occupancy.RENTAL, NAMES)
     assert types(events) == ["command", "exec_result"]  # 방문자 요청이 아니면 mcp_call 도 mcp_result 도 없다
@@ -278,14 +276,14 @@ def test_FR12B_명령_이벤트의_시각과_기기():
     two_nodes = [
         command(1, ExecutionStatus.SUCCEEDED, started=10, outcome="succeeded", occurred=12),
         command(2, ExecutionStatus.SUCCEEDED, started=20, outcome="succeeded", occurred=None, node_id="locker-2",
-                action=Action.ON),
+                action="on"),
     ]
     events = request_events(OK, OK_RENTAL, two_nodes, VISITOR, Occupancy.RENTAL, NAMES)
     rest = [e for e in events if e.type in ("command", "exec_result")]
     assert [(e.type, e.at, e.fields["nodeId"]) for e in rest] == [
         ("command", at(10), "locker-1"), ("exec_result", at(12), "locker-1"),
         ("command", at(20), "locker-2"), ("exec_result", at(20), "locker-2")]  # 결과 시각이 없으면 전송 시작 시각
-    assert rest[2].fields["action"] is Action.ON
+    assert rest[2].fields["action"] == "on"
     # 전송을 시작하지 않은 명령은 command 가 없고, 결과가 있으면 요청 받은 시각으로 exec_result 를 낸다
     odd = command(1, ExecutionStatus.UNKNOWN, outcome="unknown")
     only = request_events(OK, OK_RENTAL, [odd], VISITOR, Occupancy.RENTAL, NAMES)[-2:]
@@ -328,18 +326,19 @@ def test_FR12B_행이_뒤섞여도_같은_이벤트를_만든다():
 
 
 def test_FR12B_도구_대상은_저장된_표기에서_만든다():
-    explicit = request(Verdict.OK, ReasonCode.OK, target_spec="locker-2", action=Action.OFF)
+    explicit = request(Verdict.OK, ReasonCode.OK, target_spec="locker-2", action="off")
     call = request_events(explicit, OK_RENTAL, [], VISITOR, Occupancy.RENTAL, NAMES)[0]
-    assert dict(call.fields["target"]) == {"kind": TargetKind.EXPLICIT, "capability": Capability.LOCKER,
-                                           "nodeId": "locker-2"}
-    assert call.fields["action"] is Action.OFF
+    # 명시 지정의 종류는 대상 표기에 없다. 종류 키는 근접 지정·전역 할당에만 있다 (architecture.md §5).
+    assert dict(call.fields["target"]) == {"kind": TargetKind.EXPLICIT, "nodeId": "locker-2"}
+    assert call.fields["action"] == "off"
 
 
 def test_FR12B_target_of():
-    assert target_of("nearest:locker") == {"kind": TargetKind.NEAREST, "capability": Capability.LOCKER}
-    assert target_of("any:locker") == {"kind": TargetKind.ANY, "capability": Capability.LOCKER}
-    assert target_of("light-1") == {"kind": TargetKind.EXPLICIT, "capability": Capability.LIGHT, "nodeId": "light-1"}
-    for raw in ("nearest:door", "somewhere:locker", "locker", "locker-x", ""):
+    assert target_of("nearest:locker") == {"kind": TargetKind.NEAREST, "capability": "locker"}
+    assert target_of("any:locker") == {"kind": TargetKind.ANY, "capability": "locker"}
+    assert target_of("light-1") == {"kind": TargetKind.EXPLICIT, "nodeId": "light-1"}
+    assert target_of("nearest:door") == {"kind": TargetKind.NEAREST, "capability": "door"}
+    for raw in ("nearest:Door", "somewhere:locker", "nearest:", ""):
         with pytest.raises(ValueError):
             target_of(raw)
 
@@ -349,7 +348,7 @@ def test_FR12B_target_of():
 
 def node(device_state: DeviceState = DeviceState.ACTIVE, node_id: str = "locker-1") -> DashboardNode:
     return DashboardNode(
-        node_id=node_id, name="사물함 1", place_id="p1", capability=Capability.LOCKER, occupancy=Occupancy.RENTAL,
+        node_id=node_id, name="사물함 1", place_id="p1", capability="locker", occupancy=Occupancy.RENTAL,
         trust_state=TrustState.TRUSTED, device_state=device_state, last_seen_at=at(1), session_id="s1")
 
 
@@ -377,7 +376,7 @@ def test_FR12B_비콘_이벤트는_사람을_subject로_넘긴다():
 def approval(request_id: str = "i2", node_id: str = "locker-2") -> DashboardApproval:
     return DashboardApproval(
         approval_id="a1", node_id=node_id, requester_user_id=SECRET, internal_request_id=request_id,
-        action=Action.OPEN, status=ApprovalStatus.PENDING, created_at=at(40), pending_until=at(100),
+        action="open", status=ApprovalStatus.PENDING, created_at=at(40), pending_until=at(100),
         valid_until=None, mode=ApprovalMode.ONE_TIME, used_count=0, remaining_uses=None)
 
 
@@ -442,7 +441,7 @@ def every_event() -> list[MonitorEvent]:
     events += request_events(request(Verdict.DENY, ReasonCode.CAPACITY_EXCEEDED, None),
                              trail(decided(Step.DEDUP, "DENY", "CAPACITY_EXCEEDED")), [], VISITOR, None, NAMES)
     events += request_events(
-        request(Verdict.OK, ReasonCode.OK, target_spec="locker-2", action=Action.OFF), OK_RENTAL,
+        request(Verdict.OK, ReasonCode.OK, target_spec="locker-2", action="off"), OK_RENTAL,
         [command(1, ExecutionStatus.REJECTED, started=10, outcome="rejected", occurred=12)], VISITOR,
         Occupancy.RENTAL, NAMES)
     events += [

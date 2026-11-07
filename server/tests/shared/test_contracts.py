@@ -6,7 +6,7 @@ from datetime import datetime
 import pytest
 
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import Capability, ReasonCode, TargetKind, Verdict
+from nearpilot.shared.enums import ReasonCode, TargetKind, Verdict
 from nearpilot.shared.interfaces import ProximityEstimator
 from nearpilot.shared.models import Decision, ProximityResult, TargetSpec
 
@@ -27,19 +27,21 @@ def test_fr22_capacity_exceeded_reason_is_separate_from_request_conflict():
 
 
 @pytest.mark.parametrize(
-    ("raw", "kind", "node_id"),
+    ("raw", "kind", "device_kind", "node_id"),
     [
-        ("nearest:locker", TargetKind.NEAREST, None),
-        ("any:locker", TargetKind.ANY, None),
-        ("locker-1", TargetKind.EXPLICIT, "locker-1"),
+        ("nearest:locker", TargetKind.NEAREST, "locker", None),
+        ("any:locker", TargetKind.ANY, "locker", None),
+        ("locker-1", TargetKind.EXPLICIT, None, "locker-1"),
+        ("nearest:door", TargetKind.NEAREST, "door", None),  # 종류는 선언의 이름이다 (#245)
+        ("locker-x", TargetKind.EXPLICIT, None, "locker-x"),  # 기기 ID 형식을 강제하지 않는다
     ],
 )
-def test_target_spec_parse(raw, kind, node_id):
+def test_target_spec_parse(raw, kind, device_kind, node_id):
     spec = TargetSpec.parse(raw)
-    assert (spec.kind, spec.capability, spec.node_id) == (kind, Capability.LOCKER, node_id)
+    assert (spec.kind, spec.device_kind, spec.node_id) == (kind, device_kind, node_id)
 
 
-@pytest.mark.parametrize("raw", ["locker", "door:locker", "nearest:door", "locker-x"])
+@pytest.mark.parametrize("raw", ["", "door:locker", "nearest:Door", "nearest:", "explicit:locker-1"])
 def test_target_spec_parse_rejects(raw):
     with pytest.raises(ValueError):
         TargetSpec.parse(raw)
@@ -81,4 +83,5 @@ def test_fake_satisfies_protocol():
 )
 def test_FR09_speaker_target_spec_parse(raw, kind, node_id):
     spec = TargetSpec.parse(raw)
-    assert (spec.kind, spec.capability, spec.node_id) == (kind, Capability.SPEAKER, node_id)
+    expected = None if kind is TargetKind.EXPLICIT else "speaker"  # 명시 지정의 종류는 저장한 기기에서 읽는다
+    assert (spec.kind, spec.device_kind, spec.node_id) == (kind, expected, node_id)

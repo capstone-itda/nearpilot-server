@@ -17,7 +17,6 @@ from nearpilot.core.decision.pipeline import BatchAllocator, DecisionPipeline
 from nearpilot.core.decision.query import DeviceQueryService
 from nearpilot.core.decision.service import RequestUseService
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import Action
 from nearpilot.shared.interfaces import (
     AuditLog,
     ExecutionReadiness,
@@ -35,7 +34,7 @@ class UseRequester(Protocol):
 
 
 class AccessRequester(Protocol):
-    def request_access(self, user_id: str, node_id: str, action: Action, request_id: str) -> Decision: ...
+    def request_access(self, user_id: str, node_id: str, action: str, request_id: str) -> Decision: ...
 
 
 class DeviceQuery(Protocol):
@@ -69,7 +68,7 @@ class DelegatingCoreService:
     def get_device_state(self, user_id: str, node_id: str) -> Mapping[str, Any]:
         return self._query.get_device_state(user_id, node_id)
 
-    def request_access(self, user_id: str, node_id: str, action: Action, request_id: str) -> Decision:
+    def request_access(self, user_id: str, node_id: str, action: str, request_id: str) -> Decision:
         return self._access.request_access(user_id, node_id, action, request_id)
 
     def request_use(self, req: UseRequest) -> Decision:

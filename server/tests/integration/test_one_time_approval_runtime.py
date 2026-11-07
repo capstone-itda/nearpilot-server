@@ -14,7 +14,7 @@ import pytest
 
 from _runtime import OWNER, VISITOR_A, FakeProximity, SimBroker, make_config, query, running, seed, wait_until
 from nearpilot.runtime import Runtime, ShutdownError
-from nearpilot.shared.enums import Action, ApprovalStatus, ReasonCode, Step, Verdict
+from nearpilot.shared.enums import ApprovalStatus, ReasonCode, Step, Verdict
 from nearpilot.shared.models import TargetSpec, UseRequest
 
 
@@ -73,7 +73,7 @@ class LockerWorld:
 
     def approve(self, request_id):
         """방문자 A 가 승인을 신청하고 소유자가 승인한다."""
-        access = self.runtime.core.request_access(VISITOR_A, "locker-1", Action.OPEN, request_id)
+        access = self.runtime.core.request_access(VISITOR_A, "locker-1", "open", request_id)
         assert (access.verdict, access.reason) == (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_PENDING)
         [pending] = query(self.db, "SELECT approval_id FROM approval WHERE status = 'pending'")
         assert self.runtime.approvals.decide(OWNER, pending["approval_id"], ApprovalStatus.APPROVED).succeeded
@@ -81,7 +81,7 @@ class LockerWorld:
     def use(self, request_id):
         self.refresh_rssi()
         return self.runtime.core.request_use(UseRequest(
-            VISITOR_A, request_id, TargetSpec.parse("locker-1"), Action.OPEN, None, datetime.now(timezone.utc)))
+            VISITOR_A, request_id, TargetSpec.parse("locker-1"), "open", None, datetime.now(timezone.utc)))
 
     def use_and_release(self, request_id, commands):
         """사용이 OK 이고 기기를 구동해서 명령이 `commands` 가 된 뒤에 반납한다."""

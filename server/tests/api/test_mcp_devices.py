@@ -6,8 +6,8 @@ import json
 
 from _mcp_client import TOKEN_A, TOKEN_B, Client, run
 
-UNAVAILABLE = {"node_id": None, "capability": None, "occupancy": None, "state": None, "online": None,
-               "trusted": None, "access_mode": None, "controls": None,
+UNAVAILABLE = {"node_id": None, "kind": None, "occupancy": None, "state": None, "online": None,
+               "trusted": None, "access_mode": None, "actions": None,
                "reason": "TARGET_UNAVAILABLE"}
 
 
@@ -41,7 +41,7 @@ def test_FR11_목록_항목에서_허용_목록_밖의_키를_버린다():
     c = Client()
     c.core.devices = [{**c.core.devices[0], "user_id": "user-b", "p": 0.97, "place_id": "p"}]
     resp = devices(c)
-    assert set(resp["devices"][0]) == {"node_id", "capability", "occupancy", "access", "controls"}
+    assert set(resp["devices"][0]) == {"node_id", "kind", "occupancy", "access", "actions"}
     assert "user-b" not in json.dumps(resp) and "0.97" not in json.dumps(resp)
 
 
@@ -71,8 +71,8 @@ def test_FR11_상태에서_허용_목록_밖의_키를_버린다():
     c.core.device_state = {**c.core.device_state, "user_id": "user-b", "owner": "user-b",
                            "place_id": "p"}
     resp = state(c, {"node_id": "locker-1"})
-    assert set(resp) == {"node_id", "capability", "occupancy", "state", "online", "trusted",
-                         "access_mode", "controls", "reason"}
+    assert set(resp) == {"node_id", "kind", "occupancy", "state", "online", "trusted",
+                         "access_mode", "actions", "reason"}
     assert "user-b" not in json.dumps(resp)
 
 

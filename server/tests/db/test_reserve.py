@@ -7,7 +7,7 @@ import pytest
 
 from nearpilot.db.repositories.repository import SqliteRepository
 from nearpilot.db.schema import connect
-from nearpilot.shared.enums import Action, ExecutionStatus, ReasonCode, ReserveOutcome
+from nearpilot.shared.enums import ExecutionStatus, ReasonCode, ReserveOutcome
 from nearpilot.shared.models import ReserveRequest
 
 from conftest import insert_approval, insert_node, insert_place, insert_policy, insert_request, insert_use_session, insert_user
@@ -18,10 +18,11 @@ def _seed_request(conn, internal_request_id, **kwargs):
     insert_request(conn, internal_request_id=internal_request_id, **kwargs)
 
 
-def _request(internal_request_id="req1", user_id="u1", node_id="node1", approval_id=None, action=Action.OPEN):
+def _request(internal_request_id="req1", user_id="u1", node_id="node1", approval_id=None, action="open",
+             reoperate_only=False):
     return ReserveRequest(
         internal_request_id=internal_request_id, user_id=user_id, node_id=node_id,
-        action=action, approval_id=approval_id,
+        action=action, approval_id=approval_id, reoperate_only=reoperate_only,
     )
 
 
@@ -137,7 +138,7 @@ def test_FR19_close_reoperates_own_active_rental(conn, repo):
     insert_use_session(conn, use_id="use1", internal_request_id="rental-req", state="ACTIVE")
     _seed_request(conn, internal_request_id="close-req")
 
-    result = repo.reserve_if_free(_request(internal_request_id="close-req", action=Action.CLOSE))
+    result = repo.reserve_if_free(_request(internal_request_id="close-req", action="close", reoperate_only=True))
 
     assert (result.outcome, result.use_id, result.usage_id) == (ReserveOutcome.REOPERATING, "use1", None)
     assert conn.execute("SELECT state FROM use_session WHERE use_id = 'use1'").fetchone()["state"] == "ACTIVE"
@@ -156,7 +157,7 @@ def test_FR19_close_without_own_rental_is_use_not_found(conn, repo, case):
         insert_use_session(conn, use_id="other-use", internal_request_id="other-req", user_id="u2", state="ACTIVE")
     _seed_request(conn, internal_request_id="close-req")
 
-    result = repo.reserve_if_free(_request(internal_request_id="close-req", action=Action.CLOSE))
+    result = repo.reserve_if_free(_request(internal_request_id="close-req", action="close", reoperate_only=True))
 
     # 빈 기기에 대여를 시작하지 않고, 타인 점유를 드러내지 않는다 (FR-21)
     assert (result.outcome, result.use_id, result.usage_id) == (ReserveOutcome.USE_NOT_FOUND, None, None)
@@ -255,7 +256,7 @@ def test_FR19_reserve_shared_open_no_approval_writes_nothing(conn, repo):
     insert_node(conn, node_id="light1", capability="light", occupancy="shared", device_state="AVAILABLE")
     _seed_request(conn, internal_request_id="req1", node_id="light1")
 
-    result = repo.reserve_if_free(_request(node_id="light1", action=Action.ON))
+    result = repo.reserve_if_free(_request(node_id="light1", action="on"))
 
     assert result.outcome == ReserveOutcome.RESERVED
     assert result.use_id is None
@@ -272,7 +273,7 @@ def test_FR19_reserve_shared_with_approval_reserves_usage(conn, repo):
     insert_approval(conn, approval_id="appr1", node_id="light1", internal_request_id="other")
     _seed_request(conn, internal_request_id="req1", node_id="light1")
 
-    result = repo.reserve_if_free(_request(node_id="light1", approval_id="appr1", action=Action.ON))
+    result = repo.reserve_if_free(_request(node_id="light1", approval_id="appr1", action="on"))
 
     assert result.outcome == ReserveOutcome.RESERVED
     assert result.use_id is None
@@ -310,7 +311,7 @@ def test_FR19_reserve_concurrent(tmp_path):
             result = repository.reserve_if_free(
                 ReserveRequest(
                     internal_request_id=internal_request_id, user_id=user_id, node_id="node1",
-                    action=Action.OPEN, approval_id=None,
+                    action="open", approval_id=None,
                 )
             )
             with lock:
@@ -356,7 +357,7 @@ def test_NFR03_reserve_stress(tmp_path):
             result = repository.reserve_if_free(
                 ReserveRequest(
                     internal_request_id=f"req-{i}", user_id=f"user-{i}", node_id="node1",
-                    action=Action.OPEN, approval_id=None,
+                    action="open", approval_id=None,
                 )
             )
             with lock:
@@ -399,7 +400,7 @@ def test_FR19_reserve_shared_usage_reserved_at(conn, repo):
         conn, internal_request_id="req1", node_id="light1", received_at="2026-01-01T00:00:00+00:00"
     )
 
-    result = repo.reserve_if_free(_request(node_id="light1", approval_id="appr1", action=Action.ON))
+    result = repo.reserve_if_free(_request(node_id="light1", approval_id="appr1", action="on"))
 
     assert result.reserved_at is not None
     assert result.reserved_at.isoformat() == "2026-01-01T00:00:00+00:00"
@@ -415,7 +416,7 @@ def test_FR19_reserve_no_write_reserved_at_none(conn, repo):
     insert_node(conn, node_id="light1", capability="light", occupancy="shared", device_state="AVAILABLE")
     _seed_request(conn, internal_request_id="req1", node_id="light1")
 
-    open_result = repo.reserve_if_free(_request(node_id="light1", action=Action.ON))
+    open_result = repo.reserve_if_free(_request(node_id="light1", action="on"))
     assert open_result.reserved_at is None
 
     insert_node(conn, node_id="node1", occupancy="rental", device_state="FAULT")
@@ -504,3 +505,17 @@ def test_FR09_reserve_links_new_request_to_approval_request(conn, repo):
         "SELECT parent_internal_request_id FROM request WHERE internal_request_id = ?", ("new-req",),
     ).fetchone()["parent_internal_request_id"]
     assert parent is None
+
+
+def test_FR09_reoperate_by_flag_not_action_name(conn, repo):
+    """DB 는 동작 이름을 비교하지 않는다. 판정이 넘긴 reoperate 역할로 정한다 (FR-09, spec 결정 6)."""
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn, node_id="node1", occupancy="rental", device_state="AVAILABLE")
+    _seed_request(conn, internal_request_id="relock-req")
+    relock = repo.reserve_if_free(_request(internal_request_id="relock-req", action="relock", reoperate_only=True))
+    assert (relock.outcome, relock.use_id) == (ReserveOutcome.USE_NOT_FOUND, None)
+    _seed_request(conn, internal_request_id="close-req")
+    # 역할이 없는 동작이면 이름이 close 여도 새 대여를 시작한다.
+    plain = repo.reserve_if_free(_request(internal_request_id="close-req", action="close"))
+    assert plain.outcome == ReserveOutcome.RESERVED and plain.use_id is not None
