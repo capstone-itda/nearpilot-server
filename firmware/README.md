@@ -1,6 +1,7 @@
 # NearPilot 기기 펌웨어
 
-펌웨어는 MQTT v2로 서버와 연결한다. 성공은 제어 신호 출력 완료와 결과 저장이다.
+펌웨어는 MQTT로 서버와 연결한다. `announce`와 `cmd`는 v3, 그 밖의 메시지는 v2다. 성공은 제어 신호 출력 완료와 결과 저장이다.
+펌웨어는 기기 공개 규칙(`docs/device-protocol.md`)의 참조 구현이다. 빌드마다 기기 선언 하나를 내장해 발표하고, 명령의 동작과 인자를 그 선언으로 검사한다 (#245, `specs/iot-firmware-descriptor/spec.md`).
 2026-10-26 결정으로 센서 기반 물리 상태 검증과 반납 검사는 범위 밖이다 (`docs/product.md`, `docs/requirements.md`).
 실제 켜짐, 열림, 재생과 물리 안전은 검증하지 않는다.
 
@@ -13,7 +14,8 @@
 |---|---|
 | `lib/np_config/` | USB로 주입한 기기 설정의 검사와 16진수 값 변환 |
 | `lib/np_clock/` | MQTT 시각 응답 해석, 오차 상한·신뢰 판정, 서버 UTC 시각 해석 |
-| `lib/np_command/` | MQTT 버전(`SCHEMA_VERSION=2`), `cmd`의 기능별 동작 검사, 검사 순서와 명령 내용 비교 필드 |
+| `lib/np_command/` | MQTT 버전(`cmd` 3, 그 밖 2), `cmd`의 선언 기반 동작·인자 검사, 검사 순서와 명령 내용 비교 필드 |
+| `lib/np_descriptor/` | 내장 기기 선언(`np_descriptors.h`), 부팅 때 선언 검사, 인자 스키마 검사, `pattern`의 정규식 부분집합, 발표 크기 |
 | `lib/np_ledger/` | 명령 기록, ID 해시 색인과 저장소 인터페이스 `RecordStore` |
 | `lib/np_executor/` | 명령 상태 전이, 결과 저장과 재보고, `status`의 명령 처리 상태 |
 | `lib/np_device/` | 제어 신호 출력 인터페이스, 세 기능이 함께 쓰는 시리얼·선택 GPIO 출력, 서보 펄스 계산과 조명 링 색 계산, DFPlayer 명령 프레임 |
@@ -53,10 +55,10 @@ pio run -e esp32dev-light-1 -t upload --upload-port COM6
 ```
 
 - WS2812B 원형 LED 16개의 DIN을 보드의 `IO18`(GPIO 번호)에 연결한다. 링의 5V와 GND도 연결하고, GND는 ESP32와 공통으로 둔다.
-- 부팅하면 링을 끈다. 허가한 새 `on`은 16개를 모두 켜고, `off`는 끈다. `parameters`가 없는 `on`은 흰색(밝기 64/255)이다.
-- `cmd.parameters`의 `brightness`(0~`NP_LIGHT_RING_MAX_LEVEL`)와 `color`(대문자 `#RRGGBB`)를 받는다. 채널 출력은 `색 채널 × brightness ÷ 255`(내림)이다. 밝기 0의 `on`은 꺼진 링을 출력하는 `on`이다.
-- 상한 초과, 형식 오류, 일부 인자는 출력 없이 `UNSUPPORTED_PARAMETER`로 거부한다. 서버 설정과 상관없이 펌웨어 상한을 지킨다. 출력 직전에도 상한을 다시 확인하고, 넘으면 `LIGHT_LIMIT_REFUSED`를 남기고 실패로 보고한다.
-- 발표에 `controls {"brightness_max": NP_LIGHT_RING_MAX_LEVEL, "color": true}`를 넣는다. `COMMAND_HANDLED`의 `rgb`는 출력한 채널 값이다.
+- 부팅하면 링을 끈다. 허가한 새 `on`은 16개를 모두 켜고, `off`는 끈다. `arguments`가 없는 `on`은 흰색(밝기 64/255)이다.
+- `cmd.arguments`의 `brightness`(0~64)와 `color`(`#RRGGBB`, 대·소문자)를 받는다. 둘 중 하나만 와도 받는다. 생략한 밝기는 `NP_LIGHT_RING_LEVEL`, 생략한 색은 흰색이다. 채널 출력은 `색 채널 × brightness ÷ 255`(내림)이다. 밝기 0의 `on`은 꺼진 링을 출력하는 `on`이다.
+- 선언 밖의 인자(상한 초과, 형식 오류, 모르는 키)는 출력 없이 `UNSUPPORTED_PARAMETER`로 거부한다. 서버 설정과 상관없이 선언 범위를 지킨다. 출력 직전에도 `NP_LIGHT_RING_MAX_LEVEL`을 다시 확인하고, 넘으면 `LIGHT_LIMIT_REFUSED`를 남기고 실패로 보고한다.
+- 선언은 `LIGHT_RING_DESCRIPTOR`다(밝기 0~64, 색). 선언의 밝기 상한이 `NP_LIGHT_RING_MAX_LEVEL`을 넘으면 부팅 때 `DESCRIPTOR_INVALID`를 남기고 발표하지 않는다. `COMMAND_HANDLED`의 `rgb`는 출력한 채널 값이다.
 - 기존 결과 재보고는 링을 다시 켜지 않는다. 재부팅 뒤 켜려면 서버가 새 명령을 허가해야 한다.
 - 부팅 로그의 `LIGHT_RING_OUTPUT pin=18 count=16 level=64 initial=off`와 `NODE_START ... mode=light_ring`으로 적용한 설정을 확인한다.
 - 개수, 인자 없는 밝기, 밝기 상한은 `config.example.h`의 `NP_LIGHT_RING_COUNT`, `NP_LIGHT_RING_LEVEL`, `NP_LIGHT_RING_MAX_LEVEL`이다. 상한 64는 보드 5V와 보조배터리 전원에서 흰색 16개 점등을 확인한 값이다. 전류는 측정하지 않았다.
@@ -107,10 +109,10 @@ pio run -e esp32dev-speaker-1 -t upload --upload-port COM6
 - 모듈 VCC와 GND 사이에 1000µF 커패시터를 두는 것이 권장이다. 지금 speaker-1에는 없어서 음량 상한을 20으로 둔다. 커패시터를 단 뒤에만 `NP_SPEAKER_MAX_VOLUME`과 서버 `speaker_volume_max`를 올린다.
 - microSD는 FAT32로 포맷하고 파일을 `01/001.mp3`, `01/002.mp3`처럼 둔다. 폴더 이름은 두 자리, 파일 이름은 세 자리 번호로 시작한다.
 - 부팅하면 `NP_SPEAKER_BOOT_MS`(2초)를 기다린 뒤 볼륨과 정지를 보낸다. 허가한 새 `on`은 `01/` 폴더를 처음부터 반복 재생하고, `off`는 정지한다.
-- `cmd.parameters`의 `volume`(0~`NP_SPEAKER_MAX_VOLUME`의 정수)을 받는다. `volume`이 있는 새 `on`은 음량 프레임을 먼저 보내고, 재생 중이 아니면 `NP_SPEAKER_FRAME_GAP_MS` 뒤에 폴더 반복 프레임을 보낸다. 음량 0의 `on`도 `on`이다. `parameters`가 없는 `on`은 음량 프레임을 보내지 않아서 마지막으로 보낸 음량이 그대로다.
+- `cmd.arguments`의 `volume`(0~20의 정수)을 받는다. `volume`이 있는 새 `on`은 음량 프레임을 먼저 보내고, 재생 중이 아니면 `NP_SPEAKER_FRAME_GAP_MS` 뒤에 폴더 반복 프레임을 보낸다. 음량 0의 `on`도 `on`이다. `volume`이 없는 `on`은 음량 프레임을 보내지 않아서 마지막으로 보낸 음량이 그대로다.
 - 재생 중에 새 `on`이 오면 곡을 이어서 재생한다. `volume`이 있으면 음량 프레임만 보내고, 폴더 반복 프레임은 다시 보내지 않는다. 로그 `SPEAKER_ALREADY_PLAYING frame_skipped=1`이 남는다.
-- 상한 초과, 형식 오류, 일부 인자는 출력 없이 `UNSUPPORTED_PARAMETER`로 거부한다. 서버 설정과 상관없이 펌웨어 상한을 지킨다. 출력 직전에도 상한을 다시 확인하고, 넘으면 `SPEAKER_LIMIT_REFUSED`를 남기고 실패로 보고한다.
-- 발표에 `controls {"volume_max": NP_SPEAKER_MAX_VOLUME}`를 넣는다. `COMMAND_HANDLED`의 `volume`은 보낸 음량이고, 음량 인자가 없는 명령은 -1이다.
+- 선언 밖의 인자는 출력 없이 `UNSUPPORTED_PARAMETER`로 거부한다. 서버 설정과 상관없이 선언 범위를 지킨다. 출력 직전에도 `NP_SPEAKER_MAX_VOLUME`을 다시 확인하고, 넘으면 `SPEAKER_LIMIT_REFUSED`를 남기고 실패로 보고한다.
+- 선언은 `SPEAKER_DFPLAYER_DESCRIPTOR`다(음량 0~20). `COMMAND_HANDLED`의 `volume`은 보낸 음량이고, 음량 인자가 없는 명령은 -1이다.
 - 연결이 끊겨도 재생을 유지한다. 재부팅과 기존 결과 재보고는 다시 재생하지 않는다.
 - 볼륨, 상한, 폴더는 `config.example.h`의 `NP_SPEAKER_VOLUME`(부팅 음량), `NP_SPEAKER_MAX_VOLUME`(1~30), `NP_SPEAKER_FOLDER`다. 부팅 음량과 상한의 기본값은 모두 20이고, 부팅 음량은 상한 이하여야 한다(빌드 검사). 이전에 만든 `config.local.h`에는 `#define NP_SPEAKER_MAX_VOLUME 20`을 더한다. 없으면 빌드가 멈춘다.
 - 부팅 로그 `SPEAKER_OUTPUT tx=17 rx=16 volume=20 folder=1 initial=stopped`로 적용한 설정을 확인한다.
@@ -152,15 +154,30 @@ USB 주입과 같은 줄(`CONFIG_BEGIN`, `CONFIG_SET`, `CONFIG_COMMIT`, `CONFIG_
 
 ## 설정과 확인
 
-USB 설정은 문자열 키 9개다: `node_id`, `mqtt_user`, `mqtt_password`, `wifi_ssid`, `wifi_password`, `mqtt_host`, `mqtt_port`, `capability`, `occupancy`.
-#236부터 시각 키 4개(`time_server`, `clock_max_error_sec`, `time_trust_ms`, `time_resync_ms`)는 없다. `CONFIG_SET`은 이 키를 `unknown_key`로 거부한다. 저장된 옛 설정(키 13개)은 시각 키를 무시하고 그대로 읽는다.
-`capability`는 `locker`·`light`·`speaker`, `occupancy`는 `rental`·`shared`다. 조합을 추가로 제한하지 않는다.
+USB·BLE 설정은 문자열 키 7개다: `node_id`, `mqtt_user`, `mqtt_password`, `wifi_ssid`, `wifi_password`, `mqtt_host`, `mqtt_port`.
+#236부터 시각 키 4개(`time_server`, `clock_max_error_sec`, `time_trust_ms`, `time_resync_ms`)는 없다. #245부터 `capability`·`occupancy`도 없다. `CONFIG_SET`은 이 키들을 `unknown_key`로 거부한다. 저장된 옛 설정은 이 키들을 무시하고 그대로 읽는다.
+
+### 기기 선언
+
+빌드 환경이 `-D NP_DESCRIPTOR=np::<상수>`로 `lib/np_descriptor/np_descriptors.h`의 선언 하나를 고른다.
+
+| 빌드 환경 | 선언 | 동작 |
+|---|---|---|
+| `esp32dev` (시리얼 출력만) | `LIGHT_DESCRIPTOR` | `on`, `off`(deactivate). 인자 없음 |
+| `esp32dev-light-1` | `LIGHT_RING_DESCRIPTOR` | `on`(`brightness` 0~64, `color`), `off`(deactivate) |
+| `esp32dev-locker-1` | `LOCKER_DESCRIPTOR` | `open`, `close`(reoperate) |
+| `esp32dev-speaker-1` | `SPEAKER_DFPLAYER_DESCRIPTOR` | `on`(`volume` 0~20), `off`(deactivate) |
+
+- 선언 해시는 같은 기기가 v2로 발표하던 템플릿과 같다. 펌웨어를 올려도 다시 신뢰하지 않아도 되고, 서버는 `vendor.firmware`(`v2` → `v3`) 변경만 감사에 남긴다. `server/tests/tools/test_firmware_descriptors.py`가 헤더를 읽어 확인한다.
+- 부팅 로그 `DESCRIPTOR kind=... occupancy=... model=... firmware=v3 actions=N`으로 내장 선언을 확인한다. 선언이 규칙에 맞지 않거나, 출력 장치와 종류가 다르거나, 상한이 출력 상한을 넘거나, 발표가 2048바이트를 넘으면 `DESCRIPTOR_INVALID reason=...`를 남기고 발표하지 않는다.
+- 선언에 없는 동작은 `UNSUPPORTED_ACTION`, 인자 스키마 밖의 인자는 `UNSUPPORTED_PARAMETER`로 거부한다. `pattern`은 펌웨어의 정규식 부분집합(`^`, `$`, 문자, `\` 이스케이프와 `\d`, `.`, `[...]`, `?`·`*`·`+`·`{n,m}`)만 쓴다.
+- `cmd`는 v3만 받는다. 명령 기록의 내용은 `arguments`가 있으면 키로 정렬한 `[키, 값]` 쌍을 덧붙인다.
 `CONFIG_BEGIN` → `CONFIG_SET <key> <UTF-8 값의 16진수>` → `CONFIG_COMMIT` 절차를 유지한다.
 새 키가 없거나 허용 값이 아니면 키 이름으로 거부한다. 기존 설정에는 기본값을 채우지 않는다.
 기존 generation 1 설정은 재주입 전 부팅 시 `config=invalid`, `configured=0`이다. 저장된 설정과 기록은 지우지 않는다.
 주입 도구는 `nearpilot provision` 또는 `python -m tools.node_lab.provision`이다.
 부팅 확인 도구와 `CONFIG_STATE` 형식은 유지한다 (`server/tools/node_lab/README.md`).
-`announce`는 설정 값을 발표한다. `locker`는 `open`·`close`, `light`·`speaker`는 `on`·`off`만 받는다.
+`announce`는 내장 선언을 발표한다. 받는 동작은 선언의 동작뿐이다.
 모든 구동은 시리얼·선택 GPIO 신호다. `esp32dev-locker-1`은 서보 신호를, `esp32dev-light-1`은 원형 LED 신호를 더한다. `handle()`은 접수 저장, 재검사, `running` 발행과 출력을 한 번에 처리한다.
 `Actuator::output()`이 출력을 마치면(`Completed`) 결과를 저장하고 확인 조회한 뒤 `succeeded`를 발행한다.
 출력이 일어나지 않았음을 확인하면 `failed`, 출력 여부를 모르면 `unknown`이다. 처리하는 동안 새 명령은 `DEVICE_BUSY`다.

@@ -353,7 +353,7 @@ class _Bench:
 
         근접 확률이 임계값에 닿기 전이나 앞 명령이 끝나기 전에 보내면 거절된다. 한도는 `limit`을 `margin`으로 나눈 횟수다.
         """
-        arguments = {"target_spec": f"nearest:{node.capability}", "action": _ACTION[node.capability]}
+        arguments = {"target_spec": f"nearest:{node.kind}", "action": _ACTION[node.kind]}
         calls: list[dict[str, Any]] = []
         for _ in range(max(1, int(self.limit / self.margin))):
             suffix = f"-r{len(calls)}" if calls else ""
@@ -365,7 +365,7 @@ class _Bench:
 
     def anonymous(self, request_id: str, node: NodeSpec) -> list[dict[str, Any]]:
         """토큰 없이, 그리고 틀린 토큰으로 `request_use`를 보낸다."""
-        arguments = {"target_spec": f"nearest:{node.capability}", "action": _ACTION[node.capability]}
+        arguments = {"target_spec": f"nearest:{node.kind}", "action": _ACTION[node.kind]}
         tokens = self.h.tokens
         self.h.tokens = {**tokens, _STRANGER: "not-a-token"}
         try:
@@ -502,7 +502,7 @@ class _Bench:
         신청과 승인이 이뤄지지 않으면 승인된 상태를 만들지 못한 것이라 `_SetupFailed`다. 신청에는 요청자 정보가 없어서
         신청 전 목록과 비교해 새로 생긴 것을 고른다. 이미 대기 중인 신청이 있으면 새로 만들지 않으므로 그 신청을 고른다.
         """
-        action = _ACTION[node.capability]
+        action = _ACTION[node.kind]
         before = {item["approval_id"] for item in self._pending()}
         asked = self.call(user_id, "request_access", {"node_id": node.node_id, "action": action, "request_id": request_id})
         if (asked["verdict"], asked["reason"]) != (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_PENDING):
@@ -599,7 +599,7 @@ def _no_beacon(b: _Bench, index: int) -> dict[str, Any]:
     if listed:  # 앞 장면의 프레임이 서버에 남았으면 비콘 근거가 없는 장면이 아니다
         raise _SetupFailed(f"비콘을 듣는 기기가 없는데 {visitor}의 기기 목록에 {listed}가 있다")
     request_id = b.rid("no_beacon", index, "a")
-    call = b.call(visitor, "request_use", {"target_spec": f"nearest:{node.capability}", "action": _ACTION[node.capability],
+    call = b.call(visitor, "request_use", {"target_spec": f"nearest:{node.kind}", "action": _ACTION[node.kind],
                                            "request_id": request_id})
     return {"out_of_scope": b.breaches([call], request_id), "trace": [_brief(call)]}
 
@@ -668,7 +668,7 @@ def _untrusted(b: _Bench, index: int) -> dict[str, Any]:
     b.scene(b.everyone_near(node))  # 미신뢰 기기만 방문자를 듣는다
     listed = b.devices(visitor).count(node.node_id)  # 요청이 기기를 점유하기 전에 본다
     request_id = b.rid("untrusted", index, "a")
-    call = b.call(visitor, "request_use", {"target_spec": f"nearest:{node.capability}", "action": _ACTION[node.capability],
+    call = b.call(visitor, "request_use", {"target_spec": f"nearest:{node.kind}", "action": _ACTION[node.kind],
                                            "request_id": request_id})
     return {"untrusted_candidate": listed + (call["node_id"] == node.node_id),
             "out_of_scope": b.breaches([call], request_id),

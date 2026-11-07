@@ -144,7 +144,7 @@ class Harness:
         broker = BrokerConfig("127.0.0.1", mqtt_port, mqtt["keepalive_sec"], mqtt["reconnect_min_sec"],
                               mqtt["reconnect_max_sec"])
         for spec in config.nodes:
-            node = SimNode(spec.node_id, spec.capability, spec.occupancy,
+            node = SimNode(spec.node_id, spec.kind,
                            CommandStore(self.workdir / "sim" / f"{spec.node_id}.sqlite3"),
                            Scenario(actuation_sec=config.actuation_sec))
             device = SimDevice(node, broker, Credentials(spec.node_id, self._secret_file(spec.node_id)), sim_settings)

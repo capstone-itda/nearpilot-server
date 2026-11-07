@@ -170,7 +170,7 @@ nearpilot serve
 
 - 서버는 `<mdns_name>.local`을 `mdns_address`로 알린다(mDNS, UDP 5353). 기기는 이 이름으로 MQTT에 접속하므로 서버 IP가 바뀌면 `mdns_address`만 고친다.
 - 앱(소유자 계정)은 `GET /admin/nodes/{node_id}/provisioning`으로 기기 ID, MQTT 계정·비밀번호, `mqtt_host`(`.local`), 포트, 기능, 점유 방식을 받는다. Wi-Fi는 앱에서 입력한다.
-- 기기 목록은 `fleet`의 `devices`(`node_id`, `capability`, `occupancy`, 선택 `username`·`password_file`)다. 비밀번호는 기본으로 목록 옆의 `.env.<node_id>`다.
+- 기기 목록은 `fleet`의 `devices`(`node_id`, 선택 `username`·`password_file`)다. 묶음은 접속 정보만 담는다. 시뮬레이터 항목의 `descriptor` 같은 다른 키는 읽지 않는다 (#245). 비밀번호는 기본으로 목록 옆의 `.env.<node_id>`다.
 - `nearpilot provision`(USB)도 `[provisioning]`이 있으면 `mqtt_host`를 `<mdns_name>.local`로 넣는다.
 - mDNS를 시작하지 못하면 서버 로그에 오류를 남기고 계속한다. 그때 `.local`로 설정한 기기는 접속하지 못한다.
 - 방화벽에서 UDP 5353 수신을 허용한다. 최종 시연 구성의 `firewall.ps1`(hardware)이 연다.

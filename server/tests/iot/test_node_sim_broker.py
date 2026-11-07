@@ -89,8 +89,7 @@ def sims(broker, tmp_path):
         account = account or node_id
         secret = tmp_path / f".env.node-{account}"
         secret.write_text(broker.passwords[account], encoding="utf-8")
-        node = SimNode(node_id, capability, "rental" if capability == "locker" else "shared",
-                       CommandStore(tmp_path / f"{store or node_id}.sqlite3"),
+        node = SimNode(node_id, capability, CommandStore(tmp_path / f"{store or node_id}.sqlite3"),
                        Scenario(**({"actuation_sec": 0.1} | scenario)))
         device = SimDevice(node, BrokerConfig("127.0.0.1", broker.port, 5, 1, 2),
                            Credentials(account, secret), SIM_SETTINGS)

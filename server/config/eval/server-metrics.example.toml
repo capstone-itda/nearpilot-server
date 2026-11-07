@@ -54,7 +54,7 @@ role = "visitor"
 minor = 4
 
 # 시뮬레이터 기기. 모두 장소 place-a에 놓인다.
-# capability: locker | light | speaker, occupancy: rental | shared, mode: open | restricted(승인 필요),
+# kind: 시뮬레이터 템플릿 locker(rental) | light(shared) | speaker(shared), occupancy: kind의 점유 방식, mode: open | restricted(승인 필요),
 # trusted: false면 신뢰하지 않은 기기(discovered)로 둔다.
 # restricted 기기의 승인 정책(선택): approval_mode(one_time | time_window, 기본 one_time),
 # approval_ttl_sec(승인 유효시간, 초), max_uses(승인 한 건으로 쓸 수 있는 횟수, 없으면 무제한).
@@ -62,25 +62,25 @@ minor = 4
 # 기간 승인을 잰다. 설정에 그 기기가 없으면 그 시나리오는 건너뛰고 보고서 행의 note에 쓴다.
 [[nodes]]
 node_id = "locker-1"
-capability = "locker"
+kind = "locker"
 occupancy = "rental"
 mode = "open"
 
 [[nodes]]
 node_id = "locker-2"
-capability = "locker"
+kind = "locker"
 occupancy = "rental"
 mode = "open"
 
 [[nodes]]
 node_id = "locker-3"
-capability = "locker"
+kind = "locker"
 occupancy = "rental"
 mode = "open"
 
 [[nodes]]
 node_id = "light-1"
-capability = "light"
+kind = "light"
 occupancy = "shared"
 mode = "open"
 
@@ -88,7 +88,7 @@ mode = "open"
 # 지표 5가 시도마다 유효시간이 끝나기를 기다려서 짧게 둔다. 1회 승인(approval_mode = "one_time")을 재려면 제한 기기를 하나 더한다.
 [[nodes]]
 node_id = "light-2"
-capability = "light"
+kind = "light"
 occupancy = "shared"
 mode = "restricted"
 approval_mode = "time_window"
@@ -97,7 +97,7 @@ approval_ttl_sec = 5
 # 신뢰하지 않은 기기. 모델에 없어도 된다. 후보로 나오면 안 된다.
 [[nodes]]
 node_id = "locker-4"
-capability = "locker"
+kind = "locker"
 occupancy = "rental"
 trusted = false
 

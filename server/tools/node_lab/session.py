@@ -102,10 +102,10 @@ class Lab:
         for node in selected:
             if node.node_id in self._configured and node.trust_state == TrustState.TRUSTED and node.place_id == "node-lab":
                 continue
-            capability, occupancy = node_kind(node.node_id)
-            if node.capability.value != capability or node.occupancy.value != occupancy:
+            kind, occupancy = node_kind(node.node_id)
+            if node.kind != kind or node.occupancy.value != occupancy:  # The stored declaration (#245).
                 self.evidence.emit("node_rejected", node_id=node.node_id,
-                                   reason=f"expected {occupancy} {capability}")
+                                   reason=f"expected {occupancy} {kind}")
                 continue
             self._check(admin.assign_place(owner, PlaceAssignment("node-lab", owner, "연결 시험", (node.node_id,))))
             self._check(admin.set_node_trust(owner, node.node_id, TrustState.TRUSTED))

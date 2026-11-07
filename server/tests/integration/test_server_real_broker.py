@@ -94,7 +94,7 @@ def test_NFR12_runtime_real_broker_restart(broker, tmp_path, caplog):
                       delivery={"clock_max_error_sec": 0.0})  # 같은 PC 의 시뮬레이터
     seed(cfg.database.path, nodes=NODES)
     proximity = FakeProximity({NODE: 0.97})
-    node = SimNode(NODE, "locker", "rental", CommandStore(tmp_path / "node-a.sqlite3"),
+    node = SimNode(NODE, "locker", CommandStore(tmp_path / "node-a.sqlite3"),
                    Scenario(actuation_sec=0.1, beacons=(Beacon(UUID, 1, 2, -55.0),)))
     device = SimDevice(node, BrokerConfig("127.0.0.1", port, 5, 1, 2), Credentials(NODE, node_secret),
                        Settings(status_report_sec=0.2, rssi_frame_sec=0.2))

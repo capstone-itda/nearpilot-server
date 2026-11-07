@@ -28,7 +28,7 @@ def prepared(tmp_path):
 def test_FR04_NFR10_final_demo_inventory(prepared):
     folder = prepared()
     fleet = load_fleet(folder / "fleet.json")
-    assert {d.node_id: (d.capability, d.occupancy) for d in fleet.devices} == EXPECTED
+    assert {d.node_id: (d.descriptor.kind, d.descriptor.occupancy.value) for d in fleet.devices} == EXPECTED
     options = json.loads((folder / "lab.json").read_text(encoding="utf-8"))
     assert set(options["nodes"]) == set(EXPECTED)
     acl = (folder / "broker.acl").read_text(encoding="utf-8")

@@ -16,6 +16,8 @@ import pytest
 
 from nearpilot.iot.messages import decode_message
 from nearpilot.shared.config import Settings
+from nearpilot.shared.descriptor import legacy_descriptor
+from nearpilot.shared.enums import Occupancy
 from tools.node_sim import (
     Beacon, BrokerConfig, CommandStore, ConfigError, Credentials, Scenario, SimDevice, SimNode,
     acl_sections, load_config,
@@ -46,10 +48,9 @@ def clock():
 
 @pytest.fixture
 def make(tmp_path, clock):
-    def make(capability="locker", *, name="node", connect=True, **scenario):
+    def make(descriptor="locker", *, name="node", connect=True, **scenario):
         store = CommandStore(tmp_path / f"{name}.sqlite3")
-        occupancy = "rental" if capability == "locker" else "shared"
-        node = SimNode("locker-1", capability, occupancy, store,
+        node = SimNode("locker-1", descriptor, store,
                        Scenario(**({"actuation_sec": 0.1} | scenario)), clock=clock)
         if connect:
             node.connect()
@@ -59,8 +60,8 @@ def make(tmp_path, clock):
 
 def cmd(node, command_id="command-1", *, action=None, session=None, issued=None, expires=None,
         **extra):
-    action = action or ("open" if node.capability == "locker" else "on")
-    data = dict(schema_version=2, node_id=node.node_id, command_id=command_id, action=action,
+    action = action or ("open" if node.kind == "locker" else "on")
+    data = dict(schema_version=3, node_id=node.node_id, command_id=command_id, action=action,
                 target_session_id=session or node.session_id,
                 issued_at=iso(issued or T0 - timedelta(seconds=0.5)),
                 expires_at=iso(expires or T0 + timedelta(seconds=3))) | extra
@@ -123,6 +124,7 @@ def test_FR06_busy_rejected_without_queue(make):
     (dict(action="on"), "UNSUPPORTED_ACTION"),
     (dict(issued=T0 + timedelta(seconds=3)), "INVALID_MESSAGE"),
     (dict(schema_version=1), "INVALID_MESSAGE"),
+    (dict(schema_version=2), "INVALID_MESSAGE"),  # cmd is v3 once the device announced v3 (#245)
     (dict(issued=T0 + timedelta(seconds=1), expires=T0 + timedelta(seconds=2)),
      "INVALID_MESSAGE"),
 ])
@@ -140,7 +142,7 @@ def test_FR06_old_duplicate_reports_stored_result(make, clock):
     clock.now += timedelta(seconds=60)  # Expired and possibly another session.
     node.connect()
     record = node.store.command("command-1")
-    resend = json.loads(record.content) | dict(schema_version=2, command_id="command-1")
+    resend = json.loads(record.content) | dict(schema_version=3, command_id="command-1")
     messages, started = node.handle_command(json.dumps(resend).encode())
     assert not started and states(messages) == [("succeeded", None)]
     assert messages[0][1]["event_id"] == record.event_id
@@ -201,6 +203,82 @@ def test_FR04_reconnect_announces_new_session(make):
     assert (first.seq, second.seq) == (1, 1)
     assert decode(node.status()).seq == 1
     assert (second.descriptor.kind, second.occupancy.value) == ("locker", "rental")
+    body = second_messages[0][1]
+    assert body["schema_version"] == 3 and "capability" not in body
+    # The template is the declaration a v2 simulator became on the server: the trust is kept (spec decision 10).
+    assert second.descriptor.hash == legacy_descriptor("locker", Occupancy.RENTAL).hash
+
+
+RING = {
+    "format": "nearpilot.device/1", "kind": "light", "occupancy": "shared",
+    "vendor": {"name": "nearpilot", "model": "light", "firmware": "sim"},
+    "actions": [
+        {"name": "on", "description": "조명을 켜고 밝기와 색을 정한다",
+         "input_schema": {"type": "object", "properties": {
+             "brightness": {"type": "integer", "minimum": 0, "maximum": 64},
+             "color": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"}},
+             "required": [], "additionalProperties": False},
+         "result": {"kind": "signal_output"}},
+        {"name": "off", "description": "조명을 끈다", "role": "deactivate",
+         "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+         "result": {"kind": "signal_output"}},
+    ],
+}
+
+
+def test_FR06_sim_accepts_close_and_arguments(make):
+    """사물함 템플릿은 close(reoperate)를 받는다. 선언 객체의 인자는 스키마 안이면 받는다."""
+    locker = make(name="locker")
+    messages, started = locker.handle_command(cmd(locker, action="close"))
+    assert started and states(messages) == [("accepted", None), ("running", None)]
+    light = make(RING, name="ring")
+    assert light.kind == "light" and light.occupancy == "shared"
+    messages, started = light.handle_command(cmd(light, arguments={"brightness": 30, "color": "#00ff00"}))
+    assert started
+    light.finish()
+    # Same id, other arguments: another content (FR-22).
+    conflict, _ = light.handle_command(cmd(light, arguments={"brightness": 31, "color": "#00ff00"}))
+    assert states(conflict) == [("rejected", "COMMAND_ID_CONFLICT")]
+    same, _ = light.handle_command(cmd(light, arguments={"color": "#00ff00", "brightness": 30}))
+    assert states(same) == [("succeeded", None)] and light.actuations == 1
+
+
+@pytest.mark.parametrize("descriptor,fields,code", [
+    ("locker", dict(action="on"), "UNSUPPORTED_ACTION"),
+    ("light", dict(action="spin"), "UNSUPPORTED_ACTION"),
+    ("light", dict(arguments={"brightness": 10}), "UNSUPPORTED_PARAMETER"),  # The template takes none.
+    (RING, dict(arguments={"brightness": 65}), "UNSUPPORTED_PARAMETER"),
+    (RING, dict(arguments={"color": "blue"}), "UNSUPPORTED_PARAMETER"),
+    (RING, dict(arguments={"volume": 3}), "UNSUPPORTED_PARAMETER"),
+    (RING, dict(arguments=[30]), "UNSUPPORTED_PARAMETER"),
+    (RING, dict(action="off", arguments={"brightness": 1}), "UNSUPPORTED_PARAMETER"),
+])
+def test_FR06_sim_rejects_outside_descriptor(make, descriptor, fields, code):
+    node = make(descriptor)
+    messages, started = node.handle_command(cmd(node, **fields))
+    assert not started and states(messages) == [("rejected", code)] and node.actuations == 0
+
+
+def test_FR04_sim_descriptor_config(tmp_path):
+    """기기 목록의 `descriptor`는 템플릿 이름이나 선언 객체다. 그 밖은 설정 오류다."""
+    data = json.loads(FLEET.read_text(encoding="utf-8"))
+    data["devices"][3]["descriptor"] = RING
+    path = tmp_path / "fleet.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    loaded = {d.node_id: d.descriptor for d in load_config(path).devices}
+    assert loaded["light-1"].action("on").properties["brightness"]["maximum"] == 64
+    assert loaded["locker-1"].hash == legacy_descriptor("locker", Occupancy.RENTAL).hash
+    for bad in ("door", {"kind": "light"}, None, {**RING, "occupancy": "lease"}):
+        data["devices"][0]["descriptor"] = bad
+        path.write_text(json.dumps(data), encoding="utf-8")
+        with pytest.raises(ConfigError):
+            load_config(path)
+    data["devices"][0]["descriptor"] = "locker"
+    data["devices"][0]["capability"] = "locker"  # The old key alone is not enough.
+    del data["devices"][0]["descriptor"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_config(path)
 
 
 def test_FR20_simulator_has_no_release_check(make):
@@ -220,10 +298,10 @@ def test_FR07_status_reports_command_state_only(make):
     assert decode(node.status()).command_state.value == "idle"
 
 
-@pytest.mark.parametrize("capability,action", [("light", "on"), ("light", "off"), ("speaker", "on")])
-def test_FR07_output_completion_is_success(make, capability, action):
+@pytest.mark.parametrize("kind,action", [("light", "on"), ("light", "off"), ("speaker", "on")])
+def test_FR07_output_completion_is_success(make, kind, action):
     """실제 상태를 관측하지 않아도 출력 완료는 성공이다. IR 무드등도 같다."""
-    node = make(capability, name=capability + action)
+    node = make(kind, name=kind + action)
     node.handle_command(cmd(node, action=action))
     assert states(node.finish()) == [("succeeded", None)]
     assert node.last_output == action
@@ -236,7 +314,7 @@ def test_NFR10_eight_device_scenarios():
     assert {d.place for d in devices} == {"place-a", "place-b"}
     by_kind = {}
     for d in devices:
-        by_kind.setdefault((d.place, d.capability), []).append(d.node_id)
+        by_kind.setdefault((d.place, d.descriptor.kind), []).append(d.node_id)
     assert {k: len(v) for k, v in by_kind.items()} == {
         ("place-a", "locker"): 3, ("place-a", "light"): 3, ("place-a", "speaker"): 1,
         ("place-b", "light"): 1}
@@ -305,8 +383,7 @@ def wait_for(predicate, timeout=2.0):
 def device(tmp_path):
     secret = tmp_path / ".env.node-locker-1"
     secret.write_text("node-private-password\n", encoding="utf-8")
-    node = SimNode("locker-1", "locker", "rental", CommandStore(tmp_path / "d.sqlite3"),
-                   Scenario(actuation_sec=0))
+    node = SimNode("locker-1", "locker", CommandStore(tmp_path / "d.sqlite3"), Scenario(actuation_sec=0))
     created = SimDevice(node, BrokerConfig("127.0.0.1", 1883, 30, 1, 4),
                         Credentials("locker-1", secret),
                         Settings(rssi_frame_sec=5.0, status_report_sec=5.0, beacon_recent_sec=5.0),

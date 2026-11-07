@@ -1,28 +1,32 @@
 #pragma once
-// MQTT v2 `cmd` checks that do not depend on the board. The ledger lookup runs before these.
+// MQTT `cmd` checks that do not depend on the board. The ledger lookup runs before these.
 #include <ArduinoJson.h>
 #include <string>
 
+#include "np_descriptor.h"
 #include "np_device.h"
 
 namespace np {
 
-// Every message, in both directions. Other versions are rejected, never reinterpreted.
+// Messages other than `announce` and `cmd` (status, rssi, result, time_request, time, occupancy, restart).
+// Other versions are rejected, never reinterpreted.
 constexpr int SCHEMA_VERSION = 2;
+// `announce` carries the declaration and `cmd` carries `arguments` (#245, device-protocol.md).
+constexpr int DESCRIPTOR_SCHEMA_VERSION = 3;
 
 struct CommandContext {
-    std::string nodeId, session, capability;
-    bool connected = false;
-    bool clockTrusted = false;
-    double nowSec = 0.0;       // UTC seconds from the synchronized wall clock.
-    double maxErrorSec = 0.0;  // Bound from the accepted MQTT time reply (#236).
-    int lightMaxLevel = 0;     // Firmware output limit for `parameters.brightness`; 0 accepts no parameters.
-    bool lightColor = false;   // Whether `parameters.color` may be other than white.
-    int speakerMaxVolume = 0;  // Firmware limit for `parameters.volume`; 0 accepts no speaker parameters.
+    CommandContext()
+        : descriptor(nullptr), connected(false), clockTrusted(false), nowSec(0.0), maxErrorSec(0.0) {}
+    std::string nodeId, session;
+    const Descriptor* descriptor;  // The built-in declaration; null or unloaded accepts no action.
+    bool connected;
+    bool clockTrusted;
+    double nowSec;       // UTC seconds from the synchronized wall clock.
+    double maxErrorSec;  // Bound from the accepted MQTT time reply (#236).
 };
 
 // Returns nullptr when the command may run now, else the rejection code.
-// Order: format, target connection, action, parameters, clock trust, validity window.
+// Order: format, target connection, action, arguments, clock trust, validity window.
 const char* validateCommand(JsonDocument& command, const CommandContext& context);
 
 // MQTT `restart` (#235, architecture.md §5 MQTT 8절). nullptr when the node may restart now, else why not.
@@ -32,10 +36,11 @@ const char* validateRestart(JsonDocument& restart, const CommandContext& context
     std::string& restartId);
 
 // Content fields exclude publication/session metadata; their original strings are preserved.
-// `parameters` joins the content only when present, so records without it compare as before.
+// `arguments` joins the content only when present, as [key, value] pairs sorted by key, so records
+// without it compare as before and key order does not matter (spec decision 7).
 std::string canonicalContent(JsonDocument& command);
 
-// The output request for a validated command; `parameters` becomes a light or speaker actuation.
+// The output request for a validated command: `brightness`, `color` and `volume` arguments, each when given.
 Actuation commandActuation(const std::string& commandId, JsonDocument& command);
 
 }  // namespace np

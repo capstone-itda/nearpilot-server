@@ -1,9 +1,13 @@
-"""Virtual device logic for MQTT v2, independent of the MQTT client.
+"""Virtual device logic for MQTT, independent of the MQTT client.
 
 Methods return outbound messages as (kind, body) pairs; `device.py` publishes
 them. `succeeded` means the virtual control signal output finished and the
 result was stored; no physical state is observed or reported (2026-10-26).
 The simulator shares the server PC clock (#140).
+
+Like the reference firmware, a device announces its declaration with MQTT v3 and
+checks every command's action and arguments against it (#245); status, RSSI and
+results stay v2.
 """
 
 from __future__ import annotations
@@ -16,10 +20,15 @@ import math
 import threading
 from uuid import uuid4
 
+from nearpilot.shared.descriptor import DeviceDescriptor, legacy_descriptor, parse_descriptor, validate_arguments
+from nearpilot.shared.enums import Occupancy
 from tools.node_sim.store import CommandRecord, CommandStore, StorageError
 
-SCHEMA_VERSION = 2
-ACTIONS = {"locker": ("open",), "light": ("on", "off"), "speaker": ("on", "off")}
+SCHEMA_VERSION = 2  # status, rssi, result
+DESCRIPTOR_SCHEMA_VERSION = 3  # announce and cmd (#245, device-protocol.md)
+# Template names and their occupancy. The declaration is the one a v2 simulator's announce became on the
+# server, so a v3 simulator keeps the trust of an existing test database (spec decision 10).
+TEMPLATES = {"locker": Occupancy.RENTAL, "light": Occupancy.SHARED, "speaker": Occupancy.SHARED}
 FINAL_STATES = ("succeeded", "failed", "unknown")
 COMMAND_FIELDS = ("node_id", "action", "target_session_id", "issued_at", "expires_at")
 
@@ -46,8 +55,23 @@ def _parse_time(value: object) -> datetime | None:
     return parsed if parsed.utcoffset() is not None else None
 
 
-def _canonical(data: dict, fields: tuple[str, ...]) -> str:
-    return json.dumps({name: data.get(name) for name in fields}, sort_keys=True)
+def sim_descriptor(value: object) -> DeviceDescriptor:
+    """A template name (`locker`, `light`, `speaker`) or a declaration object. ValueError otherwise."""
+    if isinstance(value, DeviceDescriptor):
+        return value
+    if isinstance(value, str):
+        if value not in TEMPLATES:
+            raise ValueError("Unknown descriptor template")
+        return legacy_descriptor(value, TEMPLATES[value])
+    return parse_descriptor(value)  # DescriptorError is a ValueError
+
+
+def _canonical(data: dict) -> str:
+    """Content of a command. `arguments` joins only when present, so records without it compare as before."""
+    content = {name: data.get(name) for name in COMMAND_FIELDS}
+    if "arguments" in data:
+        content["arguments"] = data["arguments"]
+    return json.dumps(content, sort_keys=True)
 
 
 @dataclass(frozen=True)
@@ -87,14 +111,11 @@ class Scenario:
 class SimNode:
     """One virtual device. Command intake, busy check and start are serialized."""
 
-    def __init__(self, node_id: str, capability: str, occupancy: str, store: CommandStore,
+    def __init__(self, node_id: str, descriptor: DeviceDescriptor | str | dict, store: CommandStore,
                  scenario: Scenario, *, clock: Callable[[], datetime] = utc_now,
                  new_id: Callable[[], str] = lambda: str(uuid4())):
-        if capability not in ACTIONS or occupancy not in ("rental", "shared"):
-            raise ValueError("Unsupported capability or occupancy")
         self.node_id = node_id
-        self.capability = capability
-        self.occupancy = occupancy
+        self.descriptor = sim_descriptor(descriptor)
         self.store = store
         self.scenario = scenario
         self.busy = False  # A control signal output is in progress.
@@ -114,6 +135,14 @@ class SimNode:
             store.update_command(unknown)
             self._recovered.append(unknown)
         store.fail_writes = scenario.storage_error
+
+    @property
+    def kind(self) -> str:
+        return self.descriptor.kind
+
+    @property
+    def occupancy(self) -> str:
+        return self.descriptor.occupancy.value
 
     # ── messages ────────────────────────────────────────────────────
 
@@ -140,8 +169,8 @@ class SimNode:
         with self._lock:
             self.session_id = str(uuid4())
             self._seq.clear()
-            messages = [self._message("announce", capability=self.capability,
-                                      occupancy=self.occupancy)]
+            messages = [self._message("announce", schema_version=DESCRIPTOR_SCHEMA_VERSION,
+                                      descriptor=self.descriptor.to_json())]
             messages += [self._result(record) for record in self._recovered]
             self._recovered = []
             return messages
@@ -169,7 +198,7 @@ class SimNode:
         command_id = data.get("command_id") if isinstance(data, dict) else None
         if not isinstance(command_id, str) or not command_id:
             return [], False  # No readable command ID to report against.
-        content = _canonical(data, COMMAND_FIELDS)
+        content = _canonical(data)
         with self._lock:
             try:
                 record = self.store.command(command_id)
@@ -216,15 +245,19 @@ class SimNode:
             return messages, True
 
     def _invalid(self, data: dict) -> str | None:
-        if data.get("schema_version") != SCHEMA_VERSION or data.get("node_id") != self.node_id:
+        if data.get("schema_version") != DESCRIPTOR_SCHEMA_VERSION or data.get("node_id") != self.node_id:
             return "INVALID_MESSAGE"
         issued, expires = _parse_time(data.get("issued_at")), _parse_time(data.get("expires_at"))
         if issued is None or expires is None or issued >= expires:
             return "INVALID_MESSAGE"
         if data.get("target_session_id") != self.session_id:
             return "SESSION_MISMATCH"
-        if data.get("action") not in ACTIONS[self.capability]:
+        action = data.get("action")
+        spec = self.descriptor.action(action) if isinstance(action, str) else None
+        if spec is None:
             return "UNSUPPORTED_ACTION"
+        if validate_arguments(spec, data.get("arguments")) is not None:
+            return "UNSUPPORTED_PARAMETER"
         now = self._clock()
         if now >= expires:
             return "COMMAND_EXPIRED"

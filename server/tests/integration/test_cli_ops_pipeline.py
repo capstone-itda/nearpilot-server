@@ -226,8 +226,7 @@ class Collector:
 def use_clock(broker: SimBroker, clock: FakeClock) -> None:
     """시뮬레이터 기기가 `sent_at`, `observed_at`, `frame_ts` 를 테스트 시계로 쓰게 한다."""
     for node_id, node in list(broker.nodes.items()):
-        broker.nodes[node_id] = SimNode(node.node_id, node.capability, node.occupancy, node.store, node.scenario,
-                                        clock=clock.now)
+        broker.nodes[node_id] = SimNode(node.node_id, node.descriptor, node.store, node.scenario, clock=clock.now)
 
 
 # ── 기대값 ────────────────────────────────────────────────────────────

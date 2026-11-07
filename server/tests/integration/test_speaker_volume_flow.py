@@ -15,14 +15,17 @@ from _runtime import TOKENS, VISITOR_A, McpCaller, asgi_post, query, wait_until
 from test_server_assembly import world  # noqa: F401  (fixture)
 
 from nearpilot.runtime import create_app
+from nearpilot.shared.descriptor import legacy_descriptor
+from nearpilot.shared.enums import Occupancy
 
 CONTROLS = {"volume_max": 20}
 
 
 def announce_controls(w, controls):
+    """기기를 인자를 받는 v3 펌웨어로 올린다: 시뮬레이터의 선언을 바꾸고 v3로 다시 발표한다 (#245)."""
     node = w.broker.nodes["speaker-1"]
-    w.broker.report("speaker-1", [node._message("announce", capability="speaker", occupancy="shared",
-                                                controls=controls)])
+    node.descriptor = legacy_descriptor("speaker", Occupancy.SHARED, **controls)
+    w.broker.report("speaker-1", [node._message("announce", schema_version=3, descriptor=node.descriptor.to_json())])
     wait_until(lambda: _stored_controls(w) == controls)
     _retrust(w, "speaker-1")
 
@@ -118,12 +121,12 @@ def test_FR09_runtime_speaker_volume_reaches_device(world, caplog):  # noqa: F81
 
     # 거부한 요청은 명령을 만들지 않는다. 생략한 음량은 마지막 성공 on 의 값을 따르고, off 는 인자가 없다.
     commands = speaker_commands(w)
-    assert [(c["action"], c.get("parameters")) for c in commands] == [
+    assert [(c["action"], c.get("arguments")) for c in commands] == [
         ("on", {"volume": 12}), ("on", {"volume": 12}), ("off", None)]
-    assert "parameters" not in commands[-1]
+    assert "arguments" not in commands[-1]
     stored = [json.loads(r["arguments"]) if r["arguments"] else None
               for r in query(w.db, "SELECT arguments FROM node_command ORDER BY rowid")]
-    assert stored == [c.get("parameters") for c in commands]
+    assert stored == [c.get("arguments") for c in commands]
 
 
 def test_FR09_runtime_speaker_without_controls_stays_plain(world):  # noqa: F811
@@ -146,7 +149,7 @@ def test_FR09_runtime_speaker_without_controls_stays_plain(world):  # noqa: F811
     assert plain["verdict"] == "OK"
     # 인자를 선언하지 않은 스피커에 인자를 주면 스키마 위반이다 (FR-09).
     assert (with_args["verdict"], with_args["reason"]) == ("DENY", "INVALID_INPUT")
-    assert ["parameters" in c for c in speaker_commands(w)] == [False]
+    assert ["arguments" in c for c in speaker_commands(w)] == [False]
 
 
 def test_FR22_runtime_same_request_id_other_volume_conflicts(world):  # noqa: F811
@@ -172,4 +175,4 @@ def test_FR22_runtime_same_request_id_other_volume_conflicts(world):  # noqa: F8
     assert first["verdict"] == "OK"
     assert (other["verdict"], other["reason"]) == ("DENY", "REQUEST_ID_CONFLICT")
     assert repeat == first  # 같은 입력의 재전송은 저장한 결과다
-    assert [c["parameters"] for c in speaker_commands(w)] == [{"volume": 12}]  # 충돌과 재전송은 명령을 더하지 않는다
+    assert [c["arguments"] for c in speaker_commands(w)] == [{"volume": 12}]  # 충돌과 재전송은 명령을 더하지 않는다

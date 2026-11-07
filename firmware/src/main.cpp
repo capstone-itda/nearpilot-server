@@ -1,4 +1,5 @@
-// NearPilot node: iBeacon -> MQTT v2, CORE command -> serial / optional GPIO.
+// NearPilot node: iBeacon -> MQTT, CORE command -> serial / optional GPIO.
+// announce and cmd are MQTT v3 with the built-in declaration (#245); the other messages stay v2.
 // Board glue only: validation, clock trust, records and readiness live in lib/.
 // Success means the control signal was emitted and stored, not an observed physical state.
 #include <Arduino.h>
@@ -20,6 +21,8 @@
 #include "np_clock.h"
 #include "np_command.h"
 #include "np_config.h"
+#include "np_descriptor.h"
+#include "np_descriptors.h"
 #include "np_executor.h"
 #include "np_ledger.h"
 #include "np_nvs_store.h"
@@ -90,6 +93,11 @@ static_assert(NP_SPEAKER_FOLDER >= 1 && NP_SPEAKER_FOLDER <= 99, "DFPlayer folde
 #endif
 static_assert(NP_SPEAKER_MAX_VOLUME >= 1 && NP_SPEAKER_MAX_VOLUME <= 30 &&
     NP_SPEAKER_VOLUME <= NP_SPEAKER_MAX_VOLUME, "speaker output limit");
+// The build profile picks the built-in declaration (platformio.ini, spec decision 1).
+// The plain esp32dev build emits serial output only and declares a light without arguments.
+#ifndef NP_DESCRIPTOR
+#define NP_DESCRIPTOR np::LIGHT_DESCRIPTOR
+#endif
 
 // Per-device values are injected over USB and kept in their own NVS namespace.
 // The command record namespace is never opened for writing by provisioning.
@@ -107,6 +115,9 @@ np::LayeredRecordStore records(recordStore, legacyStore);
 np::Ledger ledger(records);
 String session;
 bool announced = false;
+// Loaded and checked once at boot. A declaration that fails is never announced and accepts no command.
+np::Descriptor descriptor;
+const char* descriptorProblem = "not_loaded";
 bool watchdogArmed = false;
 
 // Every network call is bounded (TCP connect or NP_MQTT_IO_TIMEOUT_MS); feed after each one.
@@ -166,28 +177,33 @@ bool clockTrusted() { return configured && np::clockTrusted(clockState, millis()
 
 unsigned long clockAgeMs() { return clockState.synchronized ? millis() - clockState.syncedMs : 0; }
 
-// Only a light build with the ring takes brightness and color (FR-09).
-bool lightControls() { return NP_LIGHT_RING_PIN >= 0 && config.capability == "light"; }
-
-// Only a speaker build with the DFPlayer takes a volume (FR-09).
-bool speakerControls() { return NP_SPEAKER_TX_PIN >= 0 && config.capability == "speaker"; }
+// The declaration must match the build's output and stay within its output limits (spec decision 3):
+// a servo build is a locker, a ring build a light, a DFPlayer build a speaker.
+const char* checkDescriptor() {
+    if (const char* reason = descriptor.load(NP_DESCRIPTOR)) return reason;
+    const char* expected = NP_SERVO_PIN >= 0 ? "locker" : NP_LIGHT_RING_PIN >= 0 ? "light"
+        : NP_SPEAKER_TX_PIN >= 0 ? "speaker" : nullptr;
+    if (expected && descriptor.kind() != expected) return "kind_differs_from_output";
+    double limit = 0;
+    if (descriptor.maximum("on", "brightness", limit) && (NP_LIGHT_RING_PIN < 0 || limit > NP_LIGHT_RING_MAX_LEVEL))
+        return "brightness_above_output_limit";
+    if (descriptor.maximum("on", "volume", limit) && (NP_SPEAKER_TX_PIN < 0 || limit > NP_SPEAKER_MAX_VOLUME))
+        return "volume_above_output_limit";
+    if (np::announceBytes(descriptor, config.nodeId) > np::ANNOUNCE_MAX_BYTES) return "announce_too_large";
+    return nullptr;
+}
 
 np::CommandContext liveContext() {
     timeval current;
     gettimeofday(&current, nullptr);
     np::CommandContext context;
     context.nodeId = config.nodeId;
-    context.capability = config.capability;
+    context.descriptor = descriptorProblem ? nullptr : &descriptor;
     context.session = session.c_str();
     context.connected = mqtt.connected();
     context.clockTrusted = clockTrusted();
     context.nowSec = current.tv_sec + current.tv_usec / 1e6;
     context.maxErrorSec = clockState.maxErrorSec;
-    if (lightControls()) {
-        context.lightMaxLevel = NP_LIGHT_RING_MAX_LEVEL;
-        context.lightColor = true;
-    }
-    if (speakerControls()) context.speakerMaxVolume = NP_SPEAKER_MAX_VOLUME;
     return context;
 }
 
@@ -249,8 +265,8 @@ void clockStep() {
     requestTime();
 }
 
-void common(JsonDocument& doc, int channel) {
-    doc["schema_version"] = np::SCHEMA_VERSION;
+void common(JsonDocument& doc, int channel, int version = np::SCHEMA_VERSION) {
+    doc["schema_version"] = version;
     doc["node_id"] = config.nodeId;
     doc["session_id"] = session;
     doc["seq"] = ++seq[channel];
@@ -268,19 +284,13 @@ bool report(const char* kind, JsonDocument& doc, int qos, bool retained = false)
     return sent;  // PUBACK alone is not command success.
 }
 
+// The built-in declaration, checked at boot (FR-04). Without it the node stays unannounced: no status,
+// RSSI or command follows (DESCRIPTOR_INVALID at boot names the reason).
 bool announce() {
+    if (descriptorProblem) return false;
     JsonDocument doc;
-    common(doc, 0);
-    np::announceConfig(doc, config);
-    if (lightControls()) {
-        JsonObject controls = doc["controls"].to<JsonObject>();
-        controls["brightness_max"] = NP_LIGHT_RING_MAX_LEVEL;
-        controls["color"] = true;
-    }
-    if (speakerControls()) {
-        JsonObject controls = doc["controls"].to<JsonObject>();
-        controls["volume_max"] = NP_SPEAKER_MAX_VOLUME;
-    }
+    common(doc, 0, np::DESCRIPTOR_SCHEMA_VERSION);
+    doc["descriptor"] = descriptor.json();
     return report("announce", doc, 1, true);
 }
 
@@ -413,10 +423,12 @@ void showLight(uint32_t rgb) {
 #endif
 }
 
+// An omitted brightness is the plain level and an omitted color white (spec decision 5);
+// without arguments this equals lightRingRgb(true, NP_LIGHT_RING_LEVEL).
 uint32_t lightOutput(const np::Actuation& request) {
     if (request.action != "on") return 0;
-    return request.light ? np::lightRingScaled(request.color, request.brightness)
-                         : np::lightRingRgb(true, NP_LIGHT_RING_LEVEL);
+    return np::lightRingScaled(request.hasColor ? request.color : 0xFFFFFFUL,
+                               request.hasBrightness ? request.brightness : NP_LIGHT_RING_LEVEL);
 }
 
 const char* outputMode() {
@@ -437,10 +449,10 @@ void signalOutput(const np::Actuation& request) {
         // A shared speaker keeps playing when someone else turns it on again; a new volume still applies.
         if (request.action == "off") speakerSend(np::kDfplayerStop, 0);
         else {
-            if (request.speaker) speakerSend(np::kDfplayerVolume, request.volume);
+            if (request.hasVolume) speakerSend(np::kDfplayerVolume, request.volume);  // Omitted: unchanged.
             if (speakerPlaying) Serial.println("SPEAKER_ALREADY_PLAYING frame_skipped=1");
             else {
-                if (request.speaker) delay(NP_SPEAKER_FRAME_GAP_MS);  // Consecutive frames need the gap, as at boot.
+                if (request.hasVolume) delay(NP_SPEAKER_FRAME_GAP_MS);  // Consecutive frames need the gap, as at boot.
                 speakerSend(np::kDfplayerLoopFolder, NP_SPEAKER_FOLDER);
             }
         }
@@ -450,20 +462,20 @@ void signalOutput(const np::Actuation& request) {
         request.commandId.c_str(), request.action.c_str(),
         NP_SERVO_PIN >= 0 ? "servo" : NP_LIGHT_RING_PIN >= 0 ? "light_ring" : NP_SPEAKER_TX_PIN >= 0 ? "speaker"
         : NP_OUTPUT_PIN >= 0 ? "gpio" : "serial_only", (unsigned long)rgb,
-        request.speaker ? int(request.volume) : -1);
+        request.hasVolume ? int(request.volume) : -1);
 }
 
-// validateCommand rejects actions and parameters the build does not support before output.
+// validateCommand rejects actions and arguments outside the declaration before output.
 // The board actuator checks the output limits once more, so no path reaches the ring or the speaker above them.
 class BoardActuator : public np::Actuator {
 public:
     np::OutputResult output(const np::Actuation& request) override {
-        if (request.light && (!lightControls() || request.brightness > NP_LIGHT_RING_MAX_LEVEL)) {
+        if (request.hasBrightness && (NP_LIGHT_RING_PIN < 0 || request.brightness > NP_LIGHT_RING_MAX_LEVEL)) {
             Serial.printf("LIGHT_LIMIT_REFUSED command_id=%s brightness=%u\n",
                 request.commandId.c_str(), unsigned(request.brightness));
             return np::OutputResult::Failed;
         }
-        if (request.speaker && (!speakerControls() || request.volume > NP_SPEAKER_MAX_VOLUME)) {
+        if (request.hasVolume && (NP_SPEAKER_TX_PIN < 0 || request.volume > NP_SPEAKER_MAX_VOLUME)) {
             Serial.printf("SPEAKER_LIMIT_REFUSED command_id=%s volume=%u\n",
                 request.commandId.c_str(), unsigned(request.volume));
             return np::OutputResult::Failed;
@@ -866,6 +878,12 @@ void setup() {
     Serial.printf("NODE_START node=%s config=%s generation=%lu mode=%s storage=%d reset_reason=%s\n",
         configured ? config.nodeId.c_str() : "-", loaded, config.generation,
         outputMode(), storageReady, resetReason());
+    descriptorProblem = checkDescriptor();
+    if (descriptorProblem) Serial.printf("DESCRIPTOR_INVALID reason=%s announce=0\n", descriptorProblem);
+    else Serial.printf("DESCRIPTOR kind=%s occupancy=%s model=%s firmware=%s actions=%u\n",
+        descriptor.kind().c_str(), descriptor.json()["occupancy"].as<const char*>(),
+        descriptor.json()["vendor"]["model"].as<const char*>(), descriptor.json()["vendor"]["firmware"].as<const char*>(),
+        unsigned(descriptor.json()["actions"].size()));
     Serial.printf("RECORD_STORE primary=%d legacy=%d slots=%d legacy_slots=%d free_entries=%u\n",
         recordStore.ready(), legacyStore.ready(), NP_MAX_COMMAND_RECORDS, NP_LEGACY_COMMAND_RECORDS,
         unsigned(recordStore.freeEntries()));

@@ -6,7 +6,7 @@
   [beacon]           uuid, major. 모든 사용자의 비콘 공통 값이다
   [server_settings]  서버 설정 `[settings]`를 덮어쓸 값(선택). 키는 `Settings`의 필드다
   [[users]]          user_id, role(owner|visitor), minor
-  [[nodes]]          node_id, capability, occupancy, mode(선택, 기본 open), trusted(선택, 기본 true),
+  [[nodes]]          node_id, kind, occupancy, mode(선택, 기본 open), trusted(선택, 기본 true),
                      approval_mode(선택, 기본 one_time), approval_ttl_sec(선택), max_uses(선택). 뒤 셋은 정책 시드 값이다
   [counts]           지표별 횟수. 값은 1 이상의 정수다
   [acceptance]       통과 기준. 값은 0 이상의 수다. 키가 `_rate`로 끝나면 0~1, `_sec`로 끝나면 0보다 크다
@@ -29,6 +29,7 @@ from typing import Any
 
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import AccessMode, ApprovalMode, Occupancy, Role
+from tools.node_sim.node import TEMPLATES
 
 # 기기 ID는 MQTT 토픽, Mosquitto 계정 이름, ACL, 파일 이름에 그대로 쓰인다.
 _NODE_ID = re.compile(r"[A-Za-z0-9._-]+")
@@ -40,7 +41,7 @@ _TOP_KEYS = {
 }
 _OPTIONAL_TOP_KEYS = {"server_settings"}
 _USER_KEYS = ("user_id", "role", "minor")
-_NODE_KEYS = ("node_id", "capability", "occupancy", "mode", "trusted", "approval_mode", "approval_ttl_sec", "max_uses")
+_NODE_KEYS = ("node_id", "kind", "occupancy", "mode", "trusted", "approval_mode", "approval_ttl_sec", "max_uses")
 _OPTIONAL_NODE_KEYS = ("mode", "trusted", "approval_mode", "approval_ttl_sec", "max_uses")
 
 
@@ -53,7 +54,7 @@ class NodeSpec:
     """시뮬레이터 기기 하나."""
 
     node_id: str
-    capability: str  # locker | light | speaker
+    kind: str  # 시뮬레이터 선언 템플릿 이름 locker | light | speaker (#245)
     occupancy: str  # rental | shared
     mode: str = "open"  # open | restricted
     trusted: bool = True
@@ -256,7 +257,7 @@ def _users(value: Any, problems: list[str]) -> tuple[UserSpec, ...]:
     return tuple(user for _, user in users)
 
 
-_SIM_KINDS = ("locker", "light", "speaker")
+_SIM_KINDS = tuple(TEMPLATES)
 
 
 def _nodes(value: Any, problems: list[str]) -> tuple[NodeSpec, ...]:
@@ -264,7 +265,7 @@ def _nodes(value: Any, problems: list[str]) -> tuple[NodeSpec, ...]:
     nodes = []
     for where, row in rows:
         node_id = _take(problems, f"{where}.node_id", _node_id, row.get("node_id"))
-        capability = _take(problems, f"{where}.capability", _kind, row.get("capability"))
+        kind = _take(problems, f"{where}.kind", _kind, row.get("kind"))
         occupancy = _take(problems, f"{where}.occupancy", partial(_member, Occupancy), row.get("occupancy"))
         mode = _take(problems, f"{where}.mode", partial(_member, AccessMode), row.get("mode", "open"))
         trusted = _take(problems, f"{where}.trusted", _boolean, row.get("trusted", True))
@@ -273,7 +274,10 @@ def _nodes(value: Any, problems: list[str]) -> tuple[NodeSpec, ...]:
         # 없는 키는 None이라서 `_take`가 건너뛴다
         ttl = _take(problems, f"{where}.approval_ttl_sec", partial(_integer, minimum=1), row.get("approval_ttl_sec"))
         max_uses = _take(problems, f"{where}.max_uses", partial(_integer, minimum=1), row.get("max_uses"))
-        nodes.append((where, NodeSpec(node_id, capability, occupancy, mode, trusted, approval_mode, ttl, max_uses)))
+        # 가상 기기는 템플릿 선언을 발표한다. 템플릿이 있는 조합만 받는다 (specs/iot-firmware-descriptor 결정 11)
+        if kind is not None and occupancy is not None and TEMPLATES[kind].value != occupancy:
+            problems.append(f"{where}.occupancy: {kind}의 점유 방식은 {TEMPLATES[kind].value}다 ({occupancy!r:.40})")
+        nodes.append((where, NodeSpec(node_id, kind, occupancy, mode, trusted, approval_mode, ttl, max_uses)))
     _report_duplicates(((f"{where}.node_id", node.node_id) for where, node in nodes), problems)
     return tuple(node for _, node in nodes)
 
@@ -285,7 +289,7 @@ def _node_id(value: Any) -> str:
 
 
 def _kind(value: Any) -> str:
-    """시뮬레이터 기기의 종류. 시뮬레이터는 v2 기능 세 가지만 흉내 낸다."""
+    """시뮬레이터 기기의 종류. 시뮬레이터의 선언 템플릿 이름이다."""
     if value in _SIM_KINDS:
         return value
     raise ValueError(f"{', '.join(_SIM_KINDS)} 중 하나여야 한다 ({value!r:.40})")

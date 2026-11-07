@@ -12,7 +12,8 @@ from pathlib import Path
 
 from nearpilot.shared.config import Settings
 from tools.node_sim.device import BrokerConfig, Credentials, SimDevice
-from tools.node_sim.node import ACTIONS, Beacon, Scenario, SimNode
+from nearpilot.shared.descriptor import DeviceDescriptor
+from tools.node_sim.node import Beacon, Scenario, SimNode, sim_descriptor
 from tools.node_sim.store import CommandStore
 
 REPORTS = ("announce", "rssi", "status", "result")
@@ -38,8 +39,7 @@ class ConfigError(ValueError):
 class DeviceConfig:
     node_id: str
     place: str
-    capability: str
-    occupancy: str
+    descriptor: DeviceDescriptor  # From a template name or a declaration object (spec decision 10).
     username: str
     password_file: Path = field(repr=False)
     store: Path
@@ -64,8 +64,8 @@ def load_config(path: str | Path) -> FleetConfig:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         fleet = FleetConfig(BrokerConfig(**data["broker"]), Settings(**data.get("settings", {})),
             tuple(DeviceConfig(
-                node_id=item["node_id"], place=item["place"], capability=item["capability"],
-                occupancy=item["occupancy"], username=item["username"],
+                node_id=item["node_id"], place=item["place"], descriptor=sim_descriptor(item["descriptor"]),
+                username=item["username"],
                 password_file=Path(item["password_file"]), store=Path(item["store"]),
                 scenario=_scenario(item["scenario"])) for item in data["devices"]))
     except (OSError, ValueError, KeyError, TypeError) as error:
@@ -75,17 +75,14 @@ def load_config(path: str | Path) -> FleetConfig:
         if len(values) != len(set(values)):
             raise ConfigError(f"Duplicate device {key}")
     for device in fleet.devices:
-        if (not device.node_id or any(c in device.node_id for c in "/+#\x00")
-                or device.capability not in ACTIONS
-                or device.occupancy not in ("rental", "shared") or not device.username):
+        if not device.node_id or any(c in device.node_id for c in "/+#\x00") or not device.username:
             raise ConfigError("Invalid device entry")
     return fleet
 
 
 def build_device(fleet: FleetConfig, device: DeviceConfig, **kwargs) -> SimDevice:
     """A fresh device over its persistent store; the same store models a restart."""
-    node = SimNode(device.node_id, device.capability, device.occupancy,
-                   CommandStore(device.store), device.scenario)
+    node = SimNode(device.node_id, device.descriptor, CommandStore(device.store), device.scenario)
     return SimDevice(node, fleet.broker, Credentials(device.username, device.password_file),
                      fleet.settings, **kwargs)
 

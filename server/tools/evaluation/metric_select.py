@@ -265,7 +265,7 @@ def _visitors(config: EvalConfig, count: int, metric: str) -> list[str]:
 
 def _lockers(config: EvalConfig, count: int, metric: str) -> list[str]:
     """설정의 trusted 사물함 전부. `count`대보다 적으면 지표 `metric`을 돌릴 수 없다."""
-    lockers = [node.node_id for node in config.nodes if node.capability == "locker" and node.trusted]
+    lockers = [node.node_id for node in config.nodes if node.kind == "locker" and node.trusted]
     if len(lockers) < count:
         raise EvalConfigError(f"nodes: trusted 사물함이 {count}대 이상 있어야 한다 (지표 {metric}의 장면에서 방문자가 앞에 선다)")
     return lockers

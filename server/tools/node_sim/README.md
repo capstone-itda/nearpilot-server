@@ -1,6 +1,7 @@
 # MQTT 기기 시뮬레이터
 
-실제 ESP32 없이 MQTT v2 계약을 확인하는 가상 기기다. 계약과 결정은 `specs/iot-node-simulator/spec.md`에 있다.
+실제 ESP32 없이 MQTT 계약을 확인하는 가상 기기다. 계약과 결정은 `specs/iot-node-simulator/spec.md`와 `specs/iot-firmware-descriptor/spec.md`에 있다.
+참조 펌웨어처럼 기기 선언을 v3 `announce`로 발표하고, v3 `cmd`의 동작과 `arguments`를 선언으로 검사한다. 상태·RSSI·결과는 v2다.
 2026-10-26 결정에 따라 `succeeded`는 가상 제어 신호 출력 완료다. 상태 보고는 `command_state`만 담고 반납 검사는 처리하지 않는다.
 
 ## 실행
@@ -23,7 +24,18 @@
 |---|---|
 | `broker` | 주소·포트·keepalive·재접속 최소·최대 대기다. 시간 값은 모두 필수다 |
 | `settings` | `nearpilot.shared.config.Settings`의 덮어쓸 값이다. 상태·RSSI 보고 주기에 쓴다 |
-| `devices[]` | 기기 ID·장소·기능·점유 방식·계정·비밀번호 파일·명령 기록 파일·시나리오다 |
+| `devices[]` | 기기 ID·장소·선언(`descriptor`)·계정·비밀번호 파일·명령 기록 파일·시나리오다 |
+
+`descriptor`는 템플릿 이름이나 선언 객체(`docs/device-protocol.md` 3절)다.
+
+| 템플릿 | 선언 |
+|---|---|
+| `locker` | `rental`. `open`, `close`(reoperate) |
+| `light` | `shared`. 인자 없는 `on`, `off`(deactivate) |
+| `speaker` | `shared`. 인자 없는 `on`, `off`(deactivate) |
+
+템플릿은 v2 시뮬레이터의 발표가 서버에서 바뀌던 선언과 같다. 그래서 기존 시험 DB의 신뢰가 그대로 유지된다.
+인자를 받는 기기나 새 종류는 선언 객체로 준다. 선언 객체가 공개 규칙을 어기면 설정 오류다.
 
 예시는 장소 `place-a`의 사물함 3개·조명 3개·스피커 1개와 `place-b`의 무드등 1개다 (NFR-10).
 

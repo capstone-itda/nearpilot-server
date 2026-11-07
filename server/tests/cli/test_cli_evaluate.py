@@ -63,12 +63,12 @@ minor = 2
 
 [[nodes]]
 node_id = "locker-1"
-capability = "locker"
+kind = "locker"
 occupancy = "rental"
 
 [[nodes]]
 node_id = "light-1"
-capability = "light"
+kind = "light"
 occupancy = "shared"
 
 [counts]

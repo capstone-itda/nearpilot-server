@@ -521,7 +521,7 @@ def test_NFR05_metric_select_rejects_config_it_cannot_run():
     fewer_visitors = dataclasses.replace(config, users=tuple(user for user in config.users if user.user_id != "visitor-3"))
     fewer_lockers = dataclasses.replace(config, nodes=tuple(node for node in config.nodes if node.node_id != "locker-3"))
     no_visitors = dataclasses.replace(config, users=tuple(user for user in config.users if user.role == "owner"))
-    no_lockers = dataclasses.replace(config, nodes=tuple(node for node in config.nodes if node.capability != "locker"))
+    no_lockers = dataclasses.replace(config, nodes=tuple(node for node in config.nodes if node.kind != "locker"))
 
     for broken, run, why in [
         (fewer_visitors, run_metric4, "방문자.*3명"), (fewer_lockers, run_metric4, "사물함이 3대"),

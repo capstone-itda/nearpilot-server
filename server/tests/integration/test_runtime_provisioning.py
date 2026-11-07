@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import fields
 import logging
 from pathlib import Path
 
@@ -11,7 +12,7 @@ import pytest
 from _runtime import make_config
 from nearpilot.runtime.config import ConfigError, ProvisioningConfig, parse_config
 from nearpilot.runtime.provisioning import FleetProvisioningSource, MdnsAdvertiser
-from nearpilot.shared.enums import Occupancy
+from nearpilot.shared.models import ProvisioningBundle
 from nearpilot.shared.interfaces import ProvisioningSource
 
 SECRET = "node-secret-0123456789"
@@ -26,11 +27,14 @@ def write_fleet(folder: Path, devices: list[dict]) -> Path:
 @pytest.fixture
 def fleet(tmp_path):
     path = write_fleet(tmp_path, [
-        {"node_id": "light-1", "capability": "light", "occupancy": "shared"},
-        {"node_id": "locker-1", "capability": "locker", "occupancy": "rental", "username": "acct-locker",
-         "password_file": "secrets/locker.txt"},
-        {"node_id": "bad-1", "capability": "door", "occupancy": "shared"},
+        {"node_id": "light-1"},
+        {"node_id": "locker-1", "username": "acct-locker", "password_file": "secrets/locker.txt"},
+        # 옛 목록의 기능·점유 방식과 시뮬레이터의 선언은 묶음에 쓰지 않는다 (#245)
+        {"node_id": "old-1", "capability": "door", "occupancy": "lease"},
+        {"node_id": "sim-1", "descriptor": "speaker"},
     ])
+    for node in ("old-1", "sim-1"):
+        (tmp_path / f".env.{node}").write_text(SECRET, encoding="utf-8")
     (tmp_path / ".env.light-1").write_text(SECRET + "\n", encoding="utf-8")
     (tmp_path / "secrets").mkdir()
     (tmp_path / "secrets" / "locker.txt").write_text("locker-secret\n", encoding="utf-8")
@@ -45,9 +49,8 @@ def test_NFR12_fleet_source_builds_bundle(fleet):
     target = source(fleet)
     assert isinstance(target, ProvisioningSource)
     bundle = target.bundle("light-1")
-    assert (bundle.node_id, bundle.mqtt_user, bundle.mqtt_password, bundle.mqtt_host, bundle.mqtt_port,
-            bundle.capability, bundle.occupancy) == (
-        "light-1", "light-1", SECRET, "nearpilot.local", 18883, "light", Occupancy.SHARED)
+    assert (bundle.node_id, bundle.mqtt_user, bundle.mqtt_password, bundle.mqtt_host, bundle.mqtt_port) == (
+        "light-1", "light-1", SECRET, "nearpilot.local", 18883)
     assert SECRET not in repr(bundle)  # repr 에 비밀번호를 쓰지 않는다 (NFR-08)
     locker = target.bundle("locker-1")
     assert (locker.mqtt_user, locker.mqtt_password) == ("acct-locker", "locker-secret")
@@ -56,12 +59,21 @@ def test_NFR12_fleet_source_builds_bundle(fleet):
 def test_NFR12_fleet_source_missing_device(fleet, tmp_path, caplog):
     target = source(fleet)
     assert target.bundle("light-9") is None  # 목록에 없다
-    assert target.bundle("bad-1") is None  # 기능이 계약 밖이다
     (tmp_path / ".env.light-1").unlink()
     assert target.bundle("light-1") is None  # 비밀번호 파일이 없다
     fleet.write_text("not json", encoding="utf-8")
     assert target.bundle("locker-1") is None
     assert "secret" not in caplog.text
+
+
+def test_FR12A_fleet_source_ignores_device_kind(fleet):
+    """묶음은 접속 정보뿐이다. 기기 목록의 다른 키는 묶음을 바꾸거나 막지 않는다 (architecture.md §4, #245)."""
+    target = source(fleet)
+    for node in ("old-1", "sim-1"):
+        bundle = target.bundle(node)
+        assert (bundle.node_id, bundle.mqtt_user, bundle.mqtt_password) == (node, node, SECRET)
+    assert [f.name for f in fields(ProvisioningBundle)] == [
+        "node_id", "mqtt_user", "mqtt_password", "mqtt_host", "mqtt_port"]
 
 
 def raw_config(tmp_path, provisioning):
@@ -156,8 +168,7 @@ def test_FR12A_runtime_serves_bundle_and_mdns(tmp_path):
 
     cfg = make_config(tmp_path)
     node_id = next(iter(NODES))
-    capability, occupancy = NODES[node_id]
-    fleet = write_fleet(tmp_path, [{"node_id": node_id, "capability": capability, "occupancy": occupancy}])
+    fleet = write_fleet(tmp_path, [{"node_id": node_id}])
     (tmp_path / f".env.{node_id}").write_text(SECRET, encoding="utf-8")
     cfg = replace(cfg, provisioning=ProvisioningConfig(fleet, "nearpilot", "10.0.0.5"))
     seed(cfg.database.path)

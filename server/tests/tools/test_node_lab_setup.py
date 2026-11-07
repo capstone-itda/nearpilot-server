@@ -7,6 +7,7 @@ import pytest
 
 from nearpilot.runtime import load_config
 from tools.node_lab import setup
+from tools.node_sim import load_config as load_fleet
 
 
 @pytest.fixture
@@ -66,8 +67,10 @@ def test_FR04_init_registers_locker_as_rental(tmp_path, generated):
     folder = setup.initialize(tmp_path / "locker", mode="hardware", host="10.0.0.5", port=18883,
         nodes=["locker-1", "light-1"], beacon_uuid="11111111-2222-3333-4444-555555555555", major=1, minor=2)
     fleet = json.loads((folder / "fleet.json").read_text(encoding="utf-8"))
-    kinds = {d["node_id"]: (d["capability"], d["occupancy"]) for d in fleet["devices"]}
+    kinds = {d.node_id: (d.descriptor.kind, d.descriptor.occupancy.value)
+             for d in load_fleet(folder / "fleet.json").devices}
     assert kinds == {"locker-1": ("locker", "rental"), "light-1": ("light", "shared")}
+    assert all("capability" not in d and "occupancy" not in d for d in fleet["devices"])
     acl = (folder / "broker.acl").read_text(encoding="utf-8")
     assert "user locker-1" in acl
 

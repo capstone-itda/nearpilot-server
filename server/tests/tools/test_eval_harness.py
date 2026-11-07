@@ -108,7 +108,7 @@ def test_NFR13_harness_set_rssi_and_scenario_replace_simulated_scenario(tmp_path
     config = small_config()
     harness = Harness(config, tmp_path / "work", server_root=SERVER)
     store = CommandStore(tmp_path / "locker-1.sqlite3")
-    node = SimNode("locker-1", "locker", "rental", store, Scenario(actuation_sec=config.actuation_sec))
+    node = SimNode("locker-1", "locker", store, Scenario(actuation_sec=config.actuation_sec))
     harness.nodes["locker-1"] = node
     minor = next(user.minor for user in config.users if user.user_id == "visitor-1")
     try:

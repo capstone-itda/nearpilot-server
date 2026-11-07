@@ -14,14 +14,17 @@ from _runtime import TOKENS, VISITOR_A, McpCaller, query, wait_until
 from test_server_assembly import world  # noqa: F401  (fixture)
 
 from nearpilot.runtime import create_app
+from nearpilot.shared.descriptor import legacy_descriptor
+from nearpilot.shared.enums import Occupancy
 
 RING = {"brightness_max": 64, "color": True}
 
 
 def announce_controls(w, controls):
+    """기기를 인자를 받는 v3 펌웨어로 올린다: 시뮬레이터의 선언을 바꾸고 v3로 다시 발표한다 (#245)."""
     node = w.broker.nodes["light-1"]
-    w.broker.report("light-1", [node._message("announce", capability="light", occupancy="shared",
-                                              controls=controls)])
+    node.descriptor = legacy_descriptor("light", Occupancy.SHARED, **controls)
+    w.broker.report("light-1", [node._message("announce", schema_version=3, descriptor=node.descriptor.to_json())])
     wait_until(lambda: _stored_controls(w) == controls)
     _retrust(w, "light-1")
 
@@ -101,10 +104,10 @@ def test_FR09_runtime_light_setting_reaches_device(world, caplog):  # noqa: F811
     assert out["repeat"] == out["blue"]  # 같은 입력의 재전송은 저장한 결과다
 
     # 거부한 요청은 명령을 만들지 않는다. 생략한 색은 마지막 성공 on 의 값을 따른다.
-    assert [c["parameters"] for c in light_commands(w)] == [
+    assert [c["arguments"] for c in light_commands(w)] == [
         {"brightness": 30, "color": "#0000FF"}, {"brightness": 10, "color": "#0000FF"}]
     stored = [json.loads(r["arguments"]) for r in query(w.db, "SELECT arguments FROM node_command ORDER BY rowid")]
-    assert stored == [c["parameters"] for c in light_commands(w)]
+    assert stored == [c["arguments"] for c in light_commands(w)]
 
 
 def test_FR09_runtime_light_without_controls_stays_plain(world):  # noqa: F811
@@ -127,4 +130,4 @@ def test_FR09_runtime_light_without_controls_stays_plain(world):  # noqa: F811
     assert plain["verdict"] == "OK"
     # 인자를 선언하지 않은 조명에 인자를 주면 스키마 위반이다 (FR-09).
     assert (with_args["verdict"], with_args["reason"]) == ("DENY", "INVALID_INPUT")
-    assert ["parameters" in c for c in light_commands(w)] == [False]
+    assert ["arguments" in c for c in light_commands(w)] == [False]

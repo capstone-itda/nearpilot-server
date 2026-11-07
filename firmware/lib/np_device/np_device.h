@@ -6,24 +6,20 @@
 
 namespace np {
 
-// light is set only for a light `on` that carried validated `parameters` (FR-09):
-// brightness is the per-channel output limit and color is 0xRRGGBB before scaling.
-// speaker is set only for a speaker `on` that carried validated `parameters`: volume is the DFPlayer level.
+// Arguments of a validated command, each set only when the command carried it (#245): brightness is the
+// per-channel output limit, color is 0xRRGGBB before scaling, volume is the DFPlayer level. The board decides
+// the output of an omitted argument (device-protocol.md 3절, spec decision 5).
 struct Actuation {
     Actuation(const std::string& id = "", const std::string& requestedAction = "")
-        : commandId(id), action(requestedAction), light(false), brightness(0), color(0), speaker(false), volume(0) {}
-    Actuation(const std::string& id, const std::string& requestedAction, uint8_t level, uint32_t rgb)
-        : commandId(id), action(requestedAction), light(true), brightness(level), color(rgb), speaker(false),
-          volume(0) {}
-    Actuation(const std::string& id, const std::string& requestedAction, uint8_t speakerVolume)
-        : commandId(id), action(requestedAction), light(false), brightness(0), color(0), speaker(true),
-          volume(speakerVolume) {}
+        : commandId(id), action(requestedAction), hasBrightness(false), brightness(0), hasColor(false), color(0),
+          hasVolume(false), volume(0) {}
     std::string commandId;
     std::string action;
-    bool light;
+    bool hasBrightness;
     uint8_t brightness;
+    bool hasColor;
     uint32_t color;
-    bool speaker;
+    bool hasVolume;
     uint8_t volume;
 };
 

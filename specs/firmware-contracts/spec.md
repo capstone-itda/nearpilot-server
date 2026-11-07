@@ -1,6 +1,7 @@
 # ESP32 펌웨어의 MQTT v2 연동과 실제 기기 검증
 
 - 상태: 구현 중 (1~7단계와 MQTT v2 전환 구현 완료. 8·9단계는 남음)
+- 바뀐 부분: 기능(`capability`)·점유 방식 설정, 기능별 동작·인자 검사, `announce`·`cmd`의 버전은 `specs/iot-firmware-descriptor/spec.md`의 내장 기기 선언으로 바뀌었다 (#245). 이 문서의 해당 내용은 당시의 기록이다.
 - 담당: 작업 지시자 (펌웨어). architecture.md §2의 팀 배정은 미결이다 (7절 가정).
 - 후속 구현 브랜치: `feat/firmware-contracts`
 - 요구사항: FR-04, FR-05, FR-06, FR-07, FR-20, FR-22, NFR-03, NFR-04, NFR-07, NFR-08, NFR-10, NFR-11, NFR-12, NFR-14
