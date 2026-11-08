@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -86,3 +87,23 @@ def test_FR22_selector_parent_request_id_cleared_after_latest_child(conn, repo):
 
     store.cleanup(T + timedelta(minutes=26))
     assert _external_id(conn, parent) is None
+
+
+def test_FR22_selector_parent_audit_kept_while_child_in_progress(conn, repo, tmp_path):
+    """감사 행 삭제도 같은 완료 판단을 쓴다. 하위 요청이 진행 중이면 상위 요청의 감사 행을 지우지 않는다."""
+    _, parent, (first, second) = _selector(conn, repo)
+    insert_use_session(conn, use_id="use-1", internal_request_id=first, node_id="locker-1",
+                       state="CLOSED", end_reason="RETURNED", closed_at=iso(T))
+    insert_use_session(conn, use_id="use-2", internal_request_id=second, node_id="locker-2", state="ACTIVE")
+    insert_audit_log(conn, created_at=iso(T + timedelta(days=5)))  # 가장 나중 행은 지우지 않으므로 하나 더 둔다
+    jsonl = tmp_path / "audit.jsonl"
+    jsonl.write_text("".join(json.dumps({"seq": seq}) + "\n" for seq in range(1, 20)), encoding="utf-8")
+    store = SqliteRetentionStore(conn, Settings(audit_retention_days=1), jsonl_path=str(jsonl))
+
+    store.cleanup(T + timedelta(days=2))
+
+    def audit_rows(iid):
+        return conn.execute("SELECT count(*) FROM audit_log WHERE internal_request_id = ?", (iid,)).fetchone()[0]
+
+    assert (audit_rows(parent), audit_rows(second)) == (1, 1)  # 진행 중인 하위 요청과 그 상위 요청
+    assert audit_rows(first) == 0  # 끝난 하위 요청의 감사 행은 지운다
