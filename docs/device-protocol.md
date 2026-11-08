@@ -92,7 +92,7 @@
 | 필드 | 뜻 |
 |---|---|
 | `format` | 선언 형식의 버전이다. `nearpilot.device/{N}`의 정수 버전 하나만 쓴다. MQTT `schema_version`과 따로 관리한다. |
-| `kind` | 종류 이름이다. 근접 지정(`nearest:{kind}`), 전역 할당(`any:{kind}`), 종류별 서버 설정 조회에 쓴다. 열거형이 아닌 문자열이다. |
+| `kind` | 종류 이름이다. 근접 지정(`nearest:{kind}`), 전역 할당(`any:{kind}`), 거리 선택자(`near:{kind}:…`), 종류별 서버 설정 조회에 쓴다. 열거형이 아닌 문자열이다. |
 | `occupancy` | 기기 단위의 점유 방식이다. `rental`(대여형) 또는 `shared`(공용형)다. |
 | `vendor` | 제작사 이름 `name`, 모델 `model`, 펌웨어 버전 `firmware`다. 소유자의 신뢰 판단과 감사 기록에 쓴다. 판정에는 쓰지 않는다. |
 | `actions` | 동작 선언의 목록이다. |
