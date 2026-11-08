@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from _selector_fakes import (
     LIGHT_VALUES,
@@ -548,13 +550,15 @@ def test_FR22_selector_resend_no_candidate_keeps_empty_selection():
     assert (again.decision.devices, again.decision.selected_count, again.decision.similar) == ((), 0, False)
 
 
-@pytest.mark.parametrize("damage", ["missing_child_decision", "child_not_ok"])
+@pytest.mark.parametrize("damage", ["missing_child_decision", "child_not_ok", "missing_selector_record"])
 def test_FR22_selector_resend_inconsistent_ok_is_internal_error(damage):
     pipe, repo, prox, store, audit = build(lights(), LIGHT_VALUES)
     pipe.decide_selector(request("near:light:1:2"))
     first, second = child_ids(repo)
     if damage == "missing_child_decision":  # 하위 판정이 저장되지 않았다
         del repo.decisions[second]
+    elif damage == "missing_selector_record":  # OK 상위 판정에 거리 선택자 기록이 없다
+        repo.records[PARENT] = replace(repo.records[PARENT], selector=None)
     else:  # 하위 판정이 OK 가 아니다
         repo.decisions[second] = Decision(second, "r1", Verdict.BUSY, ReasonCode.DEVICE_BUSY, node_id="light-1")
     saved, attempts = list(repo.saved), list(repo.save_attempts)

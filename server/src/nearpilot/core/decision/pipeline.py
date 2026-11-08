@@ -536,6 +536,8 @@ class DecisionPipeline:
         """재전송에는 저장된 상위·하위 판정을 돌려준다. 새 하위 요청도 예약도 인계도 만들지 않는다 (FR-22)."""
         found = self._repo.selector_children(iid)
         if found is None:  # 거리를 정하기 전에 끝난 판정이다
+            if previous.verdict is Verdict.OK:  # OK 상위 판정은 거리 선택자 기록과 하위 요청을 가진다
+                raise ValueError("OK 판정에 거리 선택자 기록이 없다")
             return SelectorDecision(self._selector_view(previous))
         record = found.record
         stored = [(c, c.decision) for c in found.children if c.decision is not None]

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -15,6 +17,7 @@ from nearpilot.shared.config import Settings
 from nearpilot.shared.descriptor import legacy_descriptor, parse_descriptor
 from nearpilot.shared.enums import (
     DeviceState,
+    ExecutionStatus,
     Occupancy,
     ReasonCode,
     ReserveOutcome,
@@ -28,6 +31,8 @@ from nearpilot.shared.models import (
     Decision,
     DecisionRecord,
     DistanceOrder,
+    ExecutionContext,
+    ExecutionResult,
     NodeInfo,
     PolicyCheckResult,
     ProximityResult,
@@ -285,6 +290,57 @@ class FakeStore:
 
     def execution(self, internal_request_id: str) -> CommandRecord | None:
         return self.executions.get(internal_request_id)
+
+
+@dataclass(frozen=True)
+class Rejected:
+    """실행 직전 재검사가 전송을 막았다. `FakeExecution` 의 기기별 결과로 쓴다."""
+
+    verdict: Verdict
+    reason: ReasonCode
+
+
+class FakeExecution:
+    """`ExecutionService.execute` 의 fake (6단계). 기기별 결과를 지정한다. 지정하지 않은 기기는 성공한다.
+
+    결과는 `ExecutionStatus`, 예외, 재검사 거부(`Rejected`) 중 하나다. 결과를 낸 하위 요청은 상태 관리처럼
+    `FakeStore.executions` 에 기록을 남긴다 (재전송이 읽는다). 예외를 던진 하위 요청은 기록을 남기지 않는다.
+    `barrier` 가 있으면 결과를 내기 전에 기다린다. `delays` 는 기기별로 결과를 늦추는 초다 (완료 순서를 바꾼다).
+    스레드마다 불리므로 호출한 순서는 보장하지 않는다.
+    """
+
+    def __init__(
+        self, store: FakeStore, results: dict[str, ExecutionStatus | Exception | Rejected] | None = None,
+        barrier: threading.Barrier | None = None, delays: dict[str, float] | None = None,
+    ) -> None:
+        self.store = store
+        self.results = {} if results is None else results
+        self.barrier = barrier
+        self.delays = {} if delays is None else delays
+        self.contexts: list[ExecutionContext] = []
+
+    def execute(self, ctx: ExecutionContext) -> ExecutionResult:
+        self.contexts.append(ctx)
+        if self.barrier is not None:
+            self.barrier.wait()
+        time.sleep(self.delays.get(ctx.node_id, 0.0))
+        result = self.results.get(ctx.node_id, ExecutionStatus.SUCCEEDED)
+        if isinstance(result, Exception):
+            raise result
+        iid, command_id = ctx.internal_request_id, f"cmd-{ctx.internal_request_id}"
+        if isinstance(result, Rejected):
+            evidence = {"source": "recheck", "verdict": result.verdict.value, "reason": result.reason.value}
+            self._record(ctx, command_id, ExecutionStatus.NOT_SENT, evidence)
+            recheck = Decision(iid, ctx.request.request_id, result.verdict, result.reason, node_id=ctx.node_id)
+            return ExecutionResult(iid, ExecutionStatus.NOT_SENT, command_id, None, recheck)
+        self._record(ctx, command_id, result, {})
+        return ExecutionResult(iid, result, command_id, ctx.use_id)
+
+    def _record(self, ctx: ExecutionContext, command_id: str, status: ExecutionStatus,
+                evidence: dict[str, Any]) -> None:
+        self.store.executions[ctx.internal_request_id] = CommandRecord(
+            command_id, ctx.internal_request_id, ctx.node_id, ctx.request.action, status,
+            execution_kind=ctx.execution_kind, use_id=ctx.use_id, evidence=evidence)
 
 
 class FakeAudit:
