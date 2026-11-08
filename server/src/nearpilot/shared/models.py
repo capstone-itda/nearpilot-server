@@ -7,6 +7,7 @@ DB 스키마의 전체 필드는 architecture.md §6 과 db 계층이 정의한�
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -178,13 +179,26 @@ class PolicyCheckResult:
 # ── 요청·판정 ───────────────────────────────────────────────────────
 
 
+# 거리 선택자의 `{start}`·정수 `{count}` 규칙. 0, 앞 0, 부호, 공백, 전각 숫자를 받지 않는다 (FR-09).
+_POSITIVE_INT = re.compile(r"[1-9][0-9]*")
+
+
+def _positive_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
 @dataclass(frozen=True, slots=True)
 class TargetSpec:
-    """대상 지정. `device_kind` 는 근접 지정·전역 할당의 종류 이름이고 명시 지정이면 None 이다 (#245)."""
+    """대상 지정. `device_kind` 는 근접 지정·전역 할당·거리 선택자의 종류 이름이고 명시 지정이면 None 이다 (#245).
+
+    `start`·`count` 는 거리 선택자(NEAR·FAR)만 담는다. `count` 가 None 이면 `all`(시작부터 끝까지)이다 (FR-09, #253).
+    """
 
     kind: TargetKind
     device_kind: str | None
     node_id: str | None = None  # EXPLICIT 일 때만
+    start: int | None = None  # NEAR·FAR 일 때만. 1 이상
+    count: int | None = None  # NEAR·FAR 일 때 1 이상의 정수. None 은 `all`(시작부터 끝까지)이다. 다른 지정은 None
 
     def __post_init__(self) -> None:
         explicit = self.kind is TargetKind.EXPLICIT
@@ -194,12 +208,25 @@ class TargetSpec:
             raise ValueError(f"종류 이름 규칙 오류: {self.device_kind!r}")
         if self.node_id is not None and (not self.node_id.strip() or self.node_id != self.node_id.strip()):
             raise ValueError("기기 ID 형식 오류")
+        if self.is_selector:
+            if not _positive_int(self.start):
+                raise ValueError(f"거리 선택자의 시작은 1 이상의 정수여야 한다: {self.start!r}")
+            if self.count is not None and not _positive_int(self.count):
+                raise ValueError(f"거리 선택자의 개수는 1 이상의 정수 또는 all 이어야 한다: {self.count!r}")
+        elif self.start is not None or self.count is not None:
+            raise ValueError("거리 선택자만 시작과 개수를 담는다")
+
+    @property
+    def is_selector(self) -> bool:
+        """거리 선택자(NEAR·FAR)인가."""
+        return self.kind is TargetKind.NEAR or self.kind is TargetKind.FAR
 
     @classmethod
     def parse(cls, raw: str) -> TargetSpec:
-        """`nearest:{kind}` · `any:{kind}` · 기기 ID 를 해석한다. 형식이 틀리면 ValueError.
+        """`nearest:{kind}` · `any:{kind}` · `near|far:{kind}:{start}:{count}` · 기기 ID 를 해석한다. 형식이 틀리면 ValueError.
 
         콜론이 없으면 기기 ID 그대로인 명시 지정이다. 종류는 저장한 기기에서 읽는다 (spec core-device-actions 결정 2).
+        거리 선택자의 `{start}` 는 1 이상의 정수, `{count}` 는 1 이상의 정수 또는 `all` 이다 (FR-09, #253).
         """
         if not isinstance(raw, str):
             raise ValueError("target_spec 은 문자열이어야 한다")
@@ -208,6 +235,14 @@ class TargetSpec:
             target_kind = TargetKind(prefix)
             if target_kind is TargetKind.EXPLICIT:
                 raise ValueError(f"target_spec 형식 오류: {raw!r}")
+            if target_kind is TargetKind.NEAR or target_kind is TargetKind.FAR:
+                parts = kind.split(":")
+                if len(parts) != 3:
+                    raise ValueError(f"거리 선택자 형식 오류: {raw!r}")
+                kind, start, count = parts
+                if not _POSITIVE_INT.fullmatch(start) or not (count == "all" or _POSITIVE_INT.fullmatch(count)):
+                    raise ValueError(f"거리 선택자 형식 오류: {raw!r}")
+                return cls(target_kind, kind, start=int(start), count=None if count == "all" else int(count))
             return cls(target_kind, kind)
         return cls(TargetKind.EXPLICIT, None, raw)
 
@@ -215,6 +250,9 @@ class TargetSpec:
         """저장하는 `target_spec` 문자열. `parse` 와 짝이다."""
         if self.kind is TargetKind.EXPLICIT:
             return self.node_id
+        if self.is_selector:
+            count = "all" if self.count is None else self.count
+            return f"{self.kind.value}:{self.device_kind}:{self.start}:{count}"
         return f"{self.kind.value}:{self.device_kind}"
 
 
@@ -251,6 +289,16 @@ class RequestLink:
 
 
 @dataclass(frozen=True, slots=True)
+class DeviceOutcome:
+    """거리 선택자 응답의 기기 하나 (FR-09, #253). 하위 요청 ID 와 사용자 ID 를 담지 않는다 (FR-11)."""
+
+    node_id: str
+    verdict: Verdict
+    reason: ReasonCode
+    use_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Decision:
     """CORE → API 판정 결과.
 
@@ -266,6 +314,10 @@ class Decision:
     use_id: str | None = None
     p_max: float | None = None
     message: str | None = None  # 호스트에 보여줄 안내 문구 (선택)
+    # 거리 선택자 요청에만 채운다. 다른 대상 지정은 기본값 그대로다 (FR-09, #253)
+    devices: tuple[DeviceOutcome, ...] = ()
+    selected_count: int | None = None
+    similar: bool | None = None
 
 
 # ── 근접 (FR-16·17) ─────────────────────────────────────────────────
@@ -287,6 +339,21 @@ class RssiFrame:
     seq: int  # 같은 연결·토픽의 발행 순번
     sent_at: datetime  # 기기 발행 시각
     received_at: datetime  # 서버 수신 시각
+
+
+@dataclass(frozen=True, slots=True)
+class RssiReport:
+    """유효한 `rssi` 메시지 하나의 머리 (FR-09, #252). 비콘이 없는 빈 보고도 있다.
+
+    관측 값은 `RssiFrame` 으로 따로 넘긴다. 시각의 뜻은 `RssiFrame` 과 같다.
+    """
+
+    node_id: str
+    session_id: str
+    seq: int
+    frame_ts: datetime
+    sent_at: datetime
+    received_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,6 +381,29 @@ class ProximityResult:
         if not self.posteriors:
             return None
         return min(self.posteriors.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+@dataclass(frozen=True, slots=True)
+class DistanceOrder:
+    """근접 참여 기기의 가까운 순서와 기기별 정렬 값 (FR-09, FR-16, #253).
+
+    정렬 값은 최근 구간에서 그 비콘 RSSI 의 평균(dBm)이다. 비콘을 보지 못한 기기는 None 이고 순서의 끝에 있다.
+    """
+
+    nodes: tuple[str, ...]
+    values: Mapping[str, float | None]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "values", _freeze(self.values))
+        if len(set(self.nodes)) != len(self.nodes):
+            raise ValueError("거리 순서에 같은 기기가 두 번 있다")
+        if set(self.values) != set(self.nodes):
+            raise ValueError("정렬 값의 기기는 거리 순서의 기기와 같아야 한다")
+        for node_id, value in self.values.items():
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
+                raise ValueError(f"정렬 값은 None 또는 유한한 수여야 한다: {node_id}={value!r}")
 
 
 # ── 점유 ────────────────────────────────────────────────────────────
@@ -868,6 +958,44 @@ class OwnerApprovalResult:
 
 
 @dataclass(frozen=True, slots=True)
+class SelectorRecord:
+    """거리 선택자 상위 요청의 판정 기록 (FR-22, #253). `DecisionRecord.selector` 로 저장한다."""
+
+    target_spec: str  # 받은 거리 선택자의 직렬화
+    order: tuple[str, ...]  # 요청 방향(near 는 가까운 순, far 는 먼 순)의 거리 순서
+    values: Mapping[str, float | None]  # 기기별 정렬 값
+    selected: tuple[str, ...]  # 고른 기기. order 순서
+    similar: bool
+    # 만든 하위 요청의 internal_request_id. selected 앞쪽부터 같은 순서. 호스트에 내보내지 않는다
+    children: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "values", _freeze(self.values))
+        remaining = iter(self.order)
+        if not all(node_id in remaining for node_id in self.selected):
+            raise ValueError("고른 기기는 거리 순서 안에 같은 순서로 있어야 한다")
+        if len(self.children) > len(self.selected):
+            raise ValueError("하위 요청 수는 고른 기기 수 이하여야 한다")
+
+
+@dataclass(frozen=True, slots=True)
+class SelectorChild:
+    """저장된 하위 요청 하나 (FR-22). `decision.request_id` 는 상위 요청의 외부 ID 다."""
+
+    internal_request_id: str
+    node_id: str
+    decision: Decision | None  # 판정을 아직 저장하지 않았으면 None
+
+
+@dataclass(frozen=True, slots=True)
+class SelectorChildren:
+    """상위 요청의 저장된 거리 선택자 기록과 그 기록이 가리키는 하위 요청들."""
+
+    record: SelectorRecord
+    children: tuple[SelectorChild, ...]  # record.children 순서
+
+
+@dataclass(frozen=True, slots=True)
 class DecisionRecord:
     """판정에 적용한 값의 불변 스냅샷 (FR-22). 근접 전에 끝났으면 버전·구간은 None 이다."""
 
@@ -878,6 +1006,7 @@ class DecisionRecord:
     posteriors: Mapping[str, float] = field(default_factory=dict)
     window_start: datetime | None = None
     window_end: datetime | None = None
+    selector: SelectorRecord | None = None  # 거리 선택자 상위 요청에만 있다 (FR-22, #253)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "posteriors", _freeze(self.posteriors))

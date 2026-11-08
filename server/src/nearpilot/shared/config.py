@@ -130,6 +130,8 @@ class Settings:
 
     # ── 시간 설정 (시연용 초기 기준) ──
     beacon_recent_sec: float = 3.0  # ① 최근 비콘 기준 T: 서버가 받은 유효 관측의 최근 구간 (FR-15)
+    anchor_recent_sec: float = 3.0  # 근접 참여 기기의 최근 구간: 서버가 받은 마지막 rssi 보고부터 (FR-09, #252)
+    order_similar_db: float = 3.0  # 거리 선택자 경계의 "비슷함" 기준: 정렬 값 차이 dB (FR-09, #253)
     online_ttl_sec: float = 15.0  # 온라인 유지 시간: 유효한 기기 메시지의 마지막 수신부터 (FR-13)
     status_report_sec: float = 1.0  # 기기 상태 보고 주기
     reservation_wait_sec: float = 10.0  # 예약 대기 제한: 예약부터 전송 시작까지 (FR-19)
@@ -175,7 +177,8 @@ class Settings:
         for name in (
             "threshold_locker", "threshold_light", "rssi_frame_sec",
             "leave_absent_sec", "leave_grace_sec", "allocation_window_ms",
-            "beacon_recent_sec", "online_ttl_sec", "status_report_sec",
+            "beacon_recent_sec", "anchor_recent_sec", "order_similar_db",
+            "online_ttl_sec", "status_report_sec",
             "reservation_wait_sec", "exec_timeout_sec",
             "rental_duration_sec", "approval_ttl_sec", "approval_pending_ttl_sec",
             "use_history_retention_days", "audit_retention_days",
@@ -233,6 +236,8 @@ class Settings:
             "rssi_frame_sec",
             "leave_absent_sec",
             "beacon_recent_sec",
+            "anchor_recent_sec",
+            "order_similar_db",
             "online_ttl_sec",
             "status_report_sec",
             "reservation_wait_sec",
@@ -258,6 +263,8 @@ class Settings:
             raise ValueError("leave_absent_sec 는 rssi_frame_sec 이상이어야 한다")
         if self.beacon_recent_sec < self.rssi_frame_sec:
             raise ValueError("beacon_recent_sec 는 rssi_frame_sec 이상이어야 한다")
+        if self.anchor_recent_sec < self.rssi_frame_sec:
+            raise ValueError("anchor_recent_sec 는 rssi_frame_sec 이상이어야 한다")
         # 상태 보고 주기보다 짧은 온라인 유지 시간은 정상 기기를 오프라인으로 만든다
         if self.online_ttl_sec < self.status_report_sec:
             raise ValueError("online_ttl_sec 는 status_report_sec 이상이어야 한다")

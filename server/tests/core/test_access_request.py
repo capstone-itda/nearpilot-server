@@ -199,7 +199,8 @@ def test_FR11_응답에_내부_값이_없다():
     svc, *_ = build()
     d = ask(svc)
     assert {f.name for f in fields(d)} == {
-        "internal_request_id", "request_id", "verdict", "reason", "node_id", "use_id", "p_max", "message"}
+        "internal_request_id", "request_id", "verdict", "reason", "node_id", "use_id", "p_max", "message",
+        "devices", "selected_count", "similar"}
     assert "visitor" not in repr(d) and "a1" not in repr(d) and "pol" not in repr(d)
 
 

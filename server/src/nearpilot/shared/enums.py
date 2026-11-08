@@ -100,6 +100,8 @@ class TargetKind(StrEnum):
     NEAREST = "nearest"  # nearest:{kind}
     EXPLICIT = "explicit"  # 기기 ID
     ANY = "any"  # any:{kind} (FR-23)
+    NEAR = "near"  # near:{kind}:{start}:{count} 가까운 순 거리 선택자 (FR-09, #253)
+    FAR = "far"  # far:{kind}:{start}:{count} 먼 순 거리 선택자
 
 
 # ── 계정·노드 (requirements.md §1.3) ──────────────────────────────────────────

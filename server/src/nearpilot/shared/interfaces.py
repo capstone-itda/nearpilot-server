@@ -73,6 +73,7 @@ from nearpilot.shared.models import (
     ReserveRequest,
     ReserveResult,
     RssiFrame,
+    SelectorChildren,
     StoreResult,
     UseRequest,
     UseSession,
@@ -140,6 +141,24 @@ class Repository(Protocol):
 
         같은 판정·기록은 ALREADY_APPLIED, 다른 내용은 CONFLICT·CONTENT_CONFLICT다.
         외부 request_id 보존기간과 관계없이 기존 기록을 보존한다. 저장 장애는 StoreError 로 알린다.
+        """
+        ...
+
+    def link_selector_child(
+        self, parent_internal_request_id: str, req: UseRequest, node_id: str, input_digest: str,
+    ) -> str:
+        """거리 선택자 하위 요청 행을 만들고 새 internal_request_id 를 반환한다 (FR-09, #253).
+
+        외부 request_id 는 비운다. target_spec·action·host_kind·received_at·parent_internal_request_id 는
+        req 의 값이고 node_id 는 고른 기기다. input_digest 는 상위 요청의 값이다. 상위 요청 행이 없으면 LookupError.
+        """
+        ...
+
+    def selector_children(self, parent_internal_request_id: str) -> SelectorChildren | None:
+        """상위 요청의 저장된 거리 선택자 기록과 그 기록의 하위 요청들 (FR-22).
+
+        판정 기록에 거리 선택자 기록이 없으면 None 이다. 하위 요청은 기록의 children 순서다.
+        하위 요청의 Decision.request_id 는 상위 요청의 외부 ID(없으면 "")다.
         """
         ...
 
