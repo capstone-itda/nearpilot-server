@@ -40,12 +40,16 @@ def host_response(decision: Decision) -> dict[str, Any]:
     return out
 
 
-def denied_response(reason: ReasonCode, request_id: str = "") -> dict[str, Any]:
-    """판정까지 가지 못한 거부. 예외 내용 대신 일반 안내만 넣는다."""
+def denied_response(reason: ReasonCode, request_id: str = "", *, selector: bool = False) -> dict[str, Any]:
+    """판정까지 가지 못한 거부. 예외 내용 대신 일반 안내만 넣는다.
+
+    `selector` 이면(형식이 맞는 거리 선택자) 고르기 전에 끝난 판정과 같은 거리 선택자 키를 더한다 (FR-09).
+    """
     message = _GENERIC_MESSAGE if reason is ReasonCode.INTERNAL_ERROR else None
+    picked: dict[str, Any] = {"devices": (), "selected_count": 0, "similar": False} if selector else {}
     return host_response(Decision(
         internal_request_id="", request_id=request_id, verdict=Verdict.DENY, reason=reason,
-        message=message))
+        message=message, **picked))
 
 
 _STATUS_TIMES = ("rental_due_at", "closed_at")

@@ -35,6 +35,19 @@ def test_FR09_selector_malformed_invalid_input(target_spec):
     assert c.core.requests == []
 
 
+@pytest.mark.parametrize("args", [
+    selector_args(action=""), selector_args(request_id=""),
+    {**selector_args(), "arguments": ["not", "object"]}])
+def test_FR09_selector_api_rejection_keeps_selector_keys(args):
+    c = Client()
+    resp = c.call(args)
+    assert (resp["verdict"], resp["reason"]) == ("DENY", "INVALID_INPUT")
+    # 형식이 맞는 거리 선택자는 판정 전에 거부해도 고르기 전에 끝난 판정과 같은 키를 담는다 (spec 결정 12)
+    assert set(resp) == SELECTOR_KEYS
+    assert (resp["devices"], resp["selected_count"], resp["similar"]) == ([], 0, False)
+    assert c.core.requests == []
+
+
 def test_FR09_tool_description_mentions_selector():
     tools = run(Client().post("tools/list")).json()["result"]["tools"]
     tool = next(t for t in tools if t["name"] == "request_use")

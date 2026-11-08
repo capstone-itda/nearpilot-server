@@ -103,6 +103,14 @@ def _arguments(arguments: Any) -> dict | None:
     return arguments
 
 
+def _is_selector(target_spec: object) -> bool:
+    """형식이 맞는 거리 선택자인가. 판정 전 거부의 응답 모양을 정할 때만 쓴다 (FR-09)."""
+    try:
+        return TargetSpec.parse(target_spec).is_selector
+    except Exception:  # noqa: BLE001 - 형식이 틀리면 거리 선택자인지 알 수 없다
+        return False
+
+
 def build_app(
     core: CoreService, authenticator: Authenticator, clock: Callable[[], datetime],
     *, public_hosts: Sequence[str] = (),
@@ -117,10 +125,14 @@ def build_app(
     async def request_use(
         target_spec: str, action: str, request_id: str, ctx: Context, arguments: Any = None,
     ) -> dict:
+        def deny(reason: ReasonCode) -> dict:
+            # 형식이 맞는 거리 선택자는 판정 전에 거부해도 거리 선택자 응답 키를 담는다 (FR-09)
+            return denied_response(reason, request_id, selector=_is_selector(target_spec))
+
         try:
             account = _account_of(ctx)
             if account is None:  # 미들웨어를 거치지 않았다
-                return denied_response(ReasonCode.INTERNAL_ERROR, request_id)
+                return deny(ReasonCode.INTERNAL_ERROR)
             try:
                 if not request_id:
                     raise ValueError("request_id 가 비었다")
@@ -129,12 +141,12 @@ def build_app(
                     target=TargetSpec.parse(target_spec), action=_action(action),
                     host_kind=None, received_at=clock(), arguments=_arguments(arguments))
             except ValueError:
-                return denied_response(ReasonCode.INVALID_INPUT, request_id)
+                return deny(ReasonCode.INVALID_INPUT)
             # 판정과 실행 인계는 동기 함수다. 이벤트 루프를 막지 않는다.
             return host_response(await asyncio.to_thread(core.request_use, req))
         except Exception:  # noqa: BLE001 - 알 수 없는 오류는 거부한다. 예외 내용은 응답에 넣지 않는다
             log.exception("request_use 도구 처리 중 예외")
-            return denied_response(ReasonCode.INTERNAL_ERROR, request_id)
+            return deny(ReasonCode.INTERNAL_ERROR)
 
     # 스키마는 주석 문자열로 쓸 수 없다. 평가한 주석 객체로 바꾼 뒤 도구로 등록한다.
     request_use.__annotations__.update(arguments=Annotated[Any, arguments_schema, Field(default=None)])
