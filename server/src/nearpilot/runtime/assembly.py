@@ -196,6 +196,9 @@ class _ScopedSink:
     def on_rssi(self, frame) -> None:
         self._call("on_rssi", frame)
 
+    def on_rssi_report(self, report) -> None:
+        self._call("on_rssi_report", report)
+
     def on_status(self, status) -> None:
         self._call("on_status", status)
 

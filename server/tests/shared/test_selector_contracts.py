@@ -1,6 +1,7 @@
 """거리 선택자의 shared 계약 검사 (FR-09, FR-16, FR-22, #253)."""
 
 import inspect
+import typing
 from dataclasses import fields
 from datetime import datetime, timezone
 
@@ -9,7 +10,7 @@ import pytest
 from nearpilot.core.decision.digest import input_digest
 from nearpilot.shared.config import Settings, settings_from_data, settings_to_data
 from nearpilot.shared.enums import ReasonCode, TargetKind, Verdict
-from nearpilot.shared.interfaces import Repository
+from nearpilot.shared.interfaces import NodeEventSink, Repository
 from nearpilot.shared.models import (
     Decision,
     DecisionRecord,
@@ -275,3 +276,9 @@ def test_FR09_selector_interfaces_add_repository_methods():
     assert list(inspect.signature(Repository.selector_children).parameters) == [
         "self", "parent_internal_request_id",
     ]
+
+
+def test_FR09_selector_interfaces_add_sink_method():
+    assert list(inspect.signature(NodeEventSink.on_rssi_report).parameters) == ["self", "report"]
+    hints = typing.get_type_hints(NodeEventSink.on_rssi_report)
+    assert hints == {"report": RssiReport, "return": type(None)}

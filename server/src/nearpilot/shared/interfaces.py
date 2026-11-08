@@ -611,6 +611,13 @@ class NodeEventSink(Protocol):
 
     def on_rssi(self, frame: RssiFrame) -> None: ...
 
+    def on_rssi_report(self, report: RssiReport) -> None:
+        """유효한 rssi 메시지마다 한 번 부른다. 비콘이 없는 빈 보고도 넘긴다 (FR-09, #252).
+
+        같은 메시지의 on_rssi 를 모두 부른 뒤에 부른다.
+        """
+        ...
+
     def on_status(self, status: NodeStatus) -> None: ...
 
     def on_result(self, result: NodeResult) -> None:

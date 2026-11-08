@@ -62,6 +62,9 @@ class Sink:
     def on_rssi(self, item):
         self.calls.append(("on_rssi", item))
 
+    def on_rssi_report(self, item):
+        self.calls.append(("on_rssi_report", item))
+
     def on_status(self, item):
         self.calls.append(("on_status", item))
 

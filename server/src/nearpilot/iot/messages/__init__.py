@@ -26,11 +26,11 @@ from nearpilot.shared.enums import (
     CommandState, DeviceState, NodeResultState, Occupancy, RejectCode,
 )
 from nearpilot.shared.models import (
-    BeaconKey, NodeAnnounce, NodeCommand, NodeResult, NodeStatus, RssiFrame,
+    BeaconKey, NodeAnnounce, NodeCommand, NodeResult, NodeStatus, RssiFrame, RssiReport,
 )
 
 __all__ = ["SCHEMA_VERSION", "DESCRIPTOR_SCHEMA_VERSION", "COMMAND_SCHEMA_VERSIONS",
-           "MessageValidationError", "decode_message", "decode_time_request",
+           "MessageValidationError", "decode_message", "decode_rssi_report", "decode_time_request",
            "encode_command", "encode_occupancy", "encode_restart", "encode_time"]
 
 SCHEMA_VERSION = 2  # announce·cmd 밖의 모든 메시지
@@ -216,16 +216,14 @@ def encode_time(node_id: str, request_id: str, server_time: datetime, *, max_err
         allow_nan=False).encode("utf-8")
 
 
-def decode_message(
-    topic: str, payload: bytes | str, *, received_at: datetime,
-) -> NodeAnnounce | tuple[RssiFrame, ...] | NodeStatus | NodeResult:
-    """Validate a complete report before returning shared models.
+def _envelope(topic: str, payload: bytes | str, received_at: datetime,
+              kinds: tuple[str, ...]) -> tuple[str, dict, dict]:
+    """Topic, reception time and schema checks shared by every report.
 
-    RSSI returns a tuple, including an empty tuple for an empty batch. The caller
-    supplies the first reception time; a payload cannot override that time.
+    Returns the topic's kind, the payload object and the fields common to the shared models.
     """
     node_id, kind = _topic(topic)
-    if kind not in ("announce", "rssi", "status", "result"):
+    if kind not in kinds:
         _fail("topic")
     if not isinstance(received_at, datetime) or received_at.utcoffset() != timedelta(0):
         _fail("received_at")
@@ -236,6 +234,55 @@ def decode_message(
         seq=_integer(data.get("seq"), "seq", 1),
         sent_at=_time(data.get("sent_at"), "sent_at"), received_at=received_at,
     )
+    return kind, data, common
+
+
+def _rssi_report(data: dict, common: dict) -> tuple[RssiReport, tuple[RssiFrame, ...]]:
+    """`rssi` body → the report header and one frame per observation (none for an empty scan)."""
+    frame_ts = _time(data.get("frame_ts"), "frame_ts")
+    observations = data.get("observations")
+    if not isinstance(observations, list):
+        _fail("observations")
+    validated, seen = [], set()
+    for observation in observations:
+        item = _object(observation, "observation")
+        beacon = BeaconKey(
+            _uuid(item.get("uuid"), "uuid", canonical=True),
+            _integer(item.get("major"), "major", 0, 65535),
+            _integer(item.get("minor"), "minor", 0, 65535))
+        rssi = item.get("rssi")
+        if type(rssi) not in (int, float) or not -math.inf < rssi < math.inf or beacon in seen:
+            _fail("rssi observation")
+        seen.add(beacon)
+        validated.append((beacon, rssi))
+    frames = tuple(
+        RssiFrame(**common, beacon=beacon, rssi=rssi, frame_ts=frame_ts)
+        for beacon, rssi in validated
+    )
+    return RssiReport(**common, frame_ts=frame_ts), frames
+
+
+def decode_rssi_report(
+    topic: str, payload: bytes | str, *, received_at: datetime,
+) -> tuple[RssiReport, tuple[RssiFrame, ...]]:
+    """Validate one rssi report and return its header and frames (empty for an empty scan).
+
+    Same validation as decode_message for rssi. A non-rssi topic raises MessageValidationError.
+    """
+    _, data, common = _envelope(topic, payload, received_at, ("rssi",))
+    return _rssi_report(data, common)
+
+
+def decode_message(
+    topic: str, payload: bytes | str, *, received_at: datetime,
+) -> NodeAnnounce | tuple[RssiFrame, ...] | NodeStatus | NodeResult:
+    """Validate a complete report before returning shared models.
+
+    RSSI returns a tuple, including an empty tuple for an empty batch. The caller
+    supplies the first reception time; a payload cannot override that time.
+    """
+    kind, data, common = _envelope(
+        topic, payload, received_at, ("announce", "rssi", "status", "result"))
     if kind == "announce":
         version = data["schema_version"]
         try:
@@ -249,26 +296,7 @@ def decode_message(
             raise
         return NodeAnnounce(**common, descriptor=descriptor, schema_version=version)
     if kind == "rssi":
-        frame_ts = _time(data.get("frame_ts"), "frame_ts")
-        observations = data.get("observations")
-        if not isinstance(observations, list):
-            _fail("observations")
-        validated, seen = [], set()
-        for observation in observations:
-            item = _object(observation, "observation")
-            beacon = BeaconKey(
-                _uuid(item.get("uuid"), "uuid", canonical=True),
-                _integer(item.get("major"), "major", 0, 65535),
-                _integer(item.get("minor"), "minor", 0, 65535))
-            rssi = item.get("rssi")
-            if type(rssi) not in (int, float) or not -math.inf < rssi < math.inf or beacon in seen:
-                _fail("rssi observation")
-            seen.add(beacon)
-            validated.append((beacon, rssi))
-        return tuple(
-            RssiFrame(**common, beacon=beacon, rssi=rssi, frame_ts=frame_ts)
-            for beacon, rssi in validated
-        )
+        return _rssi_report(data, common)[1]
     if kind == "status":
         return NodeStatus(**common, observed_at=_time(data.get("observed_at"), "observed_at"),
             command_state=_enum(CommandState, data.get("command_state"), "command_state"))

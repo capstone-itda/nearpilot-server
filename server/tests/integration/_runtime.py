@@ -141,6 +141,9 @@ class FakeProximity:
     def observe(self, frame, *, node) -> None:
         pass
 
+    def observe_report(self, report, *, node) -> None:
+        pass
+
     def restore(self, frames, nodes) -> None:
         self.restored.extend(frames)
 
