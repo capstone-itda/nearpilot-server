@@ -31,7 +31,17 @@ log = logging.getLogger(__name__)
 
 _TOOL_DESCRIPTION = (
     "기기 사용을 요청한다. target_spec 은 nearest:{kind}(가장 가까운 기기), 기기 ID(예: locker-1), "
-    "any:{kind}(허용된 종류의 전역 배정) 중 하나다. action 은 find_available_devices 나 get_device_state 가 "
+    "any:{kind}(허용된 종류의 전역 배정) 중 하나다. "
+    "네 번째 형식은 거리 선택자 near:{kind}:{start}:{count} 와 far:{kind}:{start}:{count} 다. "
+    "서버가 요청 순간 방문자와의 거리 순서로 기기를 고른다. near 는 가까운 순, far 는 먼 순이다. "
+    "start 는 1부터 센 시작 위치이고, count 는 1 이상의 개수 또는 all(끝까지)이다. "
+    "예: '가까운 조명 2개 꺼 줘' 는 near:light:1:2 와 off, '제일 먼 조명 켜 줘' 는 far:light:1:1 과 on, "
+    "'나 있는 쪽 빼고 다 켜 줘' 는 near:light:2:all 과 on 이다. "
+    "'왼쪽 조명' 처럼 방향이나 장소 이름으로 가리키면 거리 선택자로 바꾸지 말고 사용자에게 되묻는다. "
+    "거리 선택자의 응답은 devices(기기별 node_id, verdict, reason, use_id), selected_count(실제로 고른 개수), "
+    "similar(경계의 기기들이 비슷한 거리라 고른 결과가 다를 수 있음)를 더 담는다. "
+    "거리 선택자 요청이 NEED_APPROVAL 이면 devices 의 node_id 로 request_access 를 부른다. "
+    "action 은 find_available_devices 나 get_device_state 가 "
     "돌려준 그 기기의 actions[].name 중 하나다. 각 동작의 description 이 하는 일을 설명한다. "
     "선택 인자 arguments 는 객체이고, 그 동작의 actions[].input_schema 를 따른다. "
     "범위 밖 값과 스키마에 맞지 않는 인자는 실행하지 않고 거부한다. 생략한 인자는 그 기기의 마지막 성공값이나 "
