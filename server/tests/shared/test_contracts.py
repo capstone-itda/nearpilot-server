@@ -74,6 +74,10 @@ def test_fake_satisfies_protocol():
         def posterior(self, beacons, candidates, at, *, place_nodes):
             return ProximityResult({"locker-1": 0.97}, at, at, "fake", "fake")
 
+        def observe_report(self, report, *, node): ...
+
+        def distance_order(self, beacon, candidates, at): ...
+
     assert isinstance(FakeProximity(), ProximityEstimator)
 
 

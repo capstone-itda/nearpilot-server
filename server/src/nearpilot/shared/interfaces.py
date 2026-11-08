@@ -58,6 +58,7 @@ from nearpilot.shared.models import (
     CommandRecord,
     CommandResult,
     Decision,
+    DistanceOrder,
     ExecutionContext,
     ExecutionResult,
     InternalRequest,
@@ -73,6 +74,7 @@ from nearpilot.shared.models import (
     ReserveRequest,
     ReserveResult,
     RssiFrame,
+    RssiReport,
     SelectorChildren,
     StoreResult,
     UseRequest,
@@ -554,6 +556,26 @@ class ProximityEstimator(Protocol):
         판정은 명시 지정 요청에도 ② 의 전체 후보를 넘긴다 (#26). 지정 대상은 인자로 받지 않는다.
         같은 입력에는 지정 여부와 상관없이 같은 출력을 낸다 (NFR-09).
         판정이 `posteriors[지정 대상]` 을 읽어 임계값과 비교한다.
+        """
+        ...
+
+    def observe_report(self, report: RssiReport, *, node: NodeInfo) -> None:
+        """유효한 rssi 보고 하나의 서버 수신 시각을 기록한다. 빈 보고도 받는다 (FR-09, #252).
+
+        report.node_id 가 node.node_id 와 다르거나 node.trust_state 가 TRUSTED 가 아니면 기록하지 않는다.
+        기록은 메모리에만 둔다. 재시작하면 다음 보고까지 그 기기는 근접 참여 기기가 아니다.
+        """
+        ...
+
+    def distance_order(
+        self, beacon: BeaconKey, candidates: Sequence[NodeInfo], at: datetime,
+    ) -> DistanceOrder:
+        """후보 중 근접 참여 기기의 가까운 순서와 기기별 정렬 값 (FR-09, FR-16, #253).
+
+        근접 참여 기기는 at - anchor_recent_sec 이후에 rssi 보고(빈 보고 포함)를 보낸 TRUSTED 후보다.
+        정렬 값은 [at - anchor_recent_sec, at] 안에 서버가 받은 그 비콘 RSSI 의 평균이다. 프레임이 없으면 None 이다.
+        정렬 값이 큰(가까운) 기기부터, 같으면 기기 ID 순서다. None 인 기기는 끝에 기기 ID 순서로 둔다.
+        순서를 자르지 않는다. 근접 모델 파일을 쓰지 않는다.
         """
         ...
 
