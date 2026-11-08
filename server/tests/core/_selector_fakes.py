@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -305,25 +304,41 @@ class FakeExecution:
 
     결과는 `ExecutionStatus`, 예외, 재검사 거부(`Rejected`) 중 하나다. 결과를 낸 하위 요청은 상태 관리처럼
     `FakeStore.executions` 에 기록을 남긴다 (재전송이 읽는다). 예외를 던진 하위 요청은 기록을 남기지 않는다.
-    `barrier` 가 있으면 결과를 내기 전에 기다린다. `delays` 는 기기별로 결과를 늦추는 초다 (완료 순서를 바꾼다).
+    `barrier` 가 있으면 결과를 내기 전에 기다린다. `after` 는 {기기: 먼저 끝나야 하는 기기} 다. 그 기기의 execute 가
+    끝난 뒤에 결과를 낸다 (완료 순서를 정한다). 기다리는 기기가 시작하지 않으면 `RuntimeError` 다.
     스레드마다 불리므로 호출한 순서는 보장하지 않는다.
     """
 
     def __init__(
         self, store: FakeStore, results: dict[str, ExecutionStatus | Exception | Rejected] | None = None,
-        barrier: threading.Barrier | None = None, delays: dict[str, float] | None = None,
+        barrier: threading.Barrier | None = None, after: dict[str, str] | None = None,
     ) -> None:
         self.store = store
         self.results = {} if results is None else results
         self.barrier = barrier
-        self.delays = {} if delays is None else delays
+        self.after = {} if after is None else after
+        self.finished: dict[str, threading.Event] = {}  # 기기별 execute 가 끝났다
+        self._events_lock = threading.Lock()
         self.contexts: list[ExecutionContext] = []
 
+    def _finished(self, node_id: str) -> threading.Event:
+        with self._events_lock:
+            return self.finished.setdefault(node_id, threading.Event())
+
     def execute(self, ctx: ExecutionContext) -> ExecutionResult:
+        try:
+            return self._execute(ctx)
+        finally:
+            self._finished(ctx.node_id).set()
+
+    def _execute(self, ctx: ExecutionContext) -> ExecutionResult:
         self.contexts.append(ctx)
         if self.barrier is not None:
             self.barrier.wait()
-        time.sleep(self.delays.get(ctx.node_id, 0.0))
+        first = self.after.get(ctx.node_id)
+        # 기다리는 기기가 시작하지 않으면(차례로 실행하는 구현) 대기 시간이 지나 이 하위 요청이 실패한다
+        if first is not None and not self._finished(first).wait(timeout=10):
+            raise RuntimeError(f"{first} 의 실행이 끝나지 않았다")
         result = self.results.get(ctx.node_id, ExecutionStatus.SUCCEEDED)
         if isinstance(result, Exception):
             raise result

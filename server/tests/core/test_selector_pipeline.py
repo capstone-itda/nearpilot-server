@@ -842,3 +842,15 @@ def test_FR18_selector_repository_error_is_internal_error(name):
         assert [c[0] for c in store.cancels] == [repo.child_links[0].child]
     else:
         assert store.cancels == []
+
+
+def test_FR09_selector_non_participant_usable_by_node_id():
+    # light-3 은 최근 보고가 없어 근접 참여 기기가 아니다. 거리 순서에는 없지만 기기 ID 로는 쓸 수 있다
+    values = {node_id: value for node_id, value in LIGHT_VALUES.items() if node_id != "light-3"}
+    pipe, repo, prox, store, audit = build(lights(), values)
+    sd = pipe.decide_selector(request("near:light:1:all", request_id="r-sel"))
+    assert (sd.decision.verdict, sd.decision.selected_count) == (Verdict.OK, 2)
+    assert "light-3" not in [o.node_id for o in sd.decision.devices]
+    decision, ctx = pipe.decide_for_execution(request("light-3", request_id="r-id"))
+    assert (decision.verdict, decision.reason, decision.node_id) == (Verdict.OK, ReasonCode.OK, "light-3")
+    assert ctx is not None and ctx.node_id == "light-3"

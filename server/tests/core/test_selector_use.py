@@ -39,10 +39,10 @@ def lockers():
     return [node(node_id, "locker", Occupancy.RENTAL) for node_id in LOCKER_VALUES]
 
 
-def serve(results=None, barrier=None, delays=None, policy=None, values=None):
+def serve(results=None, barrier=None, after=None, policy=None, values=None):
     """조명 세 대로 만든 서비스."""
     pipe, repo, prox, store, audit = build(lights(), values or LIGHT_VALUES, policy=policy)
-    exe = FakeExecution(store, results, barrier, delays)
+    exe = FakeExecution(store, results, barrier, after)
     return RequestUseService(pipe, exe, store), repo, exe, store
 
 
@@ -158,8 +158,8 @@ def test_FR18_selector_child_result_maps_like_single_request(status, verdict, re
 
 
 def test_FR18_selector_results_keep_distance_order_when_completion_differs():
-    # 첫 기기가 늦게 끝나도 기기별 결과는 완료 순서가 아니라 거리 순서에 맞는다
-    svc, repo, exe, store = serve({"light-2": ExecutionStatus.FAILED}, delays={"light-2": 0.1})
+    # 첫 기기가 둘째 기기보다 늦게 끝나도 기기별 결과는 완료 순서가 아니라 거리 순서에 맞는다
+    svc, repo, exe, store = serve({"light-2": ExecutionStatus.FAILED}, after={"light-2": "light-1"})
     d = svc.request_use(request("near:light:1:2"))
     assert d.devices == (device("light-2", Verdict.DENY, ReasonCode.EXEC_FAILED), device("light-1"))
     assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.EXEC_FAILED)
@@ -168,7 +168,7 @@ def test_FR18_selector_results_keep_distance_order_when_completion_differs():
 @pytest.mark.parametrize("target,count", [("near:light:1:2", 2), ("near:light:1:all", 3)])
 def test_FR18_selector_children_run_concurrently(target, count):
     # 모든 하위 요청의 execute 가 함께 시작해야 배리어를 넘는다. 차례로 실행하면 대기 시간이 지나 실패한다
-    barrier = threading.Barrier(count, timeout=2)
+    barrier = threading.Barrier(count, timeout=10)
     svc, repo, exe, store = serve(barrier=barrier)
     d = svc.request_use(request(target))
     assert (d.verdict, d.reason) == (Verdict.OK, ReasonCode.OK)
