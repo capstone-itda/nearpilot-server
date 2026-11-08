@@ -133,3 +133,27 @@ def test_FR09_existing_response_keys_unchanged(target_spec):
     assert set(resp) == BASE_KEYS
     assert resp == {"verdict": "OK", "reason": "OK", "node_id": "locker-1", "use_id": "use-1",
                     "request_id": "r1", "message": None}
+
+
+@pytest.mark.parametrize("target_spec", ["nearest:locker", "locker-1", "any:locker"])
+def test_FR09_existing_rejection_keys_unchanged(target_spec):
+    # 다른 대상 지정의 판정 전 거부는 거리 선택자 키를 담지 않는다 (spec 2절)
+    c = Client()
+    resp = c.call({"target_spec": target_spec, "action": "", "request_id": "r1"})
+    assert (resp["verdict"], resp["reason"]) == ("DENY", "INVALID_INPUT")
+    assert set(resp) == BASE_KEYS
+    c.core.error = RuntimeError("secret internal detail")
+    resp = c.call({"target_spec": target_spec, "action": "open", "request_id": "r2"})
+    assert (resp["verdict"], resp["reason"]) == ("DENY", "INTERNAL_ERROR")
+    assert set(resp) == BASE_KEYS
+
+
+def test_FR09_selector_internal_error_rejection_keeps_selector_keys():
+    # 도구 처리 중 예외(서버가 요청을 받지 않을 때 포함)도 거리 선택자 키를 담는다. 예외 내용은 넣지 않는다
+    c = Client()
+    c.core.error = RuntimeError("secret internal detail")
+    resp = c.call(selector_args())
+    assert (resp["verdict"], resp["reason"]) == ("DENY", "INTERNAL_ERROR")
+    assert set(resp) == SELECTOR_KEYS
+    assert (resp["devices"], resp["selected_count"], resp["similar"]) == ([], 0, False)
+    assert "secret" not in json.dumps(resp, ensure_ascii=False)
