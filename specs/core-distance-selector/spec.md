@@ -66,7 +66,7 @@
 - `server/src/nearpilot/core/proximity/` — 마지막 보고 시각, 거리 순서 (사후확률 계산은 고치지 않는다)
 - `server/src/nearpilot/core/decision/` — 거리 선택자 판정, 하위 요청, 재검사, 응답 묶음, 중복 판단 요약, `request_access`의 거부
 - `server/src/nearpilot/core/lifecycle/node_events.py` — 보고 전달
-- `server/src/nearpilot/db/` — 마이그레이션 `0012`, 하위 요청 저장과 조회, 판정 기록, 복원
+- `server/src/nearpilot/db/` — 마이그레이션 `0012`, 하위 요청 저장과 조회, 판정 기록, 복원, 보존 정리의 상위 요청 완료 판단
 - `server/tools/evaluation/db.py` — 평가 도구가 기대하는 스키마 버전 (마이그레이션 `0012`)
 - `server/src/nearpilot/api/mcp/` — 도구 설명, 응답
 - `server/src/nearpilot/runtime/` — 설정 로더, 앱 조립
@@ -104,9 +104,10 @@
 
 | 상황 | 기대 동작 | 테스트 |
 |---|---|---|
-| 거리 선택자의 형식이 틀리다 (`near:light:0:1`, `near:light:1:0`, `near:light:x:2`, `near:light:1`) | API가 `DENY`·`INVALID_INPUT`. 판정을 부르지 않는다 | `test_FR09_selector_malformed_invalid_input` |
+| 거리 선택자의 형식이 틀리다 (`near:light:0:1`, `near:light:1:0`, `near:light:x:2`, `near:light:1`) | API가 `DENY`·`INVALID_INPUT`. 판정을 부르지 않는다. 응답은 기존 여섯 키만 담는다 | `test_FR09_selector_malformed_invalid_input` |
+| 형식이 맞는 거리 선택자를 API가 판정 전에 거부한다 (`action`·`request_id`·`arguments` 오류) | `DENY`·`INVALID_INPUT`. 판정을 부르지 않는다. 응답에 `devices` 빈 목록, `selected_count` 0, `similar` `false`를 담는다 | `test_FR09_selector_api_rejection_keeps_selector_keys` |
 | 근접 참여 기기가 하나도 없다 | `DENY`·`NO_CANDIDATE` | `test_FR09_selector_no_participant_no_candidate` |
-| 최근 구간 안에 보고가 없는 후보 | 거리 순서에 서지 않는다. 같은 기기를 기기 ID로는 쓸 수 있다 | `test_FR09_selector_non_participant_excluded` |
+| 최근 구간 안에 보고가 없는 후보 | 거리 순서에 서지 않는다. 같은 기기를 기기 ID로는 쓸 수 있다 | `test_FR09_selector_non_participant_excluded`, `test_FR09_selector_non_participant_usable_by_node_id` |
 | 빈 보고만 보낸 기기 | 가장 먼 쪽에 선다 | `test_FR09_selector_empty_report_keeps_participant_last` |
 | 개수보다 기기가 적다 | 있는 만큼 실행한다. `selected_count`가 실제 개수다 | `test_FR09_selector_count_shortage_runs_available` |
 | 경계의 두 기기가 비슷하게 들린다 | 실행하고 `similar`를 `true`로 담는다 | `test_FR09_selector_similar_boundary_flag` |
@@ -123,6 +124,7 @@
 | 신뢰하지 않은 기기가 보고한다 | 마지막 보고 시각을 기록하지 않는다 | `test_FR16_report_time_only_trusted` |
 | 하위 요청을 판정하던 중 오류가 난다 | 만든 하위 요청의 예약을 취소하고 `INTERNAL_ERROR` | `test_FR18_selector_internal_error_cancels_children` |
 | 검사에서 걸린 요청을 같은 `request_id`로 재전송한다 | 같은 판정과 걸린 기기를 반환한다 | `test_FR22_selector_resend_after_check_failure` |
+| 하위 요청이 아직 진행 중인데 상위 요청의 마지막 감사 행부터 중복 보장기간이 지난다 | 상위 요청의 외부 `request_id`를 비우지 않는다. 같은 `request_id`의 재전송은 같은 상위 요청을 찾는다 | `test_FR22_selector_parent_request_id_kept_while_child_in_progress` |
 | `OK`로 저장된 상위 요청의 거리 선택자 기록이나 하위 판정이 맞지 않는데 재전송한다 | 저장하지 않고 `DENY`·`INTERNAL_ERROR`. `OK`를 내지 않는다 | `test_FR22_selector_resend_inconsistent_ok_is_internal_error` |
 
 ## 6. 결정
@@ -138,7 +140,7 @@
 9. 하위 요청 행은 상위 요청의 `target_spec`, 고른 기기의 `node_id`, 비어 있는 외부 `request_id`, `selector_parent_id`를 가진다. 메모리의 `UseRequest.request_id`는 상위 요청의 외부 ID다 — 재검사가 요청 ID를 대조한다.
 10. 하위 요청도 판정 한 건으로 보고 판정 기록을 저장한다 (FR-18, FR-22).
 11. 판정은 거리 순서대로 하위 요청마다 ③(`rental`만), 동작·인자, ④, 예약을 하고 처음 걸린 곳에서 멈춘다.
-12. 검사에서 걸리면 응답의 `devices`는 처음 걸린 기기 하나다 — 승인이 필요하면 호스트가 그 기기 ID로 승인을 요청해야 한다. `request_use` 도구 설명이 "`NEED_APPROVAL`이면 `devices`의 `node_id`로 `request_access`를 부른다"고 알린다. 고르기 전에 끝나면 `devices`는 비고 `selected_count`는 0, `similar`는 `false`다.
+12. 검사에서 걸리면 응답의 `devices`는 처음 걸린 기기 하나다 — 승인이 필요하면 호스트가 그 기기 ID로 승인을 요청해야 한다. `request_use` 도구 설명이 "`NEED_APPROVAL`이면 `devices`의 `node_id`로 `request_access`를 부른다"고 알린다. 고르기 전에 끝나면 `devices`는 비고 `selected_count`는 0, `similar`는 `false`다. API가 판정 전에 거부해도 형식이 맞는 거리 선택자면 같은 모양이다. 형식이 틀리면 거리 선택자인지 알 수 없어 기존 여섯 키만 담는다.
 13. 옆 기기 때문에 취소한 하위 요청의 판정 기록은 `OK`로 남고 실행 기록은 미전송 취소다. 취소 근거는 `source: selector_sibling`과 걸린 기기다 — 단일 요청이 실행 직전 재검사에서 막힌 경우와 같은 모양이다.
 14. 상위 요청의 판정 기록은 만든 하위 요청의 `internal_request_id` 목록도 담는다. 재전송은 이 목록으로 하위 요청을 찾는다 — 내부 오류 뒤 재판정(#76)에서 앞 시도의 하위 요청이 섞이지 않는다. 호스트 응답에는 넣지 않는다.
 15. 한 하위 요청의 실행이 예외로 끝나면 그 기기만 `INTERNAL_ERROR`다. 다른 기기의 결과는 그대로다.
@@ -146,8 +148,9 @@
 17. IOT는 빈 보고도 기존 `rssi` 보고와 같은 시각·연결·순번 검사를 거친다. `decode_rssi_report`를 더하고 `decode_message`의 반환은 그대로 둔다. 빈 보고는 기기의 `last_seen_at`을 바꾸지 않는다. 빈 보고도 마지막 `rssi` 보고가 되어 순번과 관측 시각의 기준이 된다 — 빈 보고 뒤의 더 낮은 순번 보고는 순서 어긋남으로 거부한다.
 18. 기존 판정 입구(`decide_for_execution`)는 거리 선택자를 `INVALID_INPUT`으로 거부한다. 거리 선택자는 `decide_selector`만 처리한다.
 19. 통합 시험은 runtime 시험 세계에 시험 안에서만 `light-3`을 더한다 — 다른 runtime 시험의 기기 목록을 바꾸지 않는다. 시험 안에서 시뮬레이터가 두 명령이 모두 발행된 뒤에 첫 명령을 처리하게 해서, 두 하위 요청의 실행이 실제 SQLite에서 반드시 겹친다. 시험의 근접 추정은 `observe_report`로 보고한 기기만 거리 순서에 세워 IOT → 상태 관리 → 근접 추정의 보고 경로를 덮는다.
-20. 상위 판정 기록의 `children[i]`는 `selected[i]`의 하위 요청이다. `selector_children`은 하위 요청의 기기를 `selected`에서 읽는다 — 오류 판정은 행의 `node_id`를 비워 저장한다.
+20. 상위 판정 기록의 `children[i]`는 `selected[i]`의 하위 요청이다. `selector_children`은 하위 요청의 기기를 `selected`에서 읽는다 — 고른 기기의 출처는 판정 기록이다. 저장된 판정의 `node_id`에 기대지 않는다.
 21. `OK`로 저장된 상위 요청에 거리 선택자 기록이 없거나 하위 판정이 고른 기기 수만큼 `OK`가 아니면, 재전송은 저장하지 않고 `INTERNAL_ERROR`다 — `OK`는 실행 결과를 확인했을 때만 나간다 (#16).
+22. 보존 정리는 상위 요청과 그 하위 요청(`selector_parent_id`)이 모두 완료돼야 상위 요청을 완료로 본다. 완료 시각은 그중 가장 늦은 것이다 — 세션·명령·복구는 하위 요청 행에 붙는다. 진행 중인 요청의 외부 ID를 유지하는 FR-22를 상위 요청에도 지킨다. 단일 요청의 완료 판단(`specs/db-retention-capacity`)은 바뀌지 않는다.
 
 ## 7. 가정
 
@@ -179,6 +182,8 @@
 | FR-09 | `test_FR09_settings_selector_values_validated` | 새 설정의 기본값, 허용 범위, 옛 설정 스냅샷 |
 | FR-09 | `test_FR09_node_events_forward_rssi_report` | 상태 관리가 보고를 근접 추정에 넘긴다 |
 | FR-09 | `test_FR09_selector_old_entry_rejects_selector` | 기존 판정 입구는 거리 선택자를 거부한다 |
+| FR-09 | `test_FR09_selector_api_rejection_keeps_selector_keys` | 형식이 맞는 거리 선택자의 판정 전 거부도 거리 선택자 키를 담는다 |
+| FR-09 | `test_FR09_selector_non_participant_usable_by_node_id` | 거리 순서에 없는 기기를 기기 ID로는 실행할 수 있다 |
 | FR-16 | `test_FR16_distance_order_mean_of_recent_window` | 정렬 값은 최근 구간의 평균이다. 구간 밖 프레임은 쓰지 않는다 |
 | FR-16 | `test_FR16_report_time_only_trusted` | 신뢰한 기기의 보고만 기록한다 |
 | FR-17 | `test_FR17_selector_shared_skips_posterior` | `shared` 기기만 고른 요청은 `posterior`를 부르지 않는다. `threshold_{kind}`가 없어도 된다 |
@@ -195,6 +200,8 @@
 | FR-22 | `test_FR22_selector_resend_returns_children_results` | 재전송이 하위 결과를 묶어 반환한다 |
 | FR-22 | `test_FR22_selector_resend_after_check_failure` | 검사에서 걸린 요청의 재전송이 같은 판정과 걸린 기기를 반환한다 |
 | FR-22 | `test_FR22_selector_resend_inconsistent_ok_is_internal_error` | 맞지 않는 `OK` 기록의 재전송은 `OK`를 내지 않는다 |
+| FR-22 | `test_FR22_selector_parent_request_id_kept_while_child_in_progress` | 하위 요청이 진행 중이면 보존 정리가 상위 요청의 외부 ID를 비우지 않는다 |
+| FR-22 | `test_FR22_selector_parent_request_id_cleared_after_latest_child` | 하위 요청이 모두 끝나면 가장 늦은 완료 시각부터 보장기간을 센다 |
 | FR-22 | `test_FR22_selector_record_round_trip` | 거리 선택자 기록과 하위 요청을 저장하고 다시 읽는다 |
 | FR-22 | `test_FR22_selector_digest_includes_start_count` | 시작이나 개수가 다르면 충돌 |
 | FR-22 | `test_FR22_existing_digest_unchanged` | 기존 대상 지정의 중복 판단 요약이 그대로다 |

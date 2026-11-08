@@ -541,7 +541,7 @@ class SqliteRepository:
         상위 행이 없거나 판정이 없거나 판정 기록에 거리 선택자가 없으면 `None`이다. 기록이 가리키는
         하위 행이 없거나 다른 상위 요청의 것이면 `LookupError`다. 하위 판정의 `request_id`는 상위 행의
         외부 ID이고, 상위 행의 값이 비었으면 `""`다. 하위 요청의 기기는 기록의 `selected`에서 읽는다 —
-        오류 판정은 행의 `node_id`를 비워 저장한다.
+        고른 기기의 출처는 판정 기록이다. 저장된 판정의 `node_id`에 기대지 않는다.
         """
         parent = self._conn.execute(
             "SELECT request_id, verdict, decision_context FROM request WHERE internal_request_id = ?",
