@@ -1,6 +1,6 @@
 # 거리 선택자
 
-- 상태: 작성 중
+- 상태: 완료
 - 담당: 작업 지시자 (shared, IOT, 근접 추정, 판정, 상태 관리, DB, API 연결 구현)
 - 요구사항: FR-09, FR-16, FR-17, FR-18, FR-22
 - 따르는 결정: #253 (decision PR #254). 근접 참여 기기의 정의는 #252의 담당자 결정을 따른다.
@@ -59,7 +59,7 @@
   - `Decision.devices`, `Decision.selected_count`, `Decision.similar`, 기기별 결과 값 객체
   - `DecisionRecord`의 거리 순서 필드
   - `RssiReport`, `NodeEventSink.on_rssi_report`
-  - `ProximityEstimator.distance_order`와 결과 값 객체
+  - `ProximityEstimator.observe_report`, `ProximityEstimator.distance_order`와 결과 값 객체
   - `Repository`의 하위 요청 접점
   - 설정 `anchor_recent_sec`, `order_similar_db`
 - `server/src/nearpilot/iot/` — 빈 보고를 포함한 유효 `rssi` 보고의 전달
@@ -67,6 +67,7 @@
 - `server/src/nearpilot/core/decision/` — 거리 선택자 판정, 하위 요청, 재검사, 응답 묶음, 중복 판단 요약, `request_access`의 거부
 - `server/src/nearpilot/core/lifecycle/node_events.py` — 보고 전달
 - `server/src/nearpilot/db/` — 마이그레이션 `0012`, 하위 요청 저장과 조회, 판정 기록, 복원
+- `server/tools/evaluation/db.py` — 평가 도구가 기대하는 스키마 버전 (마이그레이션 `0012`)
 - `server/src/nearpilot/api/mcp/` — 도구 설명, 응답
 - `server/src/nearpilot/runtime/` — 설정 로더, 앱 조립
 - `server/config/` — 설정 예시
@@ -82,6 +83,7 @@
 | 계약 | 사용 또는 제공 | 상대 영역 |
 |---|---|---|
 | `NodeEventSink.on_rssi_report(RssiReport)` | 제공 | IOT → 상태 관리 |
+| `ProximityEstimator.observe_report(RssiReport, node=)` | 제공 | 상태 관리 → 근접 추정 |
 | `ProximityEstimator.distance_order(beacon, candidates, at)` | 제공 | 근접 추정 → 판정 |
 | `Repository.link_selector_child`, `Repository.selector_children` | 제공 | DB → 판정 |
 | `Repository.save_decision`의 `DecisionRecord` 거리 순서 필드 | 제공 | DB → 판정 |
@@ -121,6 +123,7 @@
 | 신뢰하지 않은 기기가 보고한다 | 마지막 보고 시각을 기록하지 않는다 | `test_FR16_report_time_only_trusted` |
 | 하위 요청을 판정하던 중 오류가 난다 | 만든 하위 요청의 예약을 취소하고 `INTERNAL_ERROR` | `test_FR18_selector_internal_error_cancels_children` |
 | 검사에서 걸린 요청을 같은 `request_id`로 재전송한다 | 같은 판정과 걸린 기기를 반환한다 | `test_FR22_selector_resend_after_check_failure` |
+| `OK`로 저장된 상위 요청의 거리 선택자 기록이나 하위 판정이 맞지 않는데 재전송한다 | 저장하지 않고 `DENY`·`INTERNAL_ERROR`. `OK`를 내지 않는다 | `test_FR22_selector_resend_inconsistent_ok_is_internal_error` |
 
 ## 6. 결정
 
@@ -135,14 +138,16 @@
 9. 하위 요청 행은 상위 요청의 `target_spec`, 고른 기기의 `node_id`, 비어 있는 외부 `request_id`, `selector_parent_id`를 가진다. 메모리의 `UseRequest.request_id`는 상위 요청의 외부 ID다 — 재검사가 요청 ID를 대조한다.
 10. 하위 요청도 판정 한 건으로 보고 판정 기록을 저장한다 (FR-18, FR-22).
 11. 판정은 거리 순서대로 하위 요청마다 ③(`rental`만), 동작·인자, ④, 예약을 하고 처음 걸린 곳에서 멈춘다.
-12. 검사에서 걸리면 응답의 `devices`는 처음 걸린 기기 하나다 — 승인이 필요하면 호스트가 그 기기 ID로 승인을 요청해야 한다. 고르기 전에 끝나면 `devices`는 비고 `selected_count`는 0, `similar`는 `false`다.
+12. 검사에서 걸리면 응답의 `devices`는 처음 걸린 기기 하나다 — 승인이 필요하면 호스트가 그 기기 ID로 승인을 요청해야 한다. `request_use` 도구 설명이 "`NEED_APPROVAL`이면 `devices`의 `node_id`로 `request_access`를 부른다"고 알린다. 고르기 전에 끝나면 `devices`는 비고 `selected_count`는 0, `similar`는 `false`다.
 13. 옆 기기 때문에 취소한 하위 요청의 판정 기록은 `OK`로 남고 실행 기록은 미전송 취소다. 취소 근거는 `source: selector_sibling`과 걸린 기기다 — 단일 요청이 실행 직전 재검사에서 막힌 경우와 같은 모양이다.
 14. 상위 요청의 판정 기록은 만든 하위 요청의 `internal_request_id` 목록도 담는다. 재전송은 이 목록으로 하위 요청을 찾는다 — 내부 오류 뒤 재판정(#76)에서 앞 시도의 하위 요청이 섞이지 않는다. 호스트 응답에는 넣지 않는다.
 15. 한 하위 요청의 실행이 예외로 끝나면 그 기기만 `INTERNAL_ERROR`다. 다른 기기의 결과는 그대로다.
-16. 근접 추정은 `ProximityEstimator.observe_report`로 보고 시각을 받는다. 최근 구간과 정렬 값의 구간은 서버 수신 시각으로 자른다 — ① 비콘 검사와 같은 기준이다. 정렬 값은 요청 시각까지 받은 프레임만 쓴다.
-17. IOT는 빈 보고도 기존 `rssi` 보고와 같은 시각·연결·순번 검사를 거친다. `decode_rssi_report`를 더하고 `decode_message`의 반환은 그대로 둔다. 빈 보고는 기기의 `last_seen_at`을 바꾸지 않는다.
+16. 근접 추정은 `ProximityEstimator.observe_report`로 보고 시각을 받는다. 최근 구간과 정렬 값의 구간은 서버 수신 시각으로 자른다 — ① 비콘 검사와 같은 기준이다. 정렬 값은 요청 시각까지 받은 프레임만 쓴다. 유한하지 않은 RSSI는 결측과 같이 버린다 (필터·학습과 같은 관례). 프레임 버퍼는 모델 관측 구간과 최근 구간 중 긴 쪽에 `rssi_frame_sec`를 더한 만큼 남긴다.
+17. IOT는 빈 보고도 기존 `rssi` 보고와 같은 시각·연결·순번 검사를 거친다. `decode_rssi_report`를 더하고 `decode_message`의 반환은 그대로 둔다. 빈 보고는 기기의 `last_seen_at`을 바꾸지 않는다. 빈 보고도 마지막 `rssi` 보고가 되어 순번과 관측 시각의 기준이 된다 — 빈 보고 뒤의 더 낮은 순번 보고는 순서 어긋남으로 거부한다.
 18. 기존 판정 입구(`decide_for_execution`)는 거리 선택자를 `INVALID_INPUT`으로 거부한다. 거리 선택자는 `decide_selector`만 처리한다.
-19. 통합 시험은 runtime 시험 세계에 시험 안에서만 `light-3`을 더한다 — 다른 runtime 시험의 기기 목록을 바꾸지 않는다.
+19. 통합 시험은 runtime 시험 세계에 시험 안에서만 `light-3`을 더한다 — 다른 runtime 시험의 기기 목록을 바꾸지 않는다. 시험 안에서 시뮬레이터가 두 명령이 모두 발행된 뒤에 첫 명령을 처리하게 해서, 두 하위 요청의 실행이 실제 SQLite에서 반드시 겹친다. 시험의 근접 추정은 `observe_report`로 보고한 기기만 거리 순서에 세워 IOT → 상태 관리 → 근접 추정의 보고 경로를 덮는다.
+20. 상위 판정 기록의 `children[i]`는 `selected[i]`의 하위 요청이다. `selector_children`은 하위 요청의 기기를 `selected`에서 읽는다 — 오류 판정은 행의 `node_id`를 비워 저장한다.
+21. `OK`로 저장된 상위 요청에 거리 선택자 기록이 없거나 하위 판정이 고른 기기 수만큼 `OK`가 아니면, 재전송은 저장하지 않고 `INTERNAL_ERROR`다 — `OK`는 실행 결과를 확인했을 때만 나간다 (#16).
 
 ## 7. 가정
 
@@ -189,6 +194,7 @@
 | FR-22 | `test_FR22_selector_parent_record_has_order` | 상위 판정 기록에 거리 순서, 정렬 값, 고른 기기, `similar` |
 | FR-22 | `test_FR22_selector_resend_returns_children_results` | 재전송이 하위 결과를 묶어 반환한다 |
 | FR-22 | `test_FR22_selector_resend_after_check_failure` | 검사에서 걸린 요청의 재전송이 같은 판정과 걸린 기기를 반환한다 |
+| FR-22 | `test_FR22_selector_resend_inconsistent_ok_is_internal_error` | 맞지 않는 `OK` 기록의 재전송은 `OK`를 내지 않는다 |
 | FR-22 | `test_FR22_selector_record_round_trip` | 거리 선택자 기록과 하위 요청을 저장하고 다시 읽는다 |
 | FR-22 | `test_FR22_selector_digest_includes_start_count` | 시작이나 개수가 다르면 충돌 |
 | FR-22 | `test_FR22_existing_digest_unchanged` | 기존 대상 지정의 중복 판단 요약이 그대로다 |
