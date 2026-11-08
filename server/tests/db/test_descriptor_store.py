@@ -133,7 +133,7 @@ def _legacy_db(tmp_path: Path) -> str:
 def test_FR04_migration_backfills_descriptor(tmp_path):
     conn = connect(_legacy_db(tmp_path))
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 11
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(node)")}
         assert {"descriptor", "descriptor_hash"} <= columns
         assert not {"light_controls", "speaker_controls"} & columns

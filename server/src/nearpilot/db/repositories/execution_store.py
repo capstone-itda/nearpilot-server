@@ -1047,24 +1047,36 @@ class SqliteExecutionStore:
     def _node_from_row(row: sqlite3.Row) -> NodeInfo:
         return node_from_row(row)
 
-    @staticmethod
-    def _use_request_from_row(row: sqlite3.Row) -> UseRequest:
+    def _use_request_from_row(self, row: sqlite3.Row) -> UseRequest:
         return UseRequest(
-            user_id=row["user_id"], request_id=row["request_id"],
+            user_id=row["user_id"], request_id=self._external_request_id(row),
             target=TargetSpec.parse(row["target_spec"]), action=row["action"],
             host_kind=row["host_kind"], received_at=parse_iso(row["received_at"]),
             parent_internal_request_id=row["parent_internal_request_id"],
         )
 
-    @staticmethod
-    def _decision_from_row(row: sqlite3.Row, use_id: str | None) -> Decision | None:
+    def _decision_from_row(self, row: sqlite3.Row, use_id: str | None) -> Decision | None:
         if row["verdict"] is None:
             return None
         return Decision(
-            internal_request_id=row["internal_request_id"], request_id=row["request_id"] or "",
+            internal_request_id=row["internal_request_id"], request_id=self._external_request_id(row) or "",
             verdict=Verdict(row["verdict"]), reason=ReasonCode(row["reason_code"]),
             node_id=row["node_id"], use_id=use_id, p_max=row["p_max"],
         )
+
+    def _external_request_id(self, row: sqlite3.Row) -> str | None:
+        """복원할 요청의 외부 `request_id`다 (FR-22, #253).
+
+        거리 선택자 하위 요청 행은 외부 ID 가 없다. 재검사가 요청 ID 를 대조하므로 상위 행의 값을 쓰고,
+        상위 행의 값이 비었으면 `""`다. 하위 요청이 아닌 행은 자기 값 그대로다.
+        """
+        parent_id = row["selector_parent_id"]
+        if parent_id is None:
+            return row["request_id"]
+        parent = self._conn.execute(
+            "SELECT request_id FROM request WHERE internal_request_id = ?", (parent_id,)
+        ).fetchone()
+        return parent["request_id"] or ""
 
     @staticmethod
     def _recovery_from_row(row: sqlite3.Row) -> RecoveryRecord:
