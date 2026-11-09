@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -14,6 +15,7 @@ from conftest import (
 )
 
 from nearpilot.db.repositories._common import iso
+from nearpilot.db.repositories.repository import SqliteRepository
 from nearpilot.db.repositories.retention import SqliteRetentionStore
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import ReasonCode, StoreOutcome, Verdict
@@ -107,3 +109,18 @@ def test_FR22_selector_parent_audit_kept_while_child_in_progress(conn, repo, tmp
 
     assert (audit_rows(parent), audit_rows(second)) == (1, 1)  # 진행 중인 하위 요청과 그 상위 요청
     assert audit_rows(first) == 0  # 끝난 하위 요청의 감사 행은 지운다
+
+
+@pytest.mark.parametrize(("parent_id_kept", "exceeded"), [(True, True), (False, False)])
+def test_FR22_selector_child_command_counted_while_parent_id_kept(conn, repo, parent_id_kept, exceeded):
+    """하위 요청의 끝난 명령도 상위 요청이 외부 ID를 유지하는 동안 명령 항목으로 센다 (결정 23)."""
+    req, parent, (first, _) = _selector(conn, repo)
+    insert_node_command(conn, command_id="cmd-1", internal_request_id=first, node_id="locker-1",
+                        status="succeeded")
+    if not parent_id_kept:  # 보존 정리가 상위 요청의 외부 ID를 비운 뒤
+        conn.execute("UPDATE request SET request_id = NULL WHERE internal_request_id = ?", (parent,))
+    limited = SqliteRepository(conn, settings=Settings(dedup_entry_limit=2))  # 상위 요청 1 + 끝난 명령 1
+
+    result = limited.link_request(replace(req, request_id="r-new"), "dg-new")
+
+    assert result.capacity_exceeded is exceeded

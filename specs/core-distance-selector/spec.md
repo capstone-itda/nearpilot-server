@@ -66,9 +66,9 @@
 - `server/src/nearpilot/core/proximity/` — 마지막 보고 시각, 거리 순서 (사후확률 계산은 고치지 않는다)
 - `server/src/nearpilot/core/decision/` — 거리 선택자 판정, 하위 요청, 재검사, 응답 묶음, 중복 판단 요약, `request_access`의 거부
 - `server/src/nearpilot/core/lifecycle/node_events.py` — 보고 전달
-- `server/src/nearpilot/db/` — 마이그레이션 `0012`, 하위 요청 저장과 조회, 판정 기록, 복원, 보존 정리의 상위 요청 완료 판단
+- `server/src/nearpilot/db/` — 마이그레이션 `0012`, 하위 요청 저장과 조회, 판정 기록, 복원, 보존 정리의 상위 요청 완료 판단, 하위 요청 명령의 중복 방지 항목 세기
 - `server/tools/evaluation/db.py` — 평가 도구가 기대하는 스키마 버전 (마이그레이션 `0012`)
-- `specs/db-retention-capacity/spec.md` 6절 — 완료 조건에 거리 선택자 상위 요청 (결정 22)
+- `specs/db-retention-capacity/spec.md` 6절 — 완료 조건에 거리 선택자 상위 요청 (결정 22), 명령 항목에 하위 요청의 명령 (결정 23)
 - `server/src/nearpilot/api/mcp/` — 도구 설명, 응답
 - `server/src/nearpilot/runtime/` — 설정 로더, 앱 조립
 - `server/config/` — 설정 예시
@@ -126,6 +126,7 @@
 | 하위 요청을 판정하던 중 오류가 난다 | 만든 하위 요청의 예약을 취소하고 `INTERNAL_ERROR` | `test_FR18_selector_internal_error_cancels_children` |
 | 검사에서 걸린 요청을 같은 `request_id`로 재전송한다 | 같은 판정과 걸린 기기를 반환한다 | `test_FR22_selector_resend_after_check_failure` |
 | 하위 요청이 아직 진행 중인데 상위 요청의 마지막 감사 행부터 중복 보장기간이 지난다 | 상위 요청의 외부 `request_id`를 비우지 않는다. 같은 `request_id`의 재전송은 같은 상위 요청을 찾는다 | `test_FR22_selector_parent_request_id_kept_while_child_in_progress` |
+| 하위 요청의 명령이 끝났고 상위 요청은 외부 `request_id`를 유지한다 | 그 명령을 중복 방지 항목으로 센다. 상위 요청의 외부 ID를 비우면 세지 않는다 | `test_FR22_selector_child_command_counted_while_parent_id_kept` |
 | `OK`로 저장된 상위 요청의 거리 선택자 기록이나 하위 판정이 맞지 않는데 재전송한다 | 저장하지 않고 `DENY`·`INTERNAL_ERROR`. `OK`를 내지 않는다 | `test_FR22_selector_resend_inconsistent_ok_is_internal_error` |
 
 ## 6. 결정
@@ -152,6 +153,7 @@
 20. 상위 판정 기록의 `children[i]`는 `selected[i]`의 하위 요청이다. `selector_children`은 `SelectorChild.node_id`를 `selected`에서 읽는다 — 고른 기기의 출처는 판정 기록이다. 판정은 하위 요청의 판정에 늘 그 기기의 `node_id`를 담아 저장하므로 두 값은 같다.
 21. `OK`로 저장된 상위 요청에 거리 선택자 기록이 없거나 하위 판정이 고른 기기 수만큼 `OK`가 아니면, 재전송은 저장하지 않고 `INTERNAL_ERROR`다 — `OK`는 실행 결과를 확인했을 때만 나간다 (#16).
 22. 보존 정리는 상위 요청과 그 하위 요청(`selector_parent_id`)이 모두 완료돼야 상위 요청을 완료로 본다. 완료 시각은 그중 가장 늦은 것이다 — 세션·명령·복구는 하위 요청 행에 붙는다. 진행 중인 요청의 외부 ID와 기록을 유지하는 FR-22를 상위 요청에도 지킨다. 외부 ID 비우기와 감사 행 삭제가 모두 이 판단을 쓴다. 단일 요청의 완료 판단은 바뀌지 않는다. `specs/db-retention-capacity` 6절 완료 조건에 5번으로 적었다.
+23. 하위 요청의 명령은 상위 요청이 외부 `request_id`를 유지하는 동안 중복 방지 항목으로 센다 — FR-22의 "그 명령을 만든 요청과 같은 보장기간"을 외부 ID를 가진 상위 요청의 보장기간으로 읽는다. 결정 22와 같은 해석이다. 진행 중인 명령은 전처럼 늘 센다. 담당자가 2026-11-09에 정했다. `specs/db-retention-capacity` 6절 명령 항목에도 적었다.
 
 ## 7. 가정
 
@@ -206,6 +208,7 @@
 | FR-22 | `test_FR22_selector_parent_request_id_kept_while_child_in_progress` | 하위 요청이 진행 중이면 보존 정리가 상위 요청의 외부 ID를 비우지 않는다 |
 | FR-22 | `test_FR22_selector_parent_request_id_cleared_after_latest_child` | 하위 요청이 모두 끝나면 가장 늦은 완료 시각부터 보장기간을 센다 |
 | FR-22 | `test_FR22_selector_parent_audit_kept_while_child_in_progress` | 하위 요청이 진행 중이면 상위 요청의 감사 행을 지우지 않는다 |
+| FR-22 | `test_FR22_selector_child_command_counted_while_parent_id_kept` | 상위 요청이 외부 ID를 유지하는 동안 하위 요청의 끝난 명령을 중복 방지 항목으로 센다 |
 | FR-22 | `test_FR22_selector_record_round_trip` | 거리 선택자 기록과 하위 요청을 저장하고 다시 읽는다 |
 | FR-22 | `test_FR22_selector_digest_includes_start_count` | 시작이나 개수가 다르면 충돌 |
 | FR-22 | `test_FR22_existing_digest_unchanged` | 기존 대상 지정의 중복 판단 요약이 그대로다 |

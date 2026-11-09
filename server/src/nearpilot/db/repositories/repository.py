@@ -369,13 +369,15 @@ class SqliteRepository:
         """중복 방지 항목 수: 외부 `request_id`가 있는 요청 행 + 명령 항목 (FR-22).
 
         명령 항목은 요청의 `request_id`가 남아 있거나 진행 중(`pending`·`in_progress`)인
-        `node_command` 행이다. 한 문장으로 세므로 두 조건을 모두 만족하는 명령도 한 번만 센다.
+        `node_command` 행이다. 거리 선택자 하위 요청의 명령은 상위 요청의 `request_id`로 본다.
+        한 문장으로 세므로 두 조건을 모두 만족하는 명령도 한 번만 센다.
         """
         return self._conn.execute(
             "SELECT (SELECT COUNT(*) FROM request WHERE request_id IS NOT NULL) "
             "+ (SELECT COUNT(*) FROM node_command WHERE status IN (?, ?) "
             "OR internal_request_id IN "
-            "(SELECT internal_request_id FROM request WHERE request_id IS NOT NULL)) AS n",
+            "(SELECT internal_request_id FROM request WHERE request_id IS NOT NULL "
+            "OR selector_parent_id IN (SELECT internal_request_id FROM request WHERE request_id IS NOT NULL))) AS n",
             (ExecutionStatus.PENDING.value, ExecutionStatus.IN_PROGRESS.value),
         ).fetchone()["n"]
 
