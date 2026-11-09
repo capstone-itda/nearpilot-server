@@ -134,6 +134,7 @@ class Settings:
     order_similar_db: float = 3.0  # 거리 선택자 경계의 "비슷함" 기준: 정렬 값 차이 dB (FR-09, #255)
     online_ttl_sec: float = 15.0  # 온라인 유지 시간: 유효한 기기 메시지의 마지막 수신부터 (FR-13)
     status_report_sec: float = 1.0  # 기기 상태 보고 주기
+    smartthings_poll_sec: float = 5.0  # SmartThings 하트비트 주기: online_ttl_sec 이하 (FR-13, #259)
     reservation_wait_sec: float = 10.0  # 예약 대기 제한: 예약부터 전송 시작까지 (FR-19)
     exec_timeout_sec: float = 3.0  # 실행 응답 제한: 전송 시도 뒤 결과 대기 (FR-07)
     rental_duration_sec: float = 3600.0  # 대여 기본 시간: 자동 반납 기준이 아니라 초과시간 계산 기준 (FR-20)
@@ -178,7 +179,7 @@ class Settings:
             "threshold_locker", "threshold_light", "rssi_frame_sec",
             "leave_absent_sec", "leave_grace_sec", "allocation_window_ms",
             "beacon_recent_sec", "anchor_recent_sec", "order_similar_db",
-            "online_ttl_sec", "status_report_sec",
+            "online_ttl_sec", "status_report_sec", "smartthings_poll_sec",
             "reservation_wait_sec", "exec_timeout_sec",
             "rental_duration_sec", "approval_ttl_sec", "approval_pending_ttl_sec",
             "use_history_retention_days", "audit_retention_days",
@@ -240,6 +241,7 @@ class Settings:
             "order_similar_db",
             "online_ttl_sec",
             "status_report_sec",
+            "smartthings_poll_sec",
             "reservation_wait_sec",
             "exec_timeout_sec",
             "rental_duration_sec",
@@ -268,6 +270,8 @@ class Settings:
         # 상태 보고 주기보다 짧은 온라인 유지 시간은 정상 기기를 오프라인으로 만든다
         if self.online_ttl_sec < self.status_report_sec:
             raise ValueError("online_ttl_sec 는 status_report_sec 이상이어야 한다")
+        if self.smartthings_poll_sec > self.online_ttl_sec:
+            raise ValueError("smartthings_poll_sec 는 online_ttl_sec 이하여야 한다")
 
 
 _FIELD_NAMES = frozenset(Settings.__dataclass_fields__)

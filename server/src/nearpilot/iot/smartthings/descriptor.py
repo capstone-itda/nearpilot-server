@@ -9,45 +9,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from nearpilot.iot.smartthings.actions import ACTIONS, ALWAYS_DECLARED
 from nearpilot.shared.descriptor import DescriptorError, DeviceDescriptor, parse_descriptor
 
 KIND = "display"
 _FORMAT = "nearpilot.device/1"
 _UNKNOWN_FIRMWARE = "unknown"
-
-_NO_ARGS = {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
-_SIGNAL = {"kind": "signal_output"}
-
-# capability id -> (동작 이름, 동작 선언). SmartThings capability.command 매핑은
-# iot-smartthings-adapter 의 명령 전송이 이 테이블을 그대로 읽는다.
-_CAPABILITY_ACTIONS: dict[str, list[dict]] = {
-    "audioVolume": [{
-        "name": "set_volume",
-        "description": "음량을 정한다",
-        "input_schema": {
-            "type": "object",
-            "properties": {"volume": {"type": "integer", "minimum": 0, "maximum": 100}},
-            "required": ["volume"],
-            "additionalProperties": False,
-        },
-        "result": _SIGNAL,
-    }],
-    "audioMute": [
-        {"name": "mute", "description": "소리를 끈다", "input_schema": _NO_ARGS, "result": _SIGNAL},
-        {"name": "unmute", "description": "소리를 켠다", "input_schema": _NO_ARGS, "result": _SIGNAL},
-    ],
-    "mediaInputSource": [{
-        "name": "set_input_source",
-        "description": "입력 소스를 바꾼다",
-        "input_schema": {
-            "type": "object",
-            "properties": {"inputSource": {"type": "string"}},
-            "required": ["inputSource"],
-            "additionalProperties": False,
-        },
-        "result": _SIGNAL,
-    }],
-}
 
 
 class UnsupportedDeviceError(DescriptorError):
@@ -67,13 +34,10 @@ def smartthings_descriptor(
         raise UnsupportedDeviceError("switch capability 가 없어 display 선언을 만들 수 없다")
 
     actions = [
-        {"name": "on", "description": "디스플레이를 켠다", "input_schema": _NO_ARGS, "result": _SIGNAL},
-        {"name": "off", "description": "디스플레이를 끈다", "role": "deactivate",
-         "input_schema": _NO_ARGS, "result": _SIGNAL},
+        dict(action.declaration)
+        for name, action in ACTIONS.items()
+        if name in ALWAYS_DECLARED or action.capability in ids
     ]
-    for capability, specs in _CAPABILITY_ACTIONS.items():
-        if capability in ids:
-            actions.extend(specs)
 
     return parse_descriptor({
         "format": _FORMAT,
