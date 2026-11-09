@@ -42,7 +42,7 @@
 - `reserve_if_free`는 예약을 쓴 결과에 저장한 예약 시각을 담는다. 대여형은 `use_session.reserved_at`, 승인이 필요한 공용형은 `approval_usage.reserved_at`에 저장한다. 쓰기가 없는 결과(공용형 `open`, 거부)는 `None`이다. 승인 없는 대여의 재조작(`REOPERATING`)은 쓰기가 없어도 요청 접수 시각을 담는다. 실행이 대여형 요청의 예약 시각 없음을 `reservation_time_unconfirmed`로 막기 때문이다 (#80, `architecture.md` §4 "예약과 승인 사용분").
 - 같은 요청의 중복 예약은 처음 저장한 예약 시각을 그대로 반환한다 (#80, FR-19).
 - `save_decision`은 `DecisionRecord.settings`의 전체 스냅샷을 저장한다. 버전만 저장하지 않는다 (#83).
-- `execution_context`는 저장한 요청, 확정 `node_id`, `use_id`·`usage_id`, `execution_kind`, `reserved_at`과 저장한 설정 스냅샷으로 문맥을 만든다. 현재 설정으로 채우지 않는다. 명령이 없으면 `None`이다. 조회 오류는 `StoreError`다 (#83).
+- `execution_context`는 저장한 요청, 확정 `node_id`, `use_id`·`usage_id`, `execution_kind`, `reserved_at`과 저장한 설정 스냅샷으로 문맥을 만든다. 현재 설정으로 채우지 않는다. 명령이 없으면 `None`이다. 대여형(`rental_initial`·`rental_reoperation`)인데 `use_id`가 없는 명령도 `None`이다 — 보존 정리가 닫힌 세션을 지우며 `use_id`를 뗀 명령이라 원래 문맥을 만들 수 없다 (#251). 조회 오류는 `StoreError`다 (#83).
 - `is_place_owner`는 소유 여부만 반환한다. 소유 계정 ID는 반환하지 않는다. 기기가 없거나 장소에 배치되지 않았으면 `False`다. 조회 오류는 `StoreError`다 (#84, FR-11).
 - `link_internal_request`는 사용자 ID와 판정 기록 없이 요청을 저장한다. 적용 설정을 함께 보존한다. 같은 내용은 `ALREADY_APPLIED`, 다른 내용은 `CONFLICT`다 (#86).
 - 서버 내부 요청은 이후 `link_command`, `begin_send`, `record_result`, `cancel_not_sent`를 그대로 쓴다. 세션과 사용분이 없으므로 명령, 기기 상태와 감사만 반영한다 (#86).
@@ -97,6 +97,8 @@
 | 명령 ID로 문맥을 조회한다 | 저장한 요청, 대상, 연결, 실행 종류, 예약 시각, 설정 스냅샷으로 만든 문맥을 반환한다 | `test_FR07_execution_context_found` |
 | 조회 사이에 현재 설정이 바뀌었다 | 저장한 설정 스냅샷을 반환한다 | `test_FR07_execution_context_uses_saved_settings` |
 | 명령이 없다 | `None`을 반환한다 | `test_FR07_execution_context_none` |
+| 보존 정리가 대여형 명령의 `use_id`를 뗐다 | `None`을 반환한다. 명령 행은 그대로 남는다 | `test_FR21_execution_context_none_after_retention_detaches_rental_command` |
+| 서버를 다시 켠 뒤 기기가 그 명령의 결과를 재보고한다 | CORE가 경고를 남기고 인계를 끝낸다. `CORE handover failed` 재시도가 없다 | `test_FR21_runtime_rereport_after_retention_detach_is_dropped` |
 | 서버 내부 요청의 명령을 조회한다 | `request`가 `None`이고 `internal_request`를 담은 문맥을 반환한다 | `test_FR20_execution_context_server_internal` |
 | 장소 소유자가 조회한다 | `True`다 | `test_FR12A_is_place_owner_true` |
 | 다른 계정이 조회한다 | `False`다 | `test_FR12A_is_place_owner_false` |
@@ -119,6 +121,7 @@
 - 적용 설정은 `request.settings_json`에 JSON으로 저장한다 — 방문자 요청은 `save_decision`이, 서버 내부 요청은 `link_internal_request`가 쓴다.
 - 서버 내부 요청의 원인(`InternalRequestCause`)은 `request.internal_cause`에 저장한다 — 방문자 요청에만 의미 있는 `reason_code`(판정 사유)에 덮어 쓰지 않는다. 방문자 요청은 `NULL`이다. `target_spec`·`input_digest`는 방문자 요청의 근접 대상 지정·중복 방지에만 쓰여 서버 내부 요청에는 의미가 없다. `target_spec`은 `node_id`를 그대로 담아 NOT NULL을 만족시키고, `input_digest`는 빈 문자열이다 — `execution_context`가 서버 내부 요청을 `UseRequest`로 복원하지 않으므로 다시 해석되지 않는다.
 - `link_command`는 `request.request_kind`를 먼저 본다 — `server_internal`이면 `node.occupancy`로 판단하지 않고 곧바로 `ExecutionKind.SERVER_INTERNAL`과 `use_id=None`·`usage_id=None`을 쓴다. 공용형 기기(점유 방식 `shared`)에서 시작한 서버 내부 요청을 `SHARED`로 잘못 분류하지 않기 위해서다.
+- 대여형인데 `use_id`가 없는 명령의 `execution_context`는 `None`이다 — 담당자가 2026-11-09에 A안을 골랐다 (#251). 보존 정리(`specs/db-retention-capacity`)는 닫힌 세션을 지우며 `node_command.use_id`를 떼지만 명령 행은 남긴다. 기기가 재접속 때 그 명령의 결과를 재보고하면 `ExecutionContext`가 `ValueError`를 던져 IOT가 인계를 끝없이 재시도했다. 상태 관리는 `None`을 DB에 없는 명령과 같게 경고 후 인계 종료로 처리한다 (`specs/state-management/core-node-events.md`). `shared` 접점과 보존 정리는 바꾸지 않는다. `link_command`가 거부한 대여형 재조작의 `not_sent` 명령도 `use_id`가 없어 `None`이다. 기기에 보내지 않은 명령이라 결과가 오지 않는다.
 
 ## 7. 가정
 
@@ -136,6 +139,8 @@
 | FR-03, FR-14 | `test_FR14_approvals_in_scope_*` | 승인 이력 전체 반환과 범위 |
 | FR-19 | `test_FR19_reserve_*` | 예약 시각 저장·반환과 중복 예약 |
 | FR-07, FR-22 | `test_FR07_execution_context_*`, `test_FR22_save_decision_*` | 설정 스냅샷 보존과 원래 문맥 조회 |
+| FR-21 | `test_FR21_execution_context_none_after_retention_detaches_rental_command` | 보존 정리로 `use_id`를 뗀 대여형 명령의 문맥은 `None`이다 |
+| FR-21 | `test_FR21_runtime_rereport_after_retention_detach_is_dropped` | 보존 정리 뒤 같은 명령의 결과 재보고가 예외 없이 끝나고 재인계를 반복하지 않는다 |
 | FR-12A | `test_FR12A_is_place_owner_*` | 소유 여부만 반환 |
 | FR-20, FR-21 | `test_FR20_*internal*`, `test_FR21_server_internal_hidden` | 서버 내부 요청의 저장, 실행, 숨김 |
 | — | `test_schema_migration_keeps_requests` | 마이그레이션이 기존 데이터를 보존한다 |
