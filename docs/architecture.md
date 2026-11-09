@@ -624,6 +624,7 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 요구는 `requirements.md` FR-09 "거리 선택자"에 있다.
 
 - 판정은 ②의 후보를 근접 추정에 넘기고 거리 순서를 받는다. 근접 추정은 근접 참여 기기만 순서에 넣고 기기별 정렬 값을 함께 반환한다. 근접 추정은 순서를 자르지 않는다.
+- 보고 인계는 `observe_report(report, node=NodeInfo)`다. 상태 관리가 `on_rssi_report`마다 부른다. 근접 추정은 `trusted` 기기의 마지막 보고 수신 시각으로 근접 참여 기기를 정한다 (#252).
 - 판정이 시작과 개수로 기기를 고르고 "비슷함" 여부를 정한다.
 - 판정은 고른 기기마다 하위 요청을 만든다. 하위 요청은 새 `internal_request_id`, 확정한 `node_id`, 상위 요청 연결을 가진다. 하위 요청에는 외부 `request_id`가 없다.
 - 하위 요청은 단일 기기 요청과 같은 경로를 쓴다. 아래는 하위 요청마다 따로 한다.
@@ -706,6 +707,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | 기기 보고의 공통 정보 | 아래 모델 모두 | `node_id`, 기기 연결 ID `session_id`, 순번 `seq`, 발행 시각 `sent_at`, 서버 수신 시각 `received_at` |
 | 기기 선언 발표 | `NodeAnnounce` | 공통 정보, 기기 선언 `descriptor` (`DeviceDescriptor`). 선언은 `format`, `kind`, `occupancy`, `vendor`, 동작 선언 목록 `actions` (`ActionSpec`)를 담는다 (#245). v2 발표이면 IOT가 종류별 선언 템플릿으로 `descriptor`를 만든다. |
 | RSSI | `RssiFrame` | 공통 정보, 관측 시각 `frame_ts`, `beacon`, `rssi` |
+| RSSI 보고 | `RssiReport` | 공통 정보, 관측 시각 `frame_ts`. 유효한 `rssi` 메시지 하나를 나타내고 관측 값은 담지 않는다. 비콘이 없는 빈 보고도 있다 (#252). |
 | 상태 | `NodeStatus` | 공통 정보, 보고 기준 시각 `observed_at`, 펌웨어의 명령 처리 상태. 새 필드 형식은 미결이다. |
 | 실행 결과 | `NodeResult` | 공통 정보, `command_id`, 결과 사건 ID `event_id`, 결과 발생 시각 `occurred_at`, 기기가 보고한 상태 `state` (`NodeResultState`), 오류 근거 `error_code` |
 
@@ -713,6 +715,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 |---|---|
 | `NodeEventSink.on_announce(NodeAnnounce)` | 기기 선언 발표 |
 | `NodeEventSink.on_rssi(RssiFrame)` | RSSI 프레임 |
+| `NodeEventSink.on_rssi_report(RssiReport)` | 유효한 `rssi` 메시지 하나. 빈 보고도 넘긴다. 같은 메시지의 `on_rssi`를 모두 부른 뒤에 부른다 (#252). |
 | `NodeEventSink.on_status(NodeStatus)` | 펌웨어의 명령 처리 상태 |
 | `NodeEventSink.on_result(NodeResult)` | 결과 대기 중의 실행 결과와 결과 대기가 끝난 뒤의 실행 결과 |
 
