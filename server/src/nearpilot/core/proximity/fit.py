@@ -16,35 +16,15 @@ import math
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+from nearpilot.core.proximity.common_fit import NONE_LABEL, FitError, GridLoss, LabeledRun
 from nearpilot.core.proximity.filter import compute_posteriors
 from nearpilot.core.proximity.model import NodeModel, ProximityModel
 from nearpilot.shared.enums import DeviceState, Occupancy, TrustState
 from nearpilot.shared.models import BeaconKey, NodeInfo, RssiFrame
-
-NONE_LABEL: str = "none"  # 수집 라벨 "어느 기기 앞도 아님"
-
-
-class FitError(ValueError):
-    """적합 입력이 잘못됐거나, 입력으로 모델 값을 정할 수 없다."""
-
-
-@dataclass(frozen=True, slots=True)
-class LabeledRun:
-    """수집 회차 하나. 구간은 `started_at <= frame_ts < ended_at`이다."""
-
-    run_id: str
-    label: str  # node_id 또는 NONE_LABEL
-    beacon: BeaconKey
-    started_at: datetime
-    ended_at: datetime
-    frames: tuple[RssiFrame, ...]  # list를 받아도 tuple로 바꾼다
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "frames", tuple(self.frames))
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,16 +77,6 @@ class FitConfig:
         object.__setattr__(self, "taus", tuple(self.taus))
         object.__setattr__(self, "stays", tuple(self.stays))
         object.__setattr__(self, "window_secs", tuple(self.window_secs))
-
-
-@dataclass(frozen=True, slots=True)
-class GridLoss:
-    """후보 조합 하나의 검증 손실."""
-
-    tau: float
-    stay: float
-    window_sec: float
-    loss: float  # 검증 평균 로그 손실. 정답 확률이 0 이하로 내려간 시각이 있으면 무한대다
 
 
 @dataclass(frozen=True, slots=True)
