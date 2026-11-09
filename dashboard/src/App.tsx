@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { DataSource } from './data/source';
 import { DataCtx, type Ctx } from './data/context';
@@ -100,6 +100,14 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
     const t = setTimeout(() => setMotion(true), 800);
     return () => clearTimeout(t);
   }, [loaded]);
+  // 움직임을 켜거나 테마를 바꾸면 이미 그린 강조 요소에 도착 강조 선택자가 새로 맞거나 애니메이션 이름이 바뀌어
+  // 바뀐 곳이 없는데도 화면 전체가 한 번 빛난다. 그리기 전에 그 애니메이션을 끝낸다.
+  const appRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = appRef.current;
+    if (!motion || !el?.getAnimations) return;
+    for (const a of el.getAnimations({ subtree: true })) if ((a as CSSAnimation).animationName?.startsWith('np-arrive')) a.finish();
+  }, [motion, theme]);
   // 토큰이 거부되면(401·403) 어댑터가 입력 화면으로 돌려보내므로 이 실패 화면이 끼어들지 않는다
   const loadPlaces = useCallback(() => {
     setPlacesError(undefined);
@@ -316,7 +324,7 @@ export function App({ source, initialView = 'monitor', initialPanel, initialThem
 
   return (
     <DataCtx.Provider value={ctx}>
-      <div className="np-app" data-theme={theme} data-motion={motion ? 'on' : 'off'}>{screen}</div>
+      <div ref={appRef} className="np-app" data-theme={theme} data-motion={motion ? 'on' : 'off'}>{screen}</div>
     </DataCtx.Provider>
   );
 }
