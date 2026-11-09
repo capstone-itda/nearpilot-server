@@ -155,4 +155,4 @@ def test_FR04_speaker_columns_migrated(conn):
     node_cols = {r["name"] for r in conn.execute("PRAGMA table_info(node)")}
     command_cols = {r["name"] for r in conn.execute("PRAGMA table_info(node_command)")}
     assert "speaker_controls" not in node_cols and "speaker" not in command_cols
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 13

@@ -363,6 +363,7 @@ class ProximityResult:
     window_end: datetime
     model_version: str
     calib_version: str
+    unzeroed: frozenset[str] = frozenset()  # posteriors 중 자동 영점이 없는 기기. posteriors 키의 부분집합 (FR-16)
 
     def __post_init__(self) -> None:
         for probability in self.posteriors.values():
@@ -373,7 +374,12 @@ class ProximityResult:
         total = fsum(self.posteriors.values())
         if total > 1.0 and not isclose(total, 1.0):
             raise ValueError("후보 사후확률의 합은 1 이하다")
+        unzeroed = frozenset(self.unzeroed)
+        outside = unzeroed.difference(self.posteriors)
+        if outside:
+            raise ValueError(f"자동 영점이 없는 기기는 posteriors 안에 있어야 한다: {sorted(outside)}")
         object.__setattr__(self, "posteriors", _freeze(self.posteriors))
+        object.__setattr__(self, "unzeroed", unzeroed)
 
     @property
     def best(self) -> tuple[str, float] | None:
@@ -404,6 +410,31 @@ class DistanceOrder:
                 continue
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
                 raise ValueError(f"정렬 값은 None 또는 유한한 수여야 한다: {node_id}={value!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class AutoZero:
+    """기기 하나의 자동 영점 개정 (FR-16, #252). zero_db 가 None 이면 버림 개정이다."""
+
+    node_id: str
+    zero_db: float | None  # dB. 보정한 RSSI 는 `r - zero_db` 다. None 이면 자동 영점이 없다
+    vendor_model: str | None  # 이 개정을 기록할 때 기기 선언의 vendor. 선언이 없으면 None
+    vendor_firmware: str | None
+    revision: int  # 서버 전체에 하나인 증가 번호
+    recorded_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class AutoZeroState:
+    """개정 하나의 시점에 기기별로 적용하는 자동 영점 (FR-22)."""
+
+    revision: int  # 이 상태의 개정 번호. 행이 없으면 0
+    zeros: Mapping[str, AutoZero]  # node_id → revision 이하의 가장 최근 행 (버림 포함). 읽기 전용
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "zeros", _freeze(self.zeros))
+        if self.revision < 0:
+            raise ValueError(f"개정 번호는 0 이상이어야 한다: {self.revision}")
 
 
 # ── 점유 ────────────────────────────────────────────────────────────

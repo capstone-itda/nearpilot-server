@@ -52,6 +52,7 @@ from nearpilot.shared.models import (
     Approval,
     ApprovalRecord,
     AuditEvent,
+    AutoZeroState,
     BeaconKey,
     CleanupReport,
     CloseResult,
@@ -487,6 +488,25 @@ class AuditLog(Protocol):
     def append(self, event: AuditEvent) -> None: ...
 
 
+@runtime_checkable
+class AutoZeroStore(Protocol):
+    """기기별 자동 영점 개정의 저장 (FR-16, FR-22, #252). DB 가 구현하고 근접 추정이 쓴다.
+
+    개정은 서버 전체에 하나인 증가 번호다. 행을 고치거나 지우지 않는다.
+    """
+
+    def auto_zeros(self, revision: int | None = None) -> AutoZeroState:
+        """revision 시점의 기기별 자동 영점. None 이면 최신 개정. revision < 0 이면 ValueError."""
+        ...
+
+    def save_auto_zero(
+        self, node_id: str, zero_db: float | None, vendor_model: str | None,
+        vendor_firmware: str | None, recorded_at: datetime,
+    ) -> int:
+        """개정 하나를 더하고 새 개정 번호를 반환한다. zero_db 가 None 이면 버림이다."""
+        ...
+
+
 # ── CORE 내부 (decision ↔ lifecycle, #16) ──────────────────────────
 
 
@@ -547,7 +567,12 @@ class ProximityEstimator(Protocol):
         """장소 전체 상태로 계산한 후보별 사후확률. 후보가 없으면 빈 posteriors.
 
         판정이 Repository.nodes() 로 읽은 해당 장소의 전체 기기를 place_nodes 로 넘긴다.
-        TRUSTED 기기는 FAULT·오프라인·다른 기능이어도 전체 상태에 넣고 '어느 기기 앞도 아님'을 더한다.
+        전체 상태는 근접 참여 기기 앞 상태들과 '어느 기기 앞도 아님'이다. 근접 참여 기기는
+        at - anchor_recent_sec 이후에 rssi 보고(빈 보고 포함)를 보낸 TRUSTED 기기다.
+        FAULT·오프라인·다른 요청 종류여도 근접 참여 기기이면 전체 상태에 넣는다.
+        결과의 posteriors 는 근접 참여 후보만 담는다. 보고하지 않은 후보는 posteriors 에 없고 오류도 아니다.
+        unzeroed 는 posteriors 중 자동 영점이 없는 기기다. 그 기기는 보정 없이 계산한다.
+        calib_version 은 판정에 적용한 자동 영점의 개정 번호다 (AutoZeroStore).
         후보 확률을 다시 정규화하지 않는다. 후보 밖 확률을 후보에 더하지 않는다. 합은 1 이하다.
         후보와 전체 기기는 같은 장소의 조회다. 관계가 맞지 않으면 실행 허가에 쓸 결과를 만들지 않는다.
         beacons 는 Repository.beacons_of() 가 반환한 본 계정의 활성 비콘 하나다 (#42).

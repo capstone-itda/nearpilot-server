@@ -66,7 +66,7 @@ def _v9_db(tmp_path: Path) -> str:
 def test_FR09_migration_moves_command_arguments(tmp_path):
     conn = connect(_v9_db(tmp_path))
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
         command_cols = {r["name"] for r in conn.execute("PRAGMA table_info(node_command)")}
         node_cols = {r["name"] for r in conn.execute("PRAGMA table_info(node)")}
         assert "arguments" in command_cols and not {"light", "speaker"} & command_cols
