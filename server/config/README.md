@@ -79,10 +79,12 @@ keepalive, 접속·시작·종료 제한 시간, 재접속 최소·최대 대기
 
 - 서버는 SmartThings SmartApp(API_ONLY, 스코프 `r:devices:*`·`x:devices:*`, 필요하면 `w:devices:*`)을 하나 만들어 쓴다. `client_id`·`client_secret`은 `.env.smartthings-client` 같은 파일에 담고 기존 `.env.*` ignore 규칙을 따른다.
 - 소유자는 최초 1회 `nearpilot smartthings link <node_id>`로 동의 절차를 밟는다. 이 명령은 로컬 루프백에 임시 콜백 서버를 띄우고 브라우저로 `https://api.smartthings.com/oauth/authorize`를 연다. `redirect_uri`는 `http://localhost:{고정 포트}/callback`이고 SmartApp 등록 값과 같아야 한다.
+- SmartThings가 `http://localhost` 리다이렉트 URI를 허용하지 않으면, 소유자가 등록한 `redirect_uri`로 받은 인가 코드를 명령에 직접 붙여 넣는 방식으로 대체한다. 허용 여부는 실제 SmartApp 등록으로 확인한다.
 - 이 동의 절차는 인터넷이 되는 PC에서 시연 전에 미리 끝낸다. 독립 AP 안에서는 실행하지 않는다.
 - 액세스 토큰(24시간)과 갱신 토큰(30일, 1회용)은 `.env.smartthings-token`에 저장한다. 서버는 갱신마다 새 값으로 원자적으로 교체한다. 토큰 값은 로그, 화면, 감사 기록에 남기지 않는다(NFR-08).
 - 서버는 만료 전에 자동으로 갱신하는 주기 작업을 둔다. 갱신 실패는 그 기기의 새 실행을 막고 대시보드에 보인다.
 - PAT(개인용 접근 토큰)는 24시간 만료라 개발 중 수동 시험에만 쓴다. 운영에는 쓰지 않는다.
+- 삼성 스마트 모니터 M5는 모니터 쪽 "모바일로 전원 켜기"(또는 비슷한 이름의) 설정이 꺼져 있으면 `switch.on` 명령으로 전원을 켜지 못할 수 있다. M5를 등록하기 전에 모니터 설정에서 이 옵션을 켠다.
 
 # AI 호스트 연결
 

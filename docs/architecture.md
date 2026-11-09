@@ -645,7 +645,11 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 
 [#259](https://github.com/capstone-itda/nearpilot-server/issues/259)의 B안을 따른다. 담당자는 시연 일정과 JM-220의 의견을 근거로 A안(외부 브리지) 대신 B안을 골랐다.
 서버는 iot 영역 안에 SmartThings 실행 어댑터를 둔다. 서버는 SmartThings REST API(`https://api.smartthings.com/v1`)를 직접 부른다. 별도 브리지 프로세스는 두지 않는다.
-판정은 core만 한다(NFR-07). 어댑터는 `NodeCommandGateway`를 구현하고 `NodeEventSink`를 호출한다. 판정과 DB는 고치지 않는다. 1차 대상은 삼성 TV·모니터 1대다.
+판정은 core만 한다(NFR-07). 어댑터는 `NodeCommandGateway`를 구현하고 `NodeEventSink`를 호출한다. 판정과 DB는 고치지 않는다. 1차 대상은 삼성 스마트 모니터 M5(이하 M5) 1대다. 종류 이름(`kind`)은 텔레비전과 모니터를 함께 가리키는 `display`를 쓴다.
+
+**구현 전 확인**
+
+- 구현을 시작하기 전에 M5를 SmartThings에 등록하고 `GET /v1/devices/{deviceId}`로 실제 capability와 각 속성의 상태 반영 시간을 확인한다. 서버는 이 확인 결과로 아래 동작 표(`requirements.md` FR-07 "SmartThings 클라우드 기기의 결과 확인")를 확정한다.
 
 **선언 합성**
 
@@ -677,18 +681,18 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 
 **실행 응답 제한 — 확인 필요**
 
-- 제안: `exec_timeout_sec`에 종류별 재정의(`exec_timeout_sec.{kind}`)를 추가한다. 텔레비전 제안값은 10초다(`requirements.md` §1.2). SmartThings 클라우드 왕복은 ESP32보다 느릴 수 있어서, 전역값을 그대로 쓰면 텔레비전이 자주 `unknown`·`FAULT`가 되거나 ESP32 사물함·조명의 응답 제한이 불필요하게 늘어난다.
+- 제안: `exec_timeout_sec`에 종류별 재정의(`exec_timeout_sec.{kind}`)를 추가한다. `display` 종류(M5)의 제안값은 10초다(`requirements.md` §1.2). SmartThings 클라우드 왕복은 ESP32보다 느릴 수 있어서, 전역값을 그대로 쓰면 M5가 자주 `unknown`·`FAULT`가 되거나 ESP32 사물함·조명의 응답 제한이 불필요하게 늘어난다.
 - 이 설정은 `core/lifecycle/execution.py`가 `Settings.exec_timeout_sec`를 읽는 자리를 고치는 core 영역 변경이다. **core 담당자(JM-220)의 확인이 끝나지 않았다.** 확인 전에는 전역값 3초를 그대로 쓴다.
 
 **점유 방식 — 선택지**
 
-텔레비전을 `occupancy: shared`로 선언하면 FR-20 "공용형 기기" 규칙이 그대로 적용된다. `shared` 기기는 `deactivate` 역할의 동작을 정확히 하나 선언해야 하므로(`device-protocol.md` 3절), `off`에 `role: deactivate`를 붙이면 **이탈 꺼짐이 자동으로 켜진다.** 유지 대상자(텔레비전을 켠 계정)가 모두 이탈하면 서버가 `off`를 요청한다. 이탈 판단은 텔레비전 자신의 RSSI가 아니라 같은 장소의 다른 앵커가 받은 방문자 비콘 관측을 쓴다("이탈 판단의 관측 계약"). 앵커의 유효 반경은 약 0.5 m다(NFR-10). 텔레비전 시청 자리에 앵커가 없으면 방문자가 화면 앞에 있어도 "이탈"로 판단될 수 있다.
+M5를 `occupancy: shared`로 선언하면 FR-20 "공용형 기기" 규칙이 그대로 적용된다. `shared` 기기는 `deactivate` 역할의 동작을 정확히 하나 선언해야 하므로(`device-protocol.md` 3절), `off`에 `role: deactivate`를 붙이면 **이탈 꺼짐이 자동으로 켜진다.** 유지 대상자(M5를 켠 계정)가 모두 이탈하면 서버가 `off`를 요청한다. 이탈 판단은 M5 자신의 RSSI가 아니라 같은 장소의 다른 앵커가 받은 방문자 비콘 관측을 쓴다("이탈 판단의 관측 계약"). 앵커의 유효 반경은 약 0.5 m다(NFR-10). M5 시청 자리에 앵커가 없으면 방문자가 화면 앞에 있어도 "이탈"로 판단될 수 있다.
 
 | 선택지 | 동작 | 장단점 |
 |---|---|---|
-| A. `shared` + `off`를 `deactivate`로 선언 (조명·스피커와 같은 규칙) | 유지 대상자가 모두 이탈(미수신 `leave_absent_sec` + 유예 `leave_grace_sec`, 초기 합 15초)하면 서버가 자동으로 끈다 | 조명·스피커와 같은 이야기로 시연할 수 있다. 텔레비전 시청 자리를 앵커 범위(약 0.5 m) 밖에 두면 시청 중에도 꺼질 수 있다. 시청 자리 가까이에 앵커를 두는 배치가 필요하다 |
+| A. `shared` + `off`를 `deactivate`로 선언 (조명·스피커와 같은 규칙) | 유지 대상자가 모두 이탈(미수신 `leave_absent_sec` + 유예 `leave_grace_sec`, 초기 합 15초)하면 서버가 자동으로 끈다 | 조명·스피커와 같은 이야기로 시연할 수 있다. M5 시청 자리를 앵커 범위(약 0.5 m) 밖에 두면 시청 중에도 꺼질 수 있다. 시청 자리 가까이에 앵커를 두는 배치가 필요하다 |
 | B. `shared` + A와 같지만 시청 자리를 기존 앵커(예: `light-1`)의 범위 안에 둔다 | A와 같은 규칙이지만 배치로 오작동을 피한다 | 코드·문서 변경 없음. 시연 장소 배치만 바꾼다 |
-| C. `rental`로 선언 | 이탈만으로 꺼지지 않는다. `release_use`로 논리적 반납만 하고 전원은 별도 `off` 요청으로 끈다 | `deactivate` 역할을 쓸 수 없다(`rental` 기기는 선언 자체가 거부된다). `use_id`로 점유해야 해서 "누구나 토글하는 공용 텔레비전"의 느낌과 멀어진다 |
+| C. `rental`로 선언 | 이탈만으로 꺼지지 않는다. `release_use`로 논리적 반납만 하고 전원은 별도 `off` 요청으로 끈다 | `deactivate` 역할을 쓸 수 없다(`rental` 기기는 선언 자체가 거부된다). `use_id`로 점유해야 해서 "누구나 토글하는 공용 모니터"의 느낌과 멀어진다 |
 
 이 결정은 시연에서 원하는 느낌(조명처럼 자동으로 꺼지는가, 명시적으로만 꺼지는가)에 달려 있다. 담당자가 선택하면 이 절에 반영한다.
 
@@ -696,16 +700,17 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 
 | 설정 | 제안값 | 비고 |
 |---|---|---|
-| `param_max.tv.setVolume.volume` | 50 | `requirements.md` §1.2 |
-| `param_default.tv.setVolume.volume` | 20 | 첫 실행에서 음량이 크게 나오지 않게 한다 |
+| `param_max.display.setVolume.volume` | 50 | `requirements.md` §1.2 |
+| `param_default.display.setVolume.volume` | 20 | 첫 실행에서 음량이 크게 나오지 않게 한다 |
 | `smartthings_poll_sec` | 5초 | 하트비트 주기. `status_report_sec` 이상, `online_ttl_sec` 이하 |
-| `exec_timeout_sec.tv` | 10초(제안) | 확인 필요 — 위 절 참고 |
-| `threshold_tv` | 두지 않음 | 명시적 지정 전용이라 필요 없다(FR-05) |
-| `any_allowed_kinds` | 바꾸지 않음(`["locker"]`) | 텔레비전은 전역 할당 대상이 아니다 |
+| `exec_timeout_sec.display` | 10초(제안) | 확인 필요 — 위 절 참고 |
+| `threshold_display` | 두지 않음 | 명시적 지정 전용이라 필요 없다(FR-05) |
+| `any_allowed_kinds` | 바꾸지 않음(`["locker"]`) | `display` 종류는 전역 할당 대상이 아니다 |
 
 **OAuth 토큰 수명주기**
 
 - 소유자가 최초 1회 `nearpilot smartthings link`를 실행하면 서버는 로컬 루프백에 임시 HTTP 콜백 서버를 띄운다. 브라우저가 `https://api.smartthings.com/oauth/authorize`에서 동의하면 SmartThings가 이 로컬 주소로 인가 코드를 돌려준다. `redirect_uri`는 `http://localhost:{고정 포트}/callback`이고, 같은 값을 SmartThings SmartApp 등록(`smartthings apps:create`)에도 써 둔다.
+- SmartThings가 `http://localhost` 리다이렉트 URI를 허용하지 않으면, 서버는 등록한 `redirect_uri`로 받은 인가 코드를 소유자가 직접 붙여 넣는 방식으로 대체한다. 허용 여부는 실제 SmartApp 등록으로 확인한다.
 - 이 콜백은 인터넷이 되는 PC에서 한 번만 실행한다. 독립 AP 안에서는 실행하지 않는다. 시연 전에 미리 끝낸다.
 - 서버는 액세스 토큰(24시간)과 갱신 토큰(30일, 1회용)을 받는다. 서버는 갱신마다 새 토큰 쌍을 원자적으로 교체 저장한다. 저장 파일은 `.env.smartthings-token` 같은 이름으로 기존 `.env.*` 비밀값 규칙을 따른다(NFR-08).
 - 서버는 만료 전에 자동으로 갱신하는 주기 작업을 둔다. 갱신에 실패하면 서버는 그 기기의 새 실행을 막고 대시보드에 보인다. 서버는 실패 사유를 감사 로그에 남기고 토큰 값은 남기지 않는다.
