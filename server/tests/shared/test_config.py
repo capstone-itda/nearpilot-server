@@ -102,4 +102,21 @@ def test_fr07_fr20_release_check_settings_are_removed():
 def test_fr13_online_ttl_is_not_shorter_than_status_report_period():
     with pytest.raises(ValueError):
         Settings(online_ttl_sec=0.5)
-    assert Settings(online_ttl_sec=1.0).online_ttl_sec == 1.0
+    settings = Settings(online_ttl_sec=1.0, smartthings_poll_sec=1.0)
+    assert settings.online_ttl_sec == 1.0
+
+
+def test_FR13_smartthings_poll_sec_has_default():
+    assert Settings().smartthings_poll_sec == 5.0
+
+
+@pytest.mark.parametrize("value", [0, -1, float("nan"), float("inf")])
+def test_FR13_smartthings_poll_sec_rejects_non_positive_or_non_finite(value):
+    with pytest.raises(ValueError):
+        Settings(smartthings_poll_sec=value)
+
+
+def test_FR13_smartthings_poll_sec_validated_against_online_ttl_sec():
+    with pytest.raises(ValueError):
+        Settings(online_ttl_sec=15.0, smartthings_poll_sec=16.0)
+    assert Settings(online_ttl_sec=15.0, smartthings_poll_sec=15.0).smartthings_poll_sec == 15.0
