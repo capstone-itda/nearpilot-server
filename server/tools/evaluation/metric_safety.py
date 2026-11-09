@@ -779,12 +779,21 @@ def _break_and_recover(b: _Bench, index: int, name: str, node: NodeSpec, visitor
         return fields
     # 받아들이면 안 되는 승인: 방문자의 승인, 준비되기 전의 소유자 승인
     refused = {"방문자 복구 승인": b.approve_recovery(visitor, node.node_id, recovery_id)[0]}
+    early: tuple[int, Any] | None = None
     if ready.get("status") != RecoveryStatus.READY:
-        refused["준비 전 소유자 복구 승인"] = b.approve_recovery(b.owner, node.node_id, recovery_id)[0]
+        early = b.approve_recovery(b.owner, node.node_id, recovery_id)
+        if not (early[0] in (200, 202) and _became_ready(ready, early[1])):
+            refused["준비 전 소유자 복구 승인"] = early[0]
     trace += [f"{what} {status}" for what, status in refused.items()]
     fields["unapproved_recovery"] = sum(status in (200, 202) for status in refused.values())
     if fields["unapproved_recovery"]:
         return fields  # 소유자가 준비된 복구를 승인해서 마친 복구가 아니다
+    if early is not None and "준비 전 소유자 복구 승인" not in refused:
+        # 준비 조회와 승인 사이에 기기의 새 보고가 와서 서버가 준비됐다. 준비 전 승인은 재지 못했고,
+        # 받아들여진 승인은 준비된 복구의 소유자 승인이다
+        trace.append(f"준비 전 소유자 복구 승인 {early[0]}: 조회 뒤 새 근거로 준비됨, 준비 전 승인을 재지 못함")
+        fields["recovered"] = b.at_rest(node.node_id)
+        return fields
 
     b.h.set_scenario(node.node_id, **_NORMAL)  # 기기가 명령 처리 대기를 다시 보고하게 한다
     ready = b.wait_ready(node.node_id)
@@ -800,6 +809,31 @@ def _break_and_recover(b: _Bench, index: int, name: str, node: NodeSpec, visitor
     if status in (200, 202) and b.at_rest(node.node_id):  # 202는 정산이 진행 중이다. 기기가 AVAILABLE이 되길 기다려서 확인한다
         fields["recovered"] = True
     return fields
+
+
+def _became_ready(before: Mapping[str, Any], body: Any) -> bool:
+    """받아들여진 준비 전 소유자 승인이 준비 조회 뒤에 서버가 새로 받은 근거로 준비된 복구의 승인이다.
+
+    승인 응답의 `readiness`가 준비를 지난 상태(`ready`, 정산 중 `recovering`, 완료 `recovered`)이고, 준비 조회(`before`)에
+    없던 근거가 있어야 한다. 근거는 관측 시각과 종류로 구분한다.
+    `command_failed`처럼 기기가 장애 뒤 바로 명령 처리 대기를 보고하면 그 보고가 조회와 승인 사이에 올 수 있다.
+    같은 근거로 `not_ready`였던 복구를 받아들였거나 응답에 준비 상태가 없으면 승인 없는 복구로 센다.
+    """
+    after = body.get("readiness") if isinstance(body, dict) else None
+    passed = (RecoveryStatus.READY, RecoveryStatus.RECOVERING, RecoveryStatus.RECOVERED)
+    if not isinstance(after, dict) or after.get("status") not in passed:
+        return False
+    seen = {_evidence_key(item) for item in _evidence_items(before)}
+    return any(_evidence_key(item) not in seen for item in _evidence_items(after))
+
+
+def _evidence_items(readiness: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    items = readiness.get("evidence")
+    return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+
+
+def _evidence_key(item: Mapping[str, Any]) -> tuple[Any, Any, Any]:
+    return item.get("observed_at"), item.get("execution_outcome"), item.get("command_idle")
 
 
 def _pending_command_release(b: _Bench, index: int) -> dict[str, Any]:

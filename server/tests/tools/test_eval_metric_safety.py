@@ -619,7 +619,7 @@ class FakeHarness:
             return 404, {"error": "NO_RECOVERY"}
         status = RecoveryStatus.NOT_READY if self._faulty(node_id) else RecoveryStatus.READY  # 정상으로 돌아와야 준비된다
         return 200, {"node_id": node_id, "recovery_id": f"recovery-{node_id}", "status": status, "blockers": [],
-                     "evidence": {}, "checked_at": "2026-10-27T00:00:00+00:00"}
+                     "evidence": [], "checked_at": "2026-10-27T00:00:00+00:00"}
 
     def _approve_recovery(self, user, node_id):
         if user != self.owner:
@@ -629,6 +629,15 @@ class FakeHarness:
                 return 403, {"error": "NOT_OWNER"}
         if self._state(node_id) != DeviceState.FAULT:
             return 409, {"error": "STATE_CONFLICT"}
+        meanwhile = {"ready_meanwhile": [{"observed_at": "2026-10-27T00:00:01+00:00", "execution_outcome": None,
+                                          "command_idle": True}],  # 준비 조회 뒤에 온 대기 보고
+                     "ready_same_evidence": []}  # 준비 조회 때와 같은 근거
+        bug = next((name for name in meanwhile if name in self.bugs), None)
+        if user == self.owner and self._faulty(node_id) and bug:
+            self._recover(node_id)
+            return 200, {"outcome": "completed", "node_id": node_id, "readiness": {
+                "node_id": node_id, "recovery_id": f"recovery-{node_id}", "status": RecoveryStatus.RECOVERED, "blockers": [],
+                "evidence": meanwhile[bug], "checked_at": "2026-10-27T00:00:02+00:00"}}
         if user == self.owner and self._faulty(node_id) and "early_recovery" not in self.bugs:
             return 409, {"error": "NOT_READY"}
         if "stuck_recovery" in self.bugs:
@@ -893,6 +902,34 @@ def test_NFR04_metric6_counts_each_breach(bug, scenarios, field, expected, metri
         assert not any(broken[scenario]["recovered"] for scenario in scenarios)
 
 
+@pytest.mark.parametrize(("bug", "unapproved"), [
+    pytest.param("ready_meanwhile", 0, id="new-evidence-arrived-before-approval"),
+    pytest.param("ready_same_evidence", 1, id="ready-without-new-evidence"),
+])
+def test_NFR04_metric6_early_owner_approval_after_server_became_ready(bug, unapproved):
+    """준비 조회와 준비 전 소유자 승인 사이에 서버가 새 근거로 준비되면 승인 없는 복구로 세지 않는다.
+
+    `command_failed`의 기기는 장애 뒤 바로 대기를 보고해서, 그 보고가 조회와 승인 사이에 올 수 있다.
+    """
+    config = with_counts(m6_each=1)
+
+    outcome = run_metric6(FakeHarness(config, [bug]), config)
+
+    attempts = {a["scenario"]: a for a in outcome.raw["attempts"]}
+    for scenario in FAULTS:
+        attempt = attempts[scenario]
+        assert not attempt["setup_failed"], attempt
+        assert (attempt["unapproved_recovery"], attempt["recovered"]) == (unapproved, not unapproved), attempt
+        if unapproved:
+            assert attempt["trace"][-1] == "준비 전 소유자 복구 승인 200"
+        else:
+            assert attempt["trace"][-2:] == [
+                "방문자 복구 승인 403", "준비 전 소유자 복구 승인 200: 조회 뒤 새 근거로 준비됨, 준비 전 승인을 재지 못함"]
+    rows = {row["metric"]: row for row in outcome.rows}
+    assert rows["m6_unapproved_recovery"]["value"] == len(FAULTS) * unapproved
+    assert rows["m6_recovery_success"]["value"] == (0.0 if unapproved else 1.0)
+
+
 @pytest.mark.parametrize("bug", [
     pytest.param("stuck_recovery", id="owner-approval-rejected"),
     pytest.param("fake_completion", id="completed-without-recovering"),
@@ -1116,9 +1153,12 @@ def test_NFR04_metric6_runs_on_harness(ascii_tmp_path, mosquitto):
         assert attempts[scenario]["recovered"] is True
         trace = attempts[scenario]["trace"]
         assert "방문자 복구 승인 403" in trace
-        assert trace[-1] == "소유자 복구 승인 200 completed"
-        # 실제 브로커에서는 준비 조회 전에 idle 보고가 도착할 수도 있다.
+        # 실제 브로커에서는 idle 보고가 준비 조회 전에, 또는 조회와 준비 전 승인 사이에 도착할 수도 있다.
         early = [entry for entry in trace if entry.startswith("준비 전 소유자 복구 승인")]
+        if early and "새 근거로 준비됨" in early[0]:
+            assert trace[-2:] == ["방문자 복구 승인 403", early[0]] and early[0].startswith("준비 전 소유자 복구 승인 200")
+            continue
+        assert trace[-1] == "소유자 복구 승인 200 completed"
         assert early in ([], ["준비 전 소유자 복구 승인 409"])
         if early:
             assert trace.index("방문자 복구 승인 403") < trace.index(early[0]) < len(trace) - 1

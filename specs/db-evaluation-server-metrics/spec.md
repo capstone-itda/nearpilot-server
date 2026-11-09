@@ -86,6 +86,7 @@
 | 측정 중간에 실패했다 | 끝난 지표의 원자료를 `error` 키와 함께 `<이름>-raw.json`에 남기고 경로를 알린다. 종료 코드 1. 끝난 지표가 없으면 아무것도 쓰지 않는다 | `test_NFR13_evaluate_server_failure_keeps_raw_so_far` |
 | 시험 횟수 0인 행이 나왔다 (예: 지표 3에서 예약·구동까지 닿은 요청이 없다) | 원자료를 남기고 `보고서를 만들 수 없다: …`와 종료 코드 1 | `test_NFR13_evaluate_server_zero_trial_row_fails_after_keeping_raw` |
 | 측정하는 동안 같은 이름의 보고서나 원자료가 생겼다 | 덮어쓰지 않고 종료 코드 2 | `test_NFR13_evaluate_server_report_created_during_run_is_not_overwritten` |
+| 지표 6의 준비 조회와 준비 전 소유자 승인 사이에 서버가 새 근거로 준비됐다 | 승인 없는 복구로 세지 않는다. 받아들여진 승인을 준비된 복구의 소유자 승인으로 보고, 원자료 trace에 준비 전 승인을 재지 못했다고 남긴다. 새 근거 없이 받아들였으면 승인 없는 복구다 | `test_NFR04_metric6_early_owner_approval_after_server_became_ready` |
 | 지표 5·6의 시작 장면을 만들지 못했다 (근접 거절 등) | 그 시도는 `setup_failed`로 원자료에 사유와 함께 남기고 값과 시험 횟수에 넣지 않는다. 장면을 만든 뒤 서버가 기대와 다르게 답한 것은 실패다 | `test_NFR04_metric6_*`, `test_NFR07_metric5_*` |
 
 ## 6. 결정
@@ -102,6 +103,7 @@
 - 시험 횟수는 보낸 요청 수가 아니라 그 행이 판정하는 시도 수다. 지표 3 이중 점유는 예약까지 닿은 요청(세션 + `DEVICE_BUSY`), 중복 실행은 구동한 요청, 지표 1 오동작률은 구동한 발화, 지표 4 교차 오동작은 구동한 요청, 성공률은 보낸 요청 전부다. 신뢰구간 상한이 부풀지 않게 한다.
 - 지표 3은 `request_id`가 `m3-`로 시작하는 요청의 세션과 명령만 센다. 같은 하네스에서 먼저 돈 지표의 세션·명령이 섞이지 않고, 겹침도 지표 3 세션끼리만 본다.
 - 지표 5 시나리오는 미등록(토큰 없음·틀린 토큰, 401), 무권한, 1회 승인, 기간 승인, 타인 핸들, 미신뢰, 비콘 근거 없음(`no_beacon`: 유효한 토큰이지만 어느 기기도 비콘을 듣지 못함, FR-15 ①)이다. `no_beacon`은 `m5_out_of_scope`에 더하고 횟수는 `m5_each`를 쓴다. NFR-07의 "유도된 다른 기기 호출"은 지표 1·4의 오동작으로 잰다.
+- fix/db-evaluation-server-metrics: 지표 6의 준비 전 소유자 승인이 받아들여지면 승인 응답의 준비 상태(`readiness`)를 본다. 준비를 지난 상태(`ready`, `recovering`, `recovered`)이고 준비 조회 때 없던 근거(관측 시각과 종류로 구분)가 있으면 조회 뒤에 서버가 정당하게 준비된 것이다. 승인 없는 복구로 세지 않고, 그 승인으로 복구를 마쳤는지를 복구 성공으로 센다. 시뮬레이터를 바꾸지 않고 서버가 돌려준 근거로 판정한다 — 담당자 결정.
 - 지표 6의 `pending_command_release`는 첫 대여 명령에 기기가 제한 시간 안에 늦게 답하는 동안 같은 방문자가 `release_use`를 보낸다. 세션이 일반 반납으로 닫히면 `m6_release_during_fault`의 위반이다 (응답 사유는 보지 않는다. FR-20은 보류 사유를 정하지 않는다). 횟수는 `m6_each`를 쓴다. ACTIVE 세션의 재조작 명령이 처리 중일 때의 반납은 재지 못한다 (7절 가정).
 - 지표 3의 이중 점유 구간 시작은 예약 접수 시각(`reserved_at`)이 아니라 단계 5 감사 기록 시각이다. 접수 시각은 정상 순서도 겹쳐 보인다.
 - 보고서 행의 `metric` 이름: `m1_wrong_device_rate`, `m3_double_occupancy`, `m3_duplicate_execution`, `m3_lock_errors`, `m4_cross_user_malfunction`, `m4_success_rate`, `m5_out_of_scope`, `m5_untrusted_candidates`, `m5_valid_approval_success`, `m6_auto_release`, `m6_foreign_release`, `m6_release_during_fault`, `m6_unapproved_recovery`, `m6_recovery_success`, `m7_server_latency_median`, `m7_server_latency_p95`, `m7_host_latency`, `m7_host_agreement`, `m9_allocation_match`, `m2_reask_curve`, 비용 비율마다 `m2_reask_r{r}`. `m2_reask_curve` 행은 표본 수와 note만 쓰고, `m2_*`의 통과 여부는 비교 기준이 미결이라 비운다.
@@ -120,6 +122,7 @@
 - 부하 클라이언트 수와 통과 기준 수치는 D8에 따라 측정 뒤 다시 정한다. 예시 설정은 `requirements.md` §4의 값을 쓴다.
 - 하네스는 시드 뒤 서버를 한 번 재시작한다. 서버는 시작 때의 기기 목록만 복원하므로 시뮬레이터 기기를 시드에 모두 넣는다 (D7 새 기기 재시작 한계).
 - 승인 없는 대여의 재조작(ACTIVE 세션에 같은 사용자의 `request_use`)은 지금 서버에서 `BUSY/COMMAND_IN_PROGRESS`로 끝나고 명령을 보내지 않는다 (재조작 예약 시각 결함, 별도 fix). 그래서 지표 6은 ACTIVE 세션 재조작 중 반납 장면을 만들지 않는다.
+- 지표 6의 `command_failed` 기기는 실패한 뒤 바로 명령 처리 대기를 주기적으로 보고한다. 시뮬레이터에 대기 보고를 멈추는 시나리오가 없어서, 그 보고가 준비 조회와 준비 전 승인 사이에 오면 그 시도에서는 준비 전 승인을 재지 못한다. `no_response`와 `result_unknown`은 명령 결과가 확정되지 않아 준비 전 상태가 유지된다.
 - 지표 6의 복구는 `api-rest-recovery`의 복구 REST를 쓴다. 이 작업은 그 브랜치 위에서 한다.
 
 ## 8. 테스트
