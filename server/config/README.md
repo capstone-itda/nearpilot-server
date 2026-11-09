@@ -73,6 +73,17 @@ keepalive, 접속·시작·종료 제한 시간, 재접속 최소·최대 대기
 하나라도 실패하면 요청을 받지 않고 끝낸다. 종료할 때 제한 시간을 넘긴 작업은 오류로 알리고,
 미완료 기록은 다음 시작의 복원에서 다시 확인한다.
 
+# SmartThings 연동 설정
+
+[#259](https://github.com/capstone-itda/nearpilot-server/issues/259)의 결정을 따른다 (`docs/architecture.md` §4 "SmartThings 실행 어댑터"). 아래는 결정 사항이고 구현은 후속 feat PR이 한다.
+
+- 서버는 SmartThings SmartApp(API_ONLY, 스코프 `r:devices:*`·`x:devices:*`, 필요하면 `w:devices:*`)을 하나 만들어 쓴다. `client_id`·`client_secret`은 `.env.smartthings-client` 같은 파일에 담고 기존 `.env.*` ignore 규칙을 따른다.
+- 소유자는 최초 1회 `nearpilot smartthings link <node_id>`로 동의 절차를 밟는다. 이 명령은 로컬 루프백에 임시 콜백 서버를 띄우고 브라우저로 `https://api.smartthings.com/oauth/authorize`를 연다. `redirect_uri`는 `http://localhost:{고정 포트}/callback`이고 SmartApp 등록 값과 같아야 한다.
+- 이 동의 절차는 인터넷이 되는 PC에서 시연 전에 미리 끝낸다. 독립 AP 안에서는 실행하지 않는다.
+- 액세스 토큰(24시간)과 갱신 토큰(30일, 1회용)은 `.env.smartthings-token`에 저장한다. 서버는 갱신마다 새 값으로 원자적으로 교체한다. 토큰 값은 로그, 화면, 감사 기록에 남기지 않는다(NFR-08).
+- 서버는 만료 전에 자동으로 갱신하는 주기 작업을 둔다. 갱신 실패는 그 기기의 새 실행을 막고 대시보드에 보인다.
+- PAT(개인용 접근 토큰)는 24시간 만료라 개발 중 수동 시험에만 쓴다. 운영에는 쓰지 않는다.
+
 # AI 호스트 연결
 
 AI 호스트는 MCP Streamable HTTP로 `http://<서버 AP 주소>:<[http] port>/mcp`에 붙고, 헤더 `Authorization: Bearer <토큰>`을 보낸다.
