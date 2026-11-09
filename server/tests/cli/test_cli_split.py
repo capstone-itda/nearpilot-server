@@ -17,7 +17,6 @@ import pytest
 
 from nearpilot.cli import EXIT_FAILED, EXIT_INVALID, EXIT_OK
 from nearpilot.cli import split as split_cli
-from nearpilot.core.proximity.fit import AnchorLayout, PlaceLayout
 from tools.evaluation.split import load_split
 
 T0 = datetime(2026, 10, 17, 9, 0, 0, tzinfo=timezone.utc)
@@ -29,10 +28,10 @@ ratios = [0.6, 0.2, 0.2]
 min_runs_per_label = 5
 
 [fit]
-min_distance_m = 0.3
 taus = [1.0]
 stays = [0.9]
 window_secs = [2.0]
+auto_zero_min_bins = 120
 
 [acceptance]
 max_misselection = 0.05
@@ -51,11 +50,6 @@ EXCLUDED_TABLE = (
     "col-022  라벨 기기가 장소에 없다\n"
     "col-023  진행 중\n"
 )
-
-
-def layout(place_id: str, *node_ids: str) -> PlaceLayout:
-    """장소와 기기 ID만 쓰는 배치. 좌표는 DB에 들어가지 않는다."""
-    return PlaceLayout(place_id, {node_id: AnchorLayout(0.0, 0.0, 0.0, 0.5) for node_id in node_ids})
 
 
 def frames(node_id: str, count: int) -> dict[str, list[float]]:
@@ -93,8 +87,7 @@ def split_db(server_dir, make_collection_db) -> list[str]:
     runs = [(label, T0 + timedelta(seconds=60 * i), seconds, observed)
             for i, (label, seconds, observed) in enumerate(specs)]
     ids = make_collection_db(
-        server_dir, [layout("place-a", "locker-1", "locker-2"), layout("place-b", "locker-9")], runs,
-        unplaced=("locker-8",))
+        server_dir, {"place-a": ["locker-1", "locker-2"], "place-b": ["locker-9"]}, runs, unplaced=("locker-8",))
     assert ids[0] == "col-001" and ids[-1] == "col-023"
     return ids
 
@@ -135,7 +128,7 @@ def test_FR16_split_cli_writes_file(server_dir, run_cli, split_db, fixed_now):
 def test_FR16_split_cli_without_excluded_runs_prints_no_excluded_table(server_dir, run_cli, make_collection_db,
                                                                        fixed_now):
     runs = [("locker-1", T0 + timedelta(seconds=60 * i), 30, frames("locker-1", 2)) for i in range(5)]
-    make_collection_db(server_dir, layout("place-a", "locker-1"), runs)
+    make_collection_db(server_dir, {"place-a": ["locker-1"]}, runs)
     write_fit(server_dir)
 
     code, out, err = run_cli(["split", "place-a"], cwd=server_dir)

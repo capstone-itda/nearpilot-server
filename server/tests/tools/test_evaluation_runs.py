@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from nearpilot.core.proximity.fit import LabeledRun
+from nearpilot.core.proximity.common_fit import LabeledRun
 from nearpilot.db.schema import connect
 from nearpilot.shared.enums import DeviceState, Occupancy, Role, TrustState
 from nearpilot.shared.models import BeaconKey, RssiFrame

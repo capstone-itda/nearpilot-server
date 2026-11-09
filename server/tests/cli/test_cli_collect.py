@@ -18,7 +18,6 @@ import pytest
 from nearpilot.cli import EXIT_FAILED, EXIT_INTERRUPTED, EXIT_INVALID, EXIT_OK
 from nearpilot.cli import collect as collect_cli
 from nearpilot.cli import common as common_cli
-from nearpilot.core.proximity.fit import AnchorLayout, PlaceLayout
 from nearpilot.shared.models import BeaconKey
 from tools.data_collection.session import SessionIO
 
@@ -31,10 +30,10 @@ ratios = [0.6, 0.2, 0.2]
 min_runs_per_label = 3
 
 [fit]
-min_distance_m = 0.3
 taus = [1.0]
 stays = [0.9]
 window_secs = [2.0]
+auto_zero_min_bins = 120
 
 [acceptance]
 max_misselection = 0.05
@@ -119,11 +118,6 @@ def opened_connections(monkeypatch):
     return opened
 
 
-def layout(place_id: str, *node_ids: str) -> PlaceLayout:
-    """장소와 기기 ID만 쓰는 배치. 좌표는 DB에 들어가지 않는다."""
-    return PlaceLayout(place_id, {node_id: AnchorLayout(0.0, 0.0, 0.0, 0.5) for node_id in node_ids})
-
-
 def timeline(*specs: tuple[str, float | None, dict]) -> list[tuple]:
     """`(label, seconds, 프레임)`을 60초 간격의 `make_collection_db` 회차 명세로 만든다. 구간이 겹치지 않는다."""
     return [
@@ -181,7 +175,7 @@ def record_entries(path: Path) -> list[dict]:
 
 def test_FR16_collect_default_record_path(server_dir, run_cli, make_collection_db, collect_beacon, use_session,
                                           today, tmp_path):
-    make_collection_db(server_dir, layout("place-a", "locker-1"), [])
+    make_collection_db(server_dir, {"place-a": ["locker-1"]}, [])
     write_plan(server_dir, collect_beacon)
     session = use_session()
 
@@ -218,7 +212,7 @@ def test_FR16_collect_default_record_path(server_dir, run_cli, make_collection_d
 
 def test_FR16_collect_default_record_appends_per_day(server_dir, run_cli, make_collection_db, collect_beacon,
                                                      use_session, today):
-    make_collection_db(server_dir, layout("place-a", "locker-1"), [])
+    make_collection_db(server_dir, {"place-a": ["locker-1"]}, [])
     write_plan(server_dir, collect_beacon)
     use_session()
     records = server_dir / "var" / "records"
@@ -251,7 +245,7 @@ def test_FR16_collect_today_utc_is_the_utc_date(monkeypatch):
 
 def test_FR16_collect_run_start_at_skips_earlier_runs(server_dir, run_cli, make_collection_db, collect_beacon,
                                                       use_session, today):
-    make_collection_db(server_dir, layout("place-a", "locker-1"), [])
+    make_collection_db(server_dir, {"place-a": ["locker-1"]}, [])
     write_plan(server_dir, collect_beacon, labels=("locker-1", "none"))
     use_session()
 
@@ -265,7 +259,7 @@ def test_FR16_collect_run_start_at_skips_earlier_runs(server_dir, run_cli, make_
 
 def test_FR16_collect_run_returns_the_tool_exit_code(server_dir, run_cli, make_collection_db, collect_beacon,
                                                      use_session, today):
-    make_collection_db(server_dir, layout("place-a", "locker-1"), [])
+    make_collection_db(server_dir, {"place-a": ["locker-1"]}, [])
     write_plan(server_dir, collect_beacon, labels=("locker-1", "locker-1"))
     write_plan(server_dir, BeaconKey("99999999-0000-0000-0000-000000000000", 1, 1), name="unregistered.json")
 
@@ -366,7 +360,7 @@ def test_FR16_collect_requires_existing_db(server_dir, run_cli, collect_beacon, 
 
 def test_FR16_collect_run_closes_database_connections(server_dir, run_cli, make_collection_db, collect_beacon,
                                                       use_session, today, monkeypatch):
-    make_collection_db(server_dir, layout("place-a", "locker-1"), [])
+    make_collection_db(server_dir, {"place-a": ["locker-1"]}, [])
     write_plan(server_dir, collect_beacon)
     use_session()
     opened = []
@@ -392,7 +386,7 @@ def test_FR16_collect_run_closes_database_connections(server_dir, run_cli, make_
 
 
 def test_FR16_collect_close_ends_open_run(server_dir, run_cli, make_collection_db, use_session):
-    ids = make_collection_db(server_dir, layout("place-a", "locker-1"), timeline(
+    ids = make_collection_db(server_dir, {"place-a": ["locker-1"]}, timeline(
         ("locker-1", 30, frames("locker-1", 3)),
         ("locker-1", None, frames("locker-1", 2)),  # 서버가 죽거나 PC가 꺼져서 끝 시각을 못 남긴 회차
     ))
@@ -414,7 +408,7 @@ def test_FR16_collect_close_ends_open_run(server_dir, run_cli, make_collection_d
 
 
 def test_FR16_collect_close_rejects_closed_and_unknown_runs(server_dir, run_cli, make_collection_db, use_session):
-    make_collection_db(server_dir, layout("place-a", "locker-1"), timeline(("locker-1", 30, frames("locker-1", 3))))
+    make_collection_db(server_dir, {"place-a": ["locker-1"]}, timeline(("locker-1", 30, frames("locker-1", 3))))
     session = use_session(start=T0 + timedelta(hours=1))
 
     for collection_id in ("col-001", "col-nothing"):  # 이미 닫힌 회차, 없는 회차
@@ -437,7 +431,7 @@ def test_FR16_collect_close_requires_collection_id(run_cli, tmp_path):
 
 
 def test_FR16_collect_list_open_only(server_dir, run_cli, make_collection_db):
-    make_collection_db(server_dir, layout("place-a", "locker-1"), timeline(
+    make_collection_db(server_dir, {"place-a": ["locker-1"]}, timeline(
         ("locker-1", 30, frames("locker-1", 3)),
         ("none", 30, frames("locker-1", 2)),
         ("locker-1", None, frames("locker-1", 3)),
@@ -466,7 +460,7 @@ def test_FR16_collect_list_open_only(server_dir, run_cli, make_collection_db):
 
 
 def test_FR16_collect_list_filters_by_place_and_label(server_dir, run_cli, make_collection_db):
-    make_collection_db(server_dir, [layout("place-a", "locker-1", "locker-2"), layout("place-b", "locker-9")],
+    make_collection_db(server_dir, {"place-a": ["locker-1", "locker-2"], "place-b": ["locker-9"]},
                        timeline(
         ("locker-1", 30, frames("locker-1", 1)),
         ("locker-2", 30, frames("locker-2", 1)),
@@ -489,7 +483,7 @@ def test_FR16_collect_list_filters_by_place_and_label(server_dir, run_cli, make_
 
 
 def test_FR16_collect_list_marks_runs_without_a_place(server_dir, run_cli, make_collection_db):
-    make_collection_db(server_dir, [layout("place-a", "locker-1"), layout("place-b", "locker-9")], timeline(
+    make_collection_db(server_dir, {"place-a": ["locker-1"], "place-b": ["locker-9"]}, timeline(
         ("locker-8", 30, frames("locker-1", 2)),  # 라벨의 기기가 장소에 없다
         ("none", 30, {}),  # 관측이 없다
         ("none", 30, {"locker-1": [-60.0] * 2, "locker-9": [-70.0] * 2}),  # 두 장소의 관측이 섞였다
@@ -508,7 +502,7 @@ def test_FR16_collect_list_marks_runs_without_a_place(server_dir, run_cli, make_
 
 
 def test_FR16_collect_list_summary(server_dir, run_cli, make_collection_db):
-    make_collection_db(server_dir, [layout("place-a", "locker-1", "locker-2"), layout("place-b", "locker-9")],
+    make_collection_db(server_dir, {"place-a": ["locker-1", "locker-2"], "place-b": ["locker-9"]},
                        timeline(
         ("locker-1", 30, frames("locker-1", 3)),
         ("locker-1", 30, frames("locker-1", 4)),
@@ -552,7 +546,7 @@ def test_FR16_collect_list_summary(server_dir, run_cli, make_collection_db):
 
 
 def test_FR16_collect_list_summary_without_fit_file_says_so(server_dir, run_cli, make_collection_db):
-    make_collection_db(server_dir, layout("place-a", "locker-1"), timeline(
+    make_collection_db(server_dir, {"place-a": ["locker-1"]}, timeline(
         ("locker-1", 30, frames("locker-1", 3)),
         ("none", 30, frames("locker-1", 2)),
     ))
@@ -580,7 +574,7 @@ def test_FR16_collect_list_summary_without_fit_file_says_so(server_dir, run_cli,
 
 
 def test_FR16_collect_list_summary_reads_the_chosen_fit_file(server_dir, run_cli, make_collection_db, tmp_path):
-    make_collection_db(server_dir, layout("place-a", "locker-1"), timeline(
+    make_collection_db(server_dir, {"place-a": ["locker-1"]}, timeline(
         *[("locker-1", 30, frames("locker-1", 2)) for _ in range(4)]))
     strict = FIT_FILE.replace("min_runs_per_label = 3", "min_runs_per_label = 5")
     write_fit(server_dir, "place-a.toml")  # 최소 3 → 예
@@ -605,7 +599,7 @@ def test_FR16_collect_list_summary_reads_the_chosen_fit_file(server_dir, run_cli
 
 
 def test_FR16_collect_list_summary_rejects_invalid_fit_file(server_dir, run_cli, make_collection_db):
-    make_collection_db(server_dir, layout("place-a", "locker-1"), timeline(("locker-1", 30, frames("locker-1", 2))))
+    make_collection_db(server_dir, {"place-a": ["locker-1"]}, timeline(("locker-1", 30, frames("locker-1", 2))))
     write_fit(server_dir, "place-a.toml", FIT_FILE.replace("min_runs_per_label = 3", "min_runs_per_label = 2"))
 
     code, out, err = run_cli(["collect", "list", "--summary", "--place", "place-a"], cwd=server_dir)
@@ -622,7 +616,7 @@ def test_FR16_collect_list_without_runs(server_dir, run_cli, make_collection_db,
         assert (code, out, err) == (EXIT_OK, "수집 회차가 없다.\n", ""), argv
 
     # 회차가 있어도 거름 조건에 맞는 것이 없으면 같다
-    make_collection_db(server_dir, layout("place-a", "locker-1"), timeline(("locker-1", 30, frames("locker-1", 1))))
+    make_collection_db(server_dir, {"place-a": ["locker-1"]}, timeline(("locker-1", 30, frames("locker-1", 1))))
     for argv in (["list", "--open"], ["list", "--place", "place-z"], ["list", "--label", "none"]):
         code, out, err = run_cli(["collect", *argv], cwd=server_dir)
         assert (code, out, err) == (EXIT_OK, "수집 회차가 없다.\n", ""), argv
@@ -651,7 +645,7 @@ def test_FR16_collect_list_rejects_other_schema_version(server_dir, run_cli, ann
 
 def test_NFR13_collect_list_reads_through_a_read_only_connection(server_dir, run_cli, make_collection_db,
                                                                 monkeypatch):
-    make_collection_db(server_dir, layout("place-a", "locker-1"), timeline(("locker-1", 30, frames("locker-1", 2))))
+    make_collection_db(server_dir, {"place-a": ["locker-1"]}, timeline(("locker-1", 30, frames("locker-1", 2))))
     real_list_runs = collect_cli.list_runs
     seen = []
 
@@ -672,7 +666,7 @@ def test_NFR13_collect_list_reads_through_a_read_only_connection(server_dir, run
 
 
 def test_FR16_collect_list_closes_connection_on_failure(server_dir, run_cli, make_collection_db, monkeypatch):
-    make_collection_db(server_dir, layout("place-a", "locker-1"), timeline(("locker-1", 30, frames("locker-1", 1))))
+    make_collection_db(server_dir, {"place-a": ["locker-1"]}, timeline(("locker-1", 30, frames("locker-1", 1))))
     opened = []
     real = common_cli.open_readonly
 
@@ -699,7 +693,7 @@ def test_FR16_collect_list_closes_connection_on_failure(server_dir, run_cli, mak
 
 
 def test_FR16_collect_config_option_goes_anywhere(server_dir, run_cli, make_collection_db, tmp_path):
-    make_collection_db(server_dir, layout("place-a", "locker-1"), timeline(("locker-1", 30, frames("locker-1", 1))))
+    make_collection_db(server_dir, {"place-a": ["locker-1"]}, timeline(("locker-1", 30, frames("locker-1", 1))))
     config = str(server_dir / "config" / "server.toml")
     work = tmp_path / "work"
     work.mkdir()

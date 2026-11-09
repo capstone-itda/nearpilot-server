@@ -18,7 +18,6 @@ from typing import Any
 import pytest
 
 from nearpilot.core.proximity import common_fit
-from nearpilot.core.proximity import fit as old_fit
 from nearpilot.core.proximity.autozero import zeros_from_frames
 from nearpilot.core.proximity.common_fit import (
     NONE_LABEL,
@@ -174,17 +173,13 @@ def oracle_run_loss(
     return sum(losses) / len(losses), len(losses)
 
 
-# ── 옛 모듈과 같은 이름 ─────────────────────────────────────────────
+# ── 평가 도구가 쓰는 이름 ───────────────────────────────────────────
 
 
-def test_FR16_fit_module_reexports_common_fit_names():
-    """옛 `fit.py`는 네 이름을 다시 정의하지 않고 `common_fit`의 것을 그대로 내보낸다."""
+def test_FR16_evaluation_runs_use_common_fit_names():
+    """평가 도구의 회차 읽기는 `LabeledRun`과 `NONE_LABEL`을 `common_fit`에서 가져온다."""
     from tools.evaluation import runs as evaluation_runs
 
-    assert old_fit.NONE_LABEL is common_fit.NONE_LABEL
-    assert old_fit.FitError is common_fit.FitError
-    assert old_fit.GridLoss is common_fit.GridLoss
-    assert old_fit.LabeledRun is common_fit.LabeledRun
     assert evaluation_runs.LabeledRun is common_fit.LabeledRun
     assert evaluation_runs.NONE_LABEL == "none"
 
@@ -202,8 +197,8 @@ def test_FR16_fit_inputs_freeze_lists():
 # ── 프레임, 앵커, 자동 영점 ─────────────────────────────────────────
 
 
-def test_FR16_place_frames_selects_like_run_frames():
-    """옛 `run_frames`와 같은 규칙: 비콘, 앵커, 유한한 RSSI, 반열린 구간, 같은 키는 처음 하나. 옛 함수와 결과가 같다."""
+def test_FR16_place_frames_selection_rules():
+    """비콘, 앵커, 유한한 RSSI, 반열린 구간, 같은 키는 처음 하나만 남긴다."""
     start = T0
     end = T0 + timedelta(seconds=10)
 
@@ -240,8 +235,6 @@ def test_FR16_place_frames_selects_like_run_frames():
         ("a", 3), ("a", 1), ("b", 1), ("a", 2), ("b", 12), ("a", 12), ("a", 11), ("a", 11), ("b", 13),
     ]
     assert [f.rssi for f in selected if (f.node_id, f.seq) == ("b", 13)] == [-81.0]
-    layout = old_fit.PlaceLayout("p", {name: old_fit.AnchorLayout(0.0, 0.0, 0.0, 0.0) for name in ("a", "b")})
-    assert selected == old_fit.run_frames(run, layout)
     assert place_frames(replace(run, frames=tuple(reversed(frames))), ["b", "a"]) == selected  # 입력 순서와 앵커 모음의 모양은 결과를 바꾸지 않는다
 
 

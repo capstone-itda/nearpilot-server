@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from nearpilot.core.proximity.fit import NONE_LABEL, LabeledRun
+from nearpilot.core.proximity.common_fit import NONE_LABEL, LabeledRun
 from nearpilot.shared.models import BeaconKey, RssiFrame
 
 # 관측 수와 장소는 한 번에 센다. rssi_observation에는 collection_id 인덱스가 없어서 회차마다 세면 매번 훑는다.
@@ -110,7 +110,7 @@ def load_labeled_runs(conn: sqlite3.Connection, collection_ids: Sequence[str]) -
     """회차 ID마다 라벨, 비콘, 구간, 연결된 프레임을 읽어 `LabeledRun`으로 돌려준다. 순서는 `collection_ids` 그대로다.
 
     프레임은 회차에 연결된(`rssi_observation.collection_id`) 관측 전부다. 비콘이나 기기로 거르는 일은
-    적합과 평가가 한다 (`run_frames`). DB에 없는 회차나 진행 중인(끝 시각이 없는) 회차가 있으면 모아서 `RunLoadError`다.
+    적합과 평가가 한다 (`place_frames`). DB에 없는 회차나 진행 중인(끝 시각이 없는) 회차가 있으면 모아서 `RunLoadError`다.
     """
     if not collection_ids:
         return []

@@ -44,7 +44,7 @@ def test_FR16_cli_missing_default_file_lists_candidates(server_dir):
 
     # 폴더가 없거나 비었으면 목록 자리에 (없음)을 쓴다.
     dirs.plans.mkdir()
-    for folder in (dirs.plans, dirs.layouts):
+    for folder in (dirs.plans, dirs.fit):  # 비어 있는 폴더, 없는 폴더
         with pytest.raises(CliError) as error:
             resolve_input("c.json", folder, kind="계획")
         assert error.value.exit_code == 2
@@ -83,8 +83,9 @@ def test_FR16_cli_default_dirs_follow_config_location(tmp_path):
     server = (tmp_path / "server").resolve()
     dirs = dirs_for(tmp_path / "server" / "config" / "server.toml")  # 파일이 없어도 정한다
     assert dirs.config_dir == server / "config"
-    assert (dirs.seed, dirs.plans, dirs.layouts, dirs.fit) == tuple(
-        server / "config" / name for name in ("seed", "plans", "layouts", "fit"))
+    assert (dirs.seed, dirs.plans, dirs.fit) == tuple(
+        server / "config" / name for name in ("seed", "plans", "fit"))
+    assert not hasattr(dirs, "layouts")  # 공통 모델은 배치 파일을 받지 않는다
     # var/ 는 설정 파일 폴더의 부모 기준이다
     assert (dirs.splits, dirs.records, dirs.reports) == tuple(
         server / "var" / name for name in ("splits", "records", "reports"))

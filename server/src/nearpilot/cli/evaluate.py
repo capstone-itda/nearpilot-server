@@ -29,16 +29,18 @@ from pathlib import Path
 from typing import Any
 
 from nearpilot.cli import EXIT_FAILED, EXIT_INVALID, EXIT_OK
-from nearpilot.cli.common import CliError, dirs_for, is_path_argument, load_cli_config, open_read_db, resolve_input
-from nearpilot.cli.eval import _print_table, _split_model_argument
-from nearpilot.core.proximity.model import ModelFileError, load_model
+from nearpilot.cli.common import (
+    CliError, dirs_for, is_path_argument, load_cli_config, open_read_db, require_name, resolve_input,
+)
+from nearpilot.cli.eval import _print_table
+from nearpilot.core.proximity.common_model import ModelFileError, ModelMismatchError, load_model_version
 from tools.evaluation.db import EXPECTED_SCHEMA_VERSION
 from tools.evaluation.harness import Harness, HarnessError, find_mosquitto
 from tools.evaluation.metric_load import run_metric3, run_metric7
 from tools.evaluation.metric_safety import run_metric5, run_metric6
 from tools.evaluation.metric_select import run_metric1, run_metric4, run_metric9
 from tools.evaluation.plots import write_plots
-from tools.evaluation.proximity import EvaluationError, collect_samples
+from tools.evaluation.proximity import AUTO_ZERO_CALIB, EvaluationError, collect_samples
 from tools.evaluation.reask import CurvePoint, reask_curve, reask_rows
 from tools.evaluation.report import write_report
 from tools.evaluation.rows import MetricOutcome
@@ -95,16 +97,17 @@ def register(subparsers: argparse._SubParsersAction, parent: argparse.ArgumentPa
 
     reask = subparsers.add_parser(
         "evaluate-reask", parents=[parent], help="시험 회차로 비용 비율별 재질문률·오작동률 곡선(지표 2)을 만든다",
-        description="분할 결과의 시험 회차로 모델의 비용 비율별 재질문률·오작동률 곡선을 만들어 보고서(CSV, Markdown), "
-                    "원자료(JSON), 그래프(PNG)에 쓴다. 학습·검증 회차는 읽지 않는다. 통과 여부는 판정하지 않는다 (비교 기준 미결). "
+        description="분할 결과의 시험 회차로 공통 모델의 비용 비율별 재질문률·오작동률 곡선을 만들어 보고서(CSV, Markdown), "
+                    "원자료(JSON), 그래프(PNG)에 쓴다. 시험 회차에서 자동 영점을 찾아 보정한다. "
+                    "학습·검증 회차는 읽지 않는다. 통과 여부는 판정하지 않는다 (비교 기준 미결). "
                     "이미 있는 보고서는 --force 없이는 덮어쓰지 않는다.")
-    reask.add_argument("model", metavar="PLACE/VERSION",
-                       help="평가할 모델. 설정의 모델 폴더에서 <PLACE>/<VERSION>.json을 읽는다")
+    reask.add_argument("version", metavar="VERSION",
+                       help="평가할 모델 버전. 설정의 모델 폴더에서 <VERSION>.json을 읽는다")
     reask.add_argument("--split", metavar="FILE", required=True,
                        help="분할 결과 파일(JSON). 이름이면 var/splits/에서 찾고, 경로(/ 나 \\ 포함)면 실행 폴더 기준이다")
     reask.add_argument("--ratios", metavar="LIST", default=DEFAULT_RATIOS,
                        help="비용 비율 r을 쉼표로 이어 쓴다 (기본 %(default)s). r마다 확률 임계값 r/(1+r) 아래면 재질문으로 센다")
-    _add_output_options(reask, "<PLACE>-<VERSION>-reask-<UTC 날짜 YYYYMMDD>")
+    _add_output_options(reask, "<분할의 장소>-<VERSION>-reask-<UTC 날짜 YYYYMMDD>")
     reask.set_defaults(handler=_evaluate_reask)
 
 
@@ -271,25 +274,21 @@ def _keep_raw(path: Path, header: Mapping[str, Any], kept: Mapping[str, Any], er
 
 
 def _evaluate_reask(args: argparse.Namespace) -> int:
-    place, version = _split_model_argument(args.model)
+    version = require_name(args.version, "VERSION")
     ratios = _parse_ratios(args.ratios)
     config = load_cli_config(args.config)
     dirs = dirs_for(config.source)
 
-    model_path = resolve_input(f"{version}.json", config.proximity.model_root / place, kind="모델")
     try:
-        model = load_model(model_path)
-    except (ModelFileError, OSError) as error:
+        model = load_model_version(config.proximity.model_root, version)
+    except (ModelFileError, ModelMismatchError, OSError) as error:  # 없는 파일은 ModelMismatchError다
         raise CliError(f"모델 파일 오류: {error}", EXIT_INVALID) from None
-    if model.place_id != place:
-        raise CliError(f"모델의 장소({model.place_id})와 평가할 장소({place})가 다르다", EXIT_INVALID)
     split_path = resolve_input(args.split, dirs.splits, kind="분할 결과")
     try:
         split = load_split(split_path)
     except SplitError as error:
         raise CliError(f"분할 결과 파일 오류: {error}", EXIT_INVALID) from None
-    if split.place_id != place:
-        raise CliError(f"분할 결과의 장소({split.place_id})와 평가할 장소({place})가 다르다", EXIT_INVALID)
+    place = split.place_id  # 공통 모델 파일에는 장소가 없다. 장소는 분할 결과가 정한다
 
     name = _report_name(args.out, f"{place}-{version}-reask-{now_utc():%Y%m%d}")
     csv_path, md_path, raw_path = _report_paths(dirs.reports, name)
@@ -311,11 +310,11 @@ def _evaluate_reask(args: argparse.Namespace) -> int:
     except EvaluationError as error:
         raise CliError(f"평가 실패: {error}", EXIT_FAILED) from None
 
-    provenance = {"place_id": place, "model_version": model.model_version, "calib_version": model.calib_version,
+    provenance = {"place_id": place, "model_version": model.model_version, "calib_version": AUTO_ZERO_CALIB,
                   "split_file": str(split_path)}
     rows = [{**row, **provenance} for row in reask_rows(points, len(samples))]
     generated_at = now_utc()
-    raw = {"command": "evaluate-reask", "model": f"{place}/{version}", "calib_version": model.calib_version,
+    raw = {"command": "evaluate-reask", "model": version, "calib_version": AUTO_ZERO_CALIB,
            "split_file": str(split_path), "ratios": ratios, "samples": len(samples),
            "curve": [dataclasses.asdict(point) for point in points]}
     # 통과 막대는 이 명령의 행이 모두 "판정 안 함"이라 그리지 않는다

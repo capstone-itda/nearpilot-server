@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 
-from nearpilot.core.proximity import filter as old_filter
 from nearpilot.core.proximity.common_model import CommonModel, RoleParams, load_common_model
 from nearpilot.core.proximity.posterior import NONE_STATE, ProximityInputError, compute_posteriors
 from nearpilot.shared.enums import TrustState
@@ -631,9 +630,6 @@ def test_FR16_node_named_like_none_state_is_not_confused_with_it():
     assert result.posteriors[NONE_STATE] < 0.01  # 모두 none 값을 들었다. "어느 기기 앞도 아님"의 확률(거의 1)이 아니다.
 
 
-def test_FR16_posterior_names_are_shared_with_old_filter_module():
-    # 옛 filter 모듈은 이름을 다시 정의하지 않고 새 모듈의 것을 내보낸다. 어느 쪽 이름으로 잡아도 같은 오류를 잡는다.
+def test_FR16_posterior_public_names():
     assert NONE_STATE == "__none__"
-    assert old_filter.NONE_STATE is NONE_STATE
-    assert old_filter.ProximityInputError is ProximityInputError
     assert issubclass(ProximityInputError, ValueError)

@@ -17,7 +17,6 @@ from typing import Any
 import pytest
 
 from nearpilot.cli import main, serve
-from nearpilot.core.proximity.fit import PlaceLayout
 from nearpilot.db.repositories.admin_repository import SqliteAdminRepository
 from nearpilot.db.repositories.repository import SqliteRepository
 from nearpilot.db.schema import connect
@@ -166,13 +165,13 @@ def _applied(result: AdminWriteResult, what: str) -> None:
 
 @pytest.fixture
 def make_collection_db() -> Callable[..., list[str]]:
-    """`make_collection_db(server_dir, layout, runs, *, unplaced=())`: 설정의 DB에 수집 회차와 프레임을 만든다.
+    """`make_collection_db(server_dir, places, runs, *, unplaced=())`: 설정의 DB에 수집 회차와 프레임을 만든다.
 
     `announce_nodes`처럼 기본 설정의 DB인 `var/nearpilot.db`에 쓰고 폴더가 없으면 만든다. 한 DB에 한 번만 부른다.
     모두 실제 경로로 만든다. 기기는 `upsert_announced_node`, 계정·비콘·장소 배치는 `AdminRepository`,
     회차는 `start_collection`/`end_collection`, 프레임은 `Repository.save_rssi`다 (회차에 연결되는 것까지 같다).
 
-    - `layout`: `PlaceLayout` 하나 또는 그 목록. 배치의 기기를 발표하고 그 장소에 놓는다. 좌표는 쓰지 않는다.
+    - `places`: 장소 ID → 그 장소에 놓을 기기 ID 목록. 기기를 발표하고 그 장소에 놓는다.
       장소의 소유자는 계정 `collector`다. 계정에 활성 비콘 `collect_beacon` 하나를 등록한다.
     - `unplaced`: 발표만 하고 장소에 놓지 않는 기기 ID. 장소 없는 기기를 만들 때 쓴다.
     - `runs`: `(label, started_at, seconds, {node_id: [rssi, …]})`의 목록이다. 모든 회차가 비콘 하나를 쓰므로
@@ -181,18 +180,17 @@ def make_collection_db() -> Callable[..., list[str]]:
       값 개수는 `seconds`를 넘을 수 없다. `{}`이면 프레임이 없는 회차다.
     - 돌려주는 값: 입력 순서대로 회차 ID 목록 (`col-001`, `col-002`, …).
 
-    배치·`unplaced`에 없는 기기를 라벨이나 프레임에 쓰면 `ValueError`다 (DB가 조용히 버리기 때문이다).
+    `places`·`unplaced`에 없는 기기를 라벨이나 프레임에 쓰면 `ValueError`다 (DB가 조용히 버리기 때문이다).
     """
 
-    def make(server: Path, layout: PlaceLayout | Sequence[PlaceLayout],
+    def make(server: Path, places: Mapping[str, Sequence[str]],
              runs: Sequence[tuple[str, datetime, float | None, Mapping[str, Sequence[float]]]],
              *, unplaced: Sequence[str] = ()) -> list[str]:
-        layouts = [layout] if isinstance(layout, PlaceLayout) else list(layout)
-        node_ids = [node_id for placed in layouts for node_id in placed.nodes] + list(unplaced)
+        node_ids = [node_id for placed in places.values() for node_id in placed] + list(unplaced)
         for label, _, _, frames in runs:
             unknown = sorted(({label} - {"none"} | set(frames)) - set(node_ids))
             if unknown:
-                raise ValueError(f"배치와 unplaced에 없는 기기를 썼다: {unknown}")
+                raise ValueError(f"places와 unplaced에 없는 기기를 썼다: {unknown}")
 
         db_file = server / "var" / "nearpilot.db"
         db_file.parent.mkdir(parents=True, exist_ok=True)
@@ -209,9 +207,9 @@ def make_collection_db() -> Callable[..., list[str]]:
                 "collector", "수집 담당", Role.OWNER, hash_token("collector-token"))), "계정 등록")
             _applied(admin.register_beacon(
                 BeaconRegistration("beacon-collect", "collector", COLLECT_BEACON)), "비콘 등록")
-            for placed in layouts:
+            for place_id, placed in places.items():
                 _applied(admin.assign_place(PlaceAssignment(
-                    placed.place_id, "collector", placed.place_id, tuple(placed.nodes))), f"장소 {placed.place_id} 배치")
+                    place_id, "collector", place_id, tuple(placed))), f"장소 {place_id} 배치")
 
             collection_ids = []
             for index, (label, started_at, seconds, frames) in enumerate(runs, start=1):

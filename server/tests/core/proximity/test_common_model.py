@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Callable
 from dataclasses import FrozenInstanceError, replace
 from functools import partial
@@ -12,7 +11,6 @@ from typing import Any
 
 import pytest
 
-from nearpilot.core.proximity import model as old_model
 from nearpilot.core.proximity.common_model import (
     CommonModel,
     ModelFileError,
@@ -362,20 +360,9 @@ def test_FR16_write_common_model_file_rejects_non_finite(tmp_path, changes):
     assert not root.exists()  # 직렬화가 먼저라서 디렉터리도 파일도 만들지 않는다
 
 
-def test_FR16_common_model_errors_are_shared_with_old_model_module():
-    # 옛 모듈은 오류 클래스를 다시 정의하지 않고 새 모듈의 것을 내보낸다. 어느 쪽 이름으로 잡아도 같은 오류를 잡는다.
-    assert old_model.ModelFileError is ModelFileError
-    assert old_model.ModelMismatchError is ModelMismatchError
+def test_FR16_common_model_error_class_hierarchy():
+    # 두 오류는 서로 다른 계통이다. 호출자는 파일 내용 오류(ValueError)와 없는 모델(LookupError)을 따로 잡는다.
     assert issubclass(ModelFileError, ValueError)
     assert issubclass(ModelMismatchError, LookupError)
     assert not issubclass(ModelFileError, LookupError)
     assert not issubclass(ModelMismatchError, ValueError)
-
-
-def test_FR16_old_loader_errors_are_caught_by_common_model_class(tmp_path):
-    path = _write(tmp_path, content="{not json")
-
-    with pytest.raises(ModelFileError, match=re.escape(str(path))):
-        old_model.load_model(path)
-    with pytest.raises(ModelMismatchError):
-        old_model.load_models(tmp_path, {"place-a": "syn-a-1"})

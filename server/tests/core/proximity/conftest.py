@@ -1,15 +1,12 @@
 """`tests/core/proximity/` 공통 도우미 (specs/core-proximity-estimator/spec.md).
 
 일반 함수와 상수로 두어서 테스트 모듈이 `from .conftest import ...`로 가져다 쓴다.
-`fixtures/models/`의 모델 파일은 테스트용 합성 값이다. 운영 값이 아니다.
+`fixtures/common/`의 모델 파일은 테스트용 합성 값이다. 운영 값이 아니다.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-
-import pytest
 
 from nearpilot.shared.enums import DeviceState, Occupancy, TrustState
 from nearpilot.shared.models import BeaconKey, NodeInfo, RssiFrame
@@ -17,7 +14,6 @@ from nearpilot.shared.models import BeaconKey, NodeInfo, RssiFrame
 T0 = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
 BEACON = BeaconKey("11111111-2222-3333-4444-555555555555", 1, 1)
 OTHER_BEACON = BeaconKey(BEACON.uuid, 1, 2)
-MODEL_ROOT = Path(__file__).resolve().parent / "fixtures" / "models"
 PLACE_A_NODES = ("locker-1", "locker-2", "locker-3", "light-1", "light-2", "speaker-1")
 
 _CAPABILITY_BY_PREFIX = {
@@ -90,8 +86,3 @@ def make_frame(
         sent_at=frame_ts,
         received_at=received_at if received_at is not None else frame_ts + timedelta(milliseconds=50),
     )
-
-
-@pytest.fixture
-def model_root() -> Path:
-    return MODEL_ROOT
