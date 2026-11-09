@@ -154,7 +154,7 @@ api  ──▶  core  ──▶  db
 | 복원·복구 저장 인터페이스 | DB | CORE (상태 관리) | 재시작 복원 조회, 복구 건 저장과 조회, 복구 정산을 제공한다 (`restore_pending`, `save_recovery`, `recovery`, `settle_recovery`). |
 | 복구 인터페이스 | CORE (상태 관리) | API | 복구 준비 조회와 복구 승인 요청을 따로 제공한다. 준비 판단, 재검사, 불명 결과 확인은 상태 관리가 맡는다. |
 | 정책 검사 인터페이스 | DB (`core/policy`) | CORE (판정) | ④에서 계정, 확정한 기기, 동작, 현재 시각과 내부 요청 ID(남은 횟수에서 뺄 같은 요청의 사용분)로 정책과 승인을 검사한다 (`PolicyChecker.check`). 허용, 승인 필요, 거부와 사유, 적용한 정책 버전(정책이 없으면 없음), 승인 ID를 `PolicyCheckResult`로 반환한다. 정책 모드, 승인 범위, 정책 버전 비교 규칙은 이 접점 안에 둔다. 승인 필요 사유는 승인 이력으로 고른다. 상세는 아래 "승인 이력과 승인 필요 사유"에 있다. 승인 사용분 예약은 하지 않는다 (`reserve_if_free`). |
-| 근접 추정 인터페이스 | 근접 추정 (`core/proximity`) | CORE (판정) | ③에서 비콘, 후보 기기, 시각으로 후보별 사후확률을 계산한다 (`ProximityEstimator.posterior`). 근접 추정은 장소의 전체 상태로 계산한 후보의 확률을 다시 정규화하지 않고 반환한다. `ProximityResult.posteriors`의 합은 1 이하다. 판정은 근접 지정과 전역 할당에 ②의 전체 후보를 넘긴다. 명시 지정은 장소의 비콘 수신과 후보를 확인한 뒤 `posterior` 호출과 임계값 검사를 생략한다. 상세는 아래 "근접 사후확률의 범위"에 있다. |
+| 근접 추정 인터페이스 | 근접 추정 (`core/proximity`) | CORE (판정) | ③에서 비콘, 후보 기기, 시각으로 후보별 사후확률을 계산한다 (`ProximityEstimator.posterior`). 근접 추정은 장소의 전체 상태로 계산한 후보의 확률을 다시 정규화하지 않고 반환한다. `ProximityResult.posteriors`의 합은 1 이하다. 판정은 근접 지정과 전역 할당에 ②의 전체 후보를 넘긴다. 명시 지정은 장소의 비콘 수신과 후보를 확인한 뒤 `posterior` 호출과 임계값 검사를 생략한다. 상세는 아래 "근접 사후확률의 범위"에 있다. 거리 선택자 요청에는 ①의 활성 비콘에 대한 거리 순서와 기기별 정렬 값을 제공한다. 상세는 아래 "거리 선택자의 판정"에 있다. |
 | 감사 로그 인터페이스 | DB | CORE | 단계별 입력, 결과, 버전, 임계값, 후보 확률의 기록 (`AuditLog.append`). 감사 테이블이 원본이다. JSONL은 커밋한 행을 내보낸 사본이다. |
 | 기기 명령 인터페이스 | IOT | CORE | `command_id`별로 전송과 결과를 추적한다. 확실한 미전송, 전송 뒤 성공, 전송 뒤 실패, 결과 불명을 구분한다. 시간 초과와 연결 끊김을 미실행으로 보지 않는다. 기기가 구동 전에 `DEVICE_BUSY`로 거부한 결과는 거부 상태와 사유를 그대로 전달한다 (§5 MQTT 5절). IOT는 보내기 전에 저장한 기기 선언으로 동작과 인자를 다시 검증하고, 맞지 않으면 보내지 않고 `NOT_SENT`를 반환한다 (FR-06). 접점은 `NodeCommandGateway.send`다. |
 | 기기 이벤트 인터페이스 | CORE | IOT | CORE는 기기 선언 발표, RSSI 프레임, 명령 처리 상태와 실행 결과를 받는다 (`NodeEventSink`). 논리적 점유 해제는 CORE가 결정한다. |
@@ -617,6 +617,29 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - `threshold_explicit_locker`, `threshold_explicit_light`, `threshold_explicit_speaker`는 이전 설정과 저장된 스냅샷의 호환 필드다. 기존 값 검증은 유지하지만 판정에는 쓰지 않는다.
 - 미결: 스피커의 근접 임계값. 설정 이름은 `threshold_speaker`다. 기본값 `None`이면 스피커의 근접 지정 실행을 허가하지 않는다 (#61).
 
+### 거리 선택자의 판정
+
+[#253](https://github.com/capstone-itda/nearpilot-server/issues/253)의 A안을 따른다.
+판정은 거리 선택자 요청을 상위 요청 하나와 고른 기기마다의 하위 요청으로 나눈다 (담당자 결정).
+요구는 `requirements.md` FR-09 "거리 선택자"에 있다.
+
+- 판정은 ②의 후보를 근접 추정에 넘기고 거리 순서를 받는다. 근접 추정은 근접 참여 기기만 순서에 넣고 기기별 정렬 값을 함께 반환한다. 근접 추정은 순서를 자르지 않는다.
+- 보고 인계는 `observe_report(report, node=NodeInfo)`다. 상태 관리가 `on_rssi_report`마다 부른다. 근접 추정은 `trusted` 기기의 마지막 보고 수신 시각으로 근접 참여 기기를 정한다 (#252).
+- 판정이 시작과 개수로 기기를 고르고 "비슷함" 여부를 정한다.
+- 판정은 고른 기기마다 하위 요청을 만든다. 하위 요청은 새 `internal_request_id`, 확정한 `node_id`, 상위 요청 연결을 가진다. 하위 요청에는 외부 `request_id`가 없다.
+- 하위 요청은 단일 기기 요청과 같은 경로를 쓴다. 아래는 하위 요청마다 따로 한다.
+  - ③의 점유 방식별 근접 검사, ④ 정책 검사, `reserve_if_free`
+  - 판정 기록, `ExecutionContext`, 실행 직전 재검사
+  - 명령과 실행 결과
+- 판정은 모든 하위 요청의 검사와 예약을 마친 뒤 실행을 인계한다.
+- 하위 요청 하나라도 검사에 걸리면 판정은 이미 만든 예약과 승인 사용분을 미전송으로 취소한다. 판정은 어느 하위 요청도 인계하지 않는다.
+- 상위 요청의 판정은 모든 하위 요청이 통과하면 `OK`다. 하나라도 걸리면 거리 순서에서 처음 걸린 하위 요청의 판정과 사유다.
+- 상위 요청의 판정 기록은 거리 선택자, 거리 순서, 기기별 정렬 값, 고른 기기, "비슷함" 여부를 담는다. 상위 요청의 `node_id`는 비어 있다.
+- ⓪은 상위 요청의 외부 `(계정, request_id)`로 중복을 검사한다. 재전송에는 하위 요청들의 진행 상태와 결과를 묶어 반환한다.
+- 하위 요청의 실행 직전 재검사는 대상을 다시 고르지 않는다. `shared` 기기는 장소의 비콘 수신을 확인한다. `rental` 기기는 근접 임계값을 다시 확인한다.
+- 한 하위 요청의 재검사 거부나 실행 실패는 다른 하위 요청의 실행을 되돌리지 않는다.
+- 호스트 응답 변환은 판정이 맡는다. 응답은 하위 요청마다 기기 정보, 실행 결과, `use_id`를 담는다.
+- `rental` 기기는 고른 기기마다 근접 임계값을 넘어야 한다. 후보의 사후확률 합은 1 이하이므로, 임계값이 0.5보다 크면 `rental` 기기를 둘 이상 고른 요청은 실행되지 않는다.
 
 ### 운영 기준의 영역별 분담
 
@@ -684,6 +707,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | 기기 보고의 공통 정보 | 아래 모델 모두 | `node_id`, 기기 연결 ID `session_id`, 순번 `seq`, 발행 시각 `sent_at`, 서버 수신 시각 `received_at` |
 | 기기 선언 발표 | `NodeAnnounce` | 공통 정보, 기기 선언 `descriptor` (`DeviceDescriptor`). 선언은 `format`, `kind`, `occupancy`, `vendor`, 동작 선언 목록 `actions` (`ActionSpec`)를 담는다 (#245). v2 발표이면 IOT가 종류별 선언 템플릿으로 `descriptor`를 만든다. |
 | RSSI | `RssiFrame` | 공통 정보, 관측 시각 `frame_ts`, `beacon`, `rssi` |
+| RSSI 보고 | `RssiReport` | 공통 정보, 관측 시각 `frame_ts`. 유효한 `rssi` 메시지 하나를 나타내고 관측 값은 담지 않는다. 비콘이 없는 빈 보고도 있다 (#252). |
 | 상태 | `NodeStatus` | 공통 정보, 보고 기준 시각 `observed_at`, 펌웨어의 명령 처리 상태. 새 필드 형식은 미결이다. |
 | 실행 결과 | `NodeResult` | 공통 정보, `command_id`, 결과 사건 ID `event_id`, 결과 발생 시각 `occurred_at`, 기기가 보고한 상태 `state` (`NodeResultState`), 오류 근거 `error_code` |
 
@@ -691,6 +715,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 |---|---|
 | `NodeEventSink.on_announce(NodeAnnounce)` | 기기 선언 발표 |
 | `NodeEventSink.on_rssi(RssiFrame)` | RSSI 프레임 |
+| `NodeEventSink.on_rssi_report(RssiReport)` | 유효한 `rssi` 메시지 하나. 빈 보고도 넘긴다. 같은 메시지의 `on_rssi`를 모두 부른 뒤에 부른다 (#252). |
 | `NodeEventSink.on_status(NodeStatus)` | 펌웨어의 명령 처리 상태 |
 | `NodeEventSink.on_result(NodeResult)` | 결과 대기 중의 실행 결과와 결과 대기가 끝난 뒤의 실행 결과 |
 
@@ -1429,7 +1454,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `approval` | `requestId` ✔, `nodeId` ✔, `kind` ✔ (`requested`, `approved`, `denied`, `expired`) | `personId` |
 | `audit` | `row` ✔ (REST 감사 행과 같다) | 없음 |
 
-- `target.kind`는 대상 지정 방식이다. `target.deviceKind`는 `nearest:{kind}`와 `any:{kind}`의 종류 이름이다. 기존 `capability` 키를 대체한다 (#245). REST 이력 행의 `target`도 같다.
+- `target.kind`는 대상 지정 방식이다. `target.deviceKind`는 `nearest:{kind}`, `any:{kind}`, 거리 선택자의 종류 이름이다. 기존 `capability` 키를 대체한다 (#245). REST 이력 행의 `target`도 같다.
 - 닫기 코드: 4401 토큰 오류, 4403 소유자 아님, 4408 인증 기한, 1011 서버 오류, 1013 대기열 넘침. 1011과 1013이면 대시보드가 다시 연결해 지금 상태를 다시 받는다.
 - 이름은 서버 프로세스가 끝날 때까지 유지한다. 방문자는 처음 나타난 순서로 글자를 받는다. 소유자가 여럿이어도 이름은 모두 `소유자`다.
 
@@ -1454,13 +1479,14 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `approval_usage` | PK `usage_id`, FK `approval_id`, `internal_request_id`, 명령 연결, `state` (`reserved`, `held`, `consumed`, `released`). 요청별로 중복 예약을 막는다. 허용 횟수는 예약, 보류, 소진을 합쳐서 검사한다. `used_count`는 소진 집계값이며 중복으로 계산하지 않는다. 미전송이 확정되면 자동으로 반환한다. 결과가 실패하거나 불명이면 보류하고 복구 뒤 정산한다. 검증된 `DEVICE_BUSY`의 접수·실행 전 거부이면 이번 요청의 사용분을 반환한다. 공용형 제한 기기의 요청에도 행을 만든다. 무제한이면 횟수 검사만 생략한다. |
 | `collection_run` | PK `collection_id`, FK `beacon_id`, `label` (기기 1~7 앞 또는 none), `started_at`, nullable `ended_at`. 같은 비콘의 수집 구간은 겹치지 않는다. |
 | `rssi_observation` | PK `obs_id`, FK `node_id`, `beacon_id`, `rssi` (dBm), `frame_ts` (약 1초 프레임), 서버 수신 시각 `received_at`, 발행 시각 `sent_at`, 기기 연결 ID `session_id`, 순번 `seq`, `(node_id, session_id, seq, beacon_id)` UNIQUE, nullable FK `collection_id`. 등록된 활성 비콘의 관측만 저장한다. 라벨은 연결한 수집 회차에서 읽는다. |
-| `request` | TEXT PK `internal_request_id`, FK `user_id`, 외부 `request_id`, UNIQUE `(user_id, request_id)`, 정규화 입력 요약 `input_digest`, nullable FK `parent_internal_request_id`, nullable FK `node_id`, `target_spec`, `action`, `verdict`, `reason_code`, `p_max`, 버전 `model`, `calib`, `policy_ver`, `config_ver`, 실제 설정을 포함한 JSON `decision_context`, `host_kind` |
+| `request` | TEXT PK `internal_request_id`, FK `user_id`, 외부 `request_id`, UNIQUE `(user_id, request_id)`, 정규화 입력 요약 `input_digest`, nullable FK `parent_internal_request_id`, 거리 선택자 하위 요청의 nullable 상위 요청 연결, nullable FK `node_id`, `target_spec`, `action`, `verdict`, `reason_code`, `p_max`, 버전 `model`, `calib`, `policy_ver`, `config_ver`, 실제 설정을 포함한 JSON `decision_context`, `host_kind` |
 | `node_command` | TEXT PK `command_id`, FK `internal_request_id`, `node_id`, 대상 동작과 입력 요약, 서버가 정한 동작 인자 JSON `arguments`(없을 수 있다. 기존 `light`, `speaker`를 대체한다), 전송 시도, 실행 상태, 결과, 시각. 승인 사용분과 연결한다. 결과 불명은 실패, 미전송과 구분한다. 접수·실행 전 거부는 미전송, 실패와 구분한다. 기록은 재시작 뒤에도 보존한다. |
 | `use_session` | TEXT PK `use_id`, FK `internal_request_id`, `user_id`, `node_id`, `state` (`RESERVED`, `ACTIVE`, `CLOSING`, `CLOSED`), `end_reason` (`release`, `leave`, `timeout`, `fault`, `cancelled`), nullable `rental_due_at` (실행 성공 때 정한다), nullable `closed_at`, 생성 당시 종료 정책. 대여형 요청과 살아 있는(취소되지 않은) 점유 세션은 1:0..1 관계다. 오류 뒤 취소한 요청을 재판정하면(#76, #80) 취소된 세션 옆에 새 세션이 생긴다. |
 | 복구 건 | TEXT PK `recovery_id`, FK `node_id`, 관련 요청·명령·점유 세션 연결, 명령 결과·현재 연결의 명령 처리 상태의 참조와 시각, 복구 승인 계정과 승인 시각, 정산 내용의 요약값, 완료 결과. 같은 복구 건의 대상 연결은 바꾸지 않는다. 엔터티의 코드 이름은 `recovery`다. |
 | `audit_log` | PK `log_id`, UNIQUE `event_id`, nullable FK `internal_request_id`, nullable 명령 참조, `step` (`auth`, ⓪~⑥, `exec`, `close`, `fault`, `announce`, `admin`), JSON `payload_json`. 인증 실패는 요청 참조 없이 기록한다. 같은 `event_id`는 한 번만 저장한다. |
 
 - 계정은 여러 비콘, 장소, 요청을 가진다. 장소는 여러 기기를 가진다.
+- 거리 선택자 요청은 상위 요청 행 하나와 고른 기기마다 하위 요청 행을 둔다. 하위 요청 행에는 외부 `request_id`가 없다. 하위 요청의 명령, 점유 세션, 승인 사용분은 하위 요청에 연결한다 (§4 "거리 선택자의 판정").
 - 계정의 활성 비콘은 하나 이하다. 비활성 비콘의 식별자와 계정 연결은 보존한다.
 - 기기별, 비콘별 관측은 요청의 `decision_context`에서 재현할 수 있는 관측 구간으로 연결한다.
 - 근접 파라미터와 기기 배치는 장소별 모델 파일이 보존한다. DB는 판정에 적용한 모델·보정 버전만 기록한다.
