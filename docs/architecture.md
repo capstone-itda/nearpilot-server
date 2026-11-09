@@ -700,8 +700,8 @@ M5를 `occupancy: shared`로 선언하면 FR-20 "공용형 기기" 규칙이 그
 
 | 설정 | 제안값 | 비고 |
 |---|---|---|
-| `param_max.display.setVolume.volume` | 50 | `requirements.md` §1.2 |
-| `param_default.display.setVolume.volume` | 20 | 첫 실행에서 음량이 크게 나오지 않게 한다 |
+| `param_max.display.set_volume.volume` | 50 | `requirements.md` §1.2 |
+| `param_default.display.set_volume.volume` | 20 | 첫 실행에서 음량이 크게 나오지 않게 한다 |
 | `smartthings_poll_sec` | 5초 | 하트비트 주기. `status_report_sec` 이상, `online_ttl_sec` 이하 |
 | `exec_timeout_sec.display` | 10초(제안) | 확인 필요 — 위 절 참고 |
 | `threshold_display` | 두지 않음 | 명시적 지정 전용이라 필요 없다(FR-05) |
