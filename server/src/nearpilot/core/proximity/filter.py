@@ -14,16 +14,11 @@ from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 
 from nearpilot.core.proximity.model import ModelMismatchError, ProximityModel
+from nearpilot.core.proximity.posterior import NONE_STATE, ProximityInputError  # 새 모듈로 옮겼다. 옛 이름으로도 같은 것을 내보낸다
 from nearpilot.shared.enums import TrustState
 from nearpilot.shared.models import BeaconKey, NodeInfo, ProximityResult, RssiFrame
 
-NONE_STATE: str = "__none__"  # "어느 기기 앞도 아님" 상태의 내부 이름. 결과의 키로 내보내지 않는다
-
 _HALF_LOG_2PI = 0.5 * math.log(2.0 * math.pi)
-
-
-class ProximityInputError(ValueError):
-    """판정이 넘긴 입력의 관계가 맞지 않는다 (장소, 후보, 비콘)."""
 
 
 def _check_inputs(

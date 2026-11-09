@@ -15,13 +15,7 @@ from math import inf, isfinite
 from pathlib import Path
 from typing import Any
 
-
-class ModelFileError(ValueError):
-    """모델 파일의 내용이나 경로가 잘못됐다."""
-
-
-class ModelMismatchError(LookupError):
-    """요청한 장소의 모델이 없거나, 장소의 trusted 기기가 모델에 없다."""
+from nearpilot.core.proximity.common_model import ModelFileError, ModelMismatchError  # 새 모듈로 옮겼다. 옛 이름으로도 같은 클래스를 내보낸다
 
 
 class _ReadOnlyDict(dict):
