@@ -110,7 +110,7 @@
 | `any:` 요청의 1등에 자동 영점이 없다 | `ASK`·`LOW_CONFIDENCE` | `test_FR23_any_top_unzeroed_asks` |
 | `any:` 요청에서 자동 영점이 없는 기기가 임계값을 넘는다 (1등은 아니다) | 그 기기를 허용쌍에 넣지 않는다 | `test_FR23_any_excludes_unzeroed` |
 | 표본이 `min_bins`보다 적다 | 자동 영점을 찾지 않는다. DB에 쓰지 않는다 | `test_FR16_auto_zero_needs_min_bins` |
-| 같은 칸에 그 기기 하나만 비콘을 들었다 | 그 칸은 표본이 아니다 | `test_FR16_auto_zero_bin_needs_two_anchors` |
+| 칸에서 1등이 아닌 기기가 둘 미만이다 (기기가 1~2대인 장소 포함) | 그 칸은 표본이 아니다. 그런 장소는 자동 영점을 찾지 못해 근접 지정이 `ASK`다. 명시 지정과 거리 선택자는 쓸 수 있다 | `test_FR16_auto_zero_bin_needs_two_anchors` |
 | 그 기기가 칸의 1등이다 (같은 값의 1등 포함) | 그 칸은 그 기기의 표본이 아니다 | `test_FR16_auto_zero_excludes_top_bins` |
 | 칸이 닫힌 뒤 그 칸의 프레임이 늦게 온다 | 자동 영점 표본에 넣지 않는다. 사후확률 계산에는 쓴다 | `test_FR16_auto_zero_late_frame_ignored` |
 | `vendor.model`이나 `vendor.firmware`가 바뀌었다 | 버림 행을 DB에 쓰고 자동 영점을 지운다. 모으던 표본도 지운다. 다시 모은다 | `test_FR16_vendor_change_discards_auto_zero` |
@@ -135,8 +135,10 @@
 3. 칸에 값이 없는 앵커는 증거로 쓰지 않는다 — 이전과 같다. 담당자가 2026-11-09에 골랐다. "못 들음"을 증거로 쓰는 것은 실측 뒤에 다시 본다.
 4. 자동 영점을 찾는 방법. 담당자가 2026-11-09에 골랐다.
    - 칸은 `frame_ts`를 `rssi_frame_sec`로 나눈 절대 칸이다. 장소와 비콘마다 칸 안의 앵커별 평균 RSSI를 낸다.
-   - 칸에 둘 이상의 앵커가 있으면, 1등이 아닌 앵커 a마다 `r_a − (다른 앵커들 값의 중앙값)`을 a의 표본으로 더한다. 값이 가장 큰 앵커는 같은 값이 여럿이어도 모두 1등이다 — 방문자가 그 기기 앞에 있을 가능성이 큰 칸을 뺀다 (#252의 "멀리 있을 때를 기준"에 가깝다).
-   - 다른 앵커의 값은 보정하지 않은 값이다 — 찾은 순서가 결과를 바꾸지 않는다.
+   - 값이 가장 큰 앵커는 같은 값이 여럿이어도 모두 1등이다. 1등은 표본에서도 비교 기준에서도 뺀다 — 방문자가 그 기기 앞에 있을 가능성이 크다 (#252의 "멀리 있을 때를 기준"에 가깝다).
+   - 칸에 1등이 아닌 앵커가 둘 이상이면, 그 앵커 a마다 `r_a − mean(1등이 아닌 앵커들의 값, a 포함)`을 a의 표본으로 더한다 — 1등 값이 기준에 섞이면 기기가 3대인 방에서 기기끼리의 차이가 1.5배로 부푼다. 자기를 포함한 평균이라 앵커 수와 상관없이 차이가 부풀지 않는다. 담당자가 2026-11-09에 2단계 보고를 보고 정했다.
+   - 그래서 기기가 1~2대인 장소는 자동 영점을 찾지 못한다.
+   - 값은 보정하지 않은 값이다 — 찾은 순서가 결과를 바꾸지 않는다.
    - 표본이 모델 파일의 `auto_zero.min_bins` 이상이면 표본의 중앙값을 자동 영점으로 찾는다. 짝수 개면 가운데 두 값의 평균이다.
    - 같은 장소, 같은 비콘의 더 늦은 칸(번호가 2 이상 큰 칸)의 프레임이 오면 칸을 닫는다. 닫은 칸의 늦은 프레임은 표본에 넣지 않는다.
    - 표본은 메모리에만 둔다. 찾기 전에 서버를 다시 시작하면 처음부터 모은다. `restore`가 넘긴 프레임도 표본이 된다.
@@ -230,8 +232,8 @@
 | FR-16 | `test_FR16_front_device_highest_posterior` | 합성 장소에서 기기 앞에 선 방문자의 1등이 그 기기다 |
 | FR-16 | `test_FR16_auto_zero_corrects_offset` | 영점 차이가 큰 기기 앞에서 보정 뒤 1등이 맞는다 |
 | FR-16 | `test_FR16_auto_zero_needs_min_bins` | 표본이 모자라면 찾지 않는다 |
-| FR-16 | `test_FR16_auto_zero_bin_needs_two_anchors` | 앵커 하나뿐인 칸은 표본이 아니다 |
-| FR-16 | `test_FR16_auto_zero_excludes_top_bins` | 1등인 칸(같은 값 포함)은 그 기기의 표본이 아니다 |
+| FR-16 | `test_FR16_auto_zero_bin_needs_two_anchors` | 1등이 아닌 앵커가 하나 이하인 칸은 표본이 아니다 |
+| FR-16 | `test_FR16_auto_zero_excludes_top_bins` | 1등(같은 값 포함)은 표본도 기준도 아니다 |
 | FR-16 | `test_FR16_auto_zero_late_frame_ignored` | 닫은 칸의 늦은 프레임은 표본에 없다 |
 | FR-16 | `test_FR16_auto_zero_saved_with_revision` | 찾으면 DB에 쓰고 결과의 `calib_version`이 그 개정이다 |
 | FR-16 | `test_FR16_unzeroed_marks_candidates` | 자동 영점이 없는 참여 후보가 `unzeroed`에 있다 |
