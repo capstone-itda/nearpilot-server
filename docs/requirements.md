@@ -48,9 +48,9 @@
 | 외부 요청의 중복 방지 보장기간 | `request_dedup_ttl_sec` | 20분 | 1초 이상의 정수 | 요청의 최종 처리 완료 시점부터 잰다 (FR-22). |
 | 신규 조작 접수 제한 | `dedup_entry_limit` | 10만 건 | 1건 이상의 정수 | 서버 전체의 중복 방지 항목 수다 (FR-22). |
 | 보존기간 정리 주기 | `retention_cleanup_interval_sec` | 60초 | 1초 이상의 정수 | 서버 조립(상태 관리)이 시작할 때와 이 간격마다 `RetentionStore.cleanup`을 부른다 (FR-21, FR-22, #164). |
-| 인자 상한 | `param_max.{kind}.{action}.{arg}` | 조명 `param_max.light.on.brightness` 64, 스피커 `param_max.speaker.on.volume` 20, 디스플레이(M5) `param_max.display.setVolume.volume` 50 | 정수 | 선택 설정이다. 서버는 기기 선언의 `maximum`과 이 값 중 작은 값으로 인자를 검사한다. 설정이 없으면 선언의 범위만 쓴다 (FR-09, #245). 기존 `light_brightness_max`와 `speaker_volume_max`는 이 형식으로 옮긴다. |
+| 인자 상한 | `param_max.{kind}.{action}.{arg}` | 조명 `param_max.light.on.brightness` 64, 스피커 `param_max.speaker.on.volume` 20, 디스플레이(M5) `param_max.display.set_volume.volume` 50 | 정수 | 선택 설정이다. 서버는 기기 선언의 `maximum`과 이 값 중 작은 값으로 인자를 검사한다. 설정이 없으면 선언의 범위만 쓴다 (FR-09, #245). 기존 `light_brightness_max`와 `speaker_volume_max`는 이 형식으로 옮긴다. |
 | 전역 할당 허용 종류 | `any_allowed_kinds` | `["locker"]` | 종류 이름의 목록 | 전역 할당(`any:{kind}`)을 받는 종류다. 목록에 없는 종류의 `any:` 요청은 거부한다 (FR-23, #245). `display` 종류는 이 목록에 넣지 않는다. 근접 모델 파일에 배치가 없는 기기는 전역 할당의 후보가 아니다 (FR-05). |
-| 인자 기본값 | `param_default.{kind}.{action}.{arg}` | 조명 `param_default.light.on.brightness` 64, `param_default.light.on.color` `#FFFFFF`, 스피커 `param_default.speaker.on.volume` 20, 디스플레이(M5) `param_default.display.setVolume.volume` 20 | 선언의 인자 스키마와 인자 상한 설정을 만족하는 값 | 선택 설정이다. 같은 동작의 앞선 성공 명령이 없을 때 생략한 인자에 쓴다 (FR-09, #245). 기존 `light_default_brightness`, `light_default_color`, `speaker_default_volume`은 이 형식으로 옮긴다. `display` 종류의 기본값은 첫 실행에서 음량이 크게 나오지 않도록 낮게 둔다. |
+| 인자 기본값 | `param_default.{kind}.{action}.{arg}` | 조명 `param_default.light.on.brightness` 64, `param_default.light.on.color` `#FFFFFF`, 스피커 `param_default.speaker.on.volume` 20, 디스플레이(M5) `param_default.display.set_volume.volume` 20 | 선언의 인자 스키마와 인자 상한 설정을 만족하는 값 | 선택 설정이다. 같은 동작의 앞선 성공 명령이 없을 때 생략한 인자에 쓴다 (FR-09, #245). 기존 `light_default_brightness`, `light_default_color`, `speaker_default_volume`은 이 형식으로 옮긴다. `display` 종류의 기본값은 첫 실행에서 음량이 크게 나오지 않도록 낮게 둔다. |
 | SmartThings 상태 확인 주기 | `smartthings_poll_sec` | 5초 | `status_report_sec` 이상이고 `online_ttl_sec` 이하 | SmartThings 클라우드 기기의 하트비트다. 서버는 이 주기로 기기 상태를 조회해서 `on_status`로 넘기고 `last_seen_at`을 갱신한다 (FR-13, #259). |
 
 - 재시작 뒤 초기 참여 대기는 별도 설정이 아니다. 서버는 이탈 판단의 미수신 시간과 유예 시간을 더해서 계산한다. 초기 기준은 10초와 5초의 합이다 (FR-20).
@@ -328,9 +328,9 @@
 | 선언할 동작 | SmartThings capability.command | 인자 | 성공 확인(조회할 속성) |
 |---|---|---|---|
 | `on` / `off` | `switch.on` / `switch.off` | 없음 | `switch` 속성이 요청한 값과 같다 |
-| `setVolume` | `audioVolume.setVolume` | `volume` | `audioVolume.volume` 속성이 요청한 값과 같다 |
+| `set_volume` | `audioVolume.setVolume` | `volume` | `audioVolume.volume` 속성이 요청한 값과 같다 |
 | `mute` / `unmute` | `audioMute.mute` / `audioMute.unmute` | 없음 | `audioMute.mute` 속성이 요청한 값(`muted` 또는 `unmuted`)과 같다 |
-| `setInputSource` | `mediaInputSource.setInputSource` | `inputSource` | `mediaInputSource.inputSource` 속성이 요청한 값과 같다 |
+| `set_input_source` | `mediaInputSource.setInputSource` | `inputSource` | `mediaInputSource.inputSource` 속성이 요청한 값과 같다 |
 
     - `custom.picturemode.setPictureMode`는 1차 표에 넣지 않는다. M5 실기에서 `GET /v1/devices/{deviceId}`로 이 capability를 확인하면 서버는 `setPictureMode` 동작과 확인 속성 `custom.picturemode.pictureMode`를 표에 더한다.
     - 서버는 `custom.launchapp.launchApp`과 `samsungvd.remoteControl.send`를 선언하지 않는다. 두 동작은 조회로 확인할 속성이 없다. 선언하면 서버는 모든 실행을 `unknown`으로 보고 기기를 반복해서 `FAULT`로 격리하게 된다. SmartThings가 확인 가능한 속성을 더하면 팀은 이 제외를 다시 검토한다.
