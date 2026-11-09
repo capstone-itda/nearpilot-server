@@ -131,7 +131,7 @@ class Settings:
     # ── 시간 설정 (시연용 초기 기준) ──
     beacon_recent_sec: float = 3.0  # ① 최근 비콘 기준 T: 서버가 받은 유효 관측의 최근 구간 (FR-15)
     anchor_recent_sec: float = 3.0  # 근접 참여 기기의 최근 구간: 서버가 받은 마지막 rssi 보고부터 (FR-09, #252)
-    order_similar_db: float = 3.0  # 거리 선택자 경계의 "비슷함" 기준: 정렬 값 차이 dB (FR-09, #253)
+    order_similar_db: float = 3.0  # 거리 선택자 경계의 "비슷함" 기준: 정렬 값 차이 dB (FR-09, #255)
     online_ttl_sec: float = 15.0  # 온라인 유지 시간: 유효한 기기 메시지의 마지막 수신부터 (FR-13)
     status_report_sec: float = 1.0  # 기기 상태 보고 주기
     reservation_wait_sec: float = 10.0  # 예약 대기 제한: 예약부터 전송 시작까지 (FR-19)
