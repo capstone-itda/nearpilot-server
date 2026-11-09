@@ -69,6 +69,9 @@ class Sink:
     def on_rssi(self, report):
         self._call("on_rssi", report)
 
+    def on_rssi_report(self, report):
+        self._call("on_rssi_report", report)
+
     def on_status(self, report):
         self._call("on_status", report)
 
@@ -125,11 +128,11 @@ def test_FR05_partial_handover_retries_missing(h):
     h.sink.fail = lambda method, frame: method == "on_rssi" and frame.beacon.minor == 2
     report = incoming("rssi", seq=1, observations=beacons)
     assert h.feed(report) == 1
-    assert h.delivery.pending_count == 1
+    assert h.delivery.pending_count == 2  # The missing frame and the on_rssi_report behind it.
     h.sink.fail = lambda method, frame: False
     assert h.delivery.deliver_due() == 0  # Not before the retry interval.
     h.advance(1)
-    assert h.delivery.deliver_due() == 1
+    assert h.delivery.deliver_due() == 2
     frames = h.sink.of("on_rssi")
     assert [f.beacon.minor for f in frames] == [1, 2]
     assert {f.received_at for f in frames} == {report.received_at}
@@ -316,7 +319,7 @@ def test_FR07_saturation_keeps_results(caplog):
                incoming("announce", seq=1),
                incoming("result"), incoming("result", seq=2, command_id="command-2",
                                             event_id=EVENT2))
-        assert h.delivery.pending_count == 4
+        assert h.delivery.pending_count == 5  # status, on_rssi, on_rssi_report and two results
         h.sink.fail = lambda method, report: False
         h.advance(1)
         h.delivery.deliver_due()

@@ -58,6 +58,9 @@ from nearpilot.shared.models import (
     ReserveRequest,
     ReserveResult,
     RssiFrame,
+    SelectorChild,
+    SelectorChildren,
+    SelectorRecord,
     StoreResult,
     TargetSpec,
     UseRequest,
@@ -366,13 +369,15 @@ class SqliteRepository:
         """중복 방지 항목 수: 외부 `request_id`가 있는 요청 행 + 명령 항목 (FR-22).
 
         명령 항목은 요청의 `request_id`가 남아 있거나 진행 중(`pending`·`in_progress`)인
-        `node_command` 행이다. 한 문장으로 세므로 두 조건을 모두 만족하는 명령도 한 번만 센다.
+        `node_command` 행이다. 거리 선택자 하위 요청의 명령은 상위 요청의 `request_id`로 본다.
+        한 문장으로 세므로 두 조건을 모두 만족하는 명령도 한 번만 센다.
         """
         return self._conn.execute(
             "SELECT (SELECT COUNT(*) FROM request WHERE request_id IS NOT NULL) "
             "+ (SELECT COUNT(*) FROM node_command WHERE status IN (?, ?) "
             "OR internal_request_id IN "
-            "(SELECT internal_request_id FROM request WHERE request_id IS NOT NULL)) AS n",
+            "(SELECT internal_request_id FROM request WHERE request_id IS NOT NULL "
+            "OR selector_parent_id IN (SELECT internal_request_id FROM request WHERE request_id IS NOT NULL))) AS n",
             (ExecutionStatus.PENDING.value, ExecutionStatus.IN_PROGRESS.value),
         ).fetchone()["n"]
 
@@ -389,26 +394,34 @@ class SqliteRepository:
 
         previous = None
         if row["verdict"] is not None:
-            # OK 가 아닌 판정에는 use_id 를 담지 않는다. 재판정이 거부로 끝나면 취소된 옛 세션만 남는다.
-            # 오류 뒤 취소한 요청을 재판정하면 취소된 세션과 새 세션이 함께 있다. 살아 있는 세션을 먼저,
-            # 없으면 가장 나중 세션을 고른다. 세션이 하나뿐이면 어느 쪽이든 그 세션이다.
-            use_row = None if row["verdict"] != Verdict.OK.value else self._conn.execute(
-                "SELECT use_id FROM use_session WHERE internal_request_id = ? "
-                "ORDER BY (state = ? AND end_reason IS ?), rowid DESC",
-                (internal_request_id, SessionState.CLOSED.value, EndReason.CANCELLED.value),
-            ).fetchone()
             previous = Decision(
                 internal_request_id=internal_request_id,
                 request_id=req.request_id,
                 verdict=Verdict(row["verdict"]),
                 reason=ReasonCode(row["reason_code"]),
                 node_id=row["node_id"],
-                use_id=use_row["use_id"] if use_row else None,
+                use_id=self._decision_use_id(internal_request_id, row["verdict"]),
                 p_max=row["p_max"],
             )
         return RequestLink(
             internal_request_id=internal_request_id, is_new=False, conflict=False, previous=previous
         )
+
+    def _decision_use_id(self, internal_request_id: str, verdict: str) -> str | None:
+        """저장된 판정에 담을 `use_id`를 고른다.
+
+        OK 가 아닌 판정에는 use_id 를 담지 않는다. 재판정이 거부로 끝나면 취소된 옛 세션만 남는다.
+        오류 뒤 취소한 요청을 재판정하면 취소된 세션과 새 세션이 함께 있다. 살아 있는 세션을 먼저,
+        없으면 가장 나중 세션을 고른다. 세션이 하나뿐이면 어느 쪽이든 그 세션이다.
+        """
+        if verdict != Verdict.OK.value:
+            return None
+        use_row = self._conn.execute(
+            "SELECT use_id FROM use_session WHERE internal_request_id = ? "
+            "ORDER BY (state = ? AND end_reason IS ?), rowid DESC",
+            (internal_request_id, SessionState.CLOSED.value, EndReason.CANCELLED.value),
+        ).fetchone()
+        return use_row["use_id"] if use_row else None
 
     def _retry_internal_error(
         self, internal_request_id: str, input_digest: str, row: sqlite3.Row
@@ -459,14 +472,15 @@ class SqliteRepository:
             if self._decision_matches(row, decision, record):
                 return StoreResult(outcome=StoreOutcome.ALREADY_APPLIED)
             return StoreResult(outcome=StoreOutcome.CONFLICT, conflict_reason=StoreConflictReason.CONTENT_CONFLICT)
-        decision_context = to_json(
-            {
-                "posteriors": dict(record.posteriors),
-                "window_start": iso(record.window_start) if record.window_start else None,
-                "window_end": iso(record.window_end) if record.window_end else None,
-                "message": decision.message,
-            }
-        )
+        context = {
+            "posteriors": dict(record.posteriors),
+            "window_start": iso(record.window_start) if record.window_start else None,
+            "window_end": iso(record.window_end) if record.window_end else None,
+            "message": decision.message,
+        }
+        if record.selector is not None:
+            context["selector"] = self._selector_to_data(record.selector)
+        decision_context = to_json(context)
         updated = self._conn.execute(
             "UPDATE request SET verdict = ?, reason_code = ?, node_id = ?, p_max = ?, model = ?, "
             "calib = ?, policy_ver = ?, config_ver = ?, decision_context = ?, settings_json = ? "
@@ -492,6 +506,100 @@ class SqliteRepository:
             and row["calib"] == record.calib_version
             and row["policy_ver"] == record.policy_version
             and row["config_ver"] == record.settings.version
+        )
+
+    # ── 거리 선택자 하위 요청 (FR-09, FR-22, #253) ────────────────────
+
+    def link_selector_child(
+        self, parent_internal_request_id: str, req: UseRequest, node_id: str, input_digest: str,
+    ) -> str:
+        """고른 기기 하나의 하위 요청 행을 만들고 새 `internal_request_id`를 반환한다.
+
+        외부 `request_id`는 비운다. 그래서 `(user_id, request_id)` 고유 색인과 중복 방지 항목 수에
+        들지 않고, 같은 키의 재전송 `link_request`는 상위 행만 찾는다. 상위 행이 없으면 `LookupError`다.
+        """
+        with immediate_transaction(self._conn):
+            parent = self._conn.execute(
+                "SELECT 1 FROM request WHERE internal_request_id = ?", (parent_internal_request_id,)
+            ).fetchone()
+            if parent is None:
+                raise LookupError(f"요청 {parent_internal_request_id} 가 없다")
+            internal_request_id = new_id()
+            self._conn.execute(
+                "INSERT INTO request (internal_request_id, user_id, request_id, input_digest, "
+                "parent_internal_request_id, node_id, target_spec, action, host_kind, received_at, "
+                "selector_parent_id) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    internal_request_id, req.user_id, input_digest, req.parent_internal_request_id,
+                    node_id, req.target.serialize(), req.action, req.host_kind, iso(req.received_at),
+                    parent_internal_request_id,
+                ),
+            )
+            return internal_request_id
+
+    def selector_children(self, parent_internal_request_id: str) -> SelectorChildren | None:
+        """상위 요청의 거리 선택자 기록과 그 기록이 가리키는 하위 요청들을 기록의 순서대로 읽는다.
+
+        상위 행이 없거나 판정이 없거나 판정 기록에 거리 선택자가 없으면 `None`이다. 기록이 가리키는
+        하위 행이 없거나 다른 상위 요청의 것이면 `LookupError`다. 하위 판정의 `request_id`는 상위 행의
+        외부 ID이고, 상위 행의 값이 비었으면 `""`다. 하위 요청의 기기는 기록의 `selected`에서 읽는다 —
+        고른 기기의 출처는 판정 기록이다. 저장된 판정의 `node_id`에 기대지 않는다.
+        """
+        parent = self._conn.execute(
+            "SELECT request_id, verdict, decision_context FROM request WHERE internal_request_id = ?",
+            (parent_internal_request_id,),
+        ).fetchone()
+        if parent is None or parent["verdict"] is None:
+            return None
+        data = from_json(parent["decision_context"]).get("selector")
+        if data is None:
+            return None
+        record = self._selector_from_data(data)
+        children = []
+        for child_id, child_node_id in zip(record.children, record.selected):
+            row = self._conn.execute(
+                "SELECT verdict, reason_code, node_id, p_max FROM request "
+                "WHERE internal_request_id = ? AND selector_parent_id = ?",
+                (child_id, parent_internal_request_id),
+            ).fetchone()
+            if row is None:
+                raise LookupError(f"요청 {parent_internal_request_id} 의 하위 요청 {child_id} 가 없다")
+            decision = None
+            if row["verdict"] is not None:
+                decision = Decision(
+                    internal_request_id=child_id,
+                    request_id=parent["request_id"] or "",
+                    verdict=Verdict(row["verdict"]),
+                    reason=ReasonCode(row["reason_code"]),
+                    node_id=row["node_id"],
+                    use_id=self._decision_use_id(child_id, row["verdict"]),
+                    p_max=row["p_max"],
+                )
+            children.append(SelectorChild(child_id, child_node_id, decision))
+        return SelectorChildren(record, tuple(children))
+
+    @staticmethod
+    def _selector_to_data(selector: SelectorRecord) -> dict[str, Any]:
+        """판정 기록(`decision_context`)의 `"selector"` 값. 정렬 값이 없는 기기는 `null`이다."""
+        return {
+            "target_spec": selector.target_spec,
+            "order": list(selector.order),
+            "values": dict(selector.values),
+            "selected": list(selector.selected),
+            "similar": selector.similar,
+            "children": list(selector.children),
+        }
+
+    @staticmethod
+    def _selector_from_data(data: Mapping[str, Any]) -> SelectorRecord:
+        """`SelectorRecord`는 `values`만 고정한다. 목록 세 개는 튜플로 만들어 넘긴다."""
+        return SelectorRecord(
+            target_spec=data["target_spec"],
+            order=tuple(data["order"]),
+            values=data["values"],
+            selected=tuple(data["selected"]),
+            similar=data["similar"],
+            children=tuple(data["children"]),
         )
 
     # ── ① 비콘 저장 (FR-05) ──────────────────────────────────────────

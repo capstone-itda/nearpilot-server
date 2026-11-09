@@ -386,7 +386,7 @@ def device(tmp_path):
     node = SimNode("locker-1", "locker", CommandStore(tmp_path / "d.sqlite3"), Scenario(actuation_sec=0))
     created = SimDevice(node, BrokerConfig("127.0.0.1", 1883, 30, 1, 4),
                         Credentials("locker-1", secret),
-                        Settings(rssi_frame_sec=5.0, status_report_sec=5.0, beacon_recent_sec=5.0),
+                        Settings(rssi_frame_sec=5.0, status_report_sec=5.0, beacon_recent_sec=5.0, anchor_recent_sec=5.0),
                         client_factory=FakeClient)
     yield created
     created.stop()

@@ -18,12 +18,14 @@ import threading
 
 from uuid import uuid4
 
-from nearpilot.iot.messages import MessageValidationError, decode_message
+from nearpilot.iot.messages import MessageValidationError, decode_message, decode_rssi_report
 from nearpilot.iot.mqtt.connection import IncomingReport
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import Step
 from nearpilot.shared.interfaces import AuditLog, NodeEventSink
-from nearpilot.shared.models import AuditEvent, NodeAnnounce, NodeResult, NodeStatus, RssiFrame
+from nearpilot.shared.models import (
+    AuditEvent, NodeAnnounce, NodeResult, NodeStatus, RssiFrame, RssiReport,
+)
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +70,7 @@ class _Session:
 
     session_id: str
     status: NodeStatus
-    rssi: tuple[RssiFrame, ...] | None = None
+    rssi: tuple[RssiReport, tuple[RssiFrame, ...]] | None = None  # last accepted report and frames
 
 
 @dataclass
@@ -157,8 +159,9 @@ class ReportDelivery:
         """Validate one report in reception order and queue its handover."""
         parts = report.topic.split("/")
         node_id, kind = (parts[2], parts[3]) if len(parts) == 4 else ("?", "?")
+        decode = decode_rssi_report if kind == "rssi" else decode_message
         try:
-            decoded = decode_message(report.topic, report.payload, received_at=report.received_at)
+            decoded = decode(report.topic, report.payload, received_at=report.received_at)
         except MessageValidationError as error:
             self._reject(node_id, kind, str(error))
             if kind == "announce" and parts[:2] == ["nearpilot", "node"] and node_id:
@@ -170,7 +173,8 @@ class ReportDelivery:
         elif kind == "status":
             self._accept_status(decoded, settings)
         elif kind == "rssi":
-            self._accept_rssi(node_id, decoded, settings)
+            rssi_report, frames = decoded
+            self._accept_rssi(node_id, rssi_report, frames, settings)
         else:
             self._accept_result(decoded)
 
@@ -261,39 +265,42 @@ class ReportDelivery:
                 current.status = status
             self._enqueue((node_id, "observe"), "on_status", status)
 
-    def _accept_rssi(self, node_id: str, frames: tuple[RssiFrame, ...], settings: Settings) -> None:
-        if not frames:
-            return  # A valid empty scan has no beacon observation to hand over.
-        first = frames[0]
+    def _accept_rssi(self, node_id: str, report: RssiReport, frames: tuple[RssiFrame, ...],
+                     settings: Settings) -> None:
+        # An empty scan (no beacon seen) goes through the same checks as a report with frames.
         skew = self.config.clock_max_error_sec
-        reason = self._stale_or_future(first.received_at, first.frame_ts,
-                                       (first.frame_ts, first.sent_at),
+        reason = self._stale_or_future(report.received_at, report.frame_ts,
+                                       (report.frame_ts, report.sent_at),
                                        settings.beacon_recent_sec, skew)
         if reason:
             self._reject(node_id, "rssi", reason)
             return
         with self._condition:
             current = self._sessions.get(node_id)
-            if current is None or current.session_id != first.session_id:
+            if current is None or current.session_id != report.session_id:
                 self._reject(node_id, "rssi", "connection not confirmed by live status")
                 return
             last = current.rssi
             if last is not None:
-                if first.seq <= last[0].seq:
-                    if first.seq != last[0].seq:
+                if report.seq <= last[0].seq:
+                    if report.seq != last[0].seq:
                         self._reject(node_id, "rssi", "out-of-order sequence")
-                    elif tuple(replace(f, received_at=last[0].received_at) for f in frames) != last:
+                    elif (replace(report, received_at=last[0].received_at),
+                          tuple(replace(f, received_at=last[0].received_at)
+                                for f in frames)) != last:
                         self._reject(node_id, "rssi", "sequence reused with different content")
                     return
-                if first.frame_ts < last[0].frame_ts:
+                if report.frame_ts < last[0].frame_ts:
                     self._reject(node_id, "rssi", "observation older than current")
                     return
             if self._saturated:
                 self._reject(node_id, "rssi", "handover saturated")
                 return
-            current.rssi = frames
+            current.rssi = (report, frames)
             for frame in frames:
                 self._enqueue((node_id, "observe"), "on_rssi", frame)
+            # After every frame of this message, on the same lane (NodeEventSink.on_rssi_report).
+            self._enqueue((node_id, "observe"), "on_rssi_report", report)
 
     def _accept_result(self, result: NodeResult) -> None:
         # Old-session and late results are settlement evidence, not observations.

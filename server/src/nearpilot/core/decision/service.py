@@ -3,12 +3,14 @@
 판정(`DecisionPipeline`)이 새로 OK 를 낸 요청만 `ExecutionService.execute()` 로 인계하고,
 실행 결과를 확인한 뒤의 판정을 호스트에 돌려준다. OK 와 use_id 는 실행 성공일 때만 나간다 (#16).
 재전송에는 저장된 실행 상태로 다시 만든 판정을 돌려준다. 기본값은 거부다.
+거리 선택자는 하위 요청마다 같은 규칙을 적용하고 기기별 결과를 상위 판정 하나로 묶는다 (#253).
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import replace
 from enum import Enum
 from typing import Any, TypeVar
@@ -16,7 +18,9 @@ from typing import Any, TypeVar
 from nearpilot.core.decision.pipeline import DecisionPipeline, make_decision
 from nearpilot.shared.enums import ExecutionStatus, ReasonCode, Verdict
 from nearpilot.shared.interfaces import ExecutionService, ExecutionStore
-from nearpilot.shared.models import Decision, ExecutionResult, UseRequest
+from nearpilot.shared.models import (
+    Decision, DeviceOutcome, ExecutionContext, ExecutionResult, UseRequest,
+)
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +56,22 @@ def _member(kind: type[_E], value: object) -> _E | None:
         return None
 
 
+def aggregate_selector(parent: Decision, outcomes: Sequence[Decision]) -> Decision:
+    """하위 요청들의 결과를 상위 판정 하나로 묶는다 (FR-09, #253).
+
+    outcomes 는 거리 순서의 하위 결과다. 모두 OK 면 OK 다. 아니면 처음 OK 가 아닌 결과의 판정과 사유다.
+    devices 는 결과마다 하나이고 use_id 는 OK 결과에만 둔다. selected_count·similar 는 parent 의 값이다.
+    상위의 node_id·use_id·p_max 는 None 이다.
+    """
+    devices = tuple(
+        DeviceOutcome(o.node_id, o.verdict, o.reason, o.use_id if o.verdict is Verdict.OK else None)
+        for o in outcomes)
+    failed = next((o for o in outcomes if o.verdict is not Verdict.OK), None)
+    verdict, reason = (Verdict.OK, ReasonCode.OK) if failed is None else (failed.verdict, failed.reason)
+    return make_decision(parent.request_id, parent.internal_request_id, verdict, reason,
+                         devices=devices, selected_count=parent.selected_count, similar=parent.similar)
+
+
 class RequestUseService:
     def __init__(
         self, pipeline: DecisionPipeline, execution: ExecutionService, store: ExecutionStore
@@ -61,6 +81,8 @@ class RequestUseService:
         self._store = store
 
     def request_use(self, req: UseRequest) -> Decision:
+        if req.target.is_selector:
+            return self._request_selector(req)
         decision, ctx = self._pipeline.decide_for_execution(req)
         try:
             if ctx is not None:  # 이번에 새로 OK 가 난 요청
@@ -71,6 +93,50 @@ class RequestUseService:
         except Exception:  # noqa: BLE001 - 알 수 없는 오류는 거부한다
             log.exception("request_use 조립 중 예외")
             return self._failure(decision, ReasonCode.INTERNAL_ERROR)
+
+    # ── 거리 선택자 (FR-09, #253) ───────────────────────────────────
+
+    def _request_selector(self, req: UseRequest) -> Decision:
+        """새로 OK 가 난 하위 요청들을 동시에 실행하고 기기별 결과를 상위 판정 하나로 묶는다.
+
+        재전송에는 하위 요청마다 저장된 실행 상태를 묶어 돌려준다. 새 명령을 만들지 않는다 (FR-22).
+        한 하위 요청의 재검사 거부나 실행 실패로 다른 하위 요청의 실행을 취소하거나 되돌리지 않는다.
+        """
+        sd = self._pipeline.decide_selector(req)
+        if sd.decision.verdict is not Verdict.OK or not sd.children:
+            return sd.decision
+        try:
+            if sd.contexts:  # 이번에 새로 OK 가 난 요청
+                outcomes = self._execute_children(sd.children, sd.contexts)
+            else:  # 재전송: 이미 인계한 하위 요청들의 현재 실행 상태
+                outcomes = [self._replay(child) for child in sd.children]
+            return aggregate_selector(sd.decision, outcomes)
+        except Exception:  # noqa: BLE001 - 알 수 없는 오류는 거부한다
+            log.exception("거리 선택자 request_use 조립 중 예외")
+            d = sd.decision
+            return make_decision(d.request_id, d.internal_request_id, Verdict.DENY, ReasonCode.INTERNAL_ERROR,
+                                 devices=(), selected_count=d.selected_count, similar=d.similar)
+
+    def _execute_children(
+        self, children: Sequence[Decision], contexts: Sequence[ExecutionContext]
+    ) -> list[Decision]:
+        """하위 요청마다 `execute` 를 동시에 실행하고 거리 순서대로 결과를 모은다.
+
+        한 기기의 실행은 결과를 기다리며 막힌다. 차례로 실행하면 기기 수만큼 응답이 늦어진다 (NFR-01).
+        """
+        with ThreadPoolExecutor(max_workers=len(contexts)) as pool:
+            futures = [pool.submit(self._execution.execute, ctx) for ctx in contexts]
+            return [self._child_outcome(child, future)
+                    for child, future in zip(children, futures, strict=True)]
+
+    def _child_outcome(self, child: Decision, future: Future[ExecutionResult]) -> Decision:
+        """하위 요청 하나의 실행 결과. 단일 요청과 같은 변환이다. `execute` 가 예외를 던지면 그 기기만 거부한다."""
+        try:
+            result = future.result()
+        except Exception:  # noqa: BLE001 - 다른 하위 요청의 결과는 그대로 둔다
+            log.exception("거리 선택자 하위 요청 실행 중 예외")
+            return self._failure(child, ReasonCode.INTERNAL_ERROR)
+        return self._from_result(child, result)
 
     # ── 실행 결과 → 판정 ────────────────────────────────────────────
 

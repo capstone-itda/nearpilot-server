@@ -16,6 +16,8 @@ def input_digest(req: UseRequest) -> str:
     동작 인자는 받은 요청에만 넣는다. 인자 없는 요청의 digest 는 이전과 같다 (FR-09, FR-22).
     `target.capability` 키 이름과 명시 지정의 값(기기 ID 의 마지막 `-` 앞)은 이전 형식을 유지한다
     (spec core-device-actions 결정 3).
+    거리 선택자(`near`·`far`)는 `target` 에 시작(`start`)과 개수(`count`, `all` 은 문자열)를 더 넣는다.
+    다른 대상 지정의 digest 는 이전과 같다 (FR-22, #253).
     """
     target = req.target
     kind = target.node_id.rpartition("-")[0] if target.device_kind is None else target.device_kind
@@ -28,6 +30,9 @@ def input_digest(req: UseRequest) -> str:
             "node_id": target.node_id,
         },
     }
+    if target.is_selector:
+        normalized["target"]["start"] = target.start
+        normalized["target"]["count"] = "all" if target.count is None else target.count
     if req.arguments is not None:
         normalized["arguments"] = dict(req.arguments)
     raw = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False)

@@ -58,6 +58,7 @@ from nearpilot.shared.models import (
     CommandRecord,
     CommandResult,
     Decision,
+    DistanceOrder,
     ExecutionContext,
     ExecutionResult,
     InternalRequest,
@@ -73,6 +74,8 @@ from nearpilot.shared.models import (
     ReserveRequest,
     ReserveResult,
     RssiFrame,
+    RssiReport,
+    SelectorChildren,
     StoreResult,
     UseRequest,
     UseSession,
@@ -140,6 +143,24 @@ class Repository(Protocol):
 
         같은 판정·기록은 ALREADY_APPLIED, 다른 내용은 CONFLICT·CONTENT_CONFLICT다.
         외부 request_id 보존기간과 관계없이 기존 기록을 보존한다. 저장 장애는 StoreError 로 알린다.
+        """
+        ...
+
+    def link_selector_child(
+        self, parent_internal_request_id: str, req: UseRequest, node_id: str, input_digest: str,
+    ) -> str:
+        """거리 선택자 하위 요청 행을 만들고 새 internal_request_id 를 반환한다 (FR-09, #253).
+
+        외부 request_id 는 비운다. target_spec·action·host_kind·received_at·parent_internal_request_id 는
+        req 의 값이고 node_id 는 고른 기기다. input_digest 는 상위 요청의 값이다. 상위 요청 행이 없으면 LookupError.
+        """
+        ...
+
+    def selector_children(self, parent_internal_request_id: str) -> SelectorChildren | None:
+        """상위 요청의 저장된 거리 선택자 기록과 그 기록의 하위 요청들 (FR-22).
+
+        판정 기록에 거리 선택자 기록이 없으면 None 이다. 하위 요청은 기록의 children 순서다.
+        하위 요청의 Decision.request_id 는 상위 요청의 외부 ID(없으면 "")다.
         """
         ...
 
@@ -538,6 +559,26 @@ class ProximityEstimator(Protocol):
         """
         ...
 
+    def observe_report(self, report: RssiReport, *, node: NodeInfo) -> None:
+        """유효한 rssi 보고 하나의 서버 수신 시각을 기록한다. 빈 보고도 받는다 (FR-09, #252).
+
+        report.node_id 가 node.node_id 와 다르거나 node.trust_state 가 TRUSTED 가 아니면 기록하지 않는다.
+        기록은 메모리에만 둔다. 재시작하면 다음 보고까지 그 기기는 근접 참여 기기가 아니다.
+        """
+        ...
+
+    def distance_order(
+        self, beacon: BeaconKey, candidates: Sequence[NodeInfo], at: datetime,
+    ) -> DistanceOrder:
+        """후보 중 근접 참여 기기의 가까운 순서와 기기별 정렬 값 (FR-09, FR-16, #253).
+
+        근접 참여 기기는 at - anchor_recent_sec 이후에 rssi 보고(빈 보고 포함)를 보낸 TRUSTED 후보다.
+        정렬 값은 [at - anchor_recent_sec, at] 안에 서버가 받은 그 비콘 RSSI 의 평균이다. 프레임이 없으면 None 이다.
+        정렬 값이 큰(가까운) 기기부터, 같으면 기기 ID 순서다. None 인 기기는 끝에 기기 ID 순서로 둔다.
+        순서를 자르지 않는다. 근접 모델 파일을 쓰지 않는다.
+        """
+        ...
+
 
 # ── IOT 제공 ────────────────────────────────────────────────────────
 
@@ -569,6 +610,13 @@ class NodeEventSink(Protocol):
     def on_announce(self, announce: NodeAnnounce) -> None: ...
 
     def on_rssi(self, frame: RssiFrame) -> None: ...
+
+    def on_rssi_report(self, report: RssiReport) -> None:
+        """유효한 rssi 메시지마다 한 번 부른다. 비콘이 없는 빈 보고도 넘긴다 (FR-09, #252).
+
+        같은 메시지의 on_rssi 를 모두 부른 뒤에 부른다.
+        """
+        ...
 
     def on_status(self, status: NodeStatus) -> None: ...
 

@@ -199,7 +199,8 @@ def test_FR11_응답에_내부_값이_없다():
     svc, *_ = build()
     d = ask(svc)
     assert {f.name for f in fields(d)} == {
-        "internal_request_id", "request_id", "verdict", "reason", "node_id", "use_id", "p_max", "message"}
+        "internal_request_id", "request_id", "verdict", "reason", "node_id", "use_id", "p_max", "message",
+        "devices", "selected_count", "similar"}
     assert "visitor" not in repr(d) and "a1" not in repr(d) and "pol" not in repr(d)
 
 
@@ -278,3 +279,14 @@ def test_FR22_한도에서는_승인_신청도_용량_초과로_거부하고_신
     assert repo.approval_calls == [] and pol.calls == []
     assert repo.saved[0][0] == d
     assert audit.events[-1].payload["capacity_exceeded"] is True
+
+
+@pytest.mark.parametrize("raw", ["near:light:1:1", "far:locker:2:all"])
+def test_FR09_request_access_rejects_selector(raw):
+    # 승인은 기기 하나에 대한 것이다. 거리 선택자는 기기를 고르지 않으므로 받지 않는다 (#253)
+    svc, repo, pol, audit = build()
+    d = svc.request_access("visitor", raw, "on", "acc-s")
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INVALID_INPUT)
+    assert (d.request_id, d.node_id, d.use_id) == ("acc-s", None, None)
+    assert repo.link_calls == [] and repo.approval_calls == [] and repo.saved == []
+    assert pol.calls == [] and audit.events == []

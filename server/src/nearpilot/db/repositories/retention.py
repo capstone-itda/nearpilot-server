@@ -93,9 +93,24 @@ class SqliteRetentionStore:
         return any(internal_request_id in json.loads(row["internal_request_ids"]) for row in rows)
 
     def _completion_time(self, internal_request_id: str) -> datetime | None:
-        """완료되지 않았으면 `None`. 완료됐으면 마지막 감사 행 시각으로 근사한다 (spec §6)."""
-        if not self._is_complete(internal_request_id):
-            return None
+        """완료되지 않았으면 `None`. 완료됐으면 마지막 감사 행 시각으로 근사한다 (spec §6).
+
+        거리 선택자 상위 요청은 세션·명령·복구가 하위 요청 행에 붙는다. 상위 요청과 하위 요청이 모두
+        완료돼야 완료이고, 시각은 그중 가장 늦은 것이다 (FR-22, specs/core-distance-selector).
+        """
+        children = [r["internal_request_id"] for r in self._conn.execute(
+            "SELECT internal_request_id FROM request WHERE selector_parent_id = ?", (internal_request_id,))]
+        latest: datetime | None = None
+        for request_id in (internal_request_id, *children):
+            if not self._is_complete(request_id):
+                return None
+            own = self._own_completion_time(request_id)
+            if own is not None and (latest is None or own > latest):
+                latest = own
+        return latest
+
+    def _own_completion_time(self, internal_request_id: str) -> datetime | None:
+        """완료된 요청 행 하나의 마지막 감사 행 시각과 복구 완료 시각 중 늦은 것이다."""
         row = self._conn.execute(
             "SELECT MAX(created_at) AS latest FROM audit_log WHERE internal_request_id = ?",
             (internal_request_id,),

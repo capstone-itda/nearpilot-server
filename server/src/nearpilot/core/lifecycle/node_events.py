@@ -18,7 +18,7 @@ from nearpilot.shared.errors import StoreError
 from nearpilot.shared.interfaces import ExecutionStore, ProximityEstimator, Repository
 from nearpilot.shared.models import (
     ExecutionContext, ExecutionResult, NodeAnnounce, NodeInfo, NodeResult, NodeStatus,
-    RestoreBundle, RssiFrame,
+    RestoreBundle, RssiFrame, RssiReport,
 )
 
 _log = logging.getLogger(__name__)
@@ -163,6 +163,17 @@ class NodeEventService:
                 if done is None or done.session_id != frame.session_id or done.seq < frame.seq:
                     self._rssi_done[stream] = frame
                 self._rssi.pop(key, None)
+
+    def on_rssi_report(self, report: RssiReport) -> None:
+        """비콘이 없는 빈 보고를 포함한 rssi 보고의 수신 시각을 근접 추정에 넘긴다 (FR-09, #252).
+
+        저장소에 쓰지 않는다. 기기의 `last_seen_at` 도 바꾸지 않는다. 같은 보고를 다시 넘겨도 결과가 같다.
+        """
+        with self._lock_for(report.node_id):
+            node = self._node(report.node_id)
+            if node.session_id != report.session_id:
+                raise StoreError("RSSI 보고의 현재 기기 연결을 확인하지 못했다")
+            self._proximity.observe_report(report, node=node)
 
     def on_status(self, status: NodeStatus) -> None:
         with self._lock_for(status.node_id):

@@ -16,7 +16,7 @@ from nearpilot.core.decision.pipeline import (
     is_reoperate, make_decision, select_candidates, target_kind, threshold_for,
 )
 from nearpilot.shared.enums import (
-    ExecutionKind, ReasonCode, SessionState, Step, TargetKind, TrustState, Verdict,
+    ExecutionKind, Occupancy, ReasonCode, SessionState, Step, TargetKind, TrustState, Verdict,
 )
 from nearpilot.shared.interfaces import AuditLog, PolicyChecker, ProximityEstimator, Repository
 from nearpilot.shared.models import AuditEvent, Decision, ExecutionContext
@@ -99,10 +99,15 @@ class Rechecker:
         if node_id not in {n.node_id for n in candidates}:
             raise stop(Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE)
 
-        # ③ 근접 — 명시 지정도 ①②는 다시 검사하지만 확률 계산은 생략한다.
+        # ③ 근접 — 명시 지정과 거리 선택자의 공용형 하위 요청도 ①②는 다시 검사하지만 확률 계산은 생략한다.
+        # 거리 선택자의 대여형 하위 요청은 `nearest:` 와 같다 (FR-17, FR-18, #253).
         p: float | None = None
-        prob: dict[str, Any] = {"skipped": True, "reason_detail": "explicit_target"}
-        if not explicit:
+        prob: dict[str, Any]
+        if explicit:
+            prob = {"skipped": True, "reason_detail": "explicit_target"}
+        elif req.target.is_selector and target.occupancy is Occupancy.SHARED:
+            prob = {"skipped": True, "reason_detail": "selector_shared"}
+        else:
             threshold = threshold_for(s, req.target.device_kind)
             if threshold is None:
                 raise ValueError("임계값 설정이 없다")
