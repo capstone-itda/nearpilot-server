@@ -814,6 +814,9 @@ class SqliteExecutionStore:
         """명령 ID로 판정이 인계한 원래 실행 문맥을 조회한다 (#83).
 
         저장한 설정 스냅샷(`request.settings_json`)으로 문맥을 만든다. 현재 설정으로 채우지 않는다.
+
+        대여형인데 `use_id`가 없는 명령은 `None`이다. 보존 정리가 닫힌 세션을 지우며 뗀 명령이라
+        원래 문맥을 만들 수 없다. DB에 없는 명령과 같게 다룬다 (#251, specs/db-execution-store 결정).
         """
         try:
             command_row = self._conn.execute(
@@ -833,6 +836,9 @@ class SqliteExecutionStore:
             raise LookupError(f"요청 {command_row['internal_request_id']} 가 없다")
         is_internal = request_row["request_kind"] == "server_internal"
         execution_kind = ExecutionKind(command_row["execution_kind"])
+        if command_row["use_id"] is None and execution_kind in (
+                ExecutionKind.RENTAL_INITIAL, ExecutionKind.RENTAL_REOPERATION):
+            return None
         # 판정이 넘긴 문맥과 같게, 예약이 없는 요청(서버 내부, 승인 없는 공용형)은 예약 시각을 비운다
         # (core-execution.md "reserved_at 이 None 인 요청"). 명령 행에는 받은 시각이 남는다.
         no_reservation = is_internal or (

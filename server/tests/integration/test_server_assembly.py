@@ -25,6 +25,7 @@ from nearpilot.core.lifecycle.restore import RestoreService
 from nearpilot.core.proximity.estimator import HmmProximityEstimator
 from nearpilot.db.repositories.execution_store import SqliteExecutionStore
 from nearpilot.db.repositories.retention import SqliteRetentionStore
+from nearpilot.db.schema import connect
 from nearpilot.iot.mqtt import ConnectionFailure, ReportDelivery
 from nearpilot.runtime import Runtime, ShutdownError, create_app
 from nearpilot.runtime.database import ThreadDatabase
@@ -408,6 +409,38 @@ def test_FR20_runtime_shared_result_handover_does_not_block_reports(world, caplo
         wait_until(lambda: query(w.db, "SELECT last_seen_at FROM node WHERE node_id = 'light-1'")[0][
             "last_seen_at"] != seen)
     assert "CORE handover failed" not in caplog.text
+
+
+def test_FR21_runtime_rereport_after_retention_detach_is_dropped(world, caplog):
+    # 보존 정리가 닫힌 대여의 세션을 지워 명령의 use_id 를 뗐다. 서버를 다시 켠 뒤 기기가 그 명령의
+    # 결과를 재보고해도 CORE 인계가 예외로 끝나지 않는다. 경고를 남기고 인계를 끝낸다 (#251).
+    w = world()
+    with running(w.runtime):
+        w.ready("locker-1")
+        rented = w.use(VISITOR_A, "locker-1", "rent")
+        assert rented.verdict is Verdict.OK
+        wait_until(lambda: [c["status"] for c in w.commands("locker-1")] == ["succeeded"])
+        assert w.runtime.core.release_use(VISITOR_A, rented.use_id).verdict is Verdict.OK
+    command_id = query(w.db, "SELECT command_id FROM node_command WHERE node_id = 'locker-1'")[0]["command_id"]
+    conn = connect(str(w.db))
+    try:
+        report = SqliteRetentionStore(conn, Settings()).cleanup(
+            datetime.now(timezone.utc) + timedelta(days=Settings().use_history_retention_days + 1))
+    finally:
+        conn.close()
+    assert report.deleted_sessions == 1
+    assert query(w.db, "SELECT use_id FROM node_command WHERE command_id = ?", command_id)[0]["use_id"] is None
+
+    node = w.broker.nodes["locker-1"]
+    again = Runtime(w.cfg, client_factory=w.broker.factory, proximity_factory=lambda models, s: w.proximity)
+    with caplog.at_level(logging.WARNING), running(again):
+        wait_until(lambda: again.services.restore.can_execute("locker-1"))
+        w.broker.report("locker-1", [node._result(node.store.command(command_id))])
+        wait_until(lambda: f"command_id={command_id}" in caplog.text)
+        time.sleep(0.3)  # 실패했다면 재인계가 이 사이에 경고를 남긴다
+    assert "CORE handover failed" not in caplog.text
+    assert query(w.db, "SELECT status, use_id FROM node_command WHERE command_id = ?",
+                 command_id)[0]["status"] == "succeeded"
 
 
 # ── 종료 ────────────────────────────────────────────────────────────

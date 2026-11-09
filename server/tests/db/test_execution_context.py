@@ -123,3 +123,28 @@ def test_FR20_execution_context_has_no_reservation_for_internal_request(conn, st
 
     assert ctx.execution_kind == ExecutionKind.SERVER_INTERNAL
     assert ctx.reserved_at is None
+
+
+def test_FR21_execution_context_none_after_retention_detaches_rental_command(conn, repo, store):
+    """보존 정리가 닫힌 대여의 세션을 지우고 명령의 `use_id`를 떼면 원래 문맥을 만들 수 없다 (#251).
+
+    예외 대신 `None`을 돌려 DB에 없는 명령과 같게 다룬다. 명령 행은 그대로 남는다.
+    """
+    from nearpilot.db.repositories.retention import SqliteRetentionStore
+
+    insert_user(conn)
+    insert_place(conn)
+    insert_node(conn)
+    link = _decided(repo)
+    insert_use_session(conn, use_id="use1", internal_request_id=link.internal_request_id, state="RESERVED")
+    command = store.link_command(link.internal_request_id, "node1", "open").command
+    assert store.execution_context(command.command_id).use_id == "use1"
+    conn.execute("UPDATE use_session SET state = 'CLOSED', end_reason = 'release', "
+                 "closed_at = '2026-01-01T00:00:00+00:00' WHERE use_id = 'use1'")
+
+    report = SqliteRetentionStore(conn, settings=Settings(use_history_retention_days=1)).cleanup(
+        datetime(2026, 2, 1, tzinfo=timezone.utc))
+
+    assert report.deleted_sessions == 1
+    assert store.execution(link.internal_request_id).use_id is None
+    assert store.execution_context(command.command_id) is None

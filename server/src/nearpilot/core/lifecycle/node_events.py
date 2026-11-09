@@ -197,8 +197,10 @@ class NodeEventService:
         with self._lock_for(result.node_id):
             context = self._context_for(result.command_id)
             if context is None:
-                # 이 서버가 보낸 명령이 아니다 (DB 교체 전 기록의 재보고). 재인계해도 결과가 같다.
-                _log.warning("DB에 없는 명령의 결과를 인계하지 않는다: node=%s command_id=%s state=%s",
+                # 이 서버가 보낸 명령이 아니거나(DB 교체 전 기록의 재보고), 보존 정리가 세션을 지워
+                # 원래 문맥이 없는 명령이다 (#251). 재인계해도 결과가 같다.
+                _log.warning("DB에 없거나 보존 정리로 문맥이 없는 명령의 결과를 인계하지 않는다: "
+                             "node=%s command_id=%s state=%s",
                              result.node_id, result.command_id, result.state.value)
                 return
             command = self._store.execution(context.internal_request_id)
