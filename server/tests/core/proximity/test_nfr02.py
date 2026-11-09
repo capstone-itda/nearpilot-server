@@ -2,37 +2,39 @@
 
 이 테스트는 합성 데이터의 회귀 테스트다. NFR-02의 인수는 실데이터(지표 8)로 한다.
 생성기 값, 시드, 기준은 고정이다. 실패해도 바꾸지 않고 측정값을 그대로 보고한다.
-합성 잡음은 모델의 sigma와 같다. 모델이 잡음을 맞게 아는 경우의 회귀를 잰다.
+합성 잡음의 표준편차는 공통 모델의 각 역할 sigma와 같다. 모델이 잡음을 맞게 아는 경우의 회귀를 잰다.
+모든 기기가 근접에 참여하고, 자동 영점은 0이 아닌 값 없이(zeros 비움) 계산한다.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
-from datetime import timedelta
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
+from pathlib import Path
 
 import numpy
 import pytest
 from scipy.stats import norm
 
-from nearpilot.core.proximity import NONE_STATE, HmmProximityEstimator, compute_posteriors, load_models
+from nearpilot.core.proximity import HmmProximityEstimator
+from nearpilot.core.proximity.common_model import load_common_model
+from nearpilot.core.proximity.posterior import NONE_STATE, compute_posteriors
 from nearpilot.shared.config import Settings
-from nearpilot.shared.models import RssiFrame
+from nearpilot.shared.models import ProximityResult, RssiFrame, RssiReport
 
-from .conftest import BEACON, MODEL_ROOT, OTHER_BEACON, T0, make_frame, place_a_nodes
+from .conftest import BEACON, OTHER_BEACON, PLACE_A_NODES, T0, make_frame, place_a_nodes
 from .synthetic import Segment, generate_frames
-from .test_filter import front_rssi
 
 SETTINGS = Settings()
-MODELS = load_models(MODEL_ROOT, {"place-a": "syn-a-1"})
-MODEL = MODELS["place-a"]
+MODEL = load_common_model(Path(__file__).resolve().parent / "fixtures" / "common" / "syn-common-1.json")
 SECOND = timedelta(seconds=1)  # 시간 칸이다. Settings.rssi_frame_sec의 기본값과 같다
 
-NOISE_SIGMA = 4.0  # 합성 잡음의 표준편차, dB. 모델 파일의 sigma와 같다
 DROP_PROB = 0.3
 SEEDS = range(20)
-SETTLED_SEC = 10  # 앞 10초는 관측 구간이 차기 전이라 깜빡임을 세지 않는다
+NO_AUTO_ZERO_BINS = 10_000  # 영점을 찾는 데 필요한 칸 수. 경로보다 훨씬 많아서 자동 영점이 시작되지 않는다
+SETTLED_SEC = 10  # 앞 10초는 추정기가 자리 잡기 전이라 깜빡임을 세지 않는다
 MIN_BASELINE_FLICKERS = 50  # 기준선 깜빡임이 이보다 적으면 80% 감소를 잴 수 없다
 MAX_FLICKER_RATIO = 0.2  # NFR-02: 깜빡임 80% 감소
 MAX_SWITCH_DELAY_SEC = 2  # NFR-02: 대상 전환은 2초 이내
@@ -43,10 +45,11 @@ MAX_SWITCH_DELAY_SEC = 2  # NFR-02: 대상 전환은 2초 이내
 
 @dataclass(frozen=True)
 class Trace:
-    """초 t(0부터)마다의 대상. 기준선은 첫 프레임이 오기 전까지 None이다."""
+    """초 t(0부터)마다의 대상과 마지막 초의 HMM 결과. 기준선은 첫 프레임이 오기 전까지 None이다."""
 
     hmm: list[str]
     baseline: list[str | None]
+    final: ProximityResult
 
 
 def _log_normal(x: float, mean: float, sigma: float) -> float:
@@ -55,29 +58,16 @@ def _log_normal(x: float, mean: float, sigma: float) -> float:
 
 
 def log_likelihood(frame: RssiFrame, state: str) -> float:
-    """기기 앞 상태 state일 때 frame의 앵커가 이 RSSI를 볼 로그 우도다."""
-    anchor = MODEL.nodes[frame.node_id]
-    return _log_normal(frame.rssi, front_rssi(MODEL, frame.node_id, state), anchor.sigma)
+    """상태 state일 때 frame의 앵커가 이 RSSI를 볼 로그 우도다.
 
-
-def none_log_likelihood(frames: Sequence[RssiFrame]) -> float:
-    """한 칸의 프레임들이 NONE_STATE에서 나올 로그 우도다. 먼 위치와 none_points의 같은 비중 혼합이다."""
-    components = [
-        math.fsum(
-            _log_normal(f.rssi, MODEL.nodes[f.node_id].none_rssi, MODEL.nodes[f.node_id].none_sigma) for f in frames
-        )
-    ]
-    for x, y in MODEL.none_points:
-        components.append(math.fsum(log_likelihood_at(f, x, y) for f in frames))
-    peak = max(components)
-    return peak + math.log(math.fsum(math.exp(c - peak) for c in components)) - math.log(len(components))
-
-
-def log_likelihood_at(frame: RssiFrame, x: float, y: float) -> float:
-    """(x, y)에 선 방문자를 frame의 앵커가 이 RSSI로 볼 로그 우도다."""
-    anchor = MODEL.nodes[frame.node_id]
-    distance = max(math.hypot(anchor.x - x, anchor.y - y), MODEL.min_distance_m)
-    return _log_normal(frame.rssi, anchor.A - 10.0 * anchor.n * math.log10(distance), anchor.sigma)
+    state는 기기 앞 상태나 NONE_STATE다. 기기 앞 상태에서 그 기기의 앵커는 `front`, 다른 앵커는 `other`를 따르고,
+    NONE_STATE에서는 모든 앵커가 `none`을 따른다.
+    """
+    if state == NONE_STATE:
+        role = MODEL.none
+    else:
+        role = MODEL.front if frame.node_id == state else MODEL.other
+    return _log_normal(frame.rssi, role.mean, role.sigma)
 
 
 def baseline_target(frames: Sequence[RssiFrame], previous: str | None) -> str | None:
@@ -88,9 +78,21 @@ def baseline_target(frames: Sequence[RssiFrame], previous: str | None) -> str | 
     """
     if not frames:
         return previous
-    scores = {state: math.fsum(log_likelihood(frame, state) for frame in frames) for state in sorted(MODEL.nodes)}
-    scores[NONE_STATE] = none_log_likelihood(frames)
+    states = [*sorted(PLACE_A_NODES), NONE_STATE]
+    scores = {state: math.fsum(log_likelihood(frame, state) for frame in frames) for state in states}
     return max(scores, key=scores.__getitem__)
+
+
+def new_estimator() -> HmmProximityEstimator:
+    """자동 영점이 시작되지 않는 추정기다. NFR-02는 zeros가 빈 계산을 잰다."""
+    return HmmProximityEstimator(replace(MODEL, auto_zero_min_bins=NO_AUTO_ZERO_BINS), SETTINGS)
+
+
+def _report(node_id: str, received_at: datetime, seq: int) -> RssiReport:
+    return RssiReport(
+        node_id=node_id, session_id=f"s-{node_id}", seq=seq, frame_ts=received_at, sent_at=received_at,
+        received_at=received_at,
+    )
 
 
 def run_path(path: Sequence[Segment], seed: int) -> Trace:
@@ -98,24 +100,29 @@ def run_path(path: Sequence[Segment], seed: int) -> Trace:
 
     실제 서버와 같은 순서다. 경로 전체를 먼저 observe하면 버퍼가 오래된 프레임을 버려서 앞쪽 시각의 결과가 틀린다.
     시드(경로)마다 추정기를 새로 만든다. 시드끼리 session_id, seq, 시각이 같아서 이어 넣으면 중복으로 버려진다.
+    모든 기기가 초마다 보고해서 근접에 참여한다. 프레임이 빠진 앵커도 보고는 한다.
     """
-    frames = generate_frames(MODEL, path, seed=seed, noise_sigma=NOISE_SIGMA, drop_prob=DROP_PROB)
+    frames = generate_frames(MODEL, path, seed=seed, drop_prob=DROP_PROB)
     nodes = place_a_nodes()
     by_id = {node.node_id: node for node in nodes}
-    estimator = HmmProximityEstimator(MODELS, SETTINGS)
+    estimator = new_estimator()
 
     hmm: list[str] = []
     baseline: list[str | None] = []
     previous = None
+    result = None
     for t in range(sum(segment.seconds for segment in path)):
         at = T0 + (t + 1) * SECOND
         in_second = [frame for frame in frames if at - SECOND < frame.frame_ts <= at]
         for frame in in_second:
             estimator.observe(frame, node=by_id[frame.node_id])
-        hmm.append(estimator.posterior([BEACON], nodes, at, place_nodes=nodes).best[0])
+        for node in nodes:
+            estimator.observe_report(_report(node.node_id, at, t + 1), node=node)
+        result = estimator.posterior([BEACON], nodes, at, place_nodes=nodes)
+        hmm.append(result.best[0])
         previous = baseline_target(in_second, previous)
         baseline.append(previous)
-    return Trace(hmm, baseline)
+    return Trace(hmm, baseline, result)
 
 
 def flicker_count(targets: Sequence[str | None]) -> int:
@@ -160,8 +167,9 @@ def test_NFR02_flicker_reduced():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="머무를 확률 0.9, 관측 구간 10초의 합성 모델은 전환이 늦은 시드가 있다. "
-    "stay와 window_sec는 feat/core-proximity-calibration에서 검증셋으로 고른다 (FR-17, 지표 8).",
+    reason="시험용 공통 모델(window_sec 3, stay 0.9)은 20개 시드 중 7개(0, 1, 2, 3, 15, 18, 19)에서 전환이 2초를 넘는다 "
+    "(끝까지 유지한 지연 24, 3, 11, 5, 25, 9, 3초). 4개(2, 3, 15, 18)는 전환 뒤 한 초씩 다른 대상으로 돌아가는 깜빡임이다. "
+    "stay와 window_sec는 검증셋으로 고르는 값이라 시험용 파일의 값이 이 기준을 보장하지 않는다 (FR-17, 지표 8).",
 )
 def test_NFR02_switch_within_two_seconds():
     path = [Segment("locker-2", 30), Segment("light-1", 30)]
@@ -176,14 +184,14 @@ def test_NFR02_switch_within_two_seconds():
 # 위 두 테스트의 값은 생성기와 기준선이 계약대로일 때만 뜻이 있다. 도구가 바뀌면 값도 조용히 바뀌므로 따로 고정한다.
 
 
-def test_NFR02_generator_follows_layout():
+def test_NFR02_generator_follows_model():
     path = [Segment("locker-2", 2), Segment("light-1", 1)]
     standing = ["locker-2", "locker-2", "light-1"]
     start = T0 + timedelta(hours=1)  # start와 beacon 인자를 따른다
 
-    frames = generate_frames(MODEL, path, seed=3, noise_sigma=0.0, drop_prob=0.0, start=start, beacon=OTHER_BEACON)
+    frames = generate_frames(MODEL, path, seed=3, drop_prob=0.0, noise_scale=0.0, start=start, beacon=OTHER_BEACON)
 
-    anchor_ids = sorted(MODEL.nodes)
+    anchor_ids = sorted(PLACE_A_NODES)
     assert len(frames) == len(standing) * len(anchor_ids)
     for index, frame in enumerate(frames):
         t, order = divmod(index, len(anchor_ids))  # 초 t마다 앵커 순서대로다
@@ -191,7 +199,8 @@ def test_NFR02_generator_follows_layout():
         frame_ts = start + timedelta(seconds=t, milliseconds=10 * order + 500)
         assert frame.node_id == anchor_id
         assert frame.beacon == OTHER_BEACON
-        assert frame.rssi == front_rssi(MODEL, anchor_id, standing[t])  # 잡음이 0이면 그 초에 서 있는 기기 앞의 평균이다
+        # 잡음이 0이면 서 있는 기기의 앵커는 front 평균, 다른 앵커는 other 평균이다.
+        assert frame.rssi == (MODEL.front.mean if anchor_id == standing[t] else MODEL.other.mean)
         assert frame.frame_ts == frame_ts
         assert frame.received_at == frame_ts + timedelta(milliseconds=50)
         assert (frame.session_id, frame.seq) == (f"s-{anchor_id}", t + 1)
@@ -202,7 +211,7 @@ def test_NFR02_generator_is_seeded_and_drop_keeps_stream():
     path = [Segment("locker-3", 120)]
 
     def generate(seed: int, drop_prob: float) -> list[RssiFrame]:
-        return generate_frames(MODEL, path, seed=seed, noise_sigma=NOISE_SIGMA, drop_prob=drop_prob)
+        return generate_frames(MODEL, path, seed=seed, drop_prob=drop_prob)
 
     full = generate(3, 0.0)
     thinned = generate(3, DROP_PROB)
@@ -214,38 +223,39 @@ def test_NFR02_generator_is_seeded_and_drop_keeps_stream():
     assert set(thinned) <= set(full)
     assert 0.2 < 1 - len(thinned) / len(full) < 0.4  # 탈락 비율이 drop_prob 근처다
     # 난수는 default_rng(seed) 하나이고 프레임마다 잡음(정규), 탈락(균등) 순서로 뽑는다.
+    # 잡음의 표준편차는 그 앵커의 역할 sigma다. locker-3 앞에 서 있으니 locker-3 앵커만 front다.
     rng = numpy.random.default_rng(3)
-    noise_first = rng.normal(0.0, NOISE_SIGMA)
-    rng.random()
-    noise_second = rng.normal(0.0, NOISE_SIGMA)
-    assert full[0].rssi == front_rssi(MODEL, "light-1", "locker-3") + noise_first
-    assert full[1].rssi == front_rssi(MODEL, "light-2", "locker-3") + noise_second
+    expected = []
+    for anchor_id in sorted(PLACE_A_NODES):
+        role = MODEL.front if anchor_id == "locker-3" else MODEL.other
+        expected.append(role.mean + rng.normal(0.0, role.sigma))
+        rng.random()
+    assert [frame.rssi for frame in full[: len(expected)]] == expected
+    assert MODEL.front.sigma != MODEL.other.sigma  # 두 역할의 sigma가 달라야 위 확인이 역할을 가린다
 
 
 def test_NFR02_baseline_picks_maximum_likelihood_state():
-    for device_id in MODEL.nodes:
-        frames = generate_frames(MODEL, [Segment(device_id, 1)], seed=0, noise_sigma=0.0, drop_prob=0.0)
+    for device_id in PLACE_A_NODES:
+        frames = generate_frames(MODEL, [Segment(device_id, 1)], seed=0, drop_prob=0.0, noise_scale=0.0)
         assert baseline_target(frames, None) == device_id  # 잡음이 없으면 서 있는 기기다
-    in_the_open = [make_frame(anchor_id, anchor.none_rssi, T0 + SECOND) for anchor_id, anchor in MODEL.nodes.items()]
+    in_the_open = [make_frame(anchor_id, MODEL.none.mean, T0 + SECOND) for anchor_id in PLACE_A_NODES]
     assert baseline_target(in_the_open, "locker-1") == NONE_STATE  # 어느 기기 앞도 아닌 값이다
     assert baseline_target([], "locker-1") == "locker-1"  # 프레임이 없으면 직전 대상이다
     assert baseline_target([], None) is None
 
-    # 한 앵커의 프레임 하나만으로도 우도가 가장 큰 상태를 고른다. locker-3 앵커가 locker-3 앞의 평균을 본 경우다.
-    only_locker_3 = [make_frame("locker-3", front_rssi(MODEL, "locker-3", "locker-3"), T0 + SECOND)]
+    # 한 앵커의 프레임 하나만으로도 우도가 가장 큰 상태를 고른다. locker-3 앵커가 front 평균을 본 경우다.
+    only_locker_3 = [make_frame("locker-3", MODEL.front.mean, T0 + SECOND)]
     assert baseline_target(only_locker_3, None) == "locker-3"
 
-    # 로그 우도는 정규분포의 로그 밀도다. 기기 앞 상태는 앵커의 sigma를 쓴다.
-    # NONE_STATE는 먼 위치(none_rssi, none_sigma)와 none_points(경로손실 식, sigma)의 같은 비중 혼합이다.
+    # 로그 우도는 정규분포의 로그 밀도다. 그 기기의 앵커는 front, 다른 앵커는 other, NONE_STATE는 none을 쓴다.
     frame = make_frame("locker-2", -61.5, T0 + SECOND)
-    anchor = MODEL.nodes["locker-2"]
-    front_mean = front_rssi(MODEL, "locker-2", "locker-1")
-    assert log_likelihood(frame, "locker-1") == pytest.approx(norm.logpdf(-61.5, front_mean, anchor.sigma))
-    densities = [norm.pdf(-61.5, anchor.none_rssi, anchor.none_sigma)] + [
-        norm.pdf(-61.5, -59.0 - 20.0 * math.log10(max(math.hypot(anchor.x - x, anchor.y - y), 0.3)), anchor.sigma)
-        for x, y in MODEL.none_points
-    ]
-    assert none_log_likelihood([frame]) == pytest.approx(math.log(sum(densities) / len(densities)))
+    assert log_likelihood(frame, "locker-2") == pytest.approx(norm.logpdf(-61.5, MODEL.front.mean, MODEL.front.sigma))
+    assert log_likelihood(frame, "locker-1") == pytest.approx(norm.logpdf(-61.5, MODEL.other.mean, MODEL.other.sigma))
+    assert log_likelihood(frame, NONE_STATE) == pytest.approx(norm.logpdf(-61.5, MODEL.none.mean, MODEL.none.sigma))
+    # 한 칸의 우도는 프레임마다의 로그 우도를 더한 값이다. 점수가 가장 큰 상태가 대상이다.
+    two = [frame, make_frame("light-1", -70.0, T0 + SECOND)]
+    scores = {state: sum(log_likelihood(f, state) for f in two) for state in [*sorted(PLACE_A_NODES), NONE_STATE]}
+    assert baseline_target(two, None) == max(scores, key=scores.__getitem__)
 
 
 def test_NFR02_measures_follow_definitions():
@@ -264,15 +274,17 @@ def test_NFR02_measures_follow_definitions():
 
 def test_NFR02_run_path_matches_replay():
     # 초마다 observe한 뒤 그 초의 끝으로 물은 대상이, 전체 프레임으로 재현한 대상과 같다.
+    # 재현은 모든 기기가 참여하고 zeros가 빈 호출이다. 추정기가 자동 영점을 쓰면 마지막 초의 확률이 달라진다.
     path = [Segment("locker-2", 15), Segment("light-1", 15)]
     seconds = sum(segment.seconds for segment in path)
-    frames = generate_frames(MODEL, path, seed=5, noise_sigma=NOISE_SIGMA, drop_prob=DROP_PROB)
+    frames = generate_frames(MODEL, path, seed=5, drop_prob=DROP_PROB)
     nodes = place_a_nodes()
 
     replayed = [
         compute_posteriors(
             MODEL, frames, BEACON, nodes, nodes, T0 + (t + 1) * SECOND, bin_sec=SETTINGS.rssi_frame_sec,
-        ).best[0]
+            participants=PLACE_A_NODES, zeros={}, calib_version="0",
+        )
         for t in range(seconds)
     ]
     # 기준선은 프레임을 초 번호로 묶어 따로 구한다. 생성기의 프레임은 초 t 안쪽 0.5초 부근에 있다.
@@ -286,5 +298,8 @@ def test_NFR02_run_path_matches_replay():
         baseline.append(previous)
 
     trace = run_path(path, 5)
-    assert trace.hmm == replayed
+    assert trace.hmm == [result.best[0] for result in replayed]
     assert trace.baseline == baseline
+    assert trace.final == replayed[-1]  # 확률, 자동 영점이 없는 기기, 개정 번호까지 같다
+    assert trace.final.unzeroed == frozenset(PLACE_A_NODES)
+    assert trace.final.calib_version == "0"

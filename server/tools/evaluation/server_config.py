@@ -1,6 +1,7 @@
 """서버 지표 평가 설정(TOML)을 읽고 검증한다 (specs/db-evaluation-server-metrics/spec.md 2절 "입력").
 
 예시는 `config/eval/server-metrics.example.toml`이다. 상대 경로(`model_root`)는 설정 파일이 있는 폴더 기준이다.
+근접 모델은 공통 모델 하나다. `model_version`이 고르는 파일은 `{model_root}/{model_version}.json`이고, 모델은 기기를 모른다.
 키는 아래만 허용하고, 모르는 키와 빠진 필수 키는 오류다. 잘못된 곳을 모두 모아 `EvalConfigError` 하나로 낸다.
   최상위             seed, model_root, model_version, actuation_sec, startup_timeout_sec
   [beacon]           uuid, major. 모든 사용자의 비콘 공통 값이다
@@ -74,7 +75,7 @@ class UserSpec:
 class EvalConfig:
     seed: int
     model_root: Path
-    model_version: str  # 장소 place-a의 모델 버전
+    model_version: str  # 공통 근접 모델의 버전. 파일은 {model_root}/{model_version}.json
     actuation_sec: float  # 시뮬레이터 구동 시간
     startup_timeout_sec: float
     server_settings: Mapping[str, Any]  # 서버 설정 [settings] 위에 덮어쓸 값

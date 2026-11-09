@@ -36,7 +36,8 @@ python -m tools.final_demo
 | `fleet.json`, `lab.json` | USB 주입에 쓰는 기기 정보. 별도 sim 구성에서는 가상 기기도 실행한다 |
 | `broker.conf`, `broker.acl` | 인증을 요구하는 MQTT 브로커와 기기별 권한 |
 | `.env.*` | 새 MQTT 비밀번호와 암호화한 브로커 비밀번호 파일 |
-| `models/final-demo/synthetic-1.json` | 기기 7대의 합성 초기 모델 |
+| `models/synthetic-2.json` | 서버가 읽는 공통 합성 근접 모델. 장소, 기기, 좌표를 모른다 |
+| `models/final-demo/synthetic-1.json` | 옛 장소별 합성 모델. 판정 기록 보존용이고 서버는 읽지 않는다 |
 | `run.ps1` | 기존 브로커, 서버, 시드, 가상 기기와 대시보드를 실행하는 스크립트 |
 | `firewall.ps1` | HTTP·MQTT 포트를 로컬 서브넷에만 여는 방화벽 규칙 |
 
@@ -155,11 +156,16 @@ AI 호스트에서 다음 순서로 조작한다.
 
 ## 5. 근접 모델
 
-기본 모델은 `node-lab`과 같은 좌표 기반 합성 초기값이다.
+기본 모델은 `node-lab`과 같은 공통 합성 모델 `synthetic-2`(`models/synthetic-2.json`)다. `server.toml`의 `[proximity] model_version`이 고른다.
+모델은 장소, 기기, 좌표를 모른다. 앞, 옆, 없음 세 역할의 RSSI 분포와 HMM 값만 담는다.
 `validation.source = SYNTHETIC_NOT_MEASURED`이며 실제 정확도를 검증하지 않았다.
-좌표, 기기 간격과 시뮬레이터 RSSI는 배치 예시다. 실제 시연 배치로 표시하지 않는다.
-실측 데이터를 수집·적합·평가한 뒤 모델을 시연 폴더에 넣는다.
-`server.toml`의 `[proximity.models]`에서 `final-demo`의 버전을 바꾸고 서버를 재시작한다.
+기기 간격과 시뮬레이터 RSSI는 배치 예시다. 실제 시연 배치로 표시하지 않는다.
+기기마다 다른 영점 차이는 서버가 장소의 관측으로 자동으로 찾는다 (자동 영점). 모델의 `auto_zero.min_bins`(`synthetic-2`는 120칸)만큼
+관측이 쌓이기 전에는 `nearest:` 지정이 `ASK`다. 칸마다 1등이 아닌 기기가 둘 이상이어야 표본이 되므로 기기를 셋 이상 둔다. 명시 지정은 쓸 수 있다.
+찾은 자동 영점은 DB에 남고 서버를 다시 시작해도 쓴다. 기기의 `vendor.model`이나 `vendor.firmware`가 바뀌면 버리고 다시 찾는다.
+
+모델 바꾸기: 실측 데이터를 수집·적합·평가한 뒤 새 버전의 모델 파일을 시연 폴더의 `models/`에 넣는다.
+`server.toml`의 `[proximity] model_version`을 그 버전으로 바꾸고 서버를 재시작한다. 같은 버전의 파일을 덮어쓰지 않는다.
 담당자의 2026-10-28 지시로 시연 임계값을 모든 기능에서 `0.8`로 설정했다.
 설정 버전은 `final-demo-2`다. 이 수치는 실측 품질 검증 결과가 아니다.
 

@@ -54,7 +54,8 @@ _COMMANDS = (
 def run_metric3(h: Harness, config: EvalConfig, rng: random.Random) -> MetricOutcome:
     """동시 요청과 재전송을 보내고 이중 점유와 중복 실행을 센다 (지표 3).
 
-    모든 방문자가 trusted 사물함마다 near RSSI로 들려서 같은 사물함을 두고 겨룬다. 클라이언트(`m3_clients`개의
+    모든 방문자가 첫 trusted 사물함 하나에만 near RSSI로 들려서 그 사물함을 두고 겨룬다. 사물함마다 같은 값으로 들리면
+    공통 모델의 사후확률이 사물함 수만큼 나뉘어 임계값을 넘는 판정이 드물다. 클라이언트(`m3_clients`개의
     스레드)가 합쳐서 `m3_requests`번 새 `request_id`로 보내고, 이어서 `m3_retransmits`번 같은 사용자·`request_id`·인자의
     요청을 둘씩 동시에 보낸다. 사용자는 `rng`로 고른다. 클라이언트가 사용자보다 많아서 같은 사용자 토큰을 여러
     클라이언트가 쓴다. `OK`를 받은 클라이언트는 바로 반납한다. 재전송 짝은 차례로 보내고 짝마다 기기가 비기를
@@ -63,7 +64,7 @@ def run_metric3(h: Harness, config: EvalConfig, rng: random.Random) -> MetricOut
     visitors, lockers = _visitors(config), _trusted_lockers(config)
     clients = config.counts["m3_clients"]
     near = config.rssi["near"]
-    _hear(h, config, {node_id: {user_id: near for user_id in visitors} for node_id in lockers})
+    _hear(h, config, {lockers[0]: {user_id: near for user_id in visitors}})
     _wait_ready(h, config, visitors)
 
     requests = [(rng.choice(visitors), f"{_PREFIX}{index}") for index in range(config.counts["m3_requests"])]

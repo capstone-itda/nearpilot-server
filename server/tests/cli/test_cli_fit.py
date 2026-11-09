@@ -191,6 +191,14 @@ def model_file(server: Path, version: str = "v1") -> Path:
 
 
 @pytest.fixture
+def server_dir(tmp_path: Path, write_config) -> Path:
+    """이 명령은 6단계까지 장소별 옛 모델 폴더 `var/models`를 쓴다. 기본 설정의 공통 모델 폴더 대신 그 폴더를 가리킨다."""
+    server = tmp_path / "server"
+    write_config(server, proximity={"model_root": "../var/models"})
+    return server
+
+
+@pytest.fixture
 def fit_data(server_dir, make_collection_db) -> SimpleNamespace:
     """학습 회차 6건(`col-001`~`col-006`)과 검증 회차 3건(`col-007`~`col-009`)이 있는 DB와, 이름으로 찾는 기본 위치의 입력 파일."""
     data = collect(server_dir, make_collection_db)
@@ -305,7 +313,7 @@ def test_FR16_fit_does_not_read_test_runs(server_dir, run_cli, make_collection_d
 
 
 def test_FR16_fit_uses_frame_interval_from_settings(server_dir, run_cli, fit_data, write_config, monkeypatch):
-    write_config(server_dir, settings={"version": "t1", "rssi_frame_sec": 0.5})
+    write_config(server_dir, settings={"version": "t1", "rssi_frame_sec": 0.5}, proximity={"model_root": "../var/models"})
     seen = []
     real = fit_cli.fit_model
 

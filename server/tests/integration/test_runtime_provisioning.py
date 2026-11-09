@@ -81,7 +81,7 @@ def raw_config(tmp_path, provisioning):
     raw = {"settings": {"version": "t1"}, "http": {"host": "127.0.0.1", "port": 8000},
            "database": {"path": "np.db", "audit_jsonl": "audit.jsonl"},
            "proximity": {"model_root": str(config.proximity.model_root),
-                         "models": dict(config.proximity.versions)},
+                         "model_version": config.proximity.model_version},
            "mqtt": {"host": "127.0.0.1", "port": 18883, "client_id": "s", "username": "nearpilot-server",
                     "password_file": ".env.mqtt-password", "keepalive_sec": 30, "connect_timeout_sec": 1.0,
                     "start_timeout_sec": 2.0, "stop_timeout_sec": 2.0, "reconnect_min_sec": 1,

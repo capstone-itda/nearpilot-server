@@ -157,7 +157,7 @@ def test_FR16_synthetic_model_reproducible():
     stored = json.loads(MODEL_FILE.read_text(encoding="utf-8"))
 
     assert_same_content(common_model_to_dict(fresh.model), stored)
-    assert len(fresh.losses) == 3 * 3 * 3
+    assert [(g.tau, g.stay, g.window_sec) for g in fresh.losses] == [(1.0, 0.9, 3.5)]  # HMM 값은 고정
     assert sorted(fresh.zeros) == [f"syn-room-{r}" for r in range(1, 7)]
 
 

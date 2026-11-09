@@ -47,6 +47,10 @@ def write_broker_passwords(path: Path, credentials: dict[str, str]) -> None:
                     encoding="utf-8")
 
 
+# 시험 폴더는 저장소의 공통 합성 모델을 그대로 쓴다. 모델이 기기를 모르므로 어떤 기기 구성에서도 쓸 수 있다.
+MODEL_VERSION = "synthetic-2"
+SYNTHETIC_MODEL = Path(__file__).resolve().parents[2] / "config" / "final-demo" / "models" / f"{MODEL_VERSION}.json"
+
 # Device ID prefix -> (kind, occupancy). Lockers are rental, lights shared (requirements.md). The kind is also the
 # simulator's declaration template in fleet.json (#245).
 KINDS = {"light": ("light", "shared"), "locker": ("locker", "rental")}
@@ -98,8 +102,7 @@ path = "lab.db"
 audit_jsonl = "audit.jsonl"
 [proximity]
 model_root = "models"
-[proximity.models]
-node-lab = "synthetic-1"
+model_version = "{MODEL_VERSION}"
 [mqtt]
 host = {q(host)}
 port = {port}
@@ -120,17 +123,10 @@ pending_limit = 1000
 retry_interval_sec = 0.5
 stop_timeout_sec = 5.0
 ''', encoding="utf-8")
-    model_nodes = {node: dict(x=i * 2.0, y=0.0, front_x=i * 2.0, front_y=0.5,
-                             A=-59.0, n=2.0, sigma=4.0, none_rssi=-90.0, none_sigma=6.0)
-                   for i, node in enumerate(nodes)}
-    model = dict(place_id="node-lab", model_version="synthetic-1", calib_version="none-1",
-                 window_sec=3.5, transition={"stay": 0.9}, min_distance_m=0.3,
-                 calibration={"method": "none"}, nodes=model_nodes,
-                 none_points=[{"x": i * 2.0, "y": 2.5} for i in range(len(nodes))],
-                 validation={"source": "SYNTHETIC_NOT_MEASURED", "quality_verified": False})
-    root = folder / "models" / "node-lab"
-    root.mkdir(parents=True)
-    write_json(root / "synthetic-1.json", model)
+    # 근접 모델은 공통 모델 하나다. 기기와 좌표를 모르는 합성 모델 파일을 그대로 복사한다 (FR-16).
+    root = folder / "models"
+    root.mkdir()
+    shutil.copyfile(SYNTHETIC_MODEL, root / f"{MODEL_VERSION}.json")
     beacon = dict(uuid=beacon_uuid, major=major, minor=minor)
     write_json(folder / "lab.json", dict(mode=mode, nodes=nodes, beacon=beacon,
         sample_sec=1.0, console_sec=5.0, observe_timeout_sec=15.0, user_id="lab-visitor", owner_id="lab-owner"))

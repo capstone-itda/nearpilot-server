@@ -14,7 +14,7 @@ import pytest
 from _runtime import SERVER, SimBroker, make_config
 from nearpilot.api.ws.settings import DashboardSettings
 from nearpilot.cli.common import dirs_for
-from nearpilot.core.proximity.model import ModelMismatchError
+from nearpilot.core.proximity.common_model import ModelMismatchError
 from nearpilot.runtime import ConfigError, DashboardConfig, Runtime, load_config
 from nearpilot.runtime.config import parse_config
 
@@ -25,7 +25,7 @@ def _raw(tmp: Path) -> dict:
         "settings": {"version": "t1"},
         "http": {"host": "127.0.0.1", "port": 8000},
         "database": {"path": "np.db", "audit_jsonl": "audit.jsonl"},
-        "proximity": {"model_root": str(cfg.proximity.model_root), "models": {"place-a": "syn-a-1"}},
+        "proximity": {"model_root": str(cfg.proximity.model_root), "model_version": cfg.proximity.model_version},
         "mqtt": {"host": "127.0.0.1", "port": 1883, "client_id": "c", "username": "nearpilot-server",
                  "password_file": ".env.mqtt-password", "keepalive_sec": 30, "connect_timeout_sec": 1.0,
                  "start_timeout_sec": 1.0, "stop_timeout_sec": 1.0, "reconnect_min_sec": 1,
@@ -51,7 +51,10 @@ def test_FR22_runtime_example_config_loads():
     (lambda r: r.update(extra={}), "extra"),
     (lambda r: r["mqtt"].pop("stop_timeout_sec"), "mqtt.stop_timeout_sec"),  # 기본값이 없다
     (lambda r: r["delivery"].pop("pending_limit"), "delivery.pending_limit"),
-    (lambda r: r["proximity"].update(models={}), "proximity.models"),
+    (lambda r: r["proximity"].update(models={}), "proximity.models"),  # 장소별 표는 빈 표도 받지 않는다
+    (lambda r: r["proximity"].pop("model_version"), "proximity.model_version"),
+    (lambda r: r["proximity"].update(model_version=""), "proximity.model_version"),
+    (lambda r: r["proximity"].update(model_version=3), "proximity.model_version"),
     (lambda r: r.setdefault("runtime", {}).update(shutdown_timeout_sec=0), "runtime.shutdown_timeout_sec"),
     (lambda r: r["settings"].update(online_ttl_sec=0.5, status_report_sec=1.0), "online_ttl_sec"),
     (lambda r: r["http"].update(public_hosts="mcp.example.test"), "http.public_hosts"),
@@ -95,7 +98,7 @@ def test_FR22_runtime_http_public_hosts_is_optional(tmp_path):
 
 
 def test_FR22_runtime_invalid_model_stops_startup(tmp_path):
-    cfg = make_config(tmp_path, models={"place-a": "missing-version"})
+    cfg = make_config(tmp_path, model_version="missing-version")
     broker = SimBroker(tmp_path)
     runtime = Runtime(cfg, client_factory=broker.factory)
     with pytest.raises(ModelMismatchError):
@@ -104,6 +107,34 @@ def test_FR22_runtime_invalid_model_stops_startup(tmp_path):
     assert broker.clients == [] and runtime.db.open_connections == 0
     assert not runtime.gate.accepting and not cfg.database.path.exists()
     broker.close()
+
+
+def test_FR16_config_single_model_version(tmp_path):
+    """장소별 표 대신 공통 모델 하나를 `model_version`으로 고른다 (FR-16, #252)."""
+    raw = _raw(tmp_path)
+    cfg = parse_config(raw, base=tmp_path)
+    assert cfg.proximity.model_version == "syn-common-1" and cfg.proximity.model_root.name == "common"
+    assert not hasattr(cfg.proximity, "versions")
+
+    # [proximity.models]는 받지 않는다. 옛 설정을 알아보게 어떻게 바꿀지 알린다.
+    raw["proximity"]["models"] = {"place-a": "syn-common-1"}
+    with pytest.raises(ConfigError, match=r"proximity\.models.*model_version"):
+        parse_config(raw, base=tmp_path)
+    del raw["proximity"]["models"]
+
+    # 없는 버전은 모델 파일을 읽지 못해 시작하지 않는다. MQTT 와 DB 를 열지 않는다.
+    broker = SimBroker(tmp_path)
+    runtime = Runtime(make_config(tmp_path, model_version="missing-version"), client_factory=broker.factory)
+    with pytest.raises(ModelMismatchError):
+        runtime.start()
+    assert broker.clients == [] and runtime.db.open_connections == 0
+    broker.close()
+
+    # 모델이 필요한 명령은 model_version 이 없으면 거부하고, 모델 없이 도는 명령은 없는 채로 읽는다.
+    del raw["proximity"]["model_version"]
+    with pytest.raises(ConfigError, match=r"proximity\.model_version"):
+        parse_config(raw, base=tmp_path)
+    assert parse_config(raw, base=tmp_path, require_models=False).proximity.model_version is None
 
 
 def test_NFR08_runtime_config_keeps_secret_out(tmp_path, caplog):

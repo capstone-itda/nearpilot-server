@@ -82,13 +82,15 @@ def test_NFR13_harness_requires_mosquitto(monkeypatch, ascii_tmp_path, spawned):
     assert not workdir.exists()
 
 
-def test_NFR13_harness_rejects_trusted_node_missing_from_model(ascii_tmp_path, spawned):
+def test_NFR13_harness_rejects_unreadable_model(ascii_tmp_path, spawned):
     config = small_config()
+    # 공통 모델은 기기를 모른다. 목록에 없는 기기를 trusted로 두어도 모델 때문에 막히지 않는다.
     config = dataclasses.replace(config, nodes=(*config.nodes, NodeSpec("ghost-1", "locker", "rental")))
+    broken = dataclasses.replace(config, model_version="missing-version")
 
-    with pytest.raises(HarnessError, match="ghost-1"):  # 모델에 없는 trusted 기기는 모든 요청을 모델 오류로 만든다
-        with Harness(config, ascii_tmp_path / "work", server_root=SERVER):
-            pytest.fail("모델이 맞지 않으면 시작하지 않아야 한다")
+    with pytest.raises(HarnessError, match="missing-version"):  # 모델 파일을 읽지 못하면 서버가 시작하지 못한다
+        with Harness(broken, ascii_tmp_path / "work", server_root=SERVER):
+            pytest.fail("모델을 읽을 수 없으면 시작하지 않아야 한다")
 
     assert spawned == []
 

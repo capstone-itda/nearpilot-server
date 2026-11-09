@@ -125,13 +125,16 @@ def test_FR16_cli_invalid_config_creates_nothing(server_dir, run_cli, write_conf
     assert not (server_dir / "var").exists()  # DB도 감사 파일도 만들지 않는다
 
 
-def test_FR16_cli_load_cli_config_checks_models_only_on_request(server_dir):
-    path = str(server_dir / "config" / "server.toml")
-    assert load_cli_config(path).proximity.versions == {}  # 기본은 모델 표를 요구하지 않는다
+def test_FR16_cli_load_cli_config_checks_models_only_on_request(server_dir, write_config):
+    path = str(write_config(server_dir, name="no-version.toml", proximity={"model_root": "../var/models"}))
+    assert load_cli_config(path).proximity.model_version is None  # 기본은 모델 버전을 요구하지 않는다
     with pytest.raises(CliError) as error:
         load_cli_config(path, require_models=True)
     assert error.value.exit_code == EXIT_INVALID and error.value.message.startswith("설정 오류: ")
-    assert "proximity.models" in error.value.message
+    assert "proximity.model_version" in error.value.message
+    # 모델 버전이 있는 기본 설정은 요구해도 읽힌다
+    assert load_cli_config(str(server_dir / "config" / "server.toml"), require_models=True).proximity.model_version \
+        == "syn-common-1"
     assert not (server_dir / "var").exists()  # 설정만 읽고 DB를 열지 않는다
 
 

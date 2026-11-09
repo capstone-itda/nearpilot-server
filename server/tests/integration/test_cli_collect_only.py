@@ -2,7 +2,7 @@
 
 실제 SQLite·runtime 조립·IOT 보고 처리 위에서 시뮬레이터를 fake Paho 로 연결한다 (`_runtime.py`).
 수집 전용 Runtime 은 근접 모델 없이 시작해서 RSSI 와 기기 보고를 저장하고, `create_app` 은 MCP 를 열지 않는다.
-`_runtime.make_config` 는 `require_models` 를 넘기지 않으므로 모델 표 없는 설정은 이 파일에서 만든다.
+`_runtime.make_config` 는 `require_models` 를 넘기지 않으므로 모델 버전 없는 설정은 이 파일에서 만든다.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ USE_LOCKER = ("request_use", {"target_spec": "locker-1", "action": "open", "requ
 
 
 def _config_without_models(tmp: Path) -> ServerConfig:
-    """`make_config` 와 같은 설정에서 `[proximity.models]` 를 뺀다. model_root 에는 파일이 없다."""
+    """`make_config` 와 같은 설정에서 `[proximity] model_version` 을 뺀다. model_root 에는 파일이 없다."""
     secret = tmp / ".env.mqtt-password"
     secret.write_text("test-only-password\n", encoding="utf-8")
     raw = {
@@ -58,14 +58,14 @@ def _wait_restored(runtime: Runtime, broker: SimBroker) -> None:
 
 def test_FR05_collect_only_starts_without_models(tmp_path, caplog):
     cfg = _config_without_models(tmp_path)
-    assert dict(cfg.proximity.versions) == {} and not cfg.proximity.model_root.exists()
+    assert cfg.proximity.model_version is None and not cfg.proximity.model_root.exists()
     seed(cfg.database.path)  # 계정, 비콘, 기기
     broker = SimBroker(tmp_path)
     built = []
 
-    def proximity_factory(models, settings):
-        built.append(dict(models))
-        return HmmProximityEstimator(models, settings)
+    def proximity_factory(model, settings):
+        built.append(model)
+        return HmmProximityEstimator(model, settings)
 
     runtime = Runtime(cfg, client_factory=broker.factory, proximity_factory=proximity_factory,
                       collect_only=True)
@@ -86,19 +86,19 @@ def test_FR05_collect_only_starts_without_models(tmp_path, caplog):
             assert {row["node_id"] for row in seen} == set(broker.nodes)
     finally:
         broker.close()
-    assert built == [{}]  # 빈 모델로 근접 추정기를 만들었다
+    assert built == [None]  # 모델 없이 근접 추정기를 만들었다
     assert "수집 전용 모드: 근접 모델을 읽지 않는다. MCP 를 열지 않는다" in caplog.text
 
 
 def test_FR05_collect_only_ignores_configured_models(tmp_path):
-    cfg = make_config(tmp_path, models={"place-a": "missing-version"})  # 일반 serve 라면 시작하지 못한다
+    cfg = make_config(tmp_path, model_version="missing-version")  # 일반 serve 라면 시작하지 못한다
     seed(cfg.database.path)
     broker = SimBroker(tmp_path)
     built = []
 
-    def proximity_factory(models, settings):
-        built.append(dict(models))
-        return HmmProximityEstimator(models, settings)
+    def proximity_factory(model, settings):
+        built.append(model)
+        return HmmProximityEstimator(model, settings)
 
     runtime = Runtime(cfg, client_factory=broker.factory, proximity_factory=proximity_factory,
                       collect_only=True)
@@ -107,7 +107,7 @@ def test_FR05_collect_only_ignores_configured_models(tmp_path):
             _wait_restored(runtime, broker)
     finally:
         broker.close()
-    assert built == [{}]  # 설정의 [proximity.models] 를 읽지 않는다
+    assert built == [None]  # 설정의 [proximity] model_version 을 읽지 않는다
 
 
 async def _request_use_in_lifespan(app, broker: SimBroker, cfg: ServerConfig):

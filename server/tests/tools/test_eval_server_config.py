@@ -39,8 +39,8 @@ def test_NFR13_eval_config_loads_example():
     config = load_eval_config(EXAMPLE)
 
     # 상대 경로는 설정 파일이 있는 폴더 기준이고, 예시는 합성 모델 파일을 가리킨다
-    assert config.model_root == (SERVER / "tests" / "core" / "proximity" / "fixtures" / "models").resolve()
-    assert (config.model_root / "place-a" / f"{config.model_version}.json").is_file()
+    assert config.model_root == (SERVER / "tests" / "core" / "proximity" / "fixtures" / "common").resolve()
+    assert (config.model_root / f"{config.model_version}.json").is_file()  # 공통 모델 하나. 장소 폴더가 없다
     assert [(user.user_id, user.role) for user in config.users] == [
         ("owner", "owner"), ("visitor-1", "visitor"), ("visitor-2", "visitor"), ("visitor-3", "visitor")]
     assert len({user.minor for user in config.users}) == len(config.users)

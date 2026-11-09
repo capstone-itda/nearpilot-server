@@ -32,8 +32,8 @@ from _runtime import (
 from nearpilot.api.ws.settings import DashboardSettings
 from nearpilot.api.ws.stream import STREAM_PATH
 from nearpilot.core.dashboard import MonitorTail
+from nearpilot.core.proximity.common_model import load_model_version
 from nearpilot.core.proximity.files import AcceptanceSettings
-from nearpilot.core.proximity.model import load_models
 from nearpilot.db.repositories import SqliteDashboardReads
 from nearpilot.iot.mqtt import MqttConnection
 from nearpilot.runtime import DashboardConfig, Runtime, create_app
@@ -290,14 +290,15 @@ def check_stream(flow: Flow) -> None:
 def check_rest(flow: Flow) -> None:
     assert {name: status for name, (status, _) in flow.rest.items()} == dict.fromkeys(flow.rest, 200)
 
-    # 장소: 시작할 때 읽은 모델의 버전, 이름이 없는 기기는 nodeId 가 이름이다
+    # 장소: 시작할 때 읽은 모델의 버전, 이름이 없는 기기는 nodeId 가 이름이다.
+    # FakeProximity 는 자동 영점이 없어서 자동 영점 개정 번호가 "0"이다
     cfg = flow.server.cfg
-    model = load_models(cfg.proximity.model_root, cfg.proximity.versions)["place-a"]
+    model = load_model_version(cfg.proximity.model_root, cfg.proximity.model_version)
     places = flow.body("places")
     assert places["weakRssiDbm"] == WEAK_RSSI_DBM
     [place] = places["places"]
     assert (place["placeId"], place["modelVersion"], place["calibrationVersion"]) == (
-        "place-a", model.model_version, model.calib_version)
+        "place-a", model.model_version, "0")
     assert {d["nodeId"] for d in place["devices"]} == set(NODES)
     assert all(d["name"] == d["nodeId"] for d in place["devices"])
 
@@ -340,7 +341,7 @@ def check_rest(flow: Flow) -> None:
     assert {d["nodeId"]: d["connected"] for d in health["devices"]} == {
         node_id: node_id in flow.server.broker.nodes for node_id in NODES}
     assert len(health["beacons"]) == 3
-    assert health["server"] == {"database": True, "mqtt": True, "model": f"{model.model_version} · {model.calib_version}"}
+    assert health["server"] == {"database": True, "mqtt": True, "model": f"{model.model_version} · 0"}
 
 
 def test_FR12B_서버에서_대시보드까지_이어진다(flow):

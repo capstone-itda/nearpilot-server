@@ -6,7 +6,7 @@ import shutil
 import pytest
 
 from nearpilot.cli.seed import load_seed_file
-from nearpilot.core.proximity.model import load_models
+from nearpilot.core.proximity.common_model import load_model_version
 from nearpilot.runtime import load_config
 from nearpilot.shared.enums import AccessMode, Role
 from tools import final_demo
@@ -67,8 +67,9 @@ def test_FR16_FR17_NFR12_final_demo_clock_and_model(prepared):
         # 모든 기기에 같은 시각 오차 상한을 쓴다. 기기별 실측 표는 없다 (#236)
         assert (cfg.delivery.clock_max_error_sec, cfg.delivery.clock_trust_sec,
                 cfg.delivery.clock_resync_sec) == (0.5, 120, 60)
-        model = load_models(cfg.proximity.model_root, cfg.proximity.versions)["final-demo"]
-        assert set(model.nodes) == set(EXPECTED)
+        # 서버는 공통 모델 하나를 읽는다. 장소와 기기 정보가 없는 합성 모델이다 (FR-16)
+        model = load_model_version(cfg.proximity.model_root, cfg.proximity.model_version)
+        assert model.model_version == cfg.proximity.model_version == "synthetic-2"
         assert model.validation["source"] == "SYNTHETIC_NOT_MEASURED"
         assert model.validation["quality_verified"] is False
         assert cfg.settings.version == "final-demo-2"

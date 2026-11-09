@@ -21,7 +21,7 @@ from pathlib import Path
 from _runtime import VISITOR_A, VISITOR_B, FakeProximity, SimBroker, make_config, query, running, seed, wait_until
 from nearpilot.core.dashboard import DashboardQueryService, ModelVersions
 from nearpilot.core.lifecycle.shared_light import SharedHolder
-from nearpilot.core.proximity.model import load_models
+from nearpilot.core.proximity.common_model import load_model_version
 from nearpilot.db.repositories._common import deferred_transaction
 from nearpilot.db.repositories.dashboard_reads import SqliteDashboardReads
 from nearpilot.db.schema import connect
@@ -53,10 +53,8 @@ class DashboardWorld:
         self.db = self.cfg.database.path
         self.audit_jsonl = self.cfg.database.audit_jsonl  # 서버가 내보낸 감사 JSONL (보존 정리가 읽는다)
         self.reports = tmp / "reports"  # 평가 리포트 폴더. 처음에는 없다
-        self.models = {
-            place_id: ModelVersions(model.model_version, model.calib_version)
-            for place_id, model in load_models(self.cfg.proximity.model_root, self.cfg.proximity.versions).items()
-        }
+        model = load_model_version(self.cfg.proximity.model_root, self.cfg.proximity.model_version)
+        self.model = ModelVersions(model.model_version, "0")  # FakeProximity 는 자동 영점이 없어서 개정 번호가 "0" 이다
         seed(self.db, modes={"light-2": "restricted"})
         self.broker = SimBroker(tmp, REPORTING)
         self.proximity = FakeProximity({})
@@ -117,7 +115,7 @@ class DashboardWorld:
         """`at` 을 지금으로 보는 조회 서비스. 조회마다 읽기 트랜잭션 하나를 연다. 유지 대상자는 서버를 멈출 때 본 값이다."""
         return DashboardQueryService(
             open_reads=lambda: self.open_reads(db), settings=lambda: self.settings, weak_rssi_dbm=WEAK_RSSI_DBM,
-            models=lambda: self.models, mqtt_ready=lambda: True, holders=lambda: self.holders,
+            model=lambda: self.model, mqtt_ready=lambda: True, holders=lambda: self.holders,
             reports_dir=reports or self.reports, clock=lambda: at, started_at=lambda: self.started_at, tz=self.tz,
         )
 

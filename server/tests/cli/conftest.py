@@ -2,7 +2,7 @@
 
 테스트 모듈은 이 파일을 import하지 않고 fixture로만 받는다. 이 디렉터리에 `__init__.py`를 두지 않는다.
 테스트 모듈 이름은 저장소 전체에서 겹치지 않게 `test_cli_*.py`로 짓는다.
-`server_dir`은 `server/` 폴더 모양의 임시 폴더다. `config/server.toml`은 유효하고 `[proximity.models]`가 없다.
+`server_dir`은 `server/` 폴더 모양의 임시 폴더다. `config/server.toml`은 유효하고 시험용 공통 모델 `syn-common-1`을 가리킨다.
 `var/`는 명령이 만드는 폴더라서 fixture가 만들지 않는다.
 """
 
@@ -34,12 +34,15 @@ from nearpilot.shared.models import (
 )
 from nearpilot.shared.tokens import hash_token
 
+# 시험용 합성 공통 모델 폴더. 서버가 읽는 `{model_root}/{model_version}.json`이 여기에 있다.
+COMMON_MODEL_ROOT = Path(__file__).resolve().parents[1] / "core" / "proximity" / "fixtures" / "common"
+
 # 유효한 최소 설정. 절 하나를 통째로 바꾸려면 `write_config(server_dir, proximity={...})`처럼 넘긴다.
 BASE_SECTIONS: dict[str, dict[str, Any]] = {
     "settings": {"version": "t1"},
     "http": {"host": "127.0.0.1", "port": 8000},
     "database": {"path": "../var/nearpilot.db", "audit_jsonl": "../var/audit.jsonl"},
-    "proximity": {"model_root": "../var/models"},
+    "proximity": {"model_root": str(COMMON_MODEL_ROOT), "model_version": "syn-common-1"},
     "mqtt": {"host": "127.0.0.1", "port": 1883, "client_id": "nearpilot-server",
              "username": "nearpilot-server", "password_file": ".env.mqtt-password", "keepalive_sec": 30,
              "connect_timeout_sec": 5.0, "start_timeout_sec": 10.0, "stop_timeout_sec": 5.0,

@@ -58,12 +58,11 @@ port = 8000
 path = "../var/nearpilot.db"
 audit_jsonl = "../var/audit.jsonl"
 
-# 장소별 모델 버전을 명시한다. 파일은 <model_root>/<place_id>/<model_version>.json 이다.
+# 공통 근접 모델 하나를 model_version 으로 고른다. 파일은 <model_root>/<model_version>.json 이다.
+# 모델은 장소, 기기, 좌표를 모른다. 기기별 자동 영점은 서버가 장소의 관측으로 찾아 DB 에 쓴다.
 [proximity]
 model_root = "../var/models"
-
-[proximity.models]
-place-a = "replace-with-model-version"
+model_version = "replace-with-model-version"
 
 # MQTT 서버 계정. 모든 키가 필수이고 기본값이 없다.
 # password_file 은 원문 비밀번호 한 줄 파일이다 (.env.* 는 커밋하지 않는다).

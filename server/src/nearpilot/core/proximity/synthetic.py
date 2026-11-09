@@ -60,9 +60,10 @@ class SyntheticSpec:
     train_runs: int = 5  # 라벨마다
     validation_runs: int = 2  # 라벨마다
     run_bins: int = 30  # 회차 하나의 칸 수
-    taus: tuple[float, ...] = (0.5, 1.0, 2.0)
-    stays: tuple[float, ...] = (0.8, 0.9, 0.95)
-    window_secs: tuple[float, ...] = (2.5, 3.5, 5.0)
+    # HMM 값은 이전 추정기의 값으로 고정한다. 생성 회차에 이동이 없어서, 후보를 넓히면 전환이 느린 값(격자 끝)을 고른다 (NFR-02).
+    taus: tuple[float, ...] = (1.0,)
+    stays: tuple[float, ...] = (0.9,)
+    window_secs: tuple[float, ...] = (3.5,)
     min_bins: int = 120  # 자동 영점을 찾는 데 필요한 표본 수
 
 

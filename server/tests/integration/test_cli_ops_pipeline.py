@@ -1,6 +1,7 @@
 """운영 CLI 전체 흐름 (FR-16, specs/core-ops-cli/spec.md 5절·8절 `test_FR16_ops_pipeline_end_to_end`).
 
 `seed → serve --collect-only → collect run → collect list → split → fit → eval → serve(모델로 시작)`를 한 테스트로 확인한다.
+`fit`이 쓰는 모델 형식은 6단계에서 공통 모델로 바뀐다. 그때까지 마지막 `serve`는 시험용 공통 모델 파일로 시작한다.
 명령은 `nearpilot.cli.main`을 같은 프로세스에서 부르고, 서버는 실제 SQLite·runtime 조립·IOT 보고 처리 위에서
 시뮬레이터 기기를 fake Paho 로 연결한다 (`_runtime.py`). 실제 uvicorn 은 띄우지 않는다.
 
@@ -27,9 +28,10 @@ from pathlib import Path
 
 import pytest
 
-from _runtime import UUID, SimBroker, query, running, wait_until
+from _runtime import MODEL_ROOT, MODEL_VERSION, UUID, SimBroker, query, running, wait_until
 from nearpilot.cli import collect as collect_cli
 from nearpilot.cli import main, serve as serve_cli
+from nearpilot.core.proximity.common_model import load_common_model
 from nearpilot.core.proximity.estimator import HmmProximityEstimator
 from nearpilot.core.proximity.model import load_model
 from nearpilot.runtime import Runtime
@@ -73,7 +75,7 @@ audit_jsonl = "../var/audit.jsonl"
 
 [proximity]
 model_root = "../var/models"
-{models}
+{model_version}
 [mqtt]
 host = "127.0.0.1"
 port = 1883
@@ -115,13 +117,13 @@ max_ece = 0.05
 # ── 입력 파일 ─────────────────────────────────────────────────────────
 
 
-def write_server(server: Path, models: dict[str, str] | None = None) -> None:
-    """`config/server.toml`을 쓴다. `models`가 있으면 `[proximity.models]`를 넣는다 (설정에 모델 버전을 적는 일)."""
+def write_server(server: Path, model_version: str | None = None) -> None:
+    """`config/server.toml`을 쓴다. `model_version`이 있으면 `[proximity]`에 넣는다 (설정에 모델 버전을 적는 일)."""
     config_dir = server / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / ".env.mqtt-password").write_text("test-only-password\n", encoding="utf-8")
-    table = "".join(f'\n[proximity.models]\n{place} = "{version}"\n' for place, version in (models or {}).items())
-    (config_dir / "server.toml").write_text(SERVER_TOML.format(models=table), encoding="utf-8")
+    line = "" if model_version is None else f'model_version = "{model_version}"\n'
+    (config_dir / "server.toml").write_text(SERVER_TOML.format(model_version=line), encoding="utf-8")
 
 
 def write_inputs(server: Path) -> None:
@@ -300,10 +302,10 @@ def test_FR16_ops_pipeline_end_to_end(tmp_path, monkeypatch, run_cli, served):
         return run_cli(list(argv), cwd=server)
 
     try:
-        # 1. 수집 전용 서버를 시작한다. 모델 표가 없는 설정이고, 기기가 발표하면 DB에 기기 행이 생긴다 (FR-05)
+        # 1. 수집 전용 서버를 시작한다. 모델 버전이 없는 설정이고, 기기가 발표하면 DB에 기기 행이 생긴다 (FR-05)
         assert cli("serve", "--collect-only") == (0, "", "")
         config, collect_only = served.pop()
-        assert collect_only and not config.proximity.versions
+        assert collect_only and config.proximity.model_version is None
         runtime = Runtime(config, client_factory=broker.factory, clock=clock.now, collect_only=True)
         with running(runtime):
             wait_until(lambda: {row["node_id"] for row in query(
@@ -375,21 +377,24 @@ def test_FR16_ops_pipeline_end_to_end(tmp_path, monkeypatch, run_cli, served):
         assert rows["switch_time"]["note"] == rows["flicker"]["note"] == "미측정"
 
         # 8. 설정에 모델 버전을 넣으면 일반 serve 가 그 모델로 시작한다. 넣기 전에는 시작하지 않는다
+        #    fit 은 6단계까지 장소별 옛 형식 파일을 쓴다. 서버는 시험용 공통 모델 파일로 시작한다.
         assert cli("serve")[0] == 2 and not served
-        write_server(server, models={PLACE: "v1"})
+        common_file = MODEL_ROOT / f"{MODEL_VERSION}.json"
+        shutil.copyfile(common_file, server / "var" / "models" / common_file.name)
+        write_server(server, model_version=MODEL_VERSION)
         assert cli("serve") == (0, "", "")
         config, collect_only = served.pop()
-        assert not collect_only and dict(config.proximity.versions) == {PLACE: "v1"}
-        built: list[dict] = []
+        assert not collect_only and config.proximity.model_version == MODEL_VERSION
+        built: list = []
 
-        def proximity_factory(models, settings):
-            built.append(dict(models))
-            return HmmProximityEstimator(models, settings)
+        def proximity_factory(model, settings):
+            built.append(model)
+            return HmmProximityEstimator(model, settings)
 
         runtime = Runtime(config, client_factory=broker.factory, clock=clock.now, proximity_factory=proximity_factory)
         with running(runtime):
-            (models,) = built  # 수집한 데이터로 적합한 모델이 근접 추정기에 들어갔다
-            assert set(models) == {PLACE} and models[PLACE] == model
+            (built_model,) = built  # 설정이 고른 공통 모델 파일이 근접 추정기에 들어갔다
+            assert built_model == load_common_model(common_file)
             # 시드가 출력한 토큰으로 서버가 계정을 식별한다 (FR-01)
             assert runtime.authenticator.authenticate(f"Bearer {tokens['owner']}").user_id == "owner"
     finally:

@@ -75,7 +75,8 @@ def test_FR05_FR06_FR16_FR22_lab_real_broker_command(lab_world):
     demo(lab)  # Includes first-discovery restart and actual HMM probabilities.
     events = read_events(lab)
     assert any(event["event"] == "inventory_reloaded" for event in events)
-    assert any(event["event"] == "proximity" and event["best"][0] == "light-1"
+    # 재시작 직후에는 근접 참여 기기가 없어서 확률이 비고 best가 None이다 (보고가 다시 올 때까지)
+    assert any(event["event"] == "proximity" and event["best"] is not None and event["best"][0] == "light-1"
                and event["best"][1] >= lab.config.settings.threshold_light for event in events)
     outcomes = [event for event in events if event["event"] == "command_result"]
     assert [(event["action"], event["status"]) for event in outcomes] == [("on", "succeeded"), ("off", "succeeded")]

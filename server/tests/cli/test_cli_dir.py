@@ -31,14 +31,14 @@ def seed_of(user_id: str) -> str:
 
 @pytest.fixture
 def lab(server_dir: Path, write_config: Callable[..., Path]) -> Path:
-    """시험 폴더 `server_dir/var/lab/`. 기본 설정(`server_dir/config/server.toml`)과 포트가 다르고 모델 표가 있다.
+    """시험 폴더 `server_dir/var/lab/`. 기본 설정(`server_dir/config/server.toml`)과 포트와 모델 버전이 다르다.
 
     `server.toml`이 폴더 바로 아래에 있고 DB도 이 폴더에 둔다. `write_config`는 `config/` 아래에만 쓰므로 쓴 파일을 옮긴다.
     """
     written = write_config(
         server_dir, name="lab.toml", http={"host": "127.0.0.1", "port": LAB_PORT},
         database={"path": "lab.db", "audit_jsonl": "audit.jsonl"},
-        proximity={"model_root": "models", "models": {"node-lab": "synthetic-1"}})
+        proximity={"model_root": "models", "model_version": "synthetic-2"})
     folder = server_dir / "var" / "lab"
     folder.mkdir(parents=True)
     written.replace(folder / "server.toml")
@@ -54,9 +54,9 @@ def test_NFR10_cli_dir_reads_folder_config(server_dir, run_cli, run_server_calls
 
     assert code == EXIT_OK
     [(config, collect_only)] = run_server_calls
-    # 실행 폴더의 config/server.toml(포트 8000, 모델 표 없음)이 아니라 시험 폴더의 server.toml을 읽었다
+    # 실행 폴더의 config/server.toml(포트 8000, 모델 syn-common-1)이 아니라 시험 폴더의 server.toml을 읽었다
     assert config.source == (lab / "server.toml").resolve() and collect_only is False
-    assert config.http.port == LAB_PORT and dict(config.proximity.versions) == {"node-lab": "synthetic-1"}
+    assert config.http.port == LAB_PORT and config.proximity.model_version == "synthetic-2"
 
     # 다른 하위 명령도 같은 설정을 읽는다. 시드의 기본 폴더(seed/)가 시험 폴더 기준이다
     write_text(lab / "seed" / "demo.toml", seed_of("lab-owner"))

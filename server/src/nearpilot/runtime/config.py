@@ -16,7 +16,6 @@ import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any
 
 from nearpilot.api.ws.settings import DashboardSettings
@@ -71,8 +70,8 @@ class DatabaseConfig:
 
 @dataclass(frozen=True)
 class ProximityConfig:
-    model_root: Path
-    versions: Mapping[str, str]  # place_id → model_version. 파일 이름으로 최신을 추측하지 않는다
+    model_root: Path  # `{model_version}.json` 파일이 있는 폴더
+    model_version: str | None  # 공통 모델 하나. require_models=False 이고 설정에 없으면 None. 파일 이름으로 최신을 추측하지 않는다
 
 
 @dataclass(frozen=True)
@@ -117,7 +116,7 @@ _MDNS_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 def load_config(path: str | Path, *, require_models: bool = True) -> ServerConfig:
     """설정 파일을 읽고 검증한다. 잘못되면 `ConfigError` 다.
 
-    `require_models=False` 면 `[proximity.models]` 가 없거나 비어도 된다. 모델 없이 도는 명령이 쓴다.
+    `require_models=False` 면 `[proximity] model_version` 이 없어도 된다. 모델 없이 도는 명령이 쓴다.
     """
     source = Path(path).resolve()
     try:
@@ -202,17 +201,17 @@ def _database(table: Mapping[str, Any], base: Path) -> DatabaseConfig:
 
 
 def _proximity(table: Mapping[str, Any], base: Path, *, require_models: bool) -> ProximityConfig:
-    # model_root 는 항상 필수다. models 는 있으면 형식을 검사하고, require_models 일 때만 비면 안 된다.
-    _keys(table, "proximity", required={"model_root", "models"} if require_models else {"model_root"},
-          allowed={"model_root", "models"})
-    models = table.get("models", {})
-    if not isinstance(models, Mapping) or (require_models and not models):
-        raise ConfigError("proximity.models 는 장소별 모델 버전 표여야 한다")
-    for place_id, version in models.items():
-        if not isinstance(version, str) or not version.strip():
-            raise ConfigError(f"proximity.models.{place_id} 는 모델 버전 문자열이어야 한다")
-    return ProximityConfig(_path(table, "proximity", "model_root", base),
-                           MappingProxyType(dict(models)))
+    # 장소별 `[proximity.models]` 표는 받지 않는다. 공통 모델 하나를 model_version 으로 고른다 (#252).
+    if "models" in table:
+        raise ConfigError("알 수 없는 설정 키: proximity.models "
+                          "(`[proximity.models]`는 #252로 없어졌다. `model_version` 하나를 쓴다)")
+    # model_root 는 항상 필수다. model_version 은 있으면 형식을 검사하고, require_models 일 때만 꼭 있어야 한다.
+    _keys(table, "proximity", required={"model_root", "model_version"} if require_models else {"model_root"},
+          allowed={"model_root", "model_version"})
+    version = table.get("model_version")
+    if "model_version" in table and (not isinstance(version, str) or not version.strip()):
+        raise ConfigError("proximity.model_version 은 비어 있지 않은 문자열이어야 한다")
+    return ProximityConfig(_path(table, "proximity", "model_root", base), version)
 
 
 def _mqtt(table: Mapping[str, Any], base: Path) -> MqttConfig:

@@ -213,6 +213,14 @@ def schema_version(server: Path) -> int:
         conn.close()
 
 
+@pytest.fixture
+def server_dir(tmp_path: Path, write_config) -> Path:
+    """이 명령은 6단계까지 장소별 옛 모델 폴더 `var/models`를 쓴다. 기본 설정의 공통 모델 폴더 대신 그 폴더를 가리킨다."""
+    server = tmp_path / "server"
+    write_config(server, proximity={"model_root": "../var/models"})
+    return server
+
+
 @pytest.fixture(autouse=True)
 def _fixed_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(eval_cli, "now_utc", lambda: NOW)
@@ -379,7 +387,7 @@ def test_NFR06_eval_without_device_label_runs(server_dir, run_cli, make_collecti
 
 
 def test_NFR06_eval_uses_frame_interval_from_settings(server_dir, run_cli, hand, write_config, monkeypatch):
-    write_config(server_dir, settings={"version": "t1", "rssi_frame_sec": 0.5})
+    write_config(server_dir, settings={"version": "t1", "rssi_frame_sec": 0.5}, proximity={"model_root": "../var/models"})
     seen = []
     real = eval_cli.collect_samples
 

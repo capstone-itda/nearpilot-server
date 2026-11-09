@@ -34,13 +34,14 @@ from nearpilot.shared.descriptor import legacy_descriptor  # noqa: E402
 from nearpilot.shared.models import ProximityResult  # noqa: E402
 from nearpilot.shared.tokens import hash_token  # noqa: E402
 
-MODEL_ROOT = SERVER / "tests" / "core" / "proximity" / "fixtures" / "models"
+MODEL_ROOT = SERVER / "tests" / "core" / "proximity" / "fixtures" / "common"
+MODEL_VERSION = "syn-common-1"  # 시험용 합성 공통 모델 (장소와 기기 정보가 없다)
 GRANTED = [1, 0, 1, 1, 0]  # announce, rssi, status, result, time_request (#236)
 OWNER, VISITOR_A, VISITOR_B = "owner", "visitor-a", "visitor-b"
 TOKENS = {OWNER: "tok-owner", VISITOR_A: "tok-a", VISITOR_B: "tok-b"}
 UUID = "11111111-2222-3333-4444-555555555555"
 MINOR = {OWNER: 1, VISITOR_A: 2, VISITOR_B: 3}
-# fixture 모델(place-a)의 기기와 같다
+# place-a의 시험 기기다 (tests/core/proximity/conftest.py의 PLACE_A_NODES와 같다)
 NODES = {
     "locker-1": ("locker", "rental"),
     "locker-2": ("locker", "rental"),
@@ -67,7 +68,7 @@ def wait_until(predicate: Callable[[], Any], timeout: float = 5.0, interval: flo
 
 def make_config(tmp: Path, *, settings: Mapping[str, Any] | None = None,
                 runtime: Mapping[str, Any] | None = None, delivery: Mapping[str, Any] | None = None,
-                database: Mapping[str, Any] | None = None, models: Mapping[str, str] | None = None,
+                database: Mapping[str, Any] | None = None, model_version: str = MODEL_VERSION,
                 mqtt: Mapping[str, Any] | None = None, http: Mapping[str, Any] | None = None) -> ServerConfig:
     secret = tmp / ".env.mqtt-password"
     secret.write_text("test-only-password\n", encoding="utf-8")
@@ -78,7 +79,7 @@ def make_config(tmp: Path, *, settings: Mapping[str, Any] | None = None,
                     "shutdown_timeout_sec": 5.0, **(runtime or {})},
         "http": {"host": "127.0.0.1", "port": 8000, **(http or {})},
         "database": {"path": "np.db", "audit_jsonl": "audit.jsonl", **(database or {})},
-        "proximity": {"model_root": str(MODEL_ROOT), "models": dict(models or {"place-a": "syn-a-1"})},
+        "proximity": {"model_root": str(MODEL_ROOT), "model_version": model_version},
         "mqtt": {"host": "127.0.0.1", "port": 1883, "client_id": "test-server",
                  "username": "nearpilot-server", "password_file": secret.name, "keepalive_sec": 30,
                  "connect_timeout_sec": 1.0, "start_timeout_sec": 2.0, "stop_timeout_sec": 2.0,
@@ -154,7 +155,7 @@ class FakeProximity:
             table = table.get(user, {})
         wanted = {n.node_id for n in candidates}
         return ProximityResult({k: v for k, v in table.items() if k in wanted}, at, at,
-                               "syn-a-1", "none-1")
+                               MODEL_VERSION, "0")
 
 
 # ── 기기 시뮬레이터와 fake Paho ─────────────────────────────────────

@@ -173,6 +173,14 @@ def reports_listing(server: Path) -> list[str]:
     return sorted(path.name for path in reports.iterdir()) if reports.exists() else []
 
 
+@pytest.fixture
+def server_dir(tmp_path: Path, write_config) -> Path:
+    """이 명령은 6단계까지 장소별 옛 모델 폴더 `var/models`를 쓴다. 기본 설정의 공통 모델 폴더 대신 그 폴더를 가리킨다."""
+    server = tmp_path / "server"
+    write_config(server, proximity={"model_root": "../var/models"})
+    return server
+
+
 @pytest.fixture(autouse=True)
 def _fixed_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(evaluate, "now_utc", lambda: NOW)

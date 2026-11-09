@@ -1,12 +1,11 @@
 {
   "model_version": "synthetic-2",
-  "window_sec": 5.0,
+  "window_sec": 3.5,
   "transition": {
-    "stay": 0.95
+    "stay": 0.9
   },
   "calibration": {
-    "method": "temperature",
-    "tau": 2.0
+    "method": "none"
   },
   "observation": {
     "front": {
@@ -58,22 +57,16 @@
       "validation_runs": 2,
       "run_bins": 30,
       "taus": [
-        0.5,
-        1.0,
-        2.0
+        1.0
       ],
       "stays": [
-        0.8,
-        0.9,
-        0.95
+        0.9
       ],
       "window_secs": [
-        2.5,
-        3.5,
-        5.0
+        3.5
       ],
       "min_bins": 120
     },
-    "validation_loss": 0.04307523033722095
+    "validation_loss": 0.19238701110454381
   }
 }
