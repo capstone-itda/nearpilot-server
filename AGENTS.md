@@ -119,3 +119,4 @@ pytest tests/<계층>      # 계층 하나
 - 대시보드 기기 상세에 절을 더하고 Vitest만 돌려, 대여 중 패널이 넘쳐 패널 안 스크롤이 생긴 것을 놓쳤다. 대시보드 화면을 바꾸면 `npx playwright test`로 네 해상도의 화면 검사를 돌린다.
 - 공동 모델의 필드(`NodeInfo.capability`)를 지운 뒤 전체 `pytest` 통과만 보고, Mosquitto가 없어 건너뛴 시험이 쓰는 `server/tools/` 코드에 남은 옛 필드 접근을 놓쳤다. 필드를 지우면 `src`와 `tools` 전체에서 그 이름을 검색하고, 건너뛴 시험의 대상 코드를 따로 확인한다.
 - 마이그레이션을 더하는 단계 문서의 고치는 파일에 스키마 버전을 하드코딩한 `tools/evaluation/db.py`의 `EXPECTED_SCHEMA_VERSION`과 `user_version` 단언 시험을 빠뜨려 구현자가 막혔다. 마이그레이션을 더하면 `src`·`tools`·`tests` 전체에서 현재 버전 숫자를 검색해 고칠 곳에 넣는다.
+- 전체 `pytest` 출력을 마지막 줄만 받아, 한 번 실패한 시험의 이름을 놓치고 불안정한 시험을 찾지 못했다. 전체 실행은 `-rf`로 실패 이름을 함께 받는다.

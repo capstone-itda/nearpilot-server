@@ -1,5 +1,6 @@
 # 근접 추정기 (`ProximityEstimator`)
 
+- 상태: 대체됨 — 장소별 모델과 배치 파일은 `specs/core-proximity-common-model/spec.md`의 공통 모델과 자동 영점으로 바뀌었다 (#252). 이 문서는 당시 결정의 기록이다.
 - 담당: dnnals (근접 추정)
 - 요구사항: FR-16, FR-22, NFR-02
 - 따르는 결정: #26, #31, #38, #39, #40, #42

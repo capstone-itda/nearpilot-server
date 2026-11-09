@@ -149,7 +149,7 @@ def _by_place(groups: Sequence[PlaceRuns], name: str) -> dict[str, PlaceRuns]:
 def place_frames(run: LabeledRun, anchors: Collection[str]) -> list[RssiFrame]:
     """회차에서 적합과 평가에 쓸 프레임을 정렬 순서로 고른다.
 
-    옛 `fit.run_frames`와 같은 규칙이고, 배치 대신 앵커 집합을 받는다. 비콘이 회차와 같고, 기기가 `anchors`에 있고,
+    비콘이 회차와 같고, 기기가 `anchors`에 있고,
     RSSI가 유한하고, `started_at <= frame_ts < ended_at`인 프레임만 남긴다.
     같은 `(node_id, session_id, seq, beacon)`은 정렬 순서로 처음 하나만 쓴다.
     `received_at`으로는 거르지 않는다. 평가 때는 `compute_posteriors`가 판정과 같은 규칙으로 늦은 프레임을 뺀다.

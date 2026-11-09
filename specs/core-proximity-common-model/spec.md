@@ -63,8 +63,8 @@
 - `server/src/nearpilot/core/dashboard/queries.py` — 모델과 보정 버전의 출처
 - `server/src/nearpilot/runtime/` — 설정 로더, 조립, 복원, `ThreadDatabase.auto_zero_store`
 - `server/src/nearpilot/cli/` — `fit`, `eval`, `evaluate-reask`
-- `server/tools/evaluation/` — 근접 표본 수집, 평가 harness, 평가 서버 설정, `EXPECTED_SCHEMA_VERSION`
-- `server/tools/node_lab/setup.py` — 실험실 모델 파일과 설정
+- `server/tools/evaluation/` — 근접 표본 수집, 평가 harness, 평가 서버 설정, 지표 3 장면(결정 21), `EXPECTED_SCHEMA_VERSION`
+- `server/tools/node_lab/` — 실험실 모델 파일과 설정(`setup.py`), 시연의 대상 지정(`session.py`, 결정 20)
 - `server/config/` — 설정 예시, `final-demo` 설정과 모델, README
 - `specs/core-proximity-estimator/spec.md`, `specs/core-proximity-model-fit/spec.md` — 머리의 상태 줄만 (`대체됨`)
 - 각 계층의 테스트
@@ -201,7 +201,7 @@
     - 기기 앞은 기기에서 방 안쪽으로 0.5 m다. "어느 기기 앞도 아님"은 모든 기기 앞에서 1.5 m 이상 떨어진 방 안의 무작위 위치다.
     - RSSI는 이전 합성 모델의 값으로 만든다: `-59 − 20·log10(max(d, 0.5)) + z + N(0, 4)`. 기기마다 영점 차이 `z`를 [-6, 6] dB에서 고른다.
     - 라벨마다(기기 앞, 없음) 학습 회차 5개, 검증 회차 2개를 만든다. 회차는 30칸이고 칸마다 앵커마다 프레임 하나다.
-    - 적합 후보: τ ∈ {0.5, 1, 2}, `stay` ∈ {0.8, 0.9, 0.95}, `window_sec` ∈ {2.5, 3.5, 5}, `min_bins` 120.
+    - 적합 후보: τ ∈ {1}, `stay` ∈ {0.9}, `window_sec` ∈ {3.5}, `min_bins` 120. HMM 값은 이전 추정기의 값으로 고정한다 — 생성 회차에 이동이 없어서, 후보를 넓히면(τ {0.5, 1, 2}, `stay` {0.8, 0.9, 0.95}, `window_sec` {2.5, 3.5, 5}) 전환이 느린 격자 끝(τ 2, `stay` 0.95, `window_sec` 5)을 골랐다 (NFR-02). 담당자가 2026-11-09에 3단계 결과를 보고 정했다.
     - 생성기 값은 이전 합성 모델(`synthetic-1`)의 값과 그 값을 넓힌 범위다. 공개 데이터나 팀 기기의 값이 아니다.
     - 모델 파일의 `validation`에 `source: SYNTHETIC_NOT_MEASURED`, `quality_verified: false`, 생성기 설정 전체, 고른 조합의 검증 손실을 쓴다. 배치는 쓰지 않는다.
     - 시드는 252다. `server/config/final-demo/models/synthetic-2.json`이 그 결과이고, 시험이 같은 시드로 다시 만들어 같은지 본다.
@@ -212,8 +212,11 @@
 15. 근접 추정기는 DB 쓰기를 잠금 밖에서 한다. 저장 중인 기기는 표시해서 같은 기기를 두 번 저장하지 않는다. 쓰기가 끝나면 잠금 안에서 개정 번호를 반영한다.
 16. 옛 `synthetic-1.json`(final-demo)은 지우지 않는다 — 판정 기록이 참조할 수 있다. 서버는 읽지 않는다. `core-proximity-estimator`, `core-proximity-model-fit` spec의 상태를 `대체됨`으로 적는다.
 17. 평가 harness의 근접 준비 확인은 DB에서 보고 시각을 읽을 수 없다. 최근 구간 안에 받은 프레임이 있는 `trusted` 기기를 근접 참여 기기로 근사한다. 대상이 `unzeroed`면 준비되지 않은 것이다.
+    - harness는 시작할 때 한 번 `trusted` 기기마다 자동 영점 0 dB 행을 DB에 쓰고(`vendor`는 기기 선언 그대로) 서버를 다시 띄운다. 지표를 재는 동안은 읽기 전용 연결만 쓴다 (NFR-13). 평가 장면은 방문자를 한 기기 앞에 세워서, 늘 1등인 기기는 자동 영점 표본을 얻지 못한다. 시뮬레이터 기기는 영점 차이가 없다. 담당자가 2026-11-09에 5단계 보고를 보고 정했다.
 18. `fit`의 적합 설정 기본 파일은 `fit/common.toml`이다 — 공통 모델은 장소 이름이 없다. `eval`은 통과 기준을 기존처럼 `fit/<장소>.toml`에서 읽는다.
 19. 새 코드는 옛 코드 옆의 새 모듈(`common_model.py`, `autozero.py`, `posterior.py`, `common_fit.py`, `synthetic.py`)에 두고, 서버와 도구를 옮긴 뒤 옛 `model.py`, `filter.py`, `fit.py`와 배치 파일 읽기를 지운다 — 단계마다 전체 시험이 통과한다.
+20. node_lab 기본 기기는 조명 둘이라 자동 영점을 찾지 못한다 (결정 4). 시연(`demo`)은 `nearest:` 대신 사후확률이 가장 큰 기기를 명시 지정해 요청한다. 담당자가 2026-11-09에 정했다.
+21. 평가 지표 3의 장면은 모든 방문자가 첫 `trusted` 사물함 하나에만 near 값으로 들리게 한다. 사물함마다 같은 값으로 들리면 공통 모델의 사후확률이 사물함 수만큼 나뉘어 임계값을 넘는 요청이 드물고, 점유 경합을 만들지 못한다. 담당자가 2026-11-09에 정했다.
 
 ## 7. 가정
 
@@ -263,5 +266,5 @@
 | FR-22 | `test_FR22_auto_zero_revision_snapshot` | 개정 R의 상태가 기기별로 R 이하의 가장 최근 행이다 |
 | FR-22 | `test_FR22_auto_zero_rows_survive_cleanup` | 보존 정리가 행을 지우지 않는다 |
 | FR-22 | `test_FR22_calib_version_recorded` | 판정 기록의 `calib`이 결과의 개정 번호다 |
-| NFR-02 | `test_NFR02_switch_within_two_seconds` | 공통 모델로도 이동 뒤 2초 안에 대상이 바뀐다 (합성 경로) |
+| NFR-02 | `test_NFR02_switch_within_two_seconds` | 이동 뒤 2초 안에 대상이 바뀐다 (합성 경로). strict xfail로 둔다 — 시험용 공통 모델(`window_sec` 3, `stay` 0.9)로 시드 20개 중 7개가 2초를 넘는다. 이전 모델도 같은 이유의 xfail이었다. 담당자가 2026-11-09에 정했다 |
 | NFR-02 | `test_NFR02_flicker_reduced` | 공통 모델로도 정지 중 깜빡임이 기준선보다 80% 줄어든다 (합성 경로) |
