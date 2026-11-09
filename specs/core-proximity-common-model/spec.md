@@ -67,6 +67,7 @@
 - `server/tools/node_lab/` — 실험실 모델 파일과 설정(`setup.py`), 시연의 대상 지정(`session.py`, 결정 20)
 - `server/config/` — 설정 예시, `final-demo` 설정과 모델, README
 - `specs/core-proximity-estimator/spec.md`, `specs/core-proximity-model-fit/spec.md` — 머리의 상태 줄만 (`대체됨`)
+- `specs/core-ops-cli/spec.md`, `specs/core-server-assembly/spec.md`, `specs/db-evaluation-server-metrics/spec.md`, `specs/core-dashboard-queries/spec.md` — 머리의 상태 줄만 (바뀐 부분을 이 spec으로 가리킨다)
 - 각 계층의 테스트
 
 ### 고치지 않는 곳
@@ -254,6 +255,9 @@
 | FR-16 | `test_FR16_synthetic_model_marked` | 합성 표시와 생성기 설정이 있고 배치가 없다 |
 | FR-16 | `test_FR16_config_single_model_version` | `[proximity] model_version`만 받는다. 파일이 없으면 시작하지 않는다 |
 | FR-16 | `test_FR16_dashboard_shows_auto_zero_revision` | 대시보드의 보정 버전이 최신 개정이다 |
+| FR-16 | `test_FR16_runtime_saves_auto_zero_to_db` | 실제 서버 조립의 추정기가 찾은 자동 영점을 DB에 쓴다 |
+| FR-16 | `test_FR16_dashboard_calibration_follows_runtime_revision` | 실제 서버의 대시보드 보정 버전이 DB의 최신 개정 번호다 |
+| FR-16 | `test_NFR13_harness_ready_rejects_unzeroed_target` | 평가 harness의 준비 확인이 자동 영점이 없는 대상을 준비되지 않은 것으로 본다 (결정 17) |
 | FR-16 | `test_FR16_cli_fit_multiple_places` | `fit`이 장소 둘의 분할로 공통 모델을 쓴다 |
 | FR-16 | `test_FR16_cli_fit_rejects_duplicate_place` | 같은 장소의 분할 둘은 거부한다 |
 | FR-16 | `test_FR16_cli_eval_common_model` | `eval VERSION`이 시험 회차의 자동 영점으로 평가한다 |

@@ -14,10 +14,14 @@ import sqlite3
 import subprocess
 import sys
 import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+from nearpilot.db.repositories.repository import SqliteRepository
+from nearpilot.db.schema import connect
+from nearpilot.shared.models import BeaconKey, RssiFrame
 from tools.evaluation.harness import Harness, HarnessError, find_mosquitto
 from tools.evaluation.server_config import NodeSpec, load_eval_config
 from tools.node_sim import Beacon, CommandStore, Scenario, SimNode
@@ -126,6 +130,46 @@ def test_NFR13_harness_set_rssi_and_scenario_replace_simulated_scenario(tmp_path
         assert node.scenario.beacons == ()
     finally:
         store.close()
+
+
+def test_NFR13_harness_ready_rejects_unzeroed_target(tmp_path):
+    """근접 준비 확인은 대상이 자동 영점을 찾지 못했으면(`unzeroed`) 확률이 임계값을 넘어도 준비되지 않았다고 본다 (결정 17).
+
+    프로세스를 띄우지 않고 하네스가 읽는 DB 파일과 서버 설정 파일만 놓는다. 방문자가 대상 사물함 앞에 있는 프레임이 방금 들어왔다.
+    자동 영점 행이 없거나 마지막 행이 버림이면 준비되지 않았고, 0 dB 행이 있으면 같은 관측으로 준비됐다.
+    """
+    config = small_config()
+    harness = Harness(config, tmp_path / "work", server_root=SERVER)
+    harness._db_path.parent.mkdir()
+    harness._server_toml.write_text('[settings]\nversion = "t1"\n', encoding="utf-8")
+    minor = next(user.minor for user in config.users if user.user_id == "visitor-1")
+    beacon = BeaconKey(config.beacon_uuid, config.beacon_major, minor)
+    conn = connect(str(harness._db_path))
+    try:
+        for user_id, role in (("owner", "owner"), ("visitor-1", "visitor")):
+            conn.execute("INSERT INTO user (user_id, name, token_hash, role) VALUES (?, ?, ?, ?)",
+                         (user_id, user_id, f"hash-{user_id}", role))
+        conn.execute("INSERT INTO beacon (beacon_id, user_id, uuid, major, minor, is_active) VALUES ('b-1', 'visitor-1', ?, ?, ?, 1)",
+                     (beacon.uuid, beacon.major, beacon.minor))
+        conn.execute("INSERT INTO place (place_id, owner_user_id, name) VALUES ('place-a', 'owner', 'lab')")
+        conn.execute("INSERT INTO node (node_id, place_id, kind, occupancy, trust_state, device_state, exclusive_group, release_policy) "
+                     "VALUES ('locker-1', 'place-a', 'locker', 'rental', 'trusted', 'AVAILABLE', NULL, '{}')")
+        repo = SqliteRepository(conn)
+        now = datetime.now(timezone.utc)
+        for seq in range(1, 4):  # 최근 구간 안의 프레임 셋 (칸 길이 1초)
+            at = now - timedelta(seconds=seq - 0.8)
+            repo.save_rssi(RssiFrame("locker-1", beacon, config.rssi["near"], at, "s-1", seq, at, at))
+
+        def ready() -> bool:
+            return harness.proximity_ready("visitor-1", "locker-1")
+
+        assert not ready()  # 자동 영점 행이 없다
+        repo.save_auto_zero("locker-1", 0.0, None, None, now)
+        assert ready()  # 영점이 있으면 같은 관측으로 준비됐다
+        repo.save_auto_zero("locker-1", None, None, None, now)
+        assert not ready()  # 마지막 행이 버림이라 영점이 없다
+    finally:
+        conn.close()
 
 
 @pytest.mark.parametrize("server_script", [

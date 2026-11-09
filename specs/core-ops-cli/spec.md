@@ -1,5 +1,6 @@
 # 운영 CLI (`nearpilot`)
 
+- 상태: 일부 대체됨 — `fit`, `eval`, `evaluate-reask`의 인자와 적합 설정 `[fit]`, 배치 폴더 `layouts`, 설정 `[proximity.models]`는 `specs/core-proximity-common-model/spec.md`의 공통 모델로 바뀌었다 (#252). 그 부분은 당시 결정의 기록이다.
 - 담당: dnnals (근접 추정·대시보드)
 - 요구사항: FR-01, FR-05, FR-06, FR-12A, FR-12B, FR-13, FR-14, FR-16, FR-22, NFR-06, NFR-10, NFR-12, NFR-13
 - 따르는 결정: #29, #30, #40, #41, #88, #131, #138

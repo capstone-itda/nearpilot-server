@@ -34,9 +34,7 @@ from nearpilot.shared.models import BeaconKey, RssiFrame
 SYNTHETIC_SOURCE: str = "SYNTHETIC_NOT_MEASURED"  # 모델 파일 `validation.source`에 쓰는 합성 표시
 
 _BEACON = BeaconKey("00000000-0000-4000-8000-000000000252", 1, 1)
-_FIRST_RUN_AT = datetime(2026, 1, 1, tzinfo=timezone.utc)  # 첫 회차의 시작. 회차마다 `run_bins·bin_sec + _RUN_GAP`씩 늦어진다
-_RUN_GAP = timedelta(seconds=10)  # 회차 사이의 빈 시간
-_RECEIVE_DELAY = timedelta(milliseconds=50)  # frame_ts에서 received_at까지
+_FIRST_RUN_AT = datetime(2026, 1, 1, tzinfo=timezone.utc)  # 첫 회차의 시작. 회차마다 `run_bins·bin_sec + run_gap_sec`씩 늦어진다
 _MAX_REDRAWS = 1000  # 조건에 맞는 위치를 다시 뽑는 횟수. 이 횟수를 넘게 실패하면 ValueError다
 
 
@@ -60,6 +58,8 @@ class SyntheticSpec:
     train_runs: int = 5  # 라벨마다
     validation_runs: int = 2  # 라벨마다
     run_bins: int = 30  # 회차 하나의 칸 수
+    run_gap_sec: float = 10.0  # 회차 사이의 빈 시간
+    receive_delay_sec: float = 0.05  # frame_ts에서 received_at까지
     # HMM 값은 이전 추정기의 값으로 고정한다. 생성 회차에 이동이 없어서, 후보를 넓히면 전환이 느린 값(격자 끝)을 고른다 (NFR-02).
     taus: tuple[float, ...] = (1.0,)
     stays: tuple[float, ...] = (0.9,)
@@ -140,8 +140,11 @@ def _make_run(
     step: timedelta,
     seqs: dict[str, int],
 ) -> LabeledRun:
-    """방문자가 `visitor`에 선 회차 하나. 칸 k의 프레임은 `started_at + (k + 0.5)·step`에 앵커마다 하나씩 있다."""
+    """방문자가 `visitor`에 선 회차 하나. 칸 k의 프레임은 `started_at + (k + 0.5)·step`에 앵커마다 하나씩 있고,
+    서버가 받는 시각(`received_at`)은 `receive_delay_sec` 뒤다.
+    """
     frames: list[RssiFrame] = []
+    receive_delay = timedelta(seconds=spec.receive_delay_sec)
     for k in range(spec.run_bins):
         frame_ts = started_at + step * (k + 0.5)
         for anchor in room.anchors:
@@ -157,7 +160,7 @@ def _make_run(
                     session_id=f"{anchor.node_id}-s1",
                     seq=seqs[anchor.node_id],
                     sent_at=frame_ts,
-                    received_at=frame_ts + _RECEIVE_DELAY,
+                    received_at=frame_ts + receive_delay,
                 )
             )
     return LabeledRun(
@@ -173,11 +176,11 @@ def generate_places(spec: SyntheticSpec, *, bin_sec: float) -> tuple[list[PlaceR
     검증 회차 `validation_runs`개를 만든다. 회차 ID는 `{장소}-{라벨}-{train|validation}-{번호}`다.
     기기 앞 회차의 방문자는 그 기기의 앞 위치에 서고, `none` 회차의 방문자는 회차마다 방 안의 무작위 위치에 선다.
     기기마다 `seq`는 1부터 모든 회차에 걸쳐 늘어난다. 회차의 시작은 모든 방에 걸쳐 `2026-01-01T00:00:00Z`부터
-    회차마다 `run_bins·bin_sec + 10초`씩 늦어진다. 좌표는 반환값에 넣지 않는다.
+    회차마다 `run_bins·bin_sec + run_gap_sec`초씩 늦어진다. 좌표는 반환값에 넣지 않는다.
     """
     rng = random.Random(spec.seed)
     step = timedelta(seconds=bin_sec)
-    span = step * spec.run_bins + _RUN_GAP  # 회차 하나가 차지하는 시간
+    span = step * spec.run_bins + timedelta(seconds=spec.run_gap_sec)  # 회차 하나가 차지하는 시간
     seqs: dict[str, int] = defaultdict(int)
     run_count = 0
 

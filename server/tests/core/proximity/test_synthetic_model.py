@@ -383,6 +383,27 @@ def test_FR16_synthetic_generator_follows_bin_sec(bin_sec):
         ]
 
 
+def test_FR16_synthetic_generator_follows_run_gap_and_receive_delay():
+    """회차 사이의 빈 시간과 수신 지연은 설정(`run_gap_sec`, `receive_delay_sec`)을 따른다. 코드 상수가 아니다.
+
+    값은 기본값(10초, 0.05초)과 다르게 둔다. 회차는 `run_bins·bin_sec + run_gap_sec`초씩 늦어지고, 프레임의 `received_at`은
+    `frame_ts`보다 `receive_delay_sec`초 뒤다.
+    """
+    spec = replace(
+        SyntheticSpec(), rooms=1, devices=(3, 3), train_runs=2, validation_runs=1, run_bins=6,
+        run_gap_sec=7.5, receive_delay_sec=0.2,
+    )
+
+    train, validation = generate_places(spec, bin_sec=BIN_SEC)
+
+    runs = sorted((run for group in train + validation for run in group.runs), key=lambda run: run.started_at)
+    first_start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    span = timedelta(seconds=6 * BIN_SEC + 7.5)
+    assert len(runs) == 4 * 3
+    assert [run.started_at for run in runs] == [first_start + i * span for i in range(len(runs))]
+    assert {frame.received_at - frame.frame_ts for run in runs for frame in run.frames} == {timedelta(milliseconds=200)}
+
+
 @pytest.mark.parametrize(
     ("front_m", "distance"),
     [pytest.param(0.2, 0.7, id="clamped_to_min_distance"), pytest.param(0.9, 0.9, id="free_distance")],
