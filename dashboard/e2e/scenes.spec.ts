@@ -151,6 +151,28 @@ test('FR12B MON-11 움직임 줄이기 설정이면 주 장소를 바로 바꾼�
   await expect(page.locator('[data-leaving="true"]')).toHaveCount(0);
 });
 
+/** 지금 도는 도착 강조 수. 끝난 애니메이션은 getAnimations에 남지 않는다 */
+const arriving = (page: Page) => page.evaluate(() => document.getAnimations().filter((a) => (a as CSSAnimation).animationName?.startsWith('np-arrive')).length);
+
+test('FR12B MON-01 처음 그린 화면은 움직임을 켤 때도 도착 강조를 보이지 않는다', async ({ page }) => {
+  // frozenAt이 움직임을 켜는 0.8초 타이머를 지나게 한다. 바뀐 곳이 없으니 강조 요소가 빛나지 않아야 한다
+  await frozenAt(page, 'scene=flow&theme=dark');
+  expect(await arriving(page)).toBe(0);
+  // 그 뒤에 장면이 바뀌면 바뀐 곳은 도착 강조를 보인다 (play는 6초마다 다음 장면으로 간다)
+  await page.goto('about:blank');
+  await frozenAt(page, 'scene=play&theme=dark');
+  expect(await arriving(page)).toBe(0);
+  await page.clock.runFor(6000 + 2000);
+  await expect.poll(() => arriving(page)).toBeGreaterThan(0);
+});
+
+test('FR12B MON-01 테마를 바꿔도 이미 그린 화면에 도착 강조를 다시 보이지 않는다', async ({ page }) => {
+  await frozenAt(page, 'scene=flow&theme=dark');
+  await bar(page).getByRole('button', { name: '라이트 모드로 바꾸기' }).click();
+  await expect(page.locator('.np-app')).toHaveAttribute('data-theme', 'light');
+  expect(await arriving(page)).toBe(0);
+});
+
 for (const theme of ['dark', 'light']) {
   for (const [w, h] of SIZES) {
     test(`FR12B MON-11 라운지 고정 · ${theme === 'dark' ? '다크' : '라이트'} ${w}×${h}`, async ({ page }) => {
