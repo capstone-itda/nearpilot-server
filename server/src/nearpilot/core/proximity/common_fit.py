@@ -7,7 +7,6 @@
 검증 회차로는 τ, `stay`, `window_sec`의 조합마다 정답 상태의 평균 로그 손실을 `compute_posteriors`로 재고,
 손실이 가장 작은 조합으로 `CommonModel`을 만든다. DB, 현재 시각, 무작위를 쓰지 않고 모델 파일도 쓰지 않는다
 (파일 쓰기는 `common_model.write_common_model_file`).
-`NONE_LABEL`, `FitError`, `LabeledRun`, `GridLoss`는 옛 `fit.py`와 같은 이름이라서, 옛 모듈이 여기서 가져다 내보낸다.
 """
 
 from __future__ import annotations
@@ -96,7 +95,6 @@ class CommonFitResult:
 
 
 # ── 입력 검사 ───────────────────────────────────────────────────────
-# 옛 `fit.py`의 도우미와 같은 검사다. 옛 모듈이 이 모듈을 import해서 거꾸로 import할 수 없어 따로 둔다.
 
 
 def _positive_number(value: object, name: str, *, upper: float = math.inf) -> float:
@@ -326,7 +324,7 @@ def fit_common_model(
     장소마다(학습과 검증에 나온 모든 장소) 앵커와 자동 영점을 정한다. 자동 영점은 그 장소의 학습·검증 회차 전부로 찾는다.
     역할 표본(`front`, `other`, `none`)은 학습 회차의 보정한 칸 평균이다 (`_role_samples`). 평균과 모표준편차를 `math.fsum`으로 낸다.
     자동 영점이 없는 기기의 영점 범위 Δ(`auto_zero_bound_db`)는 학습 장소마다 찾은 자동 영점 전체의 절댓값 최댓값이다.
-    학습 장소에서 찾은 자동 영점이 하나도 없으면(기기가 1~2대인 장소뿐이다) Δ를 정할 수 없어서 `None`(모름)이다. 적합은 실패하지 않는다.
+    학습 장소에서 찾은 자동 영점이 하나도 없으면(예: 기기 2대 장소뿐이다) Δ를 정할 수 없어서 `None`(모름)이다. 적합은 실패하지 않는다.
     Δ는 검증 손실 계산에 쓰지 않는다.
     조합은 taus → stays → window_secs 중첩 순으로 재고 (`validation_log_loss`), 손실이 가장 작은 조합을 고른다.
     같으면 먼저 나온 조합이다. 모든 손실이 무한대이면 고를 근거가 없다.

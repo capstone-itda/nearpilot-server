@@ -120,7 +120,7 @@ NTP 서버와 기기별 오차 실측은 필요 없다. Windows 방화벽의 MQT
 
 합성 모델은 `models/synthetic-2.json`이다. 저장소의 공통 합성 모델(`config/final-demo/models/synthetic-2.json`)을 그대로 복사하며, 기기와 좌표를 모른다.
 실측 모델을 쓸 때는 `server.toml`의 `[proximity]` `model_root`와 `model_version`을 바꾼다. 모델은 장소와 상관없이 하나다.
-근접 지정(`nearest:`)은 기기가 셋 이상이고 자동 영점을 찾은 뒤에 허가된다. 기기가 둘이면 자동 영점을 찾지 못해 `ASK`가 난다.
+기기가 둘이면 자동 영점을 찾지 못한다. 그래서 근접 지정(`nearest:`)은 보수적 사후확률로 판정해서, 기기 바로 앞의 강한 신호가 아니면 `ASK`가 난다.
 
 ## USB 설정 주입
 

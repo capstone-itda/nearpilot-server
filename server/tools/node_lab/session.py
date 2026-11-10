@@ -310,7 +310,7 @@ def demo(lab: Lab):
         time.sleep(lab.options["sample_sec"])
     else:
         raise ValueError("시험 비콘의 근접 확률을 확인하지 못했다")
-    # 근접 지정(nearest:)은 기기가 셋 이상이고 1등이 자동 영점을 찾은 뒤에야 허가된다. 시연은 기기가 둘이라서 가장 가까운 기기를 지정한다
+    # 기기가 둘이라 자동 영점을 찾지 못해 근접 지정(nearest:)은 보수적 사후확률로 판정된다. 시연이 신호 세기에 따라 ASK로 멈추지 않게 가장 가까운 기기를 지정한다
     target = max(probabilities, key=probabilities.get)
     for action in ("on", "off"):
         decision = lab.use(action, target)

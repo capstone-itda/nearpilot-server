@@ -1,7 +1,7 @@
 # 배치 없는 공통 근접 모델과 자동 영점
 
 - 담당: dnnals (근접 추정. 이 작업에 필요한 shared, DB, 판정, runtime, CLI, 평가 도구 연결 포함)
-- 요구사항: FR-05, FR-16, FR-17, FR-22, FR-23, NFR-02
+- 요구사항: FR-05, FR-16, FR-17, FR-18, FR-22, FR-23, NFR-02
 - 따르는 결정: #252 (decision PR #257). 남은 미결은 #258.
 
 ## 1. 왜
@@ -35,7 +35,7 @@
 
 - 전체 상태는 근접 참여 기기 앞 상태들과 "어느 기기 앞도 아님" 상태다. 근접 참여 기기는 `at − anchor_recent_sec` 이후에 `rssi` 보고(빈 보고 포함)를 보낸 장소의 `trusted` 기기다 (FR-16, §1.2).
 - 근접 참여 기기가 아닌 후보는 근접 지정과 전역 할당의 후보가 아니다 (FR-05).
-- 근접 지정과 전역 할당은 자동 영점을 찾은 기기만 후보로 쓴다. 사후확률이 가장 큰 기기에 자동 영점이 없으면 다른 후보를 고르지 않고 `ASK`다 (FR-17, FR-23).
+- 근접 지정과 전역 할당, 그 요청의 실행 직전 재검사는 자동 영점이 없는 기기의 임계값 비교에 보수적 사후확률을 쓴다. 사후확률이 가장 큰 기기가 임계값을 넘지 못하면 다른 후보를 고르지 않고 `ASK`다 (FR-17, FR-18, FR-23, 결정 22).
 - 거리 순서에는 자동 영점이 없는 근접 참여 기기도 선다 (FR-16).
 - 근접 추정은 좌표와 기기 배치를 쓰지 않는다. 공통 파라미터는 공통 모델 파일에서 읽는다 (FR-16).
 - 자동 영점은 장소의 관측으로 찾는다. 라벨과 소유자 입력을 쓰지 않는다 (FR-16).
@@ -54,12 +54,13 @@
 ### 고치는 곳
 
 - `server/src/nearpilot/shared/`
-  - `ProximityResult.unzeroed`
+  - `ProximityResult.unzeroed`, `ProximityResult.conservative`, `ProximityResult.threshold_probability()`
   - `AutoZero`, `AutoZeroState`, `AutoZeroStore` Protocol
   - `ProximityEstimator` 문서 문자열 (전체 상태와 결과의 뜻)
 - `server/src/nearpilot/db/` — 마이그레이션 `0013`, `AutoZeroStore` 구현
 - `server/src/nearpilot/core/proximity/` — 공통 모델 파일, 관측 모델, 자동 영점, 공통 적합, 합성 생성기, 추정기. 장소별 모델과 배치 파일 코드를 지운다.
 - `server/src/nearpilot/core/decision/pipeline.py` — 근접 지정과 전역 할당의 자동 영점 규칙
+- `server/src/nearpilot/core/decision/recheck.py` — `nearest:`·`any:` 요청의 재검사가 쓰는 확률 (결정 22)
 - `server/src/nearpilot/core/dashboard/queries.py` — 모델과 보정 버전의 출처
 - `server/src/nearpilot/runtime/` — 설정 로더, 조립, 복원, `ThreadDatabase.auto_zero_store`
 - `server/src/nearpilot/cli/` — `fit`, `eval`, `evaluate-reask`
@@ -67,16 +68,16 @@
 - `server/tools/node_lab/` — 실험실 모델 파일과 설정(`setup.py`), 시연의 대상 지정(`session.py`, 결정 20)
 - `server/config/` — 설정 예시, `final-demo` 설정과 모델, README
 - `specs/core-proximity-estimator/`, `specs/core-proximity-model-fit/` — 지운다. 이전 모델과 바꾼 이유는 `docs/adr/0001-proximity-common-model.md`에 남긴다 (담당자 지시)
-- `specs/core-decision-pipeline/spec.md` — 지운 spec을 가리키던 참조만
+- `specs/core-decision-pipeline/spec.md` — 지운 spec을 가리키던 참조와 머리의 상태 줄만
 - `specs/core-ops-cli/spec.md`, `specs/core-server-assembly/spec.md`, `specs/db-evaluation-server-metrics/spec.md`, `specs/core-dashboard-queries/spec.md` — 머리의 상태 줄만 (바뀐 부분을 이 spec으로 가리킨다)
-- `docs/architecture.md`, `docs/requirements.md`, `docs/glossary.md` — 옛 배치 모델을 가리키던 표현을 공통 모델로 맞춘다. 결정 22의 보수적 사후확률을 반영한다 (담당자 지시)
+- `docs/architecture.md`, `docs/requirements.md`, `docs/glossary.md`, `docs/device-protocol.md` — 옛 배치 모델을 가리키던 표현을 공통 모델로 맞춘다. 결정 22의 보수적 사후확률을 반영한다 (담당자 지시)
 - `docs/adr/0001-proximity-common-model.md` — 새로 쓴다. `docs/sensor-removal-review.md` — 지운 spec의 링크만
 - 각 계층의 테스트
 
 ### 고치지 않는 곳
 
 - 항상: `docs/` (위의 파일은 제외), `AGENTS.md` (Gotchas 절과 ADR을 더한 두 표의 행은 제외), `server/pyproject.toml`, `.github/`
-- 이 작업: 거리 순서의 계산(`distance_order`), 명시 지정과 거리 선택자의 판정 규칙, 실행 직전 재검사, IOT, 펌웨어, 시뮬레이터, 대시보드 화면, 수집 도구(`tools/data_collection`), 분할 도구
+- 이 작업: 거리 순서의 계산(`distance_order`), 명시 지정과 거리 선택자의 판정 규칙, 거리 선택자 요청의 재검사, IOT, 펌웨어, 시뮬레이터, 대시보드 화면, 수집 도구(`tools/data_collection`), 분할 도구
 
 `docs/architecture.md` §4 "근접 사후확률의 범위"가 `shared` 접점의 모양을 근접 추정 spec에 맡겼다. 그래서 이 작업은 `shared`를 고친다.
 
@@ -96,7 +97,6 @@
 - 실측 데이터로 만든 공통 모델과 지표 8 채점
 - 찾은 자동 영점의 갱신. 찾은 뒤에는 `vendor`가 바뀌기 전까지 고정한다 (결정 5).
 - 비콘을 못 들은 근접 참여 기기를 증거로 쓰는 것 (결정 3)
-- 실행 직전 재검사의 자동 영점 규칙. 재검사는 지금처럼 임계값만 본다 (FR-18).
 - 대시보드 화면의 자동 영점 표시. 기존 `calibrationVersion` 칸의 값만 바뀐다.
 - `auto_zero` 행의 보존 정리. 행을 지우지 않는다.
 
@@ -115,7 +115,7 @@
 | `any:` 요청의 1등에 자동 영점이 없고 보수적 사후확률이 임계값 미만이다 | `ASK`·`LOW_CONFIDENCE` | `test_FR23_any_top_unzeroed_asks` |
 | `any:` 요청에서 자동 영점이 없는 기기 | 보수적 사후확률이 임계값 이상이면 허용쌍에 넣는다. 비용도 그 값으로 낸다 | `test_FR23_any_uses_conservative_probability_for_unzeroed` |
 | `nearest:` 대여형의 재검사에서 대상에 자동 영점이 없다 | 보수적 사후확률로 임계값을 본다 | `test_FR18_recheck_uses_conservative_probability` |
-| 적합의 학습 장소에서 자동 영점을 하나도 찾지 못했다 (기기가 1~2대인 장소만 있다) | Δ를 `null`로 쓴다. 그 모델의 보수적 사후확률은 0이다 | `test_FR16_fit_leaves_auto_zero_bound_unknown_without_zeros`, `test_FR16_conservative_posterior_unknown_bound_is_zero` |
+| 적합의 학습 장소에서 자동 영점을 하나도 찾지 못했다 (예: 기기 2대 장소만 있다. 1대 장소만 있으면 '옆' 역할 표본이 없어 그 전에 `FitError`다) | Δ를 `null`로 쓴다. 그 모델의 보수적 사후확률은 0이다 | `test_FR16_fit_leaves_auto_zero_bound_unknown_without_zeros`, `test_FR16_conservative_posterior_unknown_bound_is_zero` |
 | `ProximityResult.conservative`의 키가 `unzeroed`와 다르거나 값이 사후확률보다 크다 | `ValueError` | `test_FR16_result_conservative_matches_unzeroed` |
 | 표본이 `min_bins`보다 적다 | 자동 영점을 찾지 않는다. DB에 쓰지 않는다 | `test_FR16_auto_zero_needs_min_bins` |
 | 칸에서 1등이 아닌 기기가 둘 미만이다 (기기가 1~2대인 장소 포함) | 그 칸은 표본이 아니다. 그런 장소는 자동 영점을 찾지 못한다. 근접 지정은 보수적 사후확률로 판정한다 | `test_FR16_auto_zero_bin_needs_two_anchors` |
@@ -234,6 +234,7 @@
 22. 자동 영점이 없는 기기는 보수적 사후확률로 임계값을 본다. 담당자가 2026-11-10에 골랐다 (기기 1~2대 장소와 늘 1등인 기기가 근접 지정을 못 쓰던 문제).
     - 자동 영점이 없는 기기의 실제 영점은 `[−Δ, +Δ]` 안의 어느 값일 수 있다고 본다. 기기 i의 보수적 사후확률은 i의 영점을 `+Δ`, i가 아닌 자동 영점 없는 근접 참여 기기의 영점을 `−Δ`로 두고 다시 계산한 i의 확률과 사후확률 중 작은 값이다. 자동 영점이 있는 기기는 그대로다.
     - Δ는 공통 값 하나다. 적합이 학습 장소에서 찾은 자동 영점의 절댓값 최댓값이고, 모델 파일의 `auto_zero.bound_db`에 쓴다. 학습 장소에서 찾은 자동 영점이 없으면 Δ는 모름(`null`)이고, 그 모델에서 자동 영점이 없는 기기의 보수적 사후확률은 0이다 — 이 결정 전처럼 `ASK`다. 기기 종류별 값이나 손으로 넣는 값이 아니다. 검증 손실 계산에는 쓰지 않는다.
+    - Δ가 `null`인 경우의 처리와 아래 거리 선택자 규칙은 구현 중 오케스트레이터가 정해 담당자에게 보고했다 (2026-11-10).
     - 근접 지정의 1등은 이전처럼 사후확률로 고른다. 임계값 비교, `p_max`, 정책과 예약에 넘기는 확률은 `threshold_probability`다. 1등이 임계값을 넘지 못하면 2등을 고르지 않는다.
     - 전역 할당은 허용쌍의 확률과 비용 `−log p`에 `threshold_probability`를 쓴다. 사후확률 1등에 자동 영점이 없고 그 값이 임계값 미만이면 `ASK`다.
     - 실행 직전 재검사도 같은 값을 쓴다. 거리 선택자는 이전처럼 사후확률로 비교한다 — requirements FR-05가 자동 영점이 없는 기기도 거리 선택자로 쓸 수 있게 했다.

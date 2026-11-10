@@ -56,7 +56,7 @@ keepalive, 접속·시작·종료 제한 시간, 재접속 최소·최대 대기
 - `[runtime]`은 주기 작업 간격, SQLite 대기시간과 종료 대기 제한이다. 모두 선택이다.
 - `[proximity]`의 `model_version`이 공통 근접 모델 하나를 고른다. 파일은 `<model_root>/<model_version>.json`이다.
   모델은 장소, 기기, 좌표를 모른다. 장소별 `[proximity.models]` 표는 받지 않는다. 기기별 자동 영점은 서버가 장소의 관측으로 찾아 DB에 쓴다.
-  기기가 셋 미만인 장소는 자동 영점을 찾지 못해 근접 지정이 `ASK`다. 명시 지정과 거리 선택자는 쓸 수 있다.
+  기기가 셋 미만인 장소는 자동 영점을 찾지 못한다. 그런 기기의 근접 지정은 보수적 사후확률(모델의 `auto_zero.bound_db`)로 판정해서, 기기 바로 앞의 강한 신호가 아니면 `ASK`다. 명시 지정과 거리 선택자는 쓸 수 있다.
 - `[mqtt]`와 `[delivery]`는 모든 키가 필수다. `password_file`은 서버 계정의 원문 비밀번호 파일이다.
 - `[delivery]`의 `clock_max_error_sec`, `clock_trust_sec`, `clock_resync_sec`는 기기의 MQTT 시각 응답 값이다 (#236). 서버는 모든 기기의 관측 검사에 같은 오차 상한을 쓴다. 0은 같은 PC의 시뮬레이터에만 쓴다. 옛 `[delivery.clock_skew_sec]` 표가 있으면 시작하지 않는다.
 - `[dashboard]`는 선택이다. 있으면 서버가 소유자 토큰으로 대시보드의 모니터링 WebSocket(`/dashboard/stream`)과

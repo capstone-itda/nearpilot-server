@@ -22,6 +22,7 @@ import pytest
 from nearpilot.db.repositories.repository import SqliteRepository
 from nearpilot.db.schema import connect
 from nearpilot.shared.models import BeaconKey, RssiFrame
+import tools.evaluation.harness as harness_module
 from tools.evaluation.harness import Harness, HarnessError, find_mosquitto
 from tools.evaluation.server_config import NodeSpec, load_eval_config
 from tools.node_sim import Beacon, CommandStore, Scenario, SimNode
@@ -161,7 +162,7 @@ def ready_scene(root, rssi):
     return conn, repo, now, lambda: harness.proximity_ready("visitor-1", "locker-1")
 
 
-def test_NFR13_harness_ready_uses_conservative_probability(tmp_path):
+def test_NFR13_harness_ready_uses_conservative_probability(tmp_path, monkeypatch):
     """근접 준비 확인은 판정과 같이 `threshold_probability`로 임계값(사물함 0.95)을 본다 (결정 17).
 
     대상이 자동 영점을 찾지 못했으면(`unzeroed`) 보수적 사후확률이다. 시험 모델(`syn-common-1`)에서 강한 신호(`near`)는
@@ -170,7 +171,15 @@ def test_NFR13_harness_ready_uses_conservative_probability(tmp_path):
     """
     near = small_config().rssi["near"]
     strong_conn, strong_repo, now, strong_ready = ready_scene(tmp_path / "strong", near)
-    weak_conn, weak_repo, _, weak_ready = ready_scene(tmp_path / "weak", near - 6.0)
+    weak_conn, weak_repo, scene_now, weak_ready = ready_scene(tmp_path / "weak", near - 6.0)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return scene_now
+
+    # 준비 확인의 현재 시각을 장면 시각으로 고정한다. 실행이 느려도 프레임이 관측 구간 밖으로 밀려나지 않는다
+    monkeypatch.setattr(harness_module, "datetime", FrozenDatetime)
     try:
         assert strong_ready()  # 자동 영점 행이 없어도 보수적 사후확률이 임계값 이상이다
         strong_repo.save_auto_zero("locker-1", 0.0, None, None, now)
