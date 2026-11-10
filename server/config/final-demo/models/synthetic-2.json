@@ -22,7 +22,8 @@
     }
   },
   "auto_zero": {
-    "min_bins": 120
+    "min_bins": 120,
+    "bound_db": 5.428320934675924
   },
   "validation": {
     "source": "SYNTHETIC_NOT_MEASURED",

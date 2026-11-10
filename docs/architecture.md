@@ -612,8 +612,8 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - 판정은 ③ 감사 기록에 `skipped=true`와 명시 지정 사유를 남긴다. 계산하지 않은 `p_max`와 모델 버전은 `None`, 사후확률 표는 빈 값이다.
 - 전역 할당은 `any_allowed_kinds`에 있는 종류의 `any:{kind}` 요청을 종류별로 묶고 `threshold_{kind}`를 적용한다. 초기 설정은 `any:locker`와 `threshold_locker`다. 명시 지정의 확률 검사 생략을 적용하지 않는다 (#245).
 - 판정은 근접 참여 기기가 아닌 기기를 근접 지정, 전역 할당, 거리 선택자의 후보에서 뺀다. 이 기기는 명시 지정으로만 쓴다 (FR-05, #252).
-- 근접 지정과 전역 할당에서 판정은 자동 영점을 찾은 기기만 후보로 쓴다. 사후확률이 가장 큰 기기에 자동 영점이 없으면 판정은 다른 후보를 고르지 않고 `ASK`를 반환한다 (FR-17, #252).
-- 근접 추정은 근접 참여 후보만 `ProximityResult.posteriors`에 넣는다. 그중 자동 영점이 없는 기기는 `ProximityResult.unzeroed`로 알린다 (`specs/core-proximity-common-model`).
+- 근접 지정과 전역 할당에서 판정은 자동 영점이 없는 기기의 임계값 비교에 보수적 사후확률을 쓴다. 사후확률이 가장 큰 기기의 보수적 사후확률이 임계값 미만이면 판정은 다른 후보를 고르지 않고 `ASK`를 반환한다. 실행 직전 재검사도 같다. 거리 선택자는 사후확률로 비교한다 (FR-17, #252).
+- 근접 추정은 근접 참여 후보만 `ProximityResult.posteriors`에 넣는다. 그중 자동 영점이 없는 기기는 `ProximityResult.unzeroed`로, 그 기기의 보수적 사후확률은 `ProximityResult.conservative`로 알린다 (`specs/core-proximity-common-model`).
 - 감사 기록의 후보 확률은 다시 정규화하지 않은 값이다.
 - `threshold_explicit_locker`, `threshold_explicit_light`, `threshold_explicit_speaker`는 이전 설정과 저장된 스냅샷의 호환 필드다. 기존 값 검증은 유지하지만 판정에는 쓰지 않는다.
 - 미결: 스피커의 근접 임계값. 설정 이름은 `threshold_speaker`다. 기본값 `None`이면 스피커의 근접 지정 실행을 허가하지 않는다 (#61).
@@ -766,7 +766,7 @@ M5를 `occupancy: shared`로 선언하면 FR-20 "공용형 기기" 규칙이 그
 [#252](https://github.com/capstone-itda/nearpilot-server/issues/252)의 A안을 따른다. [#40](https://github.com/capstone-itda/nearpilot-server/issues/40) B안의 장소별 모델 파일을 대체한다. 바꾼 이유와 이전 모델은 [ADR 0001](adr/0001-proximity-common-model.md)에 있다.
 근접 추정은 버전이 붙은 공통 모델 파일 하나를 시작할 때 읽는다. 모든 장소가 같은 파일을 쓴다.
 
-- 파일은 모든 장소에 공통인 관측 파라미터, HMM 전이와 보정 값을 묶는다.
+- 파일은 모든 장소에 공통인 관측 파라미터, HMM 전이와 보정 값을 묶는다. 보수적 사후확률이 가정하는 자동 영점의 폭 Δ도 담는다. Δ는 적합이 찾은 자동 영점에서 정한다.
 - 파일에는 장소 ID, 기기 ID, 기기 배치, 앵커별 파라미터가 없다. 소유자는 파라미터를 직접 바꾸지 않는다.
 - 운영 임계값은 `Settings`에 둔다. 파일에는 검증에 쓴 임계값을 함께 기록한다.
 - 파일의 모델 버전을 `ProximityResult.model_version`으로 반환한다. 파일 안의 보정 값(우도 온도)은 모델 버전으로 식별한다.

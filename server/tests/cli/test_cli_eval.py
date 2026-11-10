@@ -48,7 +48,7 @@ FRONT_DBM, OTHER_DBM, NONE_DBM = -44.0, -62.0, -90.0
 HAND_MODEL = CommonModel(
     model_version="v1", window_sec=2.5, stay=0.9, calibration_method="none", calibration_tau=1.0,
     front=RoleParams(FRONT_DBM, 2.0), other=RoleParams(OTHER_DBM, 2.0), none=RoleParams(NONE_DBM, 2.0),
-    auto_zero_min_bins=120, validation={},
+    auto_zero_min_bins=120, auto_zero_bound_db=0.0, validation={},
 )
 PER_RUN = 18  # `hand`의 회차 하나가 만드는 평가 시각: 20초 회차, window 2.5초, 칸 1초 → 2.5초부터 19.5초까지
 

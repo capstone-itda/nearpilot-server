@@ -325,6 +325,9 @@ def fit_common_model(
 
     장소마다(학습과 검증에 나온 모든 장소) 앵커와 자동 영점을 정한다. 자동 영점은 그 장소의 학습·검증 회차 전부로 찾는다.
     역할 표본(`front`, `other`, `none`)은 학습 회차의 보정한 칸 평균이다 (`_role_samples`). 평균과 모표준편차를 `math.fsum`으로 낸다.
+    자동 영점이 없는 기기의 영점 범위 Δ(`auto_zero_bound_db`)는 학습 장소마다 찾은 자동 영점 전체의 절댓값 최댓값이다.
+    학습 장소에서 찾은 자동 영점이 하나도 없으면(기기가 1~2대인 장소뿐이다) Δ를 정할 수 없어서 `None`(모름)이다. 적합은 실패하지 않는다.
+    Δ는 검증 손실 계산에 쓰지 않는다.
     조합은 taus → stays → window_secs 중첩 순으로 재고 (`validation_log_loss`), 손실이 가장 작은 조합을 고른다.
     같으면 먼저 나온 조합이다. 모든 손실이 무한대이면 고를 근거가 없다.
     모델의 `validation`은 `config.validation`에 `validation_loss`(고른 조합의 손실)를 더한 것이다.
@@ -366,6 +369,11 @@ def fit_common_model(
     other = _role_params(samples["other"], "other")
     none = _role_params(samples["none"], "none")
 
+    # Δ: 학습 장소에서 찾은 자동 영점의 절댓값 최댓값. 공통 값 하나이고 검증 손실에는 쓰지 않는다.
+    # 찾은 영점이 하나도 없으면 모른다(None). 그 모델은 자동 영점이 없는 기기의 보수적 사후확률이 0이다.
+    found = [abs(zero) for place_id in train_by_place for zero in zeros[place_id].values()]
+    bound_db = max(found) if found else None
+
     models: list[CommonModel] = []
     losses: list[GridLoss] = []
     for tau in taus:
@@ -381,6 +389,7 @@ def fit_common_model(
                     other=other,
                     none=none,
                     auto_zero_min_bins=min_bins,
+                    auto_zero_bound_db=bound_db,
                     validation={},
                 )
                 models.append(model)

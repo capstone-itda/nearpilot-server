@@ -2,7 +2,7 @@
 
 모델 파일의 경로는 `{모델 루트}/{model_version}.json`이다. 장소마다 두지 않고 모든 장소가 파일 하나를 같이 쓴다.
 파일에는 장소 ID, 기기 ID, 좌표, 앵커별 파라미터가 없다. 역할(앞, 옆, 없음)별 정규분포의 평균과 표준편차 여섯 값,
-HMM 전이, 관측 구간, 보정, 자동 영점의 최소 칸 수만 담는다.
+HMM 전이, 관측 구간, 보정, 자동 영점의 최소 칸 수와 자동 영점이 없는 기기의 영점 범위(`bound_db`, Δ. 모르면 `null`)만 담는다.
 읽을 때 형식, 값, 경로를 모두 검사하고 잘못된 파일은 `ModelFileError`로 거부한다. 읽은 모델은 바꿀 수 없다.
 이 모듈은 파일을 읽고 쓸 뿐 사후확률을 계산하지 않는다.
 """
@@ -91,9 +91,15 @@ class CommonModel:
     other: RoleParams  # 방문자가 선 기기가 아닌 앵커
     none: RoleParams  # "어느 기기 앞도 아님" 상태의 모든 앵커
     auto_zero_min_bins: int  # 자동 영점을 찾는 데 필요한 표본 수. 1 이상이다
+    # Δ. 자동 영점이 없는 기기의 영점이 ±Δ dB 안의 어느 값일 수도 있다고 보고 보수적 사후확률을 계산한다. 0 이상의 유한한 수다.
+    # None이면 모른다 (적합이 학습 장소에서 자동 영점을 하나도 찾지 못했다). 그 모델은 자동 영점이 없는 기기의 보수적 사후확률이 0이다.
+    auto_zero_bound_db: float | None
     validation: Mapping[str, Any]  # 검증에 쓴 값과 결과. 계산에 쓰지 않는다
 
     def __post_init__(self) -> None:
+        bound = self.auto_zero_bound_db
+        if bound is not None and (isinstance(bound, bool) or not isinstance(bound, (int, float)) or not 0.0 <= bound < inf):
+            raise ValueError(f"auto_zero_bound_db는 0 이상의 유한한 수 또는 None(모름)이어야 한다 ({bound!r})")
         # 계산은 τ만 읽고 모델 파일은 방법을 쓴다. 둘이 어긋난 모델은 쓴 파일과 계산이 달라서 만들지 않는다.
         if self.calibration_method == "none":
             if self.calibration_tau != 1.0:
@@ -200,7 +206,11 @@ def load_common_model(path: Path) -> CommonModel:
         raise ModelFileError(f'{path}: calibration.method는 "none", "temperature"만 지원한다 ({method!r})')
 
     observation = _fixed_object(top["observation"], f"{path}: observation", ("front", "other", "none"))
-    auto_zero = _fixed_object(top["auto_zero"], f"{path}: auto_zero", ("min_bins",))
+    auto_zero = _fixed_object(top["auto_zero"], f"{path}: auto_zero", ("min_bins", "bound_db"))
+    # bound_db는 필수 키다. 값은 0 이상의 유한한 수이거나 null(모름)이다.
+    bound_db = None if auto_zero["bound_db"] is None else _number(auto_zero["bound_db"], f"{path}: auto_zero.bound_db")
+    if bound_db is not None and bound_db < 0.0:
+        raise ModelFileError(f"{path}: auto_zero.bound_db: 0 이상이어야 한다 ({auto_zero['bound_db']!r})")
 
     return CommonModel(
         model_version=model_version,
@@ -212,6 +222,7 @@ def load_common_model(path: Path) -> CommonModel:
         other=_role(observation["other"], f"{path}: observation.other"),
         none=_role(observation["none"], f"{path}: observation.none"),
         auto_zero_min_bins=_min_bins(auto_zero["min_bins"], f"{path}: auto_zero.min_bins"),
+        auto_zero_bound_db=bound_db,
         validation=_object(top.get("validation", {}), f"{path}: validation"),
     )
 
@@ -248,7 +259,7 @@ def common_model_to_dict(model: CommonModel) -> dict[str, Any]:
             "other": _role_to_dict(model.other),
             "none": _role_to_dict(model.none),
         },
-        "auto_zero": {"min_bins": model.auto_zero_min_bins},
+        "auto_zero": {"min_bins": model.auto_zero_min_bins, "bound_db": model.auto_zero_bound_db},
     }
     if model.validation:
         content["validation"] = _plain(model.validation)

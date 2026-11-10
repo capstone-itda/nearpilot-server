@@ -32,7 +32,13 @@ from nearpilot.core.proximity.common_fit import (
     place_zeros,
     validation_log_loss,
 )
-from nearpilot.core.proximity.common_model import CommonModel, RoleParams, common_model_to_dict
+from nearpilot.core.proximity.common_model import (
+    CommonModel,
+    RoleParams,
+    common_model_to_dict,
+    load_common_model,
+    write_common_model_file,
+)
 from nearpilot.core.proximity.posterior import compute_posteriors
 from nearpilot.core.proximity.synthetic import SyntheticSpec, generate_places
 
@@ -149,6 +155,7 @@ def hand_model(**overrides: Any) -> CommonModel:
         "other": RoleParams(-72.0, 20.0),
         "none": RoleParams(-82.0, 20.0),
         "auto_zero_min_bins": MIN_BINS,
+        "auto_zero_bound_db": 0.0,
         "validation": {},
     }
     values.update(overrides)
@@ -516,6 +523,70 @@ def test_FR16_common_fit_without_zeros_leaves_roles_uncorrected():
     assert uncorrected.model.front.mean == pytest.approx(-50.0 + 1.0, rel=1e-12)  # 앞 -50에 장소 이동 평균 1
     assert corrected.model.front.mean == pytest.approx(-52.0 + 1.0, rel=1e-12)
     assert uncorrected.model.other.sigma > corrected.model.other.sigma  # 약한 기기를 보정하면 옆 값의 흩어짐이 줄어든다
+
+
+def test_FR16_fit_sets_auto_zero_bound_from_found_zeros(monkeypatch):
+    """Δ(`auto_zero_bound_db`)는 학습 장소마다 찾은 자동 영점의 절댓값 최댓값이다. 부호는 보지 않고, 검증에만 있는 장소는 쓰지 않는다."""
+    train, validation = two_places()
+    _, validation_only = pattern_place("place-east", ("east-1", "east-2", "east-3", "east-4"))
+    every_validation = [*validation, validation_only]
+
+    # 찾은 영점은 장소마다 앞 둘 2, 셋째 −4, 넷째 2다. 절댓값 최댓값은 음수 쪽이다
+    result = fit_common_model(train, every_validation, make_config(), bin_sec=BIN_SEC)
+    assert result.model.auto_zero_bound_db == 4.0
+    assert result.model.auto_zero_min_bins == MIN_BINS
+    # 영점을 일부만 찾아도 찾은 값으로 정한다
+    assert fit_common_model(train, validation, make_config(auto_zero_min_bins=22), bin_sec=BIN_SEC).model.auto_zero_bound_db == 4.0
+    # Δ는 검증 손실에 쓰지 않는다: Δ가 0인 같은 모델의 손실과 같다
+    assert validation_log_loss(
+        replace(result.model, auto_zero_bound_db=0.0), every_validation, result.zeros, bin_sec=BIN_SEC,
+    ) == result.model.validation["validation_loss"]
+
+    # 손으로 정한 영점. 학습 장소(north, south)에서 찾은 값의 절댓값 최댓값이 Δ이고, 검증에만 있는 place-east의 9.0은 쓰지 않는다
+    found = {
+        "place-north": {IDS_A[0]: 1.5, IDS_A[1]: -3.25},
+        "place-south": {IDS_B[0]: 2.5},
+        "place-east": {"east-1": 9.0},
+    }
+    monkeypatch.setattr(common_fit, "place_zeros", lambda groups, *, bin_sec, min_bins: dict(found[groups[0].place_id]))
+    result = fit_common_model(train, every_validation, make_config(), bin_sec=BIN_SEC)
+    assert result.zeros == found
+    assert result.model.auto_zero_bound_db == 3.25
+    # 부호만 바뀌어도 같다
+    found["place-north"][IDS_A[1]] = 3.25
+    assert fit_common_model(train, every_validation, make_config(), bin_sec=BIN_SEC).model.auto_zero_bound_db == 3.25
+    found["place-south"][IDS_B[0]] = -3.5
+    assert fit_common_model(train, every_validation, make_config(), bin_sec=BIN_SEC).model.auto_zero_bound_db == 3.5
+
+
+def test_FR16_fit_leaves_auto_zero_bound_unknown_without_zeros(monkeypatch, tmp_path):
+    """학습 장소에서 자동 영점을 찾은 기기가 하나도 없으면 Δ를 정할 수 없다. 적합은 실패하지 않고 Δ는 `None`(모름)이며 모델 파일에는 `null`로 쓴다."""
+    train, validation = two_places()
+
+    # 표본이 모자라 영점을 하나도 못 찾았다 (칸 43개 이상이 필요한데 가장 많은 기기가 42개다)
+    result = fit_common_model(train, validation, make_config(auto_zero_min_bins=43), bin_sec=BIN_SEC)
+    assert result.zeros == {"place-north": {}, "place-south": {}}
+    assert result.model.auto_zero_bound_db is None
+    # Δ를 몰라도 검증 손실은 그대로다 (Δ는 손실에 쓰지 않는다)
+    assert validation_log_loss(
+        replace(result.model, auto_zero_bound_db=0.0), validation, result.zeros, bin_sec=BIN_SEC,
+    ) == result.model.validation["validation_loss"]
+    # 모델 파일에는 null로 쓰고, 읽으면 같은 모델이다
+    path = write_common_model_file(tmp_path, result.model)
+    assert json.loads(path.read_text(encoding="utf-8"))["auto_zero"]["bound_db"] is None
+    assert load_common_model(path) == result.model
+    # 하나라도 찾으면 정한다
+    assert fit_common_model(train, validation, make_config(auto_zero_min_bins=42), bin_sec=BIN_SEC).model.auto_zero_bound_db == 4.0
+
+    # 검증에만 있는 장소에서 찾은 영점은 학습 장소의 것이 아니라서 Δ는 여전히 모른다
+    _, validation_only = pattern_place("place-east", ("east-1", "east-2", "east-3", "east-4"))
+    monkeypatch.setattr(
+        common_fit, "place_zeros",
+        lambda groups, *, bin_sec, min_bins: {"east-1": 2.0} if groups[0].place_id == "place-east" else {},
+    )
+    result = fit_common_model(train, [*validation, validation_only], make_config(), bin_sec=BIN_SEC)
+    assert result.zeros == {"place-north": {}, "place-south": {}, "place-east": {"east-1": 2.0}}
+    assert result.model.auto_zero_bound_db is None
 
 
 def test_FR16_common_fit_zeros_cover_every_place():

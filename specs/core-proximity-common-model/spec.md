@@ -18,9 +18,9 @@
   - 신뢰 기기의 `rssi` 프레임과 보고(빈 보고 포함), 기기 선언의 `vendor`
   - DB에 저장한 자동 영점 개정
 - 출력:
-  - `ProximityResult.posteriors`는 근접 참여 후보만 담는다. `ProximityResult.unzeroed`는 그중 자동 영점이 없는 기기다.
+  - `ProximityResult.posteriors`는 근접 참여 후보만 담는다. `ProximityResult.unzeroed`는 그중 자동 영점이 없는 기기다. `ProximityResult.conservative`는 그 기기마다 보수적 사후확률이다.
   - `ProximityResult.calib_version`은 판정에 적용한 자동 영점의 개정 번호다.
-  - 근접 지정은 사후확률 1등에 자동 영점이 없으면 `ASK`다. 전역 할당은 자동 영점이 없는 기기를 배정하지 않는다.
+  - 근접 지정과 전역 할당은 자동 영점이 없는 기기의 임계값 비교에 보수적 사후확률을 쓴다. 근접 지정은 1등의 보수적 사후확률이 임계값 미만이면 `ASK`이고 2등을 고르지 않는다.
   - 합성 공통 모델 파일 `synthetic-2.json`. 시드를 고정한 생성기와 공통 적합 함수로 만든다.
 - 바뀌는 상태:
   - DB 테이블 `auto_zero` (마이그레이션 `0013`). 행을 더하기만 한다.
@@ -29,7 +29,7 @@
   - 모델 파일에 장소 ID, 기기 ID, 좌표, 앵커별 파라미터가 없다. 소유자의 일은 기기 등록과 신뢰뿐이다.
   - 사후확률 출력, 근접 임계값, HMM, 우도 온도는 그대로다.
   - 합성 모델은 합성임을 파일 안에 표시한다. 실제 정확도를 검증했다고 쓰지 않는다.
-  - 명시 지정과 거리 선택자의 판정은 이전과 같다.
+  - 명시 지정과 거리 선택자의 판정은 이전과 같다. 거리 선택자는 자동 영점이 없는 기기도 사후확률로 비교한다.
 
 ## 3. 제약
 
@@ -69,7 +69,7 @@
 - `specs/core-proximity-estimator/`, `specs/core-proximity-model-fit/` — 지운다. 이전 모델과 바꾼 이유는 `docs/adr/0001-proximity-common-model.md`에 남긴다 (담당자 지시)
 - `specs/core-decision-pipeline/spec.md` — 지운 spec을 가리키던 참조만
 - `specs/core-ops-cli/spec.md`, `specs/core-server-assembly/spec.md`, `specs/db-evaluation-server-metrics/spec.md`, `specs/core-dashboard-queries/spec.md` — 머리의 상태 줄만 (바뀐 부분을 이 spec으로 가리킨다)
-- `docs/architecture.md`, `docs/requirements.md` — 옛 배치 모델을 가리키던 표현을 공통 모델로 맞춘다. 뜻은 #252 그대로다 (담당자 지시)
+- `docs/architecture.md`, `docs/requirements.md`, `docs/glossary.md` — 옛 배치 모델을 가리키던 표현을 공통 모델로 맞춘다. 결정 22의 보수적 사후확률을 반영한다 (담당자 지시)
 - `docs/adr/0001-proximity-common-model.md` — 새로 쓴다. `docs/sensor-removal-review.md` — 지운 spec의 링크만
 - 각 계층의 테스트
 
@@ -105,16 +105,20 @@
 | 상황 | 기대 동작 | 테스트 |
 |---|---|---|
 | 모델 파일에 장소 ID, 기기 항목, 좌표 같은 모르는 키가 있다 | `ModelFileError`. 서버가 시작하지 않는다 | `test_FR16_common_model_rejects_layout_keys` |
-| 모델 파일의 값이 범위 밖이다 (σ ≤ 0, stay ∉ (0, 1), `min_bins` < 1, 이름과 파일 이름이 다름) | `ModelFileError` | `test_FR16_common_model_rejects_bad_values` |
+| 모델 파일의 값이 범위 밖이다 (σ ≤ 0, stay ∉ (0, 1), `min_bins` < 1, `bound_db` < 0 또는 무한, 이름과 파일 이름이 다름) | `ModelFileError` | `test_FR16_common_model_rejects_bad_values` |
 | 설정의 모델 파일이 없다 | `ModelMismatchError`. 서버가 시작하지 않는다 | `test_FR16_config_single_model_version` |
 | 장소의 `trusted` 기기가 최근 구간 안에 보고하지 않았다 | 그 기기는 상태가 아니다. 후보여도 `posteriors`에 없다. 오류가 아니다 | `test_FR16_full_state_is_participants` |
 | 근접 참여 기기가 하나도 없다 | `posteriors`가 비고 판정은 `ASK` | `test_FR16_no_participant_empty_posteriors` |
-| 근접 참여 기기 중 일부만 자동 영점이 있다 | 없는 기기는 보정 없이 계산하고 `unzeroed`에 넣는다 | `test_FR16_unzeroed_marks_candidates` |
-| 사후확률 1등에 자동 영점이 없다 (`nearest:`) | `ASK`·`LOW_CONFIDENCE`. 2등을 고르지 않는다. 감사 기록에 `unzeroed`를 남긴다 | `test_FR17_top_unzeroed_asks` |
-| `any:` 요청의 1등에 자동 영점이 없다 | `ASK`·`LOW_CONFIDENCE` | `test_FR23_any_top_unzeroed_asks` |
-| `any:` 요청에서 자동 영점이 없는 기기가 임계값을 넘는다 (1등은 아니다) | 그 기기를 허용쌍에 넣지 않는다 | `test_FR23_any_excludes_unzeroed` |
+| 근접 참여 기기 중 일부만 자동 영점이 있다 | 없는 기기는 보정 없이 계산하고 `unzeroed`에 넣는다. 보수적 사후확률을 `conservative`에 넣는다 | `test_FR16_unzeroed_marks_candidates` |
+| 사후확률 1등에 자동 영점이 없고 보수적 사후확률이 임계값 미만이다 (`nearest:`) | `ASK`·`LOW_CONFIDENCE`. 2등을 고르지 않는다. 감사 기록에 `unzeroed`와 `conservative`를 남긴다 | `test_FR17_top_unzeroed_asks` |
+| 사후확률 1등에 자동 영점이 없고 보수적 사후확률이 임계값 이상이다 (`nearest:`) | 그 기기로 진행한다. `p_max`는 보수적 사후확률이다 | `test_FR17_unzeroed_top_passes_with_conservative_probability` |
+| `any:` 요청의 1등에 자동 영점이 없고 보수적 사후확률이 임계값 미만이다 | `ASK`·`LOW_CONFIDENCE` | `test_FR23_any_top_unzeroed_asks` |
+| `any:` 요청에서 자동 영점이 없는 기기 | 보수적 사후확률이 임계값 이상이면 허용쌍에 넣는다. 비용도 그 값으로 낸다 | `test_FR23_any_uses_conservative_probability_for_unzeroed` |
+| `nearest:` 대여형의 재검사에서 대상에 자동 영점이 없다 | 보수적 사후확률로 임계값을 본다 | `test_FR18_recheck_uses_conservative_probability` |
+| 적합의 학습 장소에서 자동 영점을 하나도 찾지 못했다 (기기가 1~2대인 장소만 있다) | Δ를 `null`로 쓴다. 그 모델의 보수적 사후확률은 0이다 | `test_FR16_fit_leaves_auto_zero_bound_unknown_without_zeros`, `test_FR16_conservative_posterior_unknown_bound_is_zero` |
+| `ProximityResult.conservative`의 키가 `unzeroed`와 다르거나 값이 사후확률보다 크다 | `ValueError` | `test_FR16_result_conservative_matches_unzeroed` |
 | 표본이 `min_bins`보다 적다 | 자동 영점을 찾지 않는다. DB에 쓰지 않는다 | `test_FR16_auto_zero_needs_min_bins` |
-| 칸에서 1등이 아닌 기기가 둘 미만이다 (기기가 1~2대인 장소 포함) | 그 칸은 표본이 아니다. 그런 장소는 자동 영점을 찾지 못해 근접 지정이 `ASK`다. 명시 지정과 거리 선택자는 쓸 수 있다 | `test_FR16_auto_zero_bin_needs_two_anchors` |
+| 칸에서 1등이 아닌 기기가 둘 미만이다 (기기가 1~2대인 장소 포함) | 그 칸은 표본이 아니다. 그런 장소는 자동 영점을 찾지 못한다. 근접 지정은 보수적 사후확률로 판정한다 | `test_FR16_auto_zero_bin_needs_two_anchors` |
 | 그 기기가 칸의 1등이다 (같은 값의 1등 포함) | 그 칸은 그 기기의 표본이 아니다 | `test_FR16_auto_zero_excludes_top_bins` |
 | 칸이 닫힌 뒤 그 칸의 프레임이 늦게 온다 | 자동 영점 표본에 넣지 않는다. 사후확률 계산에는 쓴다 | `test_FR16_auto_zero_late_frame_ignored` |
 | `vendor.model`이나 `vendor.firmware`가 바뀌었다 | 버림 행을 DB에 쓰고 자동 영점을 지운다. 모으던 표본도 지운다. 다시 모은다 | `test_FR16_vendor_change_discards_auto_zero` |
@@ -177,11 +181,16 @@
 
    # ProximityResult 에 더한다. posteriors 키의 부분집합이어야 한다
    unzeroed: frozenset[str] = frozenset()
+   # unzeroed 기기마다 보수적 사후확률 (결정 22). 키 집합은 unzeroed 와 같고 값은 posteriors 이하다
+   conservative: Mapping[str, float] = field(default_factory=dict)
+
+   def threshold_probability(self, node_id: str) -> float: ...
+   # 임계값과 비교할 확률. 자동 영점이 없으면 보수적 사후확률, 있으면 사후확률, 결과에 없으면 0.0
    ```
    - 기본값이 빈 집합이라 기존 fake와 기록은 "모두 자동 영점 있음"으로 읽힌다.
    - `posterior`는 근접 참여 후보만 `posteriors`에 넣는다. 판정은 `posteriors`에 없는 후보를 근접 지정과 전역 할당에서 쓰지 않는다 — 판정이 근접 참여 여부를 따로 묻지 않는다.
    - `SqliteRepository`가 `AutoZeroStore`를 구현한다. `ThreadDatabase.auto_zero_store()`가 범위 위임 객체를 준다.
-8. 근접 지정과 전역 할당의 `ASK` 사유는 `LOW_CONFIDENCE`다. 새 사유 코드를 만들지 않는다 — 호스트에게는 "더 가까이"와 같은 안내다. ③ 감사 기록에 `unzeroed` 목록을 남긴다.
+8. 근접 지정과 전역 할당의 `ASK` 사유는 `LOW_CONFIDENCE`다. 새 사유 코드를 만들지 않는다 — 호스트에게는 "더 가까이"와 같은 안내다. ③ 감사 기록에 `unzeroed` 목록과 `conservative`를 남긴다.
 9. 모델 파일은 `{model_root}/{model_version}.json`이다. 설정은 `[proximity]`의 `model_root`, `model_version`이다. 장소별 `[proximity.models]` 표는 받지 않는다. 형식:
    ```json
    {
@@ -194,10 +203,11 @@
        "other": {"mean": -72.0, "sigma": 5.0},
        "none": {"mean": -74.0, "sigma": 4.5}
      },
-     "auto_zero": {"min_bins": 120},
+     "auto_zero": {"min_bins": 120, "bound_db": 6.0},
      "validation": {"source": "SYNTHETIC_NOT_MEASURED", "quality_verified": false}
    }
    ```
+   - `auto_zero.bound_db`는 결정 22의 Δ다. 0 이상의 유한한 수 또는 `null`(모름)이다.
    - `validation`만 선택이다. 모르는 키와 빠진 키를 거부한다. `calibration`은 이전처럼 `none` 또는 `temperature`와 `tau`다.
    - 위 수치는 형식의 예다. 실제 값은 적합 결과다.
 10. 합성 생성기 `core/proximity/synthetic.py`. 시드를 고정한 `random.Random`만 쓴다.
@@ -221,6 +231,14 @@
 19. 새 코드는 옛 코드 옆의 새 모듈(`common_model.py`, `autozero.py`, `posterior.py`, `common_fit.py`, `synthetic.py`)에 두고, 서버와 도구를 옮긴 뒤 옛 `model.py`, `filter.py`, `fit.py`와 배치 파일 읽기를 지운다 — 단계마다 전체 시험이 통과한다.
 20. node_lab 기본 기기는 조명 둘이라 자동 영점을 찾지 못한다 (결정 4). 시연(`demo`)은 `nearest:` 대신 사후확률이 가장 큰 기기를 명시 지정해 요청한다. 담당자가 2026-11-09에 정했다.
 21. 평가 지표 3의 장면은 모든 방문자가 첫 `trusted` 사물함 하나에만 near 값으로 들리게 한다. 사물함마다 같은 값으로 들리면 공통 모델의 사후확률이 사물함 수만큼 나뉘어 임계값을 넘는 요청이 드물고, 점유 경합을 만들지 못한다. 담당자가 2026-11-09에 정했다.
+22. 자동 영점이 없는 기기는 보수적 사후확률로 임계값을 본다. 담당자가 2026-11-10에 골랐다 (기기 1~2대 장소와 늘 1등인 기기가 근접 지정을 못 쓰던 문제).
+    - 자동 영점이 없는 기기의 실제 영점은 `[−Δ, +Δ]` 안의 어느 값일 수 있다고 본다. 기기 i의 보수적 사후확률은 i의 영점을 `+Δ`, i가 아닌 자동 영점 없는 근접 참여 기기의 영점을 `−Δ`로 두고 다시 계산한 i의 확률과 사후확률 중 작은 값이다. 자동 영점이 있는 기기는 그대로다.
+    - Δ는 공통 값 하나다. 적합이 학습 장소에서 찾은 자동 영점의 절댓값 최댓값이고, 모델 파일의 `auto_zero.bound_db`에 쓴다. 학습 장소에서 찾은 자동 영점이 없으면 Δ는 모름(`null`)이고, 그 모델에서 자동 영점이 없는 기기의 보수적 사후확률은 0이다 — 이 결정 전처럼 `ASK`다. 기기 종류별 값이나 손으로 넣는 값이 아니다. 검증 손실 계산에는 쓰지 않는다.
+    - 근접 지정의 1등은 이전처럼 사후확률로 고른다. 임계값 비교, `p_max`, 정책과 예약에 넘기는 확률은 `threshold_probability`다. 1등이 임계값을 넘지 못하면 2등을 고르지 않는다.
+    - 전역 할당은 허용쌍의 확률과 비용 `−log p`에 `threshold_probability`를 쓴다. 사후확률 1등에 자동 영점이 없고 그 값이 임계값 미만이면 `ASK`다.
+    - 실행 직전 재검사도 같은 값을 쓴다. 거리 선택자는 이전처럼 사후확률로 비교한다 — requirements FR-05가 자동 영점이 없는 기기도 거리 선택자로 쓸 수 있게 했다.
+    - 위 영점 배치가 모든 경우에 가장 불리하다는 증명은 없다. 관측 모델의 분포 폭이 비슷해서 앞 기기의 값이 낮아지고 다른 기기의 값이 높아질수록 i의 확률이 줄어드는 근사다.
+    - 지금 Δ는 합성 생성기(`z` ∈ [−6, 6] dB)에서 나온 값이다. 실측 전에는 실제 기기의 영점 폭을 검증하지 않았다.
 
 ## 7. 가정
 
@@ -260,15 +278,28 @@
 | FR-16 | `test_FR16_dashboard_shows_auto_zero_revision` | 대시보드의 보정 버전이 최신 개정이다 |
 | FR-16 | `test_FR16_runtime_saves_auto_zero_to_db` | 실제 서버 조립의 추정기가 찾은 자동 영점을 DB에 쓴다 |
 | FR-16 | `test_FR16_dashboard_calibration_follows_runtime_revision` | 실제 서버의 대시보드 보정 버전이 DB의 최신 개정 번호다 |
-| FR-16 | `test_NFR13_harness_ready_rejects_unzeroed_target` | 평가 harness의 준비 확인이 자동 영점이 없는 대상을 준비되지 않은 것으로 본다 (결정 17) |
+| FR-16 | `test_NFR13_harness_ready_uses_conservative_probability` | 평가 harness의 준비 확인이 자동 영점이 없는 대상을 보수적 사후확률로 본다 (결정 17) |
+| FR-16 | `test_FR16_result_conservative_matches_unzeroed` | `conservative`의 키가 `unzeroed`와 같고 값이 사후확률 이하다 |
+| FR-16 | `test_FR16_result_threshold_probability` | 임계값 비교 확률이 자동 영점 유무에 따라 사후확률 또는 보수적 사후확률이다 |
+| FR-16 | `test_FR16_conservative_posterior_is_lower_bound` | 보수적 사후확률이 사후확률 이하이고, Δ가 0이면 같다. 일반적인 관측에서 Δ가 커지면 커지지 않는다 |
+| FR-16 | `test_FR16_conservative_posterior_uses_worst_offsets` | 대상은 +Δ, 다른 자동 영점 없는 기기는 −Δ로 계산한다 |
+| FR-16 | `test_FR16_single_device_strong_signal_passes_conservatively` | 기기 1대 장소에서 기기 앞의 강한 신호가 보수적으로도 임계값을 넘는다 |
+| FR-16 | `test_FR16_model_file_requires_auto_zero_bound` | 모델 파일의 `auto_zero.bound_db`가 필수 키이고 0 이상의 유한한 수 또는 `null`이다. 쓰고 읽으면 같다 |
+| FR-16 | `test_FR16_fit_sets_auto_zero_bound_from_found_zeros` | Δ가 학습 장소에서 찾은 자동 영점의 절댓값 최댓값이다 |
+| FR-16 | `test_FR16_fit_leaves_auto_zero_bound_unknown_without_zeros` | 찾은 자동 영점이 없으면 Δ가 `null`이다 |
+| FR-16 | `test_FR16_conservative_posterior_unknown_bound_is_zero` | Δ가 `null`이면 보수적 사후확률이 0이다 |
 | FR-16 | `test_FR16_cli_fit_multiple_places` | `fit`이 장소 둘의 분할로 공통 모델을 쓴다 |
 | FR-16 | `test_FR16_cli_fit_rejects_duplicate_place` | 같은 장소의 분할 둘은 거부한다 |
 | FR-16 | `test_FR16_cli_eval_common_model` | `eval VERSION`이 시험 회차의 자동 영점으로 평가한다 |
 | FR-05 | `test_FR05_non_participant_not_nearest_candidate` | 보고하지 않은 후보는 근접 지정으로 고르지 않는다 |
-| FR-17 | `test_FR17_top_unzeroed_asks` | 1등에 자동 영점이 없으면 `ASK`, 2등을 고르지 않는다 |
+| FR-17 | `test_FR17_top_unzeroed_asks` | 1등에 자동 영점이 없고 보수적 사후확률이 임계값 미만이면 `ASK`, 2등을 고르지 않는다 |
+| FR-17 | `test_FR17_unzeroed_top_passes_with_conservative_probability` | 1등의 보수적 사후확률이 임계값 이상이면 진행한다 |
+| FR-17 | `test_FR17_proximity_audit_records_conservative` | ③ 감사 기록에 `conservative`가 있다 |
+| FR-17 | `test_FR17_selector_rental_keeps_nominal_probability_for_unzeroed` | 거리 선택자 대여형은 자동 영점이 없어도 사후확률로 비교한다 (최초와 재검사) |
+| FR-18 | `test_FR18_recheck_uses_conservative_probability` | `nearest:` 대여형의 재검사가 보수적 사후확률로 비교한다 |
 | FR-17 | `test_FR17_zeroed_top_uses_threshold` | 1등에 자동 영점이 있으면 이전처럼 임계값을 본다 |
-| FR-23 | `test_FR23_any_excludes_unzeroed` | 자동 영점이 없는 기기를 배정하지 않는다 |
-| FR-23 | `test_FR23_any_top_unzeroed_asks` | `any:`의 1등에 자동 영점이 없으면 `ASK` |
+| FR-23 | `test_FR23_any_uses_conservative_probability_for_unzeroed` | 자동 영점이 없는 기기는 보수적 사후확률이 임계값 이상일 때만 배정한다 |
+| FR-23 | `test_FR23_any_top_unzeroed_asks` | `any:`의 1등에 자동 영점이 없고 보수적 사후확률이 임계값 미만이면 `ASK` |
 | FR-22 | `test_FR22_migration_0013_auto_zero` | 스키마 버전 13, `auto_zero` 테이블 |
 | FR-22 | `test_FR22_auto_zero_revision_snapshot` | 개정 R의 상태가 기기별로 R 이하의 가장 최근 행이다 |
 | FR-22 | `test_FR22_auto_zero_rows_survive_cleanup` | 보존 정리가 행을 지우지 않는다 |

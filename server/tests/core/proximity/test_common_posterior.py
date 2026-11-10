@@ -306,6 +306,7 @@ def test_FR16_unzeroed_marks_candidates():
     # 자동 영점이 없는 참여 후보가 unzeroed에 있다. 영점 0.0도 영점이다.
     result = compute(frames, place_nodes=nodes, candidates=nodes, zeros={"locker-1": 0.0, "locker-3": 2.0})
     assert result.unzeroed == frozenset({"locker-2"})
+    assert set(result.conservative) == {"locker-2"}  # 보수적 사후확률의 기기는 unzeroed와 같다
     assert compute(frames, zeros={}).unzeroed == frozenset(LOCKERS)
     assert compute(frames, zeros={node_id: 0.0 for node_id in LOCKERS}).unzeroed == frozenset()
 
@@ -337,6 +338,109 @@ def test_FR16_zero_shifts_only_that_device(device_id, zero_db):
 
     assert dict(compute(raw, zeros={device_id: zero_db}).posteriors) == close(ideal.posteriors)
     assert dict(compute(raw, zeros={}).posteriors) != close(ideal.posteriors)  # 영점을 모르면 다르다
+
+
+# ── 자동 영점이 없는 기기의 보수적 사후확률 ─────────────────────────
+
+HOT_MODEL = replace(MODEL, calibration_method="temperature", calibration_tau=8.0)  # 증거를 약하게 해서 확률이 0이나 1에 붙지 않게 한다
+# 칸마다 값이 크게 어긋난 관측이다. 이 관측에서는 가장 불리한 영점으로 다시 계산한 확률이 오히려 사후확률보다 커진다 (locker-1)
+ODD_MODEL = replace(MODEL, calibration_method="temperature", calibration_tau=2.0)
+ODD_BINS = {
+    0: {"locker-1": [-41.6], "locker-2": [-75.1], "locker-3": [-64.6]},
+    1: {"locker-1": [-81.7], "locker-2": [-89.4], "locker-3": [-59.6]},
+    2: {"locker-1": [-55.0], "locker-2": [-86.4], "locker-3": [-81.7]},
+}
+
+
+def test_FR16_conservative_posterior_is_lower_bound():
+    frames = standing_frames("locker-1")
+    result = compute(frames, model=HOT_MODEL, zeros={"locker-3": 2.0})
+
+    # 보수적 사후확률은 자동 영점이 없는 후보마다 있고, 사후확률보다 크지 않다
+    assert result.unzeroed == frozenset({"locker-1", "locker-2"})
+    assert set(result.conservative) == result.unzeroed
+    for node_id in result.unzeroed:
+        assert 0.0 <= result.conservative[node_id] <= result.posteriors[node_id]
+    assert result.conservative["locker-1"] < result.posteriors["locker-1"]  # Δ가 0보다 크면 실제로 낮아진다
+    # 자동 영점이 모두 있으면 보수적 사후확률이 없다
+    assert dict(compute(frames, model=HOT_MODEL, zeros={node_id: 0.5 for node_id in LOCKERS}).conservative) == {}
+
+    # Δ = 0이면 어떤 영점이든 0이라서 사후확률과 같다
+    exact = compute(frames, model=replace(HOT_MODEL, auto_zero_bound_db=0.0))
+    assert dict(exact.conservative) == close(exact.posteriors)
+
+    # Δ를 키우면 커지지 않는다. 사후확률은 Δ와 상관없다
+    results = [
+        compute(frames, model=replace(HOT_MODEL, auto_zero_bound_db=bound)) for bound in (0.0, 1.0, 3.0, 6.0, 12.0)
+    ]
+    assert all(r.posteriors == results[0].posteriors for r in results)
+    for node_id in LOCKERS:
+        values = [r.conservative[node_id] for r in results]
+        assert all(later <= earlier for earlier, later in zip(values, values[1:]))
+        assert values[-1] < values[0]
+
+    # 관측이 어긋나서 다시 계산한 확률이 사후확률보다 커져도 보수적 사후확률은 사후확률 이하다
+    odd_frames = frames_from_bins(ODD_BINS)
+    odd = compute(odd_frames, model=ODD_MODEL)
+    worst = {"locker-1": 6.0, "locker-2": -6.0, "locker-3": -6.0}
+    assert compute(odd_frames, model=ODD_MODEL, zeros=worst).posteriors["locker-1"] > odd.posteriors["locker-1"]
+    assert odd.conservative["locker-1"] == odd.posteriors["locker-1"]
+    assert all(odd.conservative[node_id] <= odd.posteriors[node_id] for node_id in odd.unzeroed)
+
+
+@pytest.mark.parametrize(
+    ("model", "zeros", "candidate_ids"),
+    [
+        pytest.param(HOT_MODEL, {}, LOCKERS, id="no_zero_found"),
+        pytest.param(HOT_MODEL, {"locker-3": 2.0}, LOCKERS, id="one_zero_found"),
+        pytest.param(HOT_MODEL, {}, ("locker-1", "locker-2"), id="non_candidate_anchor"),
+        pytest.param(MODEL, {"locker-2": -3.0}, LOCKERS, id="no_temperature"),
+    ],
+)
+def test_FR16_conservative_posterior_uses_worst_offsets(model, zeros, candidate_ids):
+    # locker-1과 locker-2 사이에서 애매한 관측이다
+    raw = {k: {"locker-1": [-58.0], "locker-2": [-67.0], "locker-3": [-75.0]} for k in range(3)}
+    frames = frames_from_bins(raw)
+    candidates = [node for node in nodes_of() if node.node_id in candidate_ids]
+    bound = model.auto_zero_bound_db
+    result = compute(frames, model=model, candidates=candidates, zeros=zeros)
+    assert result.unzeroed == frozenset(candidate_ids) - set(zeros)
+
+    for device_id in result.unzeroed:
+        # 영점을 찾은 앵커는 그대로다. device_id는 +Δ이고, 영점이 없는 다른 상태 앵커는 후보가 아니어도 −Δ다
+        worst = {**zeros, **{a: (bound if a == device_id else -bound) for a in LOCKERS if a not in zeros}}
+        # 그 영점을 직접 넣은 명목 계산과 같다
+        explicit = compute(frames, model=model, candidates=candidates, zeros=worst).posteriors[device_id]
+        assert result.conservative[device_id] == pytest.approx(
+            min(result.posteriors[device_id], explicit), rel=1e-9, abs=1e-300)
+        assert result.conservative[device_id] < result.posteriors[device_id]
+        # 따로 쓴 기준 계산과도 같다
+        observed = {k: {a: raw[k][a][0] - worst[a] for a in LOCKERS} for k in raw}
+        reference = reference_posteriors(model, list(LOCKERS), observed, 3)[0][device_id]
+        assert explicit == pytest.approx(reference, rel=1e-9, abs=1e-300)
+
+
+def test_FR16_single_device_strong_signal_passes_conservatively():
+    # 기기 한 대뿐인 장소다. 그 기기 앞의 강한 신호(모델의 front 평균 근처)는 자동 영점이 없어도 보수적 사후확률이 0.95 이상이다
+    nodes = nodes_of(("locker-1",))
+    threshold = 0.95
+
+    def run(rssi: float, zeros: Mapping[str, float] | None = None) -> ProximityResult:
+        frames = frames_from_bins({k: {"locker-1": [rssi]} for k in range(3)})
+        return compute(frames, place_nodes=nodes, candidates=nodes, zeros=zeros)
+
+    for rssi in (MODEL.front.mean, MODEL.front.mean + 2.0):
+        result = run(rssi)
+        assert result.unzeroed == frozenset({"locker-1"})
+        assert result.conservative["locker-1"] >= threshold
+        assert result.threshold_probability("locker-1") == result.conservative["locker-1"]
+
+    # 신호가 약하면 사후확률은 0.95를 넘어도 보수적 사후확률은 넘지 못한다. 영점을 알면 사후확률로 넘는다
+    weak = run(MODEL.front.mean - 5.0)
+    assert weak.posteriors["locker-1"] >= threshold > weak.conservative["locker-1"]
+    known = run(MODEL.front.mean - 5.0, zeros={"locker-1": 0.0})
+    assert known.unzeroed == frozenset()
+    assert known.threshold_probability("locker-1") == known.posteriors["locker-1"] >= threshold
 
 
 # ── 확률의 값 ────────────────────────────────────────────────────────

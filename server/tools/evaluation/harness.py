@@ -235,7 +235,8 @@ class Harness:
 
         서버의 추정기는 메모리 상태라서 쓰지 않고, 읽기 전용 연결로 읽은 프레임과 자동 영점으로 `compute_posteriors`를 직접 부른다.
         DB에는 보고 시각이 없어서, 근접 참여 기기는 최근 구간(`anchor_recent_sec`)에 프레임을 받은 trusted 기기로 근사한다.
-        빈 보고만 보낸 기기는 빠진다. 대상이 자동 영점을 찾지 못했으면(`unzeroed`) 준비되지 않은 것이다 (spec 결정 17).
+        빈 보고만 보낸 기기는 빠진다. 대상 확률은 판정과 같이 `threshold_probability`다. 대상이 자동 영점을 찾지 못했으면(`unzeroed`)
+        보수적 사후확률이 임계값 이상일 때만 준비된 것이다 (spec 결정 17).
         """
         settings = Settings(**tomllib.loads(self._server_toml.read_text(encoding="utf-8"))["settings"])
         model = load_model_version(self.config.model_root, self.config.model_version)
@@ -262,8 +263,7 @@ class Harness:
                 zeros={n: row.zero_db for n, row in state.zeros.items() if row.zero_db is not None},
                 calib_version=str(state.revision),
             )
-            return (node_id in result.posteriors and node_id not in result.unzeroed
-                    and result.posteriors[node_id] >= threshold)
+            return node_id in result.posteriors and result.threshold_probability(node_id) >= threshold
         finally:
             conn.close()
 

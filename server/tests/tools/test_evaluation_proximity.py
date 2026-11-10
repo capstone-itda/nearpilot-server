@@ -50,7 +50,7 @@ ACCEPTANCE = AcceptanceSettings(max_misselection=0.05, max_ece=0.05)
 MODEL = CommonModel(
     model_version="v1", window_sec=3.0, stay=0.9, calibration_method="none", calibration_tau=1.0,
     front=RoleParams(-50.0, 2.0), other=RoleParams(-70.0, 2.0), none=RoleParams(-90.0, 2.0),
-    auto_zero_min_bins=40, validation={},
+    auto_zero_min_bins=40, auto_zero_bound_db=0.0, validation={},
 )
 LEVELS = {  # 라벨 → 앵커마다 받는 RSSI
     "a": {"a": -50.0, "b": -70.0},

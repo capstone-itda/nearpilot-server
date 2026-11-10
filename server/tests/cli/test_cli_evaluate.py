@@ -861,7 +861,7 @@ DEVICES = ("locker-1", "locker-2")
 HAND_MODEL = CommonModel(
     model_version="v1", window_sec=2.5, stay=0.9, calibration_method="none", calibration_tau=1.0,
     front=RoleParams(-44.0, 2.0), other=RoleParams(-62.0, 2.0), none=RoleParams(-90.0, 2.0),
-    auto_zero_min_bins=120, validation={},
+    auto_zero_min_bins=120, auto_zero_bound_db=0.0, validation={},
 )
 STATE_RSSI = {  # 방문자가 선 상태 → 앵커마다 받는 RSSI
     "locker-1": {"locker-1": -44.0, "locker-2": -62.0},

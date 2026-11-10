@@ -82,6 +82,7 @@ def test_FR16_common_model_loads(tmp_path):
     assert model.other == RoleParams(mean=-72.0, sigma=6.0)
     assert model.none == RoleParams(mean=-80.0, sigma=6.0)
     assert model.auto_zero_min_bins == 20
+    assert model.auto_zero_bound_db == 6.0
     assert model.validation == {"source": "SYNTHETIC_NOT_MEASURED", "quality_verified": False}
 
     # 읽은 모델은 바꿀 수 없다
@@ -105,11 +106,13 @@ def test_FR16_common_model_numbers_become_floats(tmp_path):
     raw = json.loads(COMMON_TEXT)
     raw["window_sec"] = 3
     raw["observation"]["front"] = {"mean": -55, "sigma": 4}
+    raw["auto_zero"]["bound_db"] = 6
     model = load_common_model(_write(tmp_path, content=json.dumps(raw)))
 
     assert isinstance(model.window_sec, float)
     assert (type(model.front.mean), type(model.front.sigma)) == (float, float)
     assert isinstance(model.auto_zero_min_bins, int)
+    assert type(model.auto_zero_bound_db) is float and model.auto_zero_bound_db == 6.0
 
 
 @pytest.mark.parametrize(
@@ -168,6 +171,7 @@ INVALID_FILES = [
     pytest.param(_edit("observation.other.mean", _DROP), "빠진 키 ['mean']", id="missing_mean"),
     pytest.param(_edit("auto_zero", _DROP), "빠진 키 ['auto_zero']", id="missing_auto_zero"),
     pytest.param(_edit("auto_zero.min_bins", _DROP), "빠진 키 ['min_bins']", id="missing_min_bins"),
+    pytest.param(_edit("auto_zero.bound_db", _DROP), "빠진 키 ['bound_db']", id="missing_bound_db"),
     # 이름
     pytest.param(_edit("model_version", "other-name"), "파일 이름", id="model_version_differs_from_file_name"),
     pytest.param(partial(_write, content=COMMON_TEXT, version="other-name"), "파일 이름", id="file_name_differs"),
@@ -198,6 +202,10 @@ INVALID_FILES = [
     pytest.param(_edit("auto_zero.min_bins", 20.0), "auto_zero.min_bins", id="min_bins_float"),
     pytest.param(_edit("auto_zero.min_bins", True), "auto_zero.min_bins", id="min_bins_true"),
     pytest.param(_edit("auto_zero.min_bins", "20"), "auto_zero.min_bins", id="min_bins_string"),
+    pytest.param(_edit("auto_zero.bound_db", -0.1), "auto_zero.bound_db", id="bound_db_negative"),
+    pytest.param(_edit("auto_zero.bound_db", float("inf")), "auto_zero.bound_db", id="bound_db_infinite"),
+    pytest.param(_edit("auto_zero.bound_db", True), "auto_zero.bound_db", id="bound_db_bool"),
+    pytest.param(_edit("auto_zero.bound_db", "6.0"), "auto_zero.bound_db", id="bound_db_string"),
     # 보정
     pytest.param(_edit("calibration.method", "isotonic"), "isotonic", id="unknown_calibration_method"),
     pytest.param(_edit("calibration", {}), "calibration.method", id="calibration_without_method"),
@@ -216,6 +224,47 @@ def test_FR16_common_model_rejects_bad_values(tmp_path, make_file, message):
         load_common_model(path)
 
     assert message in str(caught.value)
+
+
+def test_FR16_model_file_requires_auto_zero_bound(tmp_path):
+    """`auto_zero.bound_db`(Δ)는 필수이고 0 이상의 유한한 수 또는 `null`(모름)이다. 쓰고 읽으면 같은 값이다."""
+    assert load_common_model(COMMON_FILE).auto_zero_bound_db == 6.0
+
+    # 0 이상의 유한한 수는 받는다. 0도 받고, 정수는 float로 읽는다
+    for value, expected in ((0, 0.0), (0.0, 0.0), (6, 6.0), (7.25, 7.25), (1e-9, 1e-9)):
+        model = load_common_model(_edit("auto_zero.bound_db", value)(tmp_path))
+        assert model.auto_zero_bound_db == expected and type(model.auto_zero_bound_db) is float
+
+    # null은 모른다는 뜻이다. 키는 있어야 한다
+    assert load_common_model(_edit("auto_zero.bound_db", None)(tmp_path)).auto_zero_bound_db is None
+
+    # 빠짐, 음수, 무한, NaN, 불리언, 숫자가 아닌 값, float로 바꿀 수 없는 큰 정수는 거부한다
+    for value in (_DROP, -0.1, -1, float("inf"), -float("inf"), float("nan"), True, False, "6.0", [6.0], 10**400):
+        with pytest.raises(ModelFileError, match="bound_db"):
+            load_common_model(_edit("auto_zero.bound_db", value)(tmp_path))
+
+    # 쓰고 읽으면 같은 값이다. 파일의 `auto_zero`에 `min_bins`와 `bound_db`만 있다
+    model = _model(auto_zero_bound_db=5.428320934675924)
+    written = write_common_model_file(tmp_path / "out", model)
+    assert json.loads(written.read_text(encoding="utf-8"))["auto_zero"] == {"min_bins": 20, "bound_db": 5.428320934675924}
+    reloaded = load_common_model(written)
+    assert reloaded == model and reloaded.auto_zero_bound_db == 5.428320934675924
+
+    # 모르는 Δ도 쓰고 읽으면 같다. 파일에는 null로 쓴다
+    unknown = _model(auto_zero_bound_db=None)
+    written = write_common_model_file(tmp_path / "unknown", unknown)
+    assert '"bound_db": null' in written.read_text(encoding="utf-8")
+    assert json.loads(written.read_text(encoding="utf-8"))["auto_zero"] == {"min_bins": 20, "bound_db": None}
+    reloaded = load_common_model(written)
+    assert reloaded == unknown and reloaded.auto_zero_bound_db is None
+    assert common_model_to_dict(reloaded)["auto_zero"]["bound_db"] is None
+
+    # 모델 객체도 같은 범위만 받는다. None(모름)도 받는다
+    assert _model(auto_zero_bound_db=0.0).auto_zero_bound_db == 0.0
+    assert unknown.auto_zero_bound_db is None
+    for bad in (-0.1, float("inf"), float("nan"), True, "6"):
+        with pytest.raises(ValueError, match="auto_zero_bound_db"):
+            _model(auto_zero_bound_db=bad)
 
 
 def test_FR16_common_model_missing_file_raises_os_error(tmp_path):
@@ -260,7 +309,7 @@ def test_FR16_common_model_to_dict_format():
         "other": {"mean": -72.0, "sigma": 6.0},
         "none": {"mean": -80.0, "sigma": 6.0},
     }
-    assert content["auto_zero"] == {"min_bins": 20}
+    assert content["auto_zero"] == {"min_bins": 20, "bound_db": 6.0}
     assert content["validation"]["grid"] == [{"tau": 1.0, "loss": None}]  # tuple은 list로 되돌린다
     _assert_plain(content)
     json.dumps(content, allow_nan=False)  # JSON으로 쓸 수 있다

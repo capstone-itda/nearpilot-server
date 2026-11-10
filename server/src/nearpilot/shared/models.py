@@ -364,6 +364,10 @@ class ProximityResult:
     model_version: str
     calib_version: str
     unzeroed: frozenset[str] = frozenset()  # posteriors 중 자동 영점이 없는 기기. posteriors 키의 부분집합 (FR-16)
+    # unzeroed 기기마다 보수적 사후확률. 그 기기의 영점이 ±Δ 안의 어느 값일 수도 있다고 보고 가장 불리한 쪽으로 다시 계산한 확률이다 (FR-16, FR-17).
+    # 키 집합은 unzeroed 와 같고 값은 같은 기기의 posteriors 이하다. 기본값이 빈 dict 라 unzeroed 기본값과 맞는다.
+    # 모델이 Δ를 모르면(auto_zero_bound_db 가 None) 그 값은 0.0이다.
+    conservative: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for probability in self.posteriors.values():
@@ -378,8 +382,21 @@ class ProximityResult:
         outside = unzeroed.difference(self.posteriors)
         if outside:
             raise ValueError(f"자동 영점이 없는 기기는 posteriors 안에 있어야 한다: {sorted(outside)}")
+        if set(self.conservative) != unzeroed:
+            raise ValueError(
+                "보수적 사후확률의 기기는 자동 영점이 없는 기기와 같아야 한다 "
+                f"(conservative={sorted(self.conservative)}, unzeroed={sorted(unzeroed)})"
+            )
+        for node_id, probability in self.conservative.items():
+            if isinstance(probability, bool) or not isinstance(probability, (int, float)):
+                raise ValueError("보수적 사후확률은 숫자여야 한다")
+            if not isfinite(probability) or not 0.0 <= probability <= 1.0:
+                raise ValueError("보수적 사후확률은 [0, 1] 범위의 유한한 값이어야 한다")
+            if probability > self.posteriors[node_id]:
+                raise ValueError(f"보수적 사후확률은 사후확률 이하다: {node_id} ({probability} > {self.posteriors[node_id]})")
         object.__setattr__(self, "posteriors", _freeze(self.posteriors))
         object.__setattr__(self, "unzeroed", unzeroed)
+        object.__setattr__(self, "conservative", _freeze(self.conservative))
 
     @property
     def best(self) -> tuple[str, float] | None:
@@ -387,6 +404,12 @@ class ProximityResult:
         if not self.posteriors:
             return None
         return min(self.posteriors.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    def threshold_probability(self, node_id: str) -> float:
+        """임계값과 비교할 확률 (FR-17). 자동 영점이 없는 기기는 보수적 사후확률, 있는 기기는 사후확률이다. 결과에 없는 기기는 0.0이다."""
+        if node_id in self.unzeroed:
+            return self.conservative[node_id]
+        return self.posteriors.get(node_id, 0.0)
 
 
 @dataclass(frozen=True, slots=True)
