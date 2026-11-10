@@ -1,0 +1,13 @@
+{
+  "model_version": "syn-common-1",
+  "window_sec": 3.0,
+  "transition": {"stay": 0.9},
+  "calibration": {"method": "none"},
+  "observation": {
+    "front": {"mean": -55.0, "sigma": 4.0},
+    "other": {"mean": -72.0, "sigma": 6.0},
+    "none": {"mean": -80.0, "sigma": 6.0}
+  },
+  "auto_zero": {"min_bins": 20, "bound_db": 6.0},
+  "validation": {"source": "SYNTHETIC_NOT_MEASURED", "quality_verified": false}
+}

@@ -87,7 +87,7 @@ class Lab:
             result = admin.register_beacon(BeaconRegistration("lab-beacon", self.options["user_id"],
                 BeaconKey(**self.options["beacon"])))
             self._check(result)
-        self.evidence.emit("lab_started", mode=self.options["mode"], models=dict(self.config.proximity.versions),
+        self.evidence.emit("lab_started", mode=self.options["mode"], model_version=self.config.proximity.model_version,
                            model_warning="확률은 연결 확인용이다. 모델 파일의 실측 여부를 확인한다.")
 
     @staticmethod
@@ -310,8 +310,10 @@ def demo(lab: Lab):
         time.sleep(lab.options["sample_sec"])
     else:
         raise ValueError("시험 비콘의 근접 확률을 확인하지 못했다")
+    # 기기가 둘이라 자동 영점을 찾지 못해 근접 지정(nearest:)은 보수적 사후확률로 판정된다. 시연이 신호 세기에 따라 ASK로 멈추지 않게 가장 가까운 기기를 지정한다
+    target = max(probabilities, key=probabilities.get)
     for action in ("on", "off"):
-        decision = lab.use(action)
+        decision = lab.use(action, target)
         if decision.verdict != Verdict.OK:
             raise ValueError(f"시험 명령이 허가되지 않았다: {decision.reason}")
     lab.evidence.emit("demo_passed", note="시뮬레이터 결과이며 실제 ESP32 검증은 아니다")

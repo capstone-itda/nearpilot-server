@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from nearpilot.core.proximity.fit import NONE_LABEL
+from nearpilot.core.proximity.common_fit import NONE_LABEL
 from tools.evaluation.proximity import EvaluationError, Sample, _most_probable
 from tools.evaluation.rows import metric_row
 

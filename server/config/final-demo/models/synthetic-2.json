@@ -1,0 +1,75 @@
+{
+  "model_version": "synthetic-2",
+  "window_sec": 3.5,
+  "transition": {
+    "stay": 0.9
+  },
+  "calibration": {
+    "method": "none"
+  },
+  "observation": {
+    "front": {
+      "mean": -51.754474897309315,
+      "sigma": 4.662131914019332
+    },
+    "other": {
+      "mean": -67.95237886342673,
+      "sigma": 6.046835575230347
+    },
+    "none": {
+      "mean": -68.24806407762392,
+      "sigma": 5.663276322189071
+    }
+  },
+  "auto_zero": {
+    "min_bins": 120,
+    "bound_db": 5.428320934675924
+  },
+  "validation": {
+    "source": "SYNTHETIC_NOT_MEASURED",
+    "quality_verified": false,
+    "generator": {
+      "seed": 252,
+      "rooms": 6,
+      "devices": [
+        3,
+        7
+      ],
+      "width_m": [
+        4.0,
+        8.0
+      ],
+      "depth_m": [
+        3.0,
+        6.0
+      ],
+      "min_gap_m": 1.0,
+      "front_m": 0.5,
+      "none_clearance_m": 1.5,
+      "A": -59.0,
+      "n": 2.0,
+      "sigma": 4.0,
+      "min_distance_m": 0.5,
+      "zero_db": [
+        -6.0,
+        6.0
+      ],
+      "train_runs": 5,
+      "validation_runs": 2,
+      "run_bins": 30,
+      "run_gap_sec": 10.0,
+      "receive_delay_sec": 0.05,
+      "taus": [
+        1.0
+      ],
+      "stays": [
+        0.9
+      ],
+      "window_secs": [
+        3.5
+      ],
+      "min_bins": 120
+    },
+    "validation_loss": 0.19238701110454381
+  }
+}

@@ -1,6 +1,6 @@
 # 서버 진입점과 서비스 조립
 
-- 상태: 구현 중. 실제 Mosquitto·SQLite·시뮬레이터 연결 검증을 통과했다. 전체 `pytest`를 통과한 뒤에만 같은 feat PR을 머지한다.
+- 상태: 구현 중. 실제 Mosquitto·SQLite·시뮬레이터 연결 검증을 통과했다. 전체 `pytest`를 통과한 뒤에만 같은 feat PR을 머지한다. 근접 모델 설정(`[proximity.models]`)과 모델 읽기는 `specs/core-proximity-common-model/spec.md`의 `[proximity] model_version`으로 바뀌었다 (#252).
 - 담당: JM-220 (상태 관리, 판정)
 - 요구사항: FR-01, FR-03, FR-05, FR-06, FR-07, FR-08, FR-09, FR-11, FR-19, FR-20, FR-21, FR-22, FR-23, NFR-03, NFR-04, NFR-08, NFR-12, NFR-13
 - 따르는 결정: #34, #40, #82, #83, #88, #140, #164, #165, 2026-10-26 담당자 결정(전권 위임, 인증 실패 감사 기록)

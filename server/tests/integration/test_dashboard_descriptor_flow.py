@@ -38,7 +38,7 @@ def dashboard(w: World, tmp_path: Path) -> DashboardQueryService:
         yield SqliteDashboardReads(w.conn)
 
     return DashboardQueryService(
-        open_reads=open_reads, settings=lambda: w.settings, weak_rssi_dbm=-80.0, models=lambda: {},
+        open_reads=open_reads, settings=lambda: w.settings, weak_rssi_dbm=-80.0, model=lambda: None,
         mqtt_ready=lambda: True, holders=lambda: (), reports_dir=tmp_path / "reports", clock=lambda: NOW,
         started_at=lambda: NOW, tz=timezone.utc,
     )

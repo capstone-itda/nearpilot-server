@@ -34,7 +34,6 @@ class Dirs:
     config_dir: Path  # 설정 파일이 있는 폴더
     seed: Path
     plans: Path
-    layouts: Path
     fit: Path
     splits: Path
     records: Path
@@ -49,7 +48,6 @@ def dirs_for(config_path: Path) -> Dirs:
         config_dir=config_dir,
         seed=config_dir / "seed",
         plans=config_dir / "plans",
-        layouts=config_dir / "layouts",
         fit=config_dir / "fit",
         splits=var / "splits",
         records=var / "records",

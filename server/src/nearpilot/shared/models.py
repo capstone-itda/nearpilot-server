@@ -363,6 +363,11 @@ class ProximityResult:
     window_end: datetime
     model_version: str
     calib_version: str
+    unzeroed: frozenset[str] = frozenset()  # posteriors 중 자동 영점이 없는 기기. posteriors 키의 부분집합 (FR-16)
+    # unzeroed 기기마다 보수적 사후확률. 그 기기의 영점이 ±Δ 안의 어느 값일 수도 있다고 보고 가장 불리한 쪽으로 다시 계산한 확률이다 (FR-16, FR-17).
+    # 키 집합은 unzeroed 와 같고 값은 같은 기기의 posteriors 이하다. 기본값이 빈 dict 라 unzeroed 기본값과 맞는다.
+    # 모델이 Δ를 모르면(auto_zero_bound_db 가 None) 그 값은 0.0이다.
+    conservative: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for probability in self.posteriors.values():
@@ -373,7 +378,25 @@ class ProximityResult:
         total = fsum(self.posteriors.values())
         if total > 1.0 and not isclose(total, 1.0):
             raise ValueError("후보 사후확률의 합은 1 이하다")
+        unzeroed = frozenset(self.unzeroed)
+        outside = unzeroed.difference(self.posteriors)
+        if outside:
+            raise ValueError(f"자동 영점이 없는 기기는 posteriors 안에 있어야 한다: {sorted(outside)}")
+        if set(self.conservative) != unzeroed:
+            raise ValueError(
+                "보수적 사후확률의 기기는 자동 영점이 없는 기기와 같아야 한다 "
+                f"(conservative={sorted(self.conservative)}, unzeroed={sorted(unzeroed)})"
+            )
+        for node_id, probability in self.conservative.items():
+            if isinstance(probability, bool) or not isinstance(probability, (int, float)):
+                raise ValueError("보수적 사후확률은 숫자여야 한다")
+            if not isfinite(probability) or not 0.0 <= probability <= 1.0:
+                raise ValueError("보수적 사후확률은 [0, 1] 범위의 유한한 값이어야 한다")
+            if probability > self.posteriors[node_id]:
+                raise ValueError(f"보수적 사후확률은 사후확률 이하다: {node_id} ({probability} > {self.posteriors[node_id]})")
         object.__setattr__(self, "posteriors", _freeze(self.posteriors))
+        object.__setattr__(self, "unzeroed", unzeroed)
+        object.__setattr__(self, "conservative", _freeze(self.conservative))
 
     @property
     def best(self) -> tuple[str, float] | None:
@@ -381,6 +404,12 @@ class ProximityResult:
         if not self.posteriors:
             return None
         return min(self.posteriors.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    def threshold_probability(self, node_id: str) -> float:
+        """임계값과 비교할 확률 (FR-17). 자동 영점이 없는 기기는 보수적 사후확률, 있는 기기는 사후확률이다. 결과에 없는 기기는 0.0이다."""
+        if node_id in self.unzeroed:
+            return self.conservative[node_id]
+        return self.posteriors.get(node_id, 0.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -404,6 +433,31 @@ class DistanceOrder:
                 continue
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
                 raise ValueError(f"정렬 값은 None 또는 유한한 수여야 한다: {node_id}={value!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class AutoZero:
+    """기기 하나의 자동 영점 개정 (FR-16, #252). zero_db 가 None 이면 버림 개정이다."""
+
+    node_id: str
+    zero_db: float | None  # dB. 보정한 RSSI 는 `r - zero_db` 다. None 이면 자동 영점이 없다
+    vendor_model: str | None  # 이 개정을 기록할 때 기기 선언의 vendor. 선언이 없으면 None
+    vendor_firmware: str | None
+    revision: int  # 서버 전체에 하나인 증가 번호
+    recorded_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class AutoZeroState:
+    """개정 하나의 시점에 기기별로 적용하는 자동 영점 (FR-22)."""
+
+    revision: int  # 이 상태의 개정 번호. 행이 없으면 0
+    zeros: Mapping[str, AutoZero]  # node_id → revision 이하의 가장 최근 행 (버림 포함). 읽기 전용
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "zeros", _freeze(self.zeros))
+        if self.revision < 0:
+            raise ValueError(f"개정 번호는 0 이상이어야 한다: {self.revision}")
 
 
 # ── 점유 ────────────────────────────────────────────────────────────

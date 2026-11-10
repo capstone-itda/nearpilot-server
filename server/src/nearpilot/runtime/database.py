@@ -28,7 +28,7 @@ from nearpilot.db.repositories._common import deferred_transaction, unregister_j
 from nearpilot.db.schema import connect
 from nearpilot.shared.config import Settings
 from nearpilot.shared.interfaces import (
-    AccountLookup, AdminRepository, AuditLog, ExecutionStore, Repository, RetentionStore,
+    AccountLookup, AdminRepository, AuditLog, AutoZeroStore, ExecutionStore, Repository, RetentionStore,
 )
 from nearpilot.shared.models import BeaconKey
 
@@ -132,6 +132,9 @@ class ThreadDatabase:
 
     def accounts(self) -> AccountLookup:
         return _scoped(self, "repo", AccountLookup)
+
+    def auto_zero_store(self) -> AutoZeroStore:
+        return _scoped(self, "repo", AutoZeroStore)
 
     def execution_store(self) -> ExecutionStore:
         return _scoped(self, "store", ExecutionStore)

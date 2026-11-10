@@ -1,7 +1,7 @@
 """서버 진입점과 서비스 조립 (specs/core-server-assembly/spec.md 5절·8절).
 
 실제 SQLite·runtime 조립·IOT 보고 처리 위에서 시뮬레이터를 fake Paho 로 연결한다.
-근접 추정은 fake 로 고정한다. 단, 근접 복원 검사는 실제 HMM 을 쓴다.
+근접 추정은 fake 로 고정한다. 단, 근접 복원 검사와 자동 영점 저장 검사는 실제 HMM 을 쓴다.
 """
 
 from __future__ import annotations
@@ -17,11 +17,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from _runtime import (
-    OWNER, TOKENS, UUID, VISITOR_A, VISITOR_B, FakeProximity, McpCaller, SimBroker, asgi_post, make_config,
-    query, running, seed, wait_until,
+    AUTO_ZEROS, MINOR, MODEL_ROOT, MODEL_VERSION, NODES, OWNER, TOKENS, UUID, VISITOR_A, VISITOR_B, FakeProximity,
+    McpCaller, SimBroker, asgi_post, feed_auto_zero_frames, make_config, query, running, seed, wait_until,
 )
 from nearpilot.core.lifecycle.node_events import NodeEventService
 from nearpilot.core.lifecycle.restore import RestoreService
+from nearpilot.core.proximity.common_model import load_model_version
 from nearpilot.core.proximity.estimator import HmmProximityEstimator
 from nearpilot.db.repositories.execution_store import SqliteExecutionStore
 from nearpilot.db.repositories.retention import SqliteRetentionStore
@@ -369,6 +370,50 @@ def test_FR16_runtime_restores_recent_observations(world):
         # 최근 구간의 관측만 실제 HMM 의 기존 복원 접점으로 넣는다.
         assert [len(frames) for frames in restored] == [1]
         assert restored[0][0].beacon == BeaconKey(UUID, 1, 2)
+
+
+def test_FR16_runtime_saves_auto_zero_to_db(tmp_path):
+    """서버가 찾은 자동 영점은 DB에 쌓이고, 다시 시작한 서버가 그 값을 쓴다 (FR-16, FR-22, 결정 6).
+
+    근접 추정기 팩토리를 주지 않아서 서버 조립이 만든 기본 추정기다. 앵커 셋이 한 비콘을 `min_bins`+4칸 들으면 1등이 아닌 둘이
+    자동 영점을 찾는다. 조립이 추정기에 저장소를 넘기지 않으면 메모리에서만 찾아서 DB 행이 없고, 시작할 때 DB의 영점을 읽지 않으면
+    다시 시작한 서버가 영점을 모른다.
+    """
+    anchors = ("locker-1", "locker-2", "locker-3")
+    cfg = make_config(tmp_path)
+    seed(cfg.database.path, nodes={node_id: NODES[node_id] for node_id in anchors})
+    min_bins = load_model_version(MODEL_ROOT, MODEL_VERSION).auto_zero_min_bins
+
+    broker = SimBroker(tmp_path / "first", anchors)
+    try:
+        with running(Runtime(cfg, client_factory=broker.factory)) as runtime:
+            feed_auto_zero_frames(runtime, anchors, bins=min_bins + 4)
+    finally:
+        broker.close()
+    rows = query(cfg.database.path, "SELECT revision, node_id, zero_db FROM auto_zero ORDER BY revision")
+    assert [(row["revision"], row["node_id"], row["zero_db"]) for row in rows] == [
+        (1, "locker-2", AUTO_ZEROS[0]), (2, "locker-3", AUTO_ZEROS[1])]  # 늘 1등인 locker-1은 영점이 없다
+
+    # 같은 DB로 다시 시작한다. 기기가 보고하면 근접 참여 기기가 되고, 저장한 영점이 있는 둘은 unzeroed가 아니다.
+    broker = SimBroker(tmp_path / "again", anchors)
+    try:
+        with running(Runtime(cfg, client_factory=broker.factory)) as runtime:
+            assert runtime.services is not None
+            wait_until(lambda: all(runtime.services.restore.can_execute(node_id) for node_id in anchors))
+            broker.rssi()
+            with runtime.db.scope() as bound:
+                nodes = bound.repo.nodes()
+
+            def posterior():
+                return runtime.services.proximity.posterior(
+                    [BeaconKey(UUID, 1, MINOR[VISITOR_A])], nodes, datetime.now(timezone.utc), place_nodes=nodes)
+
+            wait_until(lambda: posterior().posteriors.keys() == set(anchors))
+            result = posterior()
+            assert result.unzeroed == frozenset({"locker-1"})
+            assert result.calib_version == "2"  # DB의 최신 개정 번호
+    finally:
+        broker.close()
 
 
 def test_FR20_runtime_release_and_leave_off(world):

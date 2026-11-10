@@ -54,7 +54,9 @@ keepalive, 접속·시작·종료 제한 시간, 재접속 최소·최대 대기
 - `[http]`의 `public_hosts`는 선택이다. 터널 같은 공개 주소로 `/mcp`를 열 때 그 Host를 쓴다 (예: `["mcp.example.com"]`).
   `/mcp`는 localhost와 이 Host로 온 요청만 받는다. 다른 Host는 토큰이 맞아도 `421`이다.
 - `[runtime]`은 주기 작업 간격, SQLite 대기시간과 종료 대기 제한이다. 모두 선택이다.
-- `[proximity.models]`에 장소별 모델 버전을 명시한다. 파일은 `<model_root>/<place_id>/<model_version>.json`이다.
+- `[proximity]`의 `model_version`이 공통 근접 모델 하나를 고른다. 파일은 `<model_root>/<model_version>.json`이다.
+  모델은 장소, 기기, 좌표를 모른다. 장소별 `[proximity.models]` 표는 받지 않는다. 기기별 자동 영점은 서버가 장소의 관측으로 찾아 DB에 쓴다.
+  기기가 셋 미만인 장소는 자동 영점을 찾지 못한다. 그런 기기의 근접 지정은 보수적 사후확률(모델의 `auto_zero.bound_db`)로 판정해서, 기기 바로 앞의 강한 신호가 아니면 `ASK`다. 명시 지정과 거리 선택자는 쓸 수 있다.
 - `[mqtt]`와 `[delivery]`는 모든 키가 필수다. `password_file`은 서버 계정의 원문 비밀번호 파일이다.
 - `[delivery]`의 `clock_max_error_sec`, `clock_trust_sec`, `clock_resync_sec`는 기기의 MQTT 시각 응답 값이다 (#236). 서버는 모든 기기의 관측 검사에 같은 오차 상한을 쓴다. 0은 같은 PC의 시뮬레이터에만 쓴다. 옛 `[delivery.clock_skew_sec]` 표가 있으면 시작하지 않는다.
 - `[dashboard]`는 선택이다. 있으면 서버가 소유자 토큰으로 대시보드의 모니터링 WebSocket(`/dashboard/stream`)과
@@ -140,15 +142,14 @@ nearpilot --dir var/final-demo provision --node locker-1 --port COM6   # USB 주
 |---|---|---|---|
 | `config/seed/` | 시드: 계정, 비콘, 장소, 기기 신뢰와 종료 정책, 접근 정책 | 사람 | `seed` |
 | `config/plans/` | 수집 계획: 회차 순서와 길이, 수집하는 사람의 비콘 | 사람 | `collect run` |
-| `config/layouts/` | 배치: 기기와 기기 앞 위치의 좌표, none 지점 | 사람 | `fit` |
-| `config/fit/` | 적합 설정: 분할 비율, 후보 값, 통과 기준 | 사람 | `collect list --summary`, `split`, `fit`, `eval` |
+| `config/fit/` | 적합 설정: 분할 비율, 후보 값과 자동 영점 표본 수, 통과 기준 | 사람 | `collect list --summary`, `split`, `fit`, `eval` |
 | `config/eval/` | 서버 지표 평가 설정: 사용자, 기기, 지표별 횟수와 통과 기준, 시뮬레이터 RSSI | 사람 | `evaluate-server` |
 | `var/records/` | 수집 회차 기록 | `collect run` | |
 | `var/splits/` | 분할 결과 | `split` | `fit`, `eval`, `evaluate-reask` |
 | `var/models/` | 모델 파일 (`[proximity].model_root`) | `fit` | `eval`, `evaluate-reask`, `serve` |
 | `var/reports/` | 평가 보고서 (CSV, Markdown). `evaluate-*`는 원자료(JSON)와 그래프(PNG)도 쓴다 | `eval`, `evaluate-server`, `evaluate-reask` | |
 
-`config/`의 `example.*`는 예시다. 좌표, 회차 길이, 통과 기준을 실제 환경에 맞춰 바꾼다.
+`config/`의 `example.*`는 예시다. 회차 길이, 후보 값, 통과 기준을 실제 환경에 맞춰 바꾼다.
 `var/`는 설정 파일 폴더의 부모(`server/var/`)이고 명령이 만든다.
 
 모델을 처음 만들 때의 흐름이다.
@@ -159,8 +160,8 @@ nearpilot seed example.toml
 nearpilot collect run example.json
 nearpilot collect list --summary --place place-a --fit example.toml
 nearpilot split place-a --fit example.toml
-nearpilot fit example.json --split place-a-seed42.json --version v1 --fit example.toml
-nearpilot eval place-a/v1 --split place-a-seed42.json --fit example.toml
+nearpilot fit --split place-a-seed42.json --version v1 --fit example.toml
+nearpilot eval v1 --split place-a-seed42.json --fit example.toml
 nearpilot serve
 ```
 
@@ -170,12 +171,15 @@ nearpilot serve
   계정 토큰은 등록할 때 한 번만 화면에 나온다. DB에는 해시만 저장한다.
 - `collect run`은 회차마다 Enter로 시작하고 q로 끝낸다. 기록은 `var/records/<계획 파일 이름>-<UTC 날짜>.jsonl`에 덧붙인다.
   `collect list --summary --place`의 `분할 가능`이 라벨마다 `예`이면 `split`을 실행한다.
-- `split`, `fit`, `eval`은 `--fit`을 생략하면 `<장소>.toml`을 읽는다. 예시 파일은 `example.toml`이라서 `--fit example.toml`을 준다.
+- `split`과 `eval`은 `--fit`을 생략하면 `<장소>.toml`을, `fit`은 `common.toml`을 읽는다 (모델에는 장소가 없다).
+  예시 파일은 `example.toml`이라서 `--fit example.toml`을 주거나 복사해서 이름을 바꾼다.
   `split`과 `fit`은 이미 있는 결과 파일과 같은 모델 버전을 덮어쓰지 않는다.
+- 모델 파일 하나를 모든 장소가 같이 쓴다. 장소가 여럿이면 `fit`에 `--split`을 장소마다 하나씩 준다 (같은 장소의 분할 결과를 둘 줄 수 없다).
+  `fit`은 역할별 값, 장소별 자동 영점, 조합별 손실을 출력한다. `eval`은 시험 회차에서 찾은 자동 영점으로 보정하고, 보고서의 `calib_version`은 `auto-zero`다.
 - `eval`은 기준에 못 미쳐도 종료 코드 0이고, 보고서의 통과 칸에 쓴다. 전환 시간과 깜빡임은 `미측정`이다.
-- `server.example.toml`의 `[proximity.models]` 값(`replace-with-model-version`)은 자리값이다. 첫 모델을 만들기 전에는 `serve --collect-only`만 쓴다.
-- `fit` 출력의 `place-a = "v1"` 줄을 `config/server.toml`의 `[proximity.models]`에 쓴다.
-  수집 전용 서버를 끈 뒤 `nearpilot serve`를 실행한다. 모델 표가 없으면 일반 `serve`는 시작하지 않는다 (종료 코드 2).
+- `server.example.toml`의 `model_version` 값(`replace-with-model-version`)은 자리값이다. 첫 모델을 만들기 전에는 `serve --collect-only`만 쓴다.
+- `fit` 출력의 `model_version = "v1"` 줄을 `config/server.toml`의 `[proximity]`에 쓴다.
+  수집 전용 서버를 끈 뒤 `nearpilot serve`를 실행한다. `model_version`이 없으면 일반 `serve`는 시작하지 않는다 (종료 코드 2).
 
 # 앱 BLE 기기 설정과 mDNS
 
@@ -280,7 +284,7 @@ nearpilot recover approve locker-1 <복구 ID> --token-file config/.env.owner-to
 ```
 nearpilot evaluate-server server-metrics.example.toml
 nearpilot evaluate-server server-metrics.example.toml --metrics 1,4,5 --seed 7 --out demo --force
-nearpilot evaluate-reask place-a/v1 --split place-a-seed42.json --ratios 1,2,5,10
+nearpilot evaluate-reask v1 --split place-a-seed42.json --ratios 1,2,5,10
 ```
 
 | 옵션 | 뜻 |
@@ -306,7 +310,7 @@ nearpilot evaluate-reask place-a/v1 --split place-a-seed42.json --ratios 1,2,5,1
   이름이면 `config/eval/`에서 찾고, 경로면 실행 폴더 기준이다. 설정 안의 상대 경로는 그 파일이 있는 폴더 기준이다.
 - 고른 지표가 읽는 횟수, 통과 기준, RSSI가 설정에 없거나 값이 틀리면 서버를 띄우기 전에 종료 코드 2다. 고르지 않은 지표의 키가 빠진 것은 오류가 아니다.
   장면에 필요한 사용자나 기기가 설정에 없다는 오류만 지표를 돌릴 때 알게 되어 그때 종료 코드 2로 끝난다.
-- 예시 `server-metrics.example.toml`의 `model_root`는 테스트용 합성 모델을 가리킨다. 실제 평가는 `fit`이 만든 모델과 그 모델의 기기 ID로 설정을 쓴다.
+- 예시 `server-metrics.example.toml`의 `model_root`와 `model_version`은 테스트용 합성 공통 모델을 가리킨다. 실제 평가는 `fit`이 `var/models/`에 만든 모델 파일과 그 버전을 쓴다.
   예시의 횟수, 부하 클라이언트 수, 통과 기준 수치는 시연용 초기값이다. D8에 따라 측정 뒤 다시 정한다.
 
 **도는 순서와 시드**
@@ -333,7 +337,8 @@ nearpilot evaluate-reask place-a/v1 --split place-a-seed42.json --ratios 1,2,5,1
 - `evaluate-server`의 `db_path`는 하네스가 만든 임시 DB 경로이고 평가가 끝나면 지워진다 (`--metrics 9`만 재면 `없음`). `sample_count`는 행의 `trials` 합이다.
 - 시뮬레이터 RSSI(`[rssi]`)는 실제 전파가 아니다. 서버 경로와 절차를 확인하는 값이라서 지표 1·4의 note에 `시뮬레이터 측정 (실측 아님)`이라고 쓴다.
   실기기 수집 뒤 실측 값을 넣은 설정으로 같은 명령을 다시 돌린다. 지표 7의 호스트 쪽 행(`m7_host_*`)은 LLM 호스트가 필요해서 `미측정`이다.
-- `evaluate-reask`는 `eval`처럼 분할 결과의 시험 회차만 읽는다. 모델은 `[proximity].model_root`의 `<장소>/<버전>.json`이다.
+- `evaluate-reask`는 `eval`처럼 분할 결과의 시험 회차만 읽는다. 모델은 `[proximity].model_root`의 `<버전>.json`이고, 장소는 분할 결과의 장소다.
+  시험 회차에서 찾은 자동 영점으로 보정하고 `calib_version`은 `auto-zero`다.
   비용 비율 r마다 확률 임계값 `r/(1+r)` 아래를 재질문으로 세어 재질문률과 오작동률을 낸다. 행은 `m2_reask_curve` 하나와 r마다 `m2_reask_r<r>`이다.
   같은 재질문률에서 오작동이 줄었는지 비교할 기준이 미결이라 통과 여부는 판정하지 않는다 (통과 칸이 빈 값이다).
   시험 회차에 기기 라벨이 없으면 곡선 행을 비우고 note에 이유를 쓴다 (종료 코드 0).

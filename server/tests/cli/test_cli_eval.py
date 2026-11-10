@@ -1,14 +1,16 @@
-"""`nearpilot eval` (NFR-06, NFR-13, specs/core-ops-cli/spec.md 5절·6절 "eval").
+"""`nearpilot eval` (FR-16, NFR-06, NFR-13, specs/core-ops-cli/spec.md 5절·6절 "eval",
+specs/core-proximity-common-model/spec.md 6절 결정 4, 11, 13).
 
 실제 SQLite 파일에 `main(argv)`를 같은 프로세스에서 불러 확인한다. DB의 기기, 비콘, 회차, 프레임은 `make_collection_db`가
 실제 쓰기 경로로 만들고, 모델·분할 결과·적합 설정 파일은 이 파일이 쓴다. 지표 계산의 세부는 `tests/tools/test_evaluation_proximity.py`가
 확인한다. 여기서는 시험 회차만 읽는지, 보고서 파일과 표준 출력과 종료 코드가 맞는지 확인한다.
 
 데이터는 두 가지다. 둘 다 기기 둘(locker-1, locker-2)이 있는 장소 place-a이고, 회차는 20초이며 기기마다 1초에 하나씩 RSSI를 받는다.
-- `hand`: 손으로 쓴 모델 파일(`HAND_MODEL`)과, 그 모델이 확신하는 RSSI의 회차들. 값을 손으로 계산할 수 있다.
+- `hand`: 손으로 쓴 공통 모델 파일(`HAND_MODEL`)과, 그 모델이 확신하는 RSSI의 회차들. 값을 손으로 계산할 수 있다.
 - `fitted`: `test_cli_fit.py`와 같은 학습·검증 회차를 `nearpilot fit`으로 적합한 모델과, 검증 회차와 같은 환경의 시험 회차.
-`window_sec`는 .5초로 둔다. 도우미가 만드는 프레임은 수신(`received_at`)이 관측(`frame_ts`)보다 50ms 늦은데,
-평가 시각은 관측 시각과 같은 순간이라서 정수 초 구간이면 마지막 칸의 프레임이 모두 빠지고 사후확률이 `stay`에서 멈춘다.
+기기가 둘이면 자동 영점을 찾을 수 없어서 (`test_cli_fit.py`) 평가는 영점 없이 보정한다.
+`window_sec`는 2.5초다. 도우미가 만드는 프레임은 정수 초에 있어서, 2.5초 구간은 칸 둘에 프레임이 하나씩 들어가 사후확률이
+정답으로 몰린다 (`test_cli_fit.py` 머리말의 설명과 같다).
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import csv
 import json
 import math
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -26,8 +29,9 @@ import pytest
 
 from nearpilot.cli import EXIT_FAILED, EXIT_INVALID, EXIT_OK
 from nearpilot.cli import eval as eval_cli
-from nearpilot.core.proximity.fit import AnchorLayout, PlaceLayout, model_to_dict, write_model_file
-from nearpilot.core.proximity.model import NodeModel, ProximityModel, load_model
+from nearpilot.core.proximity.common_model import (
+    CommonModel, RoleParams, common_model_to_dict, load_model_version, write_common_model_file,
+)
 from tools.evaluation import report as report_module
 from tools.evaluation.split import SplitResult, split_to_json
 
@@ -37,27 +41,15 @@ REPORT_NAME = "place-a-v1-20261020"  # 기본 보고서 이름: <장소>-<버전
 REPORT_HEADER = "지표  값  기준  통과"
 UNMEASURED_ROWS = ["switch_time  -  -  미측정", "flicker  -  -  미측정"]
 
-LAYOUT = PlaceLayout(
-    "place-a",
-    {"locker-1": AnchorLayout(0.0, 0.0, 0.0, 0.5), "locker-2": AnchorLayout(4.0, 0.0, 4.0, 0.5)},
-    none_points=((2.0, 3.0),),
+DEVICES = ("locker-1", "locker-2")
+# 손으로 쓴 공통 모델: 기기 앞은 −44 dBm, 방문자가 선 기기가 아닌 기기는 −62 dBm, 어느 기기 앞도 아니면 −90 dBm을 기대하고
+# 흔들림은 모두 2 dB다. 아래 `state_rssi`는 이 기대값과 같아서 정답 상태의 확률이 1로 포화된다.
+FRONT_DBM, OTHER_DBM, NONE_DBM = -44.0, -62.0, -90.0
+HAND_MODEL = CommonModel(
+    model_version="v1", window_sec=2.5, stay=0.9, calibration_method="none", calibration_tau=1.0,
+    front=RoleParams(FRONT_DBM, 2.0), other=RoleParams(OTHER_DBM, 2.0), none=RoleParams(NONE_DBM, 2.0),
+    auto_zero_min_bins=120, auto_zero_bound_db=0.0, validation={},
 )
-# 손으로 쓴 모델: 기기마다 A = −50, n = 2, 흔들림 2 dB. 자기 앞(0.5 m)은 −43.98 dBm, 다른 기기 앞(4.03 m)은 −62.11 dBm을 기대한다.
-# none은 −90 dBm이다. 아래 STATE_RSSI는 이 기대값에 가까워서 정답 상태의 확률이 1로 포화된다.
-HAND_MODEL = ProximityModel(
-    place_id="place-a", model_version="v1", calib_version="c1", window_sec=2.5, stay=0.9, min_distance_m=0.3,
-    calibration_method="temperature", calibration_tau=1.0, validation={},
-    nodes={
-        node_id: NodeModel(node_id, a.x, a.y, a.front_x, a.front_y, A=-50.0, n=2.0, sigma=2.0, none_rssi=-90.0,
-                           none_sigma=2.0)
-        for node_id, a in LAYOUT.nodes.items()
-    },
-)
-STATE_RSSI = {  # 방문자가 선 상태 → 앵커마다 받는 RSSI
-    "locker-1": {"locker-1": -44.0, "locker-2": -62.0},
-    "locker-2": {"locker-1": -62.0, "locker-2": -44.0},
-    "none": {"locker-1": -90.0, "locker-2": -90.0},
-}
 PER_RUN = 18  # `hand`의 회차 하나가 만드는 평가 시각: 20초 회차, window 2.5초, 칸 1초 → 2.5초부터 19.5초까지
 
 # `fitted`의 데이터: test_cli_fit.py와 같다. 기기별 (자기 앞, 다른 기기 앞, 어느 기기 앞도 아님) 평균 RSSI(dBm)와 흔들림 폭(dB).
@@ -66,6 +58,13 @@ JITTER = (-1.0, 0.0, 1.0, 0.0)  # 평균은 그대로 두고 표준편차만 0�
 TRAIN_LABELS = ("locker-1", "locker-1", "locker-2", "locker-2", "none", "none")
 VALIDATION_LABELS = ("locker-1", "locker-2", "none")
 TEST_LABELS = ("locker-1", "locker-2", "none")
+
+
+def state_rssi(device: str, state: str) -> float:
+    """방문자가 `state`(기기 ID 또는 "none")에 설 때 `device`가 받는 RSSI. 손으로 쓴 모델의 기대값이다."""
+    if state == "none":
+        return NONE_DBM
+    return FRONT_DBM if device == state else OTHER_DBM
 
 
 def fit_file(*, max_misselection: float = 0.05, max_ece: float = 0.05, taus: str = "[0.5, 1.0, 2.0]",
@@ -77,10 +76,10 @@ ratios = [0.6, 0.2, 0.2]
 min_runs_per_label = 5
 
 [fit]
-min_distance_m = 0.3
 taus = {taus}
 stays = {stays}
 window_secs = {window_secs}
+auto_zero_min_bins = 120
 
 [acceptance]
 max_misselection = {max_misselection}
@@ -92,7 +91,7 @@ def rssis(node_id: str, label: str, seconds: int, *, validation: bool = False) -
     """`node_id`가 `label` 회차에서 1초마다 받는 RSSI `seconds`개 (`test_cli_fit.py`와 같다).
 
     검증·시험 회차는 학습 회차와 환경이 달라서 기기 앞 신호는 5dB 약하고, 다른 기기 앞은 3dB, none은 8dB 세고, 흔들림은 두 배다.
-    그래서 모델이 정답을 완전히 확신하지 못한다.
+    그래도 적합한 모델은 시험 회차를 확신하고 맞힌다.
     """
     near, far, none, spread = LEVELS[node_id]
     if label == "none":
@@ -107,14 +106,15 @@ def rssis(node_id: str, label: str, seconds: int, *, validation: bool = False) -
 
 
 def fitted_run(index: int, label: str, *, validation: bool, seconds: int = 20) -> tuple:
-    frames = {node_id: rssis(node_id, label, seconds, validation=validation) for node_id in LAYOUT.nodes}
+    frames = {node_id: rssis(node_id, label, seconds, validation=validation) for node_id in DEVICES}
     return label, T0 + timedelta(seconds=60 * index), seconds, frames
 
 
 def hand_run(index: int, label: str, *, looks_like: str | None = None, seconds: int = 20,
-             in_progress: bool = False) -> tuple:
+             in_progress: bool = False, devices: Sequence[str] = DEVICES) -> tuple:
     """`make_collection_db`의 회차 한 건. `looks_like`는 라벨과 다른 상태의 RSSI를 쓴다 (라벨을 잘못 단 회차)."""
-    frames = {node_id: [rssi] * seconds for node_id, rssi in STATE_RSSI[looks_like or label].items()}
+    state = looks_like or label
+    frames = {device: [state_rssi(device, state)] * seconds for device in devices}
     return label, T0 + timedelta(seconds=60 * index), None if in_progress else seconds, frames
 
 
@@ -124,18 +124,8 @@ def hand_runs() -> list[tuple]:
             hand_run(3, "locker-1", looks_like="locker-2")]
 
 
-def write_model(server: Path, model: ProximityModel = HAND_MODEL) -> Path:
-    return write_model_file(server / "var" / "models", model)
-
-
-def write_layout(server: Path) -> Path:
-    path = server / "config" / "layouts" / "place-a.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    data = {"place_id": "place-a", "none_points": [list(p) for p in LAYOUT.none_points],
-            "nodes": {n: {"x": a.x, "y": a.y, "front_x": a.front_x, "front_y": a.front_y}
-                      for n, a in LAYOUT.nodes.items()}}
-    path.write_text(json.dumps(data), encoding="utf-8")
-    return path
+def write_model(server: Path, model: CommonModel = HAND_MODEL) -> Path:
+    return write_common_model_file(server / "var" / "models", model)
 
 
 def write_fit(server: Path, name: str = "place-a.toml", text: str | None = None) -> Path:
@@ -155,9 +145,9 @@ def write_split(server: Path, train, validation, test, *, place_id: str = "place
     return path
 
 
-def build_hand(server: Path, make_collection_db, runs: list[tuple] | None = None, **db_options) -> SimpleNamespace:
+def build_hand(server: Path, make_collection_db, runs: list[tuple] | None = None) -> SimpleNamespace:
     """DB에 `runs`(기본은 `hand_runs()`)를 만들고, 모두를 시험 회차로 둔 분할 결과 파일과 손으로 쓴 모델, 적합 설정 파일을 쓴다."""
-    ids = make_collection_db(server, LAYOUT, hand_runs() if runs is None else runs, **db_options)
+    ids = make_collection_db(server, {"place-a": list(DEVICES)}, hand_runs() if runs is None else runs)
     write_model(server)
     write_fit(server)
     write_split(server, (), (), ids)
@@ -165,22 +155,22 @@ def build_hand(server: Path, make_collection_db, runs: list[tuple] | None = None
 
 
 def build_fitted(server: Path, make_collection_db, run_cli) -> SimpleNamespace:
-    """학습 회차 6건, 검증 회차 3건, 시험 회차 3건을 DB에 만들고 `nearpilot fit`으로 모델 v1을 쓴다."""
+    """학습 회차 6건, 검증 회차 3건, 시험 회차 3건을 DB에 만들고 `nearpilot fit`으로 공통 모델 v1을 쓴다."""
     runs = [fitted_run(i, label, validation=False) for i, label in enumerate(TRAIN_LABELS)]
     runs += [fitted_run(6 + i, label, validation=True) for i, label in enumerate(VALIDATION_LABELS)]
     runs += [fitted_run(9 + i, label, validation=True) for i, label in enumerate(TEST_LABELS)]
-    ids = make_collection_db(server, LAYOUT, runs)
+    ids = make_collection_db(server, {"place-a": list(DEVICES)}, runs)
     data = SimpleNamespace(train=tuple(ids[:6]), validation=tuple(ids[6:9]), test=tuple(ids[9:]))
-    write_layout(server)
     write_fit(server)
     write_split(server, data.train, data.validation, data.test)
-    code, _, err = run_cli(["fit", "place-a.json", "--split", "place-a-seed42.json", "--version", "v1"], cwd=server)
+    code, _, err = run_cli(
+        ["fit", "--split", "place-a-seed42.json", "--version", "v1", "--fit", "place-a.toml"], cwd=server)
     assert (code, err) == (EXIT_OK, "")
     return data
 
 
-def eval_argv(*extra: str, model: str = "place-a/v1") -> list[str]:
-    return ["eval", model, "--split", "place-a-seed42.json", *extra]
+def eval_argv(*extra: str, version: str = "v1") -> list[str]:
+    return ["eval", version, "--split", "place-a-seed42.json", *extra]
 
 
 def report_files(server: Path, name: str = REPORT_NAME) -> tuple[Path, Path]:
@@ -211,6 +201,14 @@ def schema_version(server: Path) -> int:
         return conn.execute("PRAGMA user_version").fetchone()[0]
     finally:
         conn.close()
+
+
+@pytest.fixture
+def server_dir(tmp_path: Path, write_config) -> Path:
+    """기본 설정은 저장소의 시험용 모델 폴더를 가리킨다. 이 시험은 모델 파일을 쓰므로 임시 폴더 `var/models`를 가리킨다."""
+    server = tmp_path / "server"
+    write_config(server, proximity={"model_root": "../var/models"})
+    return server
 
 
 @pytest.fixture(autouse=True)
@@ -245,16 +243,19 @@ def test_NFR06_eval_writes_report(server_dir, run_cli, fitted):
     comments, rows = read_report(csv_path)
     assert list(rows) == ["front_misselection_rate", "ece", "switch_time", "flicker"]  # 4행
     # 무엇을 평가했는지 모든 행에 남는다: 장소, 모델 버전, 보정 버전, 분할·적합 설정 파일
-    model = load_model(server_dir / "var" / "models" / "place-a" / "v1.json")
+    model = load_model_version(server_dir / "var" / "models", "v1")
     [(place, version, calib, split_file, fit_file)] = provenance(csv_path)
-    assert (place, version, calib) == ("place-a", "v1", model.calib_version)
+    assert (place, version, calib) == ("place-a", "v1", "auto-zero")  # 보정 버전은 모델이 아니라 평가가 정한다
     assert split_file.endswith("place-a-seed42.json") and fit_file.endswith("place-a.toml")
     # fit이 쓴 모델이 시험 회차(검증 회차와 같은 환경)를 맞힌다. 회차의 평가 시각 수는 모델이 고른 window_sec에서 나온다.
-    per_run = math.floor(20 - load_model(server_dir / "var" / "models" / "place-a" / "v1.json").window_sec) + 1
+    per_run = math.floor(20 - model.window_sec) + 1
     assert (rows["front_misselection_rate"]["trials"], rows["front_misselection_rate"]["failures"]) == (
         str(2 * per_run), "0")
     assert rows["ece"]["trials"] == str(3 * per_run)
-    assert 0.0 < float(rows["ece"]["value"]) < 1.0  # 모델이 정답을 완전히 확신하지는 않는다
+    # 시험 회차는 검증 회차와 같은 환경이고, 적합한 모델이 정답을 확신하고 맞힌다: 오선택 0, ECE 0이라 두 기준을 모두 통과한다
+    assert float(rows["front_misselection_rate"]["value"]) == 0.0
+    assert float(rows["ece"]["value"]) == pytest.approx(0.0, abs=1e-9)
+    assert (rows["front_misselection_rate"]["passed"], rows["ece"]["passed"]) == ("True", "True")
     assert comments[0] == f"# db_path: {(server_dir / 'var' / 'nearpilot.db').resolve()}"
     assert comments[1] == f"# schema_version: {schema_version(server_dir)}"  # 상수가 아니라 DB의 PRAGMA user_version이다
     assert comments[3:] == [f"# sample_count: {3 * per_run}", "# generated_at: 2026-10-20T05:00:00+00:00"]
@@ -291,6 +292,41 @@ def test_NFR06_eval_report_values_match_hand_calculation(server_dir, run_cli, ha
     assert "- 표본 수: 72" in markdown and "- 생성 시각: 2026-10-20T05:00:00+00:00" in markdown
     assert "| metric | value | limit | passed | trials | failures | note |" in markdown
     assert "| " + " | ".join(["switch_time", "", "", "", "", "", "미측정"]) + " |" in markdown
+
+
+def test_FR16_cli_eval_common_model(server_dir, run_cli, make_collection_db):
+    """공통 모델 파일 하나로 두 장소를 평가한다. 장소는 분할 결과가 정하고, 보고서의 보정 버전은 `auto-zero`다."""
+    doors = ("door-1", "door-2")
+    runs = [
+        hand_run(0, "locker-1"), hand_run(1, "locker-2"), hand_run(2, "none"),  # place-a: 모두 맞게 단 회차
+        hand_run(3, "door-1", devices=doors), hand_run(4, "none", devices=doors),  # place-b: 맞게 단 회차 둘과
+        hand_run(5, "door-2", looks_like="door-1", devices=doors),  # door-1 앞의 RSSI에 door-2를 단 회차
+    ]
+    ids = make_collection_db(server_dir, {"place-a": list(DEVICES), "place-b": list(doors)}, runs)
+    model_path = write_model(server_dir)  # 모델 파일은 하나다. 파일에 장소 이름이 없다
+    before = model_path.read_bytes()
+    for place, test in (("place-a", ids[:3]), ("place-b", ids[3:])):
+        write_fit(server_dir, f"{place}.toml")
+        write_split(server_dir, (), (), test, place_id=place, name=f"{place}-seed42.json")
+
+    # place-b: 기기 라벨 회차 둘(36개) 중 하나가 오선택(18개)이라 오선택률 1/2이다. ECE는 54개의 정답 비율 36/54와 신뢰도 1의 차 1/3이다.
+    for place, failures, table in (
+        ("place-a", 0, ["front_misselection_rate  0.0000  0.0500  통과", "ece  0.0000  0.0500  통과"]),
+        ("place-b", PER_RUN, ["front_misselection_rate  0.5000  0.0500  미달", "ece  0.3333  0.0500  미달"]),
+    ):
+        code, out, err = run_cli(["eval", "v1", "--split", f"{place}-seed42.json"], cwd=server_dir)
+
+        csv_path, _ = report_files(server_dir, f"{place}-v1-20261020")  # 이름의 장소는 분할 결과의 장소다
+        assert (code, err) == (EXIT_OK, ""), place
+        [(place_id, version, calib, split_file, fit_file)] = provenance(csv_path)
+        assert (place_id, version, calib) == (place, "v1", "auto-zero"), place
+        assert split_file.endswith(f"{place}-seed42.json") and fit_file.endswith(f"{place}.toml"), place
+        rows = read_report(csv_path)[1]
+        assert (rows["front_misselection_rate"]["trials"], rows["front_misselection_rate"]["failures"]) == (
+            str(2 * PER_RUN), str(failures)), place
+        assert rows["ece"]["trials"] == str(3 * PER_RUN), place
+        assert out.splitlines()[1:3] == table, place
+    assert model_path.read_bytes() == before and [p.name for p in model_path.parent.iterdir()] == ["v1.json"]
 
 
 def test_NFR06_eval_perfect_model_passes_with_confidence_bound(server_dir, run_cli, make_collection_db):
@@ -379,7 +415,7 @@ def test_NFR06_eval_without_device_label_runs(server_dir, run_cli, make_collecti
 
 
 def test_NFR06_eval_uses_frame_interval_from_settings(server_dir, run_cli, hand, write_config, monkeypatch):
-    write_config(server_dir, settings={"version": "t1", "rssi_frame_sec": 0.5})
+    write_config(server_dir, settings={"version": "t1", "rssi_frame_sec": 0.5}, proximity={"model_root": "../var/models"})
     seen = []
     real = eval_cli.collect_samples
 
@@ -506,7 +542,7 @@ def test_NFR06_eval_creates_missing_report_folders(server_dir, run_cli, write_co
     assert not (other / "var").exists()
 
     code, out, err = run_cli(
-        ["eval", "place-a/v1", "--split", str(split), "--fit", str(fit), "--out", "far", "--config", str(config)],
+        ["eval", "v1", "--split", str(split), "--fit", str(fit), "--out", "far", "--config", str(config)],
         cwd=tmp_path)
 
     assert (code, err) == (EXIT_OK, "")
@@ -558,7 +594,7 @@ def test_NFR06_eval_unreadable_runs_fail(server_dir, run_cli, make_collection_db
     assert (code, out) == (EXIT_FAILED, "")
     assert err == "수집 회차를 읽을 수 없다: 진행 중인 회차 col-005\n"
     write_split(server_dir, (), (), (*data.test[:-1], "col-999"), name="ghost.json")  # 시험 회차 하나가 DB에 없다
-    code, out, err = run_cli(["eval", "place-a/v1", "--split", "ghost.json"], cwd=server_dir)
+    code, out, err = run_cli(["eval", "v1", "--split", "ghost.json"], cwd=server_dir)
     assert (code, out) == (EXIT_FAILED, "")
     assert err == "수집 회차를 읽을 수 없다: DB에 없는 회차 col-999\n"
     assert not (server_dir / "var" / "reports").exists()  # 보고서도 보고서 폴더도 만들지 않는다
@@ -575,18 +611,6 @@ def test_NFR06_eval_run_without_evaluation_times_fails(server_dir, run_cli, make
     assert not (server_dir / "var" / "reports").exists()
 
 
-def test_NFR06_eval_label_missing_from_the_model_fails(server_dir, run_cli, make_collection_db):
-    # locker-3은 DB에 있는 기기지만 모델(locker-1, locker-2)에는 없다
-    build_hand(server_dir, make_collection_db, [hand_run(0, "locker-1"), hand_run(1, "locker-3", looks_like="locker-1")],
-               unplaced=("locker-3",))
-
-    code, out, err = run_cli(eval_argv(), cwd=server_dir)
-
-    assert (code, out) == (EXIT_FAILED, "")
-    assert err == "평가 실패: 회차 'col-002': 라벨 'locker-3'에 해당하는 기기가 모델에 없다 ('none'도 아니다)\n"
-    assert not (server_dir / "var" / "reports").exists()
-
-
 def test_NFR06_eval_without_test_runs_fails(server_dir, run_cli, hand):
     write_split(server_dir, hand.test, (), ())  # 시험 회차가 없다
 
@@ -600,33 +624,27 @@ def test_NFR06_eval_without_test_runs_fails(server_dir, run_cli, hand):
 # ── 입력 오류 (종료 코드 2) ───────────────────────────────────────────
 
 
-@pytest.mark.parametrize("model", [
-    "place-a", "place-a/v1/v2", "/v1", "place-a/", "/", "place-a\\v1", "place-a/..", "../v1", "./v1", "place-a/./v1",
-    "place\\a/v1", "place-a/v\\1",
-])
-def test_NFR06_eval_model_argument_must_be_place_slash_version(server_dir, run_cli, model):
-    code, out, err = run_cli(eval_argv(model=model), cwd=server_dir)
+@pytest.mark.parametrize("version", ["", ".", "..", "a/b", "a\\b", "../v1", "./v1", "/v1", "v1/", "C:\\v1"])
+def test_NFR06_eval_version_must_be_a_name(server_dir, run_cli, version):
+    code, out, err = run_cli(eval_argv(version=version), cwd=server_dir)
 
+    # 모델 파일은 `<VERSION>.json`이다. 이름이 아니면 설정도 읽기 전에 거부한다.
     assert (code, out) == (EXIT_INVALID, "")
-    assert err == f"평가할 모델은 PLACE/VERSION 형식으로 쓴다: {model}\n"
+    assert err == f"VERSION은(는) 경로 구분자가 없는 이름이어야 한다: {version!r}\n"
     assert not (server_dir / "var").exists()
 
 
 def test_NFR06_eval_missing_model_is_input_error(server_dir, run_cli):
-    models = (server_dir / "var" / "models" / "place-a").resolve()
+    models = (server_dir / "var" / "models").resolve()
 
     code, out, err = run_cli(eval_argv(), cwd=server_dir)
     assert (code, out) == (EXIT_INVALID, "")
-    assert err == f"모델 파일이 없다: {models / 'v1.json'}. {models}에 있는 파일: (없음)\n"
+    assert err == f"모델 파일 오류: 모델 'v1'의 파일이 없다: {models / 'v1.json'}\n"
 
-    write_model(server_dir)  # 다른 버전이 있으면 안내한다
-    write_model(server_dir, replace(HAND_MODEL, model_version="v2"))
-    code, out, err = run_cli(eval_argv(model="place-a/v9"), cwd=server_dir)
+    write_model(server_dir, replace(HAND_MODEL, model_version="v2"))  # 다른 버전이 있어도 요청한 버전의 파일이 있어야 한다
+    code, out, err = run_cli(eval_argv(version="v9"), cwd=server_dir)
     assert (code, out) == (EXIT_INVALID, "")
-    assert err == f"모델 파일이 없다: {models / 'v9.json'}. {models}에 있는 파일: v1.json, v2.json\n"
-    code, out, err = run_cli(eval_argv(model="place-b/v1"), cwd=server_dir)  # 다른 장소의 모델은 그 장소 폴더에서 찾는다
-    assert (code, out) == (EXIT_INVALID, "")
-    assert err.startswith(f"모델 파일이 없다: {models.parent / 'place-b' / 'v1.json'}.")
+    assert err == f"모델 파일 오류: 모델 'v9'의 파일이 없다: {models / 'v9.json'}\n"
     assert not (server_dir / "var" / "reports").exists() and not (server_dir / "var" / "nearpilot.db").exists()
 
 
@@ -638,44 +656,30 @@ def test_NFR06_eval_rejects_invalid_model_file(server_dir, run_cli):
     assert (code, out) == (EXIT_INVALID, "")
     assert err.startswith(f"모델 파일 오류: {path.resolve()}: UTF-8 JSON으로 읽을 수 없다 (") and err.count("\n") == 1
 
-    # 모델 파일의 장소가 폴더 이름과 다르다
-    path.write_text(json.dumps(model_to_dict(replace(HAND_MODEL, place_id="place-b"))), encoding="utf-8")
+    # 파일 안의 model_version이 파일 이름과 다르다
+    path.write_text(json.dumps(common_model_to_dict(replace(HAND_MODEL, model_version="v2"))), encoding="utf-8")
     code, out, err = run_cli(eval_argv(), cwd=server_dir)
     assert (code, out) == (EXIT_INVALID, "")
-    assert err.startswith("모델 파일 오류: ") and "place_id는 디렉터리 이름과 같아야 한다" in err
-    assert not (server_dir / "var" / "reports").exists()
+    assert err == (f"모델 파일 오류: {path.resolve()}: model_version은 파일 이름과 같아야 한다 "
+                   "(model_version='v2', 파일='v1')\n")
 
-
-def test_NFR06_eval_rejects_model_of_another_place(server_dir, run_cli, hand, monkeypatch):
-    real = eval_cli.load_model
-    monkeypatch.setattr(eval_cli, "load_model", lambda path: replace(real(path), place_id="place-b"))
-
+    # 옛 장소별 모델 파일(장소와 기기별 값이 있는 형식)은 읽지 않는다
+    path.write_text(json.dumps({"place_id": "place-a", "model_version": "v1", "nodes": {}}), encoding="utf-8")
     code, out, err = run_cli(eval_argv(), cwd=server_dir)
-
     assert (code, out) == (EXIT_INVALID, "")
-    assert err == "모델의 장소(place-b)와 평가할 장소(place-a)가 다르다\n"
-    assert not (server_dir / "var" / "reports").exists()
-
-
-def test_NFR06_eval_split_place_mismatch_rejected(server_dir, run_cli, hand):
-    write_split(server_dir, (), (), hand.test, place_id="place-b")
-
-    code, out, err = run_cli(eval_argv(), cwd=server_dir)
-
-    assert (code, out) == (EXIT_INVALID, "")
-    assert err == "분할 결과의 장소(place-b)와 평가할 장소(place-a)가 다르다\n"
+    assert err.startswith("모델 파일 오류: ") and "모르는 키" in err and "place_id" in err
     assert not (server_dir / "var" / "reports").exists()
 
 
 def test_NFR06_eval_checks_input_files_in_order(server_dir, run_cli):
-    models = (server_dir / "var" / "models" / "place-a").resolve()
+    models = (server_dir / "var" / "models").resolve()
     splits = (server_dir / "var" / "splits").resolve()
     fit_dir = (server_dir / "config" / "fit").resolve()
     db_file = (server_dir / "var" / "nearpilot.db").resolve()
 
     code, out, err = run_cli(eval_argv(), cwd=server_dir)
     assert (code, out) == (EXIT_INVALID, "")
-    assert err == f"모델 파일이 없다: {models / 'v1.json'}. {models}에 있는 파일: (없음)\n"
+    assert err == f"모델 파일 오류: 모델 'v1'의 파일이 없다: {models / 'v1.json'}\n"
 
     write_model(server_dir)
     code, _, err = run_cli(eval_argv(), cwd=server_dir)
@@ -798,8 +802,7 @@ def test_NFR06_eval_file_arguments_name_and_path(server_dir, run_cli, hand, tmp_
     (work / "mine.toml").write_text(fit_file(max_misselection=0.5, max_ece=0.4), encoding="utf-8")
 
     def run(split: str, fit: str) -> tuple[int, str, str]:
-        return run_cli(["eval", "place-a/v1", "--split", split, "--fit", fit, "--out", "viaw", "--config", config],
-                       cwd=work)
+        return run_cli(["eval", "v1", "--split", split, "--fit", fit, "--out", "viaw", "--config", config], cwd=work)
 
     code, out, err = run("./mine-split.json", "./mine.toml")
     assert (code, err) == (EXIT_OK, "")
@@ -831,10 +834,11 @@ def test_NFR06_eval_help_and_usage_errors(run_cli, tmp_path):
 
     code, out, _ = run_cli(["eval", "--help"], cwd=tmp_path)
     assert code == EXIT_OK and all(
-        text in out for text in ("PLACE/VERSION", "--split", "--fit", "--out", "--force", "--config"))
+        text in out for text in ("VERSION", "--split", "--fit", "--out", "--force", "--config"))
+    assert "PLACE" not in out  # 모델은 버전으로만 고른다. 장소는 분할 결과가 정한다
 
-    for argv in (["eval"], ["eval", "place-a/v1"], ["eval", "--split", "s.json"],
-                 ["eval", "place-a/v1", "other/v2", "--split", "s.json"], ["eval", "place-a/v1", "--split", "s.json", "--bad"]):
+    for argv in (["eval"], ["eval", "v1"], ["eval", "--split", "s.json"],
+                 ["eval", "v1", "v2", "--split", "s.json"], ["eval", "v1", "--split", "s.json", "--bad"]):
         code, out, err = run_cli(argv, cwd=tmp_path)  # 인자 오류는 argparse가 사용법과 사유를 stderr에 쓰고 2다
         assert (code, out) == (EXIT_INVALID, ""), argv
         assert "nearpilot" in err and "eval" in err, argv

@@ -100,7 +100,8 @@ class Rechecker:
             raise stop(Verdict.DENY, ReasonCode.TARGET_UNAVAILABLE)
 
         # ③ 근접 — 명시 지정과 거리 선택자의 공용형 하위 요청도 ①②는 다시 검사하지만 확률 계산은 생략한다.
-        # 거리 선택자의 대여형 하위 요청은 `nearest:` 와 같다 (FR-17, FR-18, #253).
+        # 거리 선택자의 대여형 하위 요청도 확률을 계산하지만 이전처럼 명목 사후확률로 비교한다 — 자동 영점이 없는 기기도
+        # 거리 선택자로 쓸 수 있다 (FR-05, FR-17, FR-18, #253). 그 밖의 요청(`nearest:`, `any:`)은 `threshold_probability`로 비교한다.
         p: float | None = None
         prob: dict[str, Any]
         if explicit:
@@ -113,7 +114,8 @@ class Rechecker:
                 raise ValueError("임계값 설정이 없다")
             place_nodes = [n for n in all_nodes if n.place_id == place_id]
             result = self._proximity.posterior(beacons, candidates, now, place_nodes=place_nodes)
-            p = dict(result.posteriors).get(node_id, 0.0)
+            p = (dict(result.posteriors).get(node_id, 0.0) if req.target.is_selector
+                 else result.threshold_probability(node_id))
             prob = {"p": p, "threshold": threshold}
             if p < threshold:
                 raise stop(Verdict.ASK, ReasonCode.MOVE_CLOSER, prob, p_max=p)

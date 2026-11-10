@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from nearpilot.core.proximity.common_model import load_model_version
 from nearpilot.runtime import load_config
 from tools.node_lab import setup
 from tools.node_sim import load_config as load_fleet
@@ -38,8 +39,13 @@ def test_FR07_lab_uses_one_clock_bound(generated):
 
 def test_FR16_lab_model_is_marked_synthetic_and_beacon_matches(generated):
     folder = generated()
-    model = json.loads((folder / "models/node-lab/synthetic-1.json").read_text(encoding="utf-8"))
+    model = json.loads((folder / "models" / "synthetic-2.json").read_text(encoding="utf-8"))
     assert model["validation"]["quality_verified"] is False
+    assert model["validation"]["source"] == "SYNTHETIC_NOT_MEASURED"
+    # 서버 설정이 이 파일을 공통 모델로 읽는다. 모델은 장소와 기기를 모른다
+    cfg = load_config(folder / "server.toml")
+    assert cfg.proximity.model_version == "synthetic-2"
+    assert load_model_version(cfg.proximity.model_root, cfg.proximity.model_version).model_version == "synthetic-2"
     lab = json.loads((folder / "lab.json").read_text(encoding="utf-8"))
     fleet = json.loads((folder / "fleet.json").read_text(encoding="utf-8"))
     for node in fleet["devices"]:

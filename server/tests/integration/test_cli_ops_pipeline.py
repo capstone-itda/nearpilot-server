@@ -1,6 +1,7 @@
 """운영 CLI 전체 흐름 (FR-16, specs/core-ops-cli/spec.md 5절·8절 `test_FR16_ops_pipeline_end_to_end`).
 
 `seed → serve --collect-only → collect run → collect list → split → fit → eval → serve(모델로 시작)`를 한 테스트로 확인한다.
+`fit`이 쓴 공통 모델 파일을 `eval`이 평가하고, 마지막 `serve`가 그 모델로 시작한다.
 명령은 `nearpilot.cli.main`을 같은 프로세스에서 부르고, 서버는 실제 SQLite·runtime 조립·IOT 보고 처리 위에서
 시뮬레이터 기기를 fake Paho 로 연결한다 (`_runtime.py`). 실제 uvicorn 은 띄우지 않는다.
 
@@ -10,8 +11,8 @@
 같고, 시계가 실제 시간보다 앞서 가도 IOT 의 "미래 관측"·"오래된 관측" 검사를 통과한다.
 
 데이터: 기기 둘(locker-1, locker-2)이 있는 장소 place-a. 라벨(기기 둘과 none)마다 20초 회차를 5개 수집하면 분할은 3/1/1이다.
-RSSI 는 라벨마다 정한 평균에 (−1, 0, +1, 0) × 흔들림 폭을 차례로 더한 값이라서, 학습 회차에서 나온 앵커 값을 손으로 구할 수 있다
-(`expected_anchor`). `window_secs` 는 예시 설정처럼 .5초 단위로 둔다.
+RSSI 는 라벨마다 정한 평균에 (−1, 0, +1, 0) × 흔들림 폭을 차례로 더한 값이라서, 학습 회차에서 나온 역할별 값을 손으로 구할 수 있다
+(`EXPECTED_ROLES`). 기기가 둘이면 자동 영점을 찾을 수 없어서 값이 보정 없이 그대로 쓰인다. `window_secs` 는 예시 설정처럼 .5초 단위로 둔다.
 """
 
 from __future__ import annotations
@@ -30,8 +31,8 @@ import pytest
 from _runtime import UUID, SimBroker, query, running, wait_until
 from nearpilot.cli import collect as collect_cli
 from nearpilot.cli import main, serve as serve_cli
+from nearpilot.core.proximity.common_model import load_model_version
 from nearpilot.core.proximity.estimator import HmmProximityEstimator
-from nearpilot.core.proximity.model import load_model
 from nearpilot.runtime import Runtime
 from nearpilot.shared.models import BeaconKey
 from nearpilot.shared.tokens import hash_token
@@ -48,8 +49,13 @@ LABELS = (*DEVICES, "none") * ROUNDS  # 계획 파일의 회차 순서
 # 기기별 (자기 앞, 다른 기기 앞, 어느 기기 앞도 아님) 평균 RSSI(dBm)와 흔들림 폭(dB). none 회차의 흔들림은 두 배다.
 LEVELS = {"locker-1": (-44.0, -60.0, -80.0, 1.0), "locker-2": (-46.0, -64.0, -76.0, 2.0)}
 JITTER = (-1.0, 0.0, 1.0, 0.0)  # 평균은 그대로 두고 표준편차만 0보다 크게 한다
-FRONT = {"locker-1": (0.0, 0.5), "locker-2": (4.0, 0.5)}  # 기기 앞 위치. 기기는 (0, 0), (4, 0)에 있다
-NONE_POINT = (2.0, 3.0)
+# 학습 회차(라벨마다 3개)에서 손으로 구한 역할별 값 (mean, sigma). 흔들림 (−1, 0, +1, 0) × s가 5주기(20개)면 평균은 0이고
+# 분산은 s²/2다. 역할마다 두 기기의 표본 수가 같아서, 합친 평균은 두 평균의 평균이고 분산은
+# (기기 분산 + (기기 평균 − 합친 평균)²)의 평균이다.
+#   front: 자기 앞의 값 (−44, s = 1)과 (−46, s = 2) → 평균 −45, 분산 ((0.5 + 1) + (2 + 1)) / 2 = 2.25
+#   other: 다른 기기 앞의 값 (−64, s = 2)과 (−60, s = 1) → 평균 −62, 분산 ((2 + 4) + (0.5 + 4)) / 2 = 5.25
+#   none: none 회차의 값 (−80, s = 2)과 (−76, s = 4) → 평균 −78, 분산 ((2 + 4) + (8 + 4)) / 2 = 9
+EXPECTED_ROLES = {"front": (-45.0, 1.5), "other": (-62.0, math.sqrt(5.25)), "none": (-78.0, 3.0)}
 
 SERVER_TOML = """\
 [settings]
@@ -73,7 +79,7 @@ audit_jsonl = "../var/audit.jsonl"
 
 [proximity]
 model_root = "../var/models"
-{models}
+{model_version}
 [mqtt]
 host = "127.0.0.1"
 port = 1883
@@ -101,10 +107,10 @@ ratios = [0.6, 0.2, 0.2]
 min_runs_per_label = 5
 
 [fit]
-min_distance_m = 0.3
 taus = [1.0]
 stays = [0.9]
 window_secs = [2.5]
+auto_zero_min_bins = 120
 
 [acceptance]
 max_misselection = 0.05
@@ -115,20 +121,20 @@ max_ece = 0.05
 # ── 입력 파일 ─────────────────────────────────────────────────────────
 
 
-def write_server(server: Path, models: dict[str, str] | None = None) -> None:
-    """`config/server.toml`을 쓴다. `models`가 있으면 `[proximity.models]`를 넣는다 (설정에 모델 버전을 적는 일)."""
+def write_server(server: Path, model_version: str | None = None) -> None:
+    """`config/server.toml`을 쓴다. `model_version`이 있으면 `[proximity]`에 넣는다 (설정에 모델 버전을 적는 일)."""
     config_dir = server / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / ".env.mqtt-password").write_text("test-only-password\n", encoding="utf-8")
-    table = "".join(f'\n[proximity.models]\n{place} = "{version}"\n' for place, version in (models or {}).items())
-    (config_dir / "server.toml").write_text(SERVER_TOML.format(models=table), encoding="utf-8")
+    line = "" if model_version is None else f'model_version = "{model_version}"\n'
+    (config_dir / "server.toml").write_text(SERVER_TOML.format(model_version=line), encoding="utf-8")
 
 
 def write_inputs(server: Path) -> None:
-    """사람이 쓰는 입력 파일: 시드, 수집 계획, 배치, 적합 설정. 이름은 `server/config/` 예시와 같다.
+    """사람이 쓰는 입력 파일: 시드, 수집 계획, 적합 설정. 이름은 `server/config/` 예시와 같다.
 
     시드는 저장소의 예시 파일을 그대로 복사한다 (README의 `nearpilot seed example.toml`이 실제 서버에 반영되는지 본다).
-    나머지는 이 시뮬레이션의 회차 길이와 배치에 맞춘 값이다. 배치는 예시 배치와 같은 위치를 쓴다.
+    나머지는 이 시뮬레이션의 회차 길이에 맞춘 값이다. 공통 모델은 배치 파일이 없다.
     """
     (server / "config" / "seed").mkdir(parents=True, exist_ok=True)
     shutil.copyfile(CONFIG / "seed" / "example.toml", server / "config" / "seed" / "example.toml")
@@ -136,16 +142,7 @@ def write_inputs(server: Path) -> None:
         "place_id": PLACE, "beacon": {"uuid": BEACON.uuid, "major": BEACON.major, "minor": BEACON.minor},
         "settle_sec": 0, "run_sec": RUN_SEC, "runs": [{"label": label, "spot": f"{label} 앞"} for label in LABELS],
     }
-    layout = {
-        "place_id": PLACE,
-        "nodes": {node_id: {"x": x, "y": 0.0, "front_x": FRONT[node_id][0], "front_y": FRONT[node_id][1]}
-                  for node_id, x in zip(DEVICES, (0.0, 4.0))},
-        "none_points": [list(NONE_POINT)],
-    }
-    files = {
-        "plans/example.json": json.dumps(plan, ensure_ascii=False),
-        "layouts/example.json": json.dumps(layout), "fit/example.toml": FIT_TOML,
-    }
+    files = {"plans/example.json": json.dumps(plan, ensure_ascii=False), "fit/example.toml": FIT_TOML}
     for name, text in files.items():
         path = server / "config" / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -232,25 +229,6 @@ def use_clock(broker: SimBroker, clock: FakeClock) -> None:
 # ── 기대값 ────────────────────────────────────────────────────────────
 
 
-def expected_anchor(node_id: str, train_runs: int) -> tuple[float, float, float, float, float]:
-    """학습 회차 데이터에서 손으로 구한 앵커 값 (A, n, sigma, none_rssi, none_sigma). 라벨마다 학습 회차가 `train_runs`개다.
-
-    기기 앞 표본은 두 거리(자기 앞, 다른 기기 앞)에 있고, 거리마다 평균이 `near`, `far`라서 최소제곱 직선은 두 평균을 지난다.
-    흔들림 (−1, 0, +1, 0) × s가 5주기(20개)면 평균은 0이고 제곱합은 10 s²이다.
-    기기 앞 표본의 잔차 제곱합은 회차 2·`train_runs`개 × 10 s²이고 자유도는 40·`train_runs` − 2다.
-    none 표본의 제곱합은 회차 `train_runs`개 × 10 (2s)²이고 자유도는 20·`train_runs` − 1이다.
-    """
-    near, far, none, spread = LEVELS[node_id]
-    other = next(other_id for other_id in DEVICES if other_id != node_id)
-    u_near = -10 * math.log10(math.dist((0.0 if node_id == DEVICES[0] else 4.0, 0.0), FRONT[node_id]))
-    u_far = -10 * math.log10(math.dist((0.0 if node_id == DEVICES[0] else 4.0, 0.0), FRONT[other]))
-    n = (near - far) / (u_near - u_far)
-    a = (near + far) / 2 - n * (u_near + u_far) / 2
-    sigma = spread * math.sqrt(2 * train_runs * 10 / (40 * train_runs - 2))
-    none_sigma = spread * math.sqrt(train_runs * 40 / (20 * train_runs - 1))
-    return a, n, sigma, none, none_sigma
-
-
 def read_report(path: Path) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
     """보고서 CSV 의 머리말(`# 키: 값`)과 지표 행(`metric` → 행)."""
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -300,10 +278,10 @@ def test_FR16_ops_pipeline_end_to_end(tmp_path, monkeypatch, run_cli, served):
         return run_cli(list(argv), cwd=server)
 
     try:
-        # 1. 수집 전용 서버를 시작한다. 모델 표가 없는 설정이고, 기기가 발표하면 DB에 기기 행이 생긴다 (FR-05)
+        # 1. 수집 전용 서버를 시작한다. 모델 버전이 없는 설정이고, 기기가 발표하면 DB에 기기 행이 생긴다 (FR-05)
         assert cli("serve", "--collect-only") == (0, "", "")
         config, collect_only = served.pop()
-        assert collect_only and not config.proximity.versions
+        assert collect_only and config.proximity.model_version is None
         runtime = Runtime(config, client_factory=broker.factory, clock=clock.now, collect_only=True)
         with running(runtime):
             wait_until(lambda: {row["node_id"] for row in query(
@@ -346,23 +324,20 @@ def test_FR16_ops_pipeline_end_to_end(tmp_path, monkeypatch, run_cli, served):
         assert (len(split["train"]), len(split["validation"]), len(split["test"]), split["excluded"]) == (9, 3, 3, [])
         assert sorted(split["train"] + split["validation"] + split["test"]) == collected  # 모든 회차가 정확히 한 분할에 있다
 
-        # 6. 적합: 학습 회차의 프레임이 DB 에서 모델 파일까지 이어진다. 값은 시뮬레이션한 RSSI 에서 손으로 구한 것과 같다
-        code, out, err = cli("fit", "example.json", "--split", "place-a-seed42.json", "--version", "v1",
-                             "--fit", "example.toml")
-        model_path = server / "var" / "models" / PLACE / "v1.json"
-        assert (code, err) == (0, "") and f'{PLACE} = "v1"' in out and model_path.is_file()
-        model = load_model(model_path)
-        assert set(model.nodes) == set(DEVICES) and model.none_points == (NONE_POINT,)
-        for node_id in DEVICES:
-            node = model.nodes[node_id]
-            assert (node.A, node.n, node.sigma, node.none_rssi, node.none_sigma) == pytest.approx(
-                expected_anchor(node_id, train_runs=3))
-        assert sorted(model.validation["train_runs"]) == sorted(split["train"])
-        assert sorted(model.validation["validation_runs"]) == sorted(split["validation"])
+        # 6. 적합: 학습 회차의 프레임이 DB 에서 공통 모델 파일까지 이어진다. 값은 시뮬레이션한 RSSI 에서 손으로 구한 것과 같다.
+        #    장소는 모델 파일 이름에 없다. 파일은 `var/models/<버전>.json` 하나다
+        code, out, err = cli("fit", "--split", "place-a-seed42.json", "--version", "v1", "--fit", "example.toml")
+        model_path = server / "var" / "models" / "v1.json"
+        assert (code, err) == (0, "") and 'model_version = "v1"' in out and model_path.is_file()
+        model = load_model_version(model_path.parent, "v1")
+        for role, (mean, sigma) in EXPECTED_ROLES.items():
+            assert (getattr(model, role).mean, getattr(model, role).sigma) == pytest.approx((mean, sigma)), role
+        assert (model.window_sec, model.stay, model.calibration_tau, model.auto_zero_min_bins) == (2.5, 0.9, 1.0, 120)
+        assert set(model.validation) == {"validation_loss"}
+        assert [path.name for path in model_path.parent.iterdir()] == ["v1.json"]
 
         # 7. 평가: 시험 회차 셋(기기 둘, none)만 읽는다. 평가 시각은 회차마다 18개(2.5초부터 19.5초까지)다
-        code, out, err = cli("eval", f"{PLACE}/v1", "--split", "place-a-seed42.json", "--fit", "example.toml",
-                             "--out", "pipeline")
+        code, out, err = cli("eval", "v1", "--split", "place-a-seed42.json", "--fit", "example.toml", "--out", "pipeline")
         reports = server / "var" / "reports"
         assert (code, err) == (0, "") and (reports / "pipeline.md").is_file()
         header, rows = read_report(reports / "pipeline.csv")
@@ -373,23 +348,26 @@ def test_FR16_ops_pipeline_end_to_end(tmp_path, monkeypatch, run_cli, served):
         assert misselection["value"] != "" and float(misselection["value"]) <= float(misselection["limit"])
         assert misselection["passed"] == "True" and rows["ece"]["value"] != ""
         assert rows["switch_time"]["note"] == rows["flicker"]["note"] == "미측정"
+        # 출처 행: 장소는 분할 결과, 모델은 fit이 쓴 버전, 보정 버전은 시험 회차에서 찾은 자동 영점이다
+        assert {(row["place_id"], row["model_version"], row["calib_version"]) for row in rows.values()} == {
+            (PLACE, "v1", "auto-zero")}
 
-        # 8. 설정에 모델 버전을 넣으면 일반 serve 가 그 모델로 시작한다. 넣기 전에는 시작하지 않는다
+        # 8. 설정에 모델 버전을 넣으면 일반 serve 가 fit 이 쓴 그 모델로 시작한다. 넣기 전에는 시작하지 않는다
         assert cli("serve")[0] == 2 and not served
-        write_server(server, models={PLACE: "v1"})
+        write_server(server, model_version="v1")
         assert cli("serve") == (0, "", "")
         config, collect_only = served.pop()
-        assert not collect_only and dict(config.proximity.versions) == {PLACE: "v1"}
-        built: list[dict] = []
+        assert not collect_only and config.proximity.model_version == "v1"
+        built: list = []
 
-        def proximity_factory(models, settings):
-            built.append(dict(models))
-            return HmmProximityEstimator(models, settings)
+        def proximity_factory(model, settings):
+            built.append(model)
+            return HmmProximityEstimator(model, settings)
 
         runtime = Runtime(config, client_factory=broker.factory, clock=clock.now, proximity_factory=proximity_factory)
         with running(runtime):
-            (models,) = built  # 수집한 데이터로 적합한 모델이 근접 추정기에 들어갔다
-            assert set(models) == {PLACE} and models[PLACE] == model
+            (built_model,) = built  # 설정이 고른 공통 모델 파일이 근접 추정기에 들어갔다
+            assert built_model == model
             # 시드가 출력한 토큰으로 서버가 계정을 식별한다 (FR-01)
             assert runtime.authenticator.authenticate(f"Bearer {tokens['owner']}").user_id == "owner"
     finally:

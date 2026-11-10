@@ -610,18 +610,21 @@ class DecisionPipeline:
             applied.posteriors = posteriors
             applied.window_start, applied.window_end = result.window_start, result.window_end
             prox_detail = {"posteriors": posteriors, "threshold": threshold,
-                           "model_version": result.model_version, "calib_version": result.calib_version}
+                           "model_version": result.model_version, "calib_version": result.calib_version,
+                           "unzeroed": sorted(result.unzeroed),
+                           "conservative": dict(sorted(result.conservative.items()))}
             self._audit_step(Step.PROXIMITY, iid, {**prox_detail, "best": result.best})
             if any_kind:
-                node_id, p, check = self._assign_any(
-                    req, iid, applied, by_id, posteriors, result.best, threshold, now)
+                node_id, p, check = self._assign_any(req, iid, applied, by_id, result, threshold, now)
             else:
+                # 1등은 명목 사후확률로 고르고 2등을 고르지 않는다. 임계값은 1등의 `threshold_probability`로 본다.
+                # 1등에 자동 영점이 없으면 보수적 사후확률이 임계값 이상일 때만 진행한다 (FR-17)
                 best = result.best
-                if best is None or best[1] < threshold or best[0] not in by_id:
-                    p_max = best[1] if best else None
+                p_top = None if best is None else result.threshold_probability(best[0])
+                if best is None or p_top < threshold or best[0] not in by_id:
                     raise _Stop(Step.PROXIMITY, self._decision(
-                        req, iid, Verdict.ASK, ReasonCode.LOW_CONFIDENCE, p_max=p_max))
-                node_id, p = best
+                        req, iid, Verdict.ASK, ReasonCode.LOW_CONFIDENCE, p_max=p_top))
+                node_id, p = best[0], p_top
         node = by_id[node_id]
         applied.arguments = self._resolve_action(req, iid, node, p)
         applied.reoperate = is_reoperate(node, req.action)
@@ -758,20 +761,28 @@ class DecisionPipeline:
 
     def _assign_any(
         self, req: UseRequest, iid: str, applied: _Applied, by_id: Mapping[str, NodeInfo],
-        posteriors: Mapping[str, float], best: tuple[str, float] | None, threshold: float,
-        now: datetime,
+        result: ProximityResult, threshold: float, now: datetime,
     ) -> tuple[str, float, PolicyCheckResult]:
         """`any:{kind}` ③~④ 와 전역 할당 (FR-23). 대기 구간은 종류별로 따로 연다. 배정받은 (기기, 확률, 정책 검사)를 반환한다.
 
         허용쌍은 ③ 임계값, ④ 정책 OK, 점유(AVAILABLE)를 모두 만족한 쌍이다. 승인이 필요한 기기는 뺀다.
+        ③ 확률은 `threshold_probability`다. 자동 영점이 없는 기기(`unzeroed`)는 보수적 사후확률이 임계값 이상일 때만 허용쌍에 넣고,
+        배정 비용(−log p)도 그 값으로 낸다. 명목 1등에 자동 영점이 없고 그 보수적 사후확률이 임계값 미만이면
+        다른 기기를 배정하지 않고 ASK 다 (`p_max`는 그 보수적 값).
         """
         if self._window is None:
             raise ValueError("대기 구간이 없다")
+        best = result.best
+        p_top = None if best is None else result.threshold_probability(best[0])
+        if best is not None and best[0] in result.unzeroed and p_top < threshold:
+            raise _Stop(Step.PROXIMITY, self._decision(
+                req, iid, Verdict.ASK, ReasonCode.LOW_CONFIDENCE, p_max=p_top))
         qualified = sorted(
-            (-posteriors.get(nid, 0.0), nid) for nid in by_id if posteriors.get(nid, 0.0) >= threshold)
+            (-result.threshold_probability(nid), nid) for nid in by_id
+            if result.threshold_probability(nid) >= threshold)
         if not qualified:
             raise _Stop(Step.PROXIMITY, self._decision(
-                req, iid, Verdict.ASK, ReasonCode.LOW_CONFIDENCE, p_max=best[1] if best else None))
+                req, iid, Verdict.ASK, ReasonCode.LOW_CONFIDENCE, p_max=p_top))
 
         passed: list[tuple[str, float, PolicyCheckResult]] = []
         first_failure: tuple[str, float, PolicyCheckResult] | None = None

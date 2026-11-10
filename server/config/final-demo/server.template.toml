@@ -29,9 +29,7 @@ audit_jsonl = "audit.jsonl"
 
 [proximity]
 model_root = "models"
-
-[proximity.models]
-final-demo = "synthetic-1"
+model_version = "synthetic-2"
 
 [mqtt]
 host = "@HOST@"

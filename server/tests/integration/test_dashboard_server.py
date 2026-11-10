@@ -1,7 +1,8 @@
 """FR-12A·FR-12B 대시보드를 서버에 붙인 조립 (specs/core-dashboard-queries/spec.md 5절·8절).
 
 실제 `Runtime`·`create_app`·SQLite 위에서 fake Paho 의 기기 시뮬레이터가 보고하고, `TestClient` 가 앱의 수명주기를 돌려
-서버를 띄운다. 근접 추정만 fake 다 (`FakeProximity`). 판정은 MCP 요청이 닿는 `runtime.core` 를 직접 부른다.
+서버를 띄운다. 근접 추정만 fake 다 (`FakeProximity`). 단, 보정 버전의 출처를 보는 시험은 서버가 만드는 기본 추정기를 쓴다
+(`real_proximity`). 판정은 MCP 요청이 닿는 `runtime.core` 를 직접 부른다.
 서버는 모듈마다 한 번 띄워 (`flow`) 방문자 A 의 사물함, 방문자 B 의 공용 조명, 접근 신청을 만들고 스트림과 조회 REST 에서
 받은 것을 담는다. 시나리오가 서로 섞이는 시험 (섹션 없음, 수집 전용, 발행 실패, 종료, 시작 실패) 은 서버를 따로 띄운다.
 TestClient 의 웹소켓 수신에는 기한이 없어서 읽기 스레드가 원문을 큐에 쌓고 시험이 기한을 두고 꺼낸다.
@@ -27,13 +28,14 @@ import pytest
 from starlette.testclient import TestClient
 
 from _runtime import (
-    NODES, OWNER, TOKENS, VISITOR_A, VISITOR_B, FakeProximity, SimBroker, make_config, query, seed, wait_until,
+    AUTO_ZEROS, NODES, OWNER, TOKENS, VISITOR_A, VISITOR_B, FakeProximity, SimBroker, feed_auto_zero_frames,
+    make_config, query, seed, wait_until,
 )
 from nearpilot.api.ws.settings import DashboardSettings
 from nearpilot.api.ws.stream import STREAM_PATH
 from nearpilot.core.dashboard import MonitorTail
+from nearpilot.core.proximity.common_model import load_model_version
 from nearpilot.core.proximity.files import AcceptanceSettings
-from nearpilot.core.proximity.model import load_models
 from nearpilot.db.repositories import SqliteDashboardReads
 from nearpilot.iot.mqtt import MqttConnection
 from nearpilot.runtime import DashboardConfig, Runtime, create_app
@@ -67,10 +69,11 @@ class Server:
 
     `with` 에 들어가면 서버가 뜨고 나오면 멈춘다. `dashboard=False` 면 `[dashboard]` 가 없는 설정이다.
     `tail_interval_sec` 을 크게 주면 따라 읽기가 스스로 돌지 않아서 시험이 `tick()` 을 부른다.
+    `real_proximity=True` 면 근접 추정기를 fake 로 바꾸지 않는다. 서버 조립이 만든 기본 추정기가 DB 의 자동 영점을 읽고 쓴다.
     """
 
     def __init__(self, tmp: Path, *, dashboard: bool = True, collect_only: bool = False,
-                 tail_interval_sec: float = 0.05) -> None:
+                 tail_interval_sec: float = 0.05, real_proximity: bool = False) -> None:
         cfg = make_config(tmp, settings=SETTINGS)
         if dashboard:
             cfg = replace(cfg, dashboard=DashboardConfig(DASHBOARD_API, WEAK_RSSI_DBM, tail_interval_sec, tmp / "reports"))
@@ -80,7 +83,7 @@ class Server:
         self.broker = SimBroker(tmp)
         self.proximity = FakeProximity(NEAR)
         self.runtime = Runtime(cfg, client_factory=self.broker.factory, collect_only=collect_only,
-                               proximity_factory=lambda models, s: self.proximity)
+                               proximity_factory=None if real_proximity else (lambda models, s: self.proximity))
         self.app = create_app(self.runtime)
         self.client: TestClient
         self._stack = ExitStack()
@@ -290,14 +293,15 @@ def check_stream(flow: Flow) -> None:
 def check_rest(flow: Flow) -> None:
     assert {name: status for name, (status, _) in flow.rest.items()} == dict.fromkeys(flow.rest, 200)
 
-    # 장소: 시작할 때 읽은 모델의 버전, 이름이 없는 기기는 nodeId 가 이름이다
+    # 장소: 시작할 때 읽은 모델의 버전, 이름이 없는 기기는 nodeId 가 이름이다.
+    # FakeProximity 는 자동 영점이 없어서 자동 영점 개정 번호가 "0"이다
     cfg = flow.server.cfg
-    model = load_models(cfg.proximity.model_root, cfg.proximity.versions)["place-a"]
+    model = load_model_version(cfg.proximity.model_root, cfg.proximity.model_version)
     places = flow.body("places")
     assert places["weakRssiDbm"] == WEAK_RSSI_DBM
     [place] = places["places"]
     assert (place["placeId"], place["modelVersion"], place["calibrationVersion"]) == (
-        "place-a", model.model_version, model.calib_version)
+        "place-a", model.model_version, "0")
     assert {d["nodeId"] for d in place["devices"]} == set(NODES)
     assert all(d["name"] == d["nodeId"] for d in place["devices"])
 
@@ -340,7 +344,7 @@ def check_rest(flow: Flow) -> None:
     assert {d["nodeId"]: d["connected"] for d in health["devices"]} == {
         node_id: node_id in flow.server.broker.nodes for node_id in NODES}
     assert len(health["beacons"]) == 3
-    assert health["server"] == {"database": True, "mqtt": True, "model": f"{model.model_version} · {model.calib_version}"}
+    assert health["server"] == {"database": True, "mqtt": True, "model": f"{model.model_version} · 0"}
 
 
 def test_FR12B_서버에서_대시보드까지_이어진다(flow):
@@ -391,6 +395,27 @@ def test_FR12A_수집_전용_서버에도_대시보드를_붙인다(tmp_path):
         assert (place["modelVersion"], place["calibrationVersion"]) == ("없음", "없음")  # 모델을 읽지 않았다
         # 수집 전용은 판정 요청이 닿을 경로를 열지 않는다 (FR-06). 대시보드 라우터가 그 경로를 만들지 않는다
         assert server.client.post("/mcp", json={}).status_code == 404
+
+
+def test_FR16_dashboard_calibration_follows_runtime_revision(tmp_path):
+    """대시보드의 `calibrationVersion`은 서버가 찾아 저장한 자동 영점의 최신 개정 번호를 따라간다 (FR-16, 결정 14).
+
+    서버가 만든 기본 추정기로 띄운다 (`real_proximity`). 자동 영점이 없을 때는 "0"이다. 앵커 셋이 `min_bins`+4칸을 들어
+    자동 영점 둘을 찾으면 DB의 최신 개정 번호(2)로 바뀐다. 보정 버전의 출처가 고정 값이면 "0"에 머문다.
+    """
+    with Server(tmp_path, real_proximity=True) as server:
+        def calibration() -> str:
+            [place] = server.get("/dashboard/places").json()["places"]
+            return place["calibrationVersion"]
+
+        assert calibration() == "0"
+
+        min_bins = load_model_version(server.cfg.proximity.model_root, server.cfg.proximity.model_version).auto_zero_min_bins
+        feed_auto_zero_frames(server.runtime, ("locker-1", "locker-2", "light-1"), bins=min_bins + 4)
+
+        latest = query(server.db, "SELECT MAX(revision) AS latest FROM auto_zero")[0]["latest"]
+        assert latest == len(AUTO_ZEROS)  # 개정 둘: 1등이 아닌 앵커 둘의 영점
+        assert calibration() == str(latest) != "0"
 
 
 def test_FR12A_점검_mqtt는_연결_준비_상태를_따른다(tmp_path, monkeypatch):

@@ -71,7 +71,10 @@ _PERIOD = re.compile(r"([0-9]{2}):([0-9]{2})~([0-9]{2}):([0-9]{2})")
 
 @dataclass(frozen=True, slots=True)
 class ModelVersions:
-    """장소의 근접 모델과 보정 버전 (서버가 시작할 때 읽은 모델)."""
+    """근접 모델과 보정 버전. 모델은 서버가 시작할 때 읽은 공통 모델이고, 보정 버전은 조회 순간의 최신 자동 영점 개정 번호다.
+
+    모델이 공통이라 모든 장소가 같은 값을 쓴다 (FR-16).
+    """
 
     model_version: str
     calib_version: str
@@ -81,7 +84,7 @@ class DashboardQueryService:
     """`DashboardQueries` 와 `MonitorSnapshot` 구현.
 
     open_reads 는 읽기 트랜잭션 하나를 연 `DashboardReadStore` 를 주는 컨텍스트 관리자다. 메서드 하나는 한 번만 연다.
-    models·mqtt_ready·holders 는 서버가 시작하기 전에도 불릴 수 있고, 읽기 트랜잭션 밖에서 부른다.
+    model·mqtt_ready·holders 는 서버가 시작하기 전에도 불릴 수 있고, 읽기 트랜잭션 밖에서 부른다. model 이 None 이면 모델이 없다.
     started_at 은 서버가 시작한 시각이고 tz 는 이력 기간의 "오늘"을 자르는 시간대다 (없으면 서버 지역 시간대).
     """
 
@@ -90,7 +93,7 @@ class DashboardQueryService:
         open_reads: Callable[[], AbstractContextManager[DashboardReadStore]],
         settings: Callable[[], Settings],
         weak_rssi_dbm: float,
-        models: Callable[[], Mapping[str, ModelVersions]],
+        model: Callable[[], ModelVersions | None],
         mqtt_ready: Callable[[], bool],
         holders: Callable[[], Sequence[SharedHolder]],
         reports_dir: Path,
@@ -101,7 +104,7 @@ class DashboardQueryService:
         self._open_reads = open_reads
         self._settings = settings
         self._weak_rssi_dbm = weak_rssi_dbm
-        self._models = models
+        self._model = model
         self._mqtt_ready = mqtt_ready
         self._holders = holders
         self._reports_dir = reports_dir
@@ -117,13 +120,12 @@ class DashboardQueryService:
         기기 정보는 저장한 기기 선언 그대로다 (FR-12A). 선언 없는 기기는 판정 후보도 아니고,
         형식 표의 필수 키를 채울 값이 없다 (spec 결정 1).
         """
-        models = self._models()
+        version = self._model()
         with self._open_reads() as reads:
             places, nodes = reads.places(), reads.nodes()
         names = _names(nodes)
         rows = []
         for place in places:
-            version = models.get(place.place_id)
             rows.append({
                 "placeId": place.place_id,
                 "placeName": place.name,
@@ -338,7 +340,7 @@ class DashboardQueryService:
     def health(self) -> Mapping[str, Any]:
         """기기 연결, 활성 비콘의 최근 수신, 서버 상태. DB 점검이 실패해도 나머지 키는 만든다."""
         now, settings = self._clock(), self._settings()
-        models, mqtt = self._models(), self._mqtt_ready()
+        version, mqtt = self._model(), self._mqtt_ready()
         with self._open_reads() as reads:
             try:
                 reads.ping()
@@ -356,8 +358,8 @@ class DashboardQueryService:
             if last is None or last > settings.beacon_recent_sec:
                 row["note"] = NO_SIGNAL
             beacon_rows.append(row)
-        versions = [models.get(p.place_id) for p in places]
-        model = model_text([None if v is None else (v.model_version, v.calib_version) for v in versions])
+        # 모델이 공통이라 모든 장소가 같은 값이다
+        model = model_text([None if version is None else (version.model_version, version.calib_version) for _ in places])
         return {
             "devices": [
                 {"nodeId": n.node_id, "connected": _connected(n, now, ttl), "trust": n.trust_state} for n in nodes

@@ -1,4 +1,4 @@
-"""`Repository`·`AccountLookup` 구현 (specs/db-repository/spec.md).
+"""`Repository`·`AccountLookup`·`AutoZeroStore` 구현 (specs/db-repository/spec.md).
 
 쓰기는 이 클래스 하나로만 한다 (`AGENTS.md` 의존 규칙 5). 연결은 스레드 하나당 하나를
 `db/schema/connect()`로 만들어 넘긴다.
@@ -9,6 +9,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
+from math import isfinite
 from typing import Any
 
 from nearpilot.db.repositories.retention import SqliteRetentionStore
@@ -47,6 +48,8 @@ from nearpilot.shared.models import (
     ApprovalRecord,
     ApprovalRequest,
     ApprovalRequestResult,
+    AutoZero,
+    AutoZeroState,
     BeaconKey,
     Decision,
     DecisionRecord,
@@ -80,7 +83,7 @@ def _use_limit(approval_mode: str, max_uses: int | None) -> int | None:
 
 
 class SqliteRepository:
-    """`Repository` Protocol과 `AccountLookup` Protocol을 함께 구현한다."""
+    """`Repository`, `AccountLookup`, `AutoZeroStore` Protocol을 함께 구현한다."""
 
     def __init__(self, conn: sqlite3.Connection, settings: Settings | None = None) -> None:
         self._conn = conn
@@ -1033,3 +1036,52 @@ class SqliteRepository:
             (usage_id, approval_id, internal_request_id, ApprovalUsageState.RESERVED.value, reserved_at_iso),
         )
         return usage_id
+
+    # ── 자동 영점 개정 (FR-16, FR-22, #252) ───────────────────────────
+
+    def save_auto_zero(
+        self, node_id: str, zero_db: float | None, vendor_model: str | None,
+        vendor_firmware: str | None, recorded_at: datetime,
+    ) -> int:
+        """개정 하나를 더하고 새 개정 번호를 반환한다. `zero_db`가 `None`이면 버림이다.
+
+        개정은 서버 전체에 하나인 증가 번호다. 행을 고치거나 지우지 않는다. `zero_db`가 유한하지 않은
+        float면 `ValueError`다. 없는 `node_id`면 `sqlite3.IntegrityError`가 그대로 올라간다.
+        """
+        if zero_db is not None and not isfinite(zero_db):
+            raise ValueError(f"자동 영점은 유한한 값이어야 한다: node={node_id} zero_db={zero_db!r}")
+        with immediate_transaction(self._conn):
+            cursor = self._conn.execute(
+                "INSERT INTO auto_zero (node_id, zero_db, vendor_model, vendor_firmware, recorded_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (node_id, zero_db, vendor_model, vendor_firmware, iso(recorded_at)),
+            )
+            return cursor.lastrowid
+
+    def auto_zeros(self, revision: int | None = None) -> AutoZeroState:
+        """`revision` 시점의 기기별 자동 영점이다. `None`이면 최신 개정이다.
+
+        기기마다 `revision` 이하에서 가장 큰 개정의 행이다. 버림 행도 담는다 — 버림은 자동 영점이
+        없다는 뜻이다. `revision`이 실제 최대보다 커도 그대로 담는다. 행이 없으면 최신 개정은 0이다.
+        `revision`이 음수면 `ValueError`다.
+        """
+        if revision is None:
+            latest = self._conn.execute("SELECT MAX(revision) AS latest FROM auto_zero").fetchone()["latest"]
+            revision = latest or 0
+        elif revision < 0:
+            raise ValueError(f"개정 번호는 0 이상이어야 한다: {revision}")
+        rows = self._conn.execute(
+            "SELECT revision, node_id, zero_db, vendor_model, vendor_firmware, recorded_at FROM auto_zero "
+            "WHERE revision IN (SELECT MAX(revision) FROM auto_zero WHERE revision <= ? GROUP BY node_id) "
+            "ORDER BY node_id",
+            (revision,),
+        ).fetchall()
+        zeros = {
+            row["node_id"]: AutoZero(
+                node_id=row["node_id"], zero_db=row["zero_db"], vendor_model=row["vendor_model"],
+                vendor_firmware=row["vendor_firmware"], revision=row["revision"],
+                recorded_at=parse_iso(row["recorded_at"]),
+            )
+            for row in rows
+        }
+        return AutoZeroState(revision=revision, zeros=zeros)

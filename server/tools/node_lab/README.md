@@ -20,7 +20,7 @@ python -m tools.node_lab demo
 `init`은 `var/node-lab/`에 설정, 기기별 비밀번호, ACL과 합성 모델을 만든다.
 기존 폴더가 있으면 덮어쓰지 않는다. 재생성하려면 `--dir var/node-lab-2`로 새 경로를 쓴다.
 `demo`는 임시 로컬 브로커와 가상 기기 2대를 시작한다.
-실제 HMM으로 확률을 계산하고 가까운 기기에 `on`, `off`를 요청한다.
+실제 HMM으로 확률을 계산하고, 확률이 가장 큰 기기를 지정해 `on`, `off`를 요청한다. 기기가 둘이라서 `nearest:`는 쓰지 않는다 (아래 근접 지정 설명).
 CORE가 허가한 명령만 기존 MQTT 경로로 보낸다.
 
 ## 화면과 로그 읽기
@@ -118,9 +118,9 @@ python -m tools.node_lab init --mode hardware --dir var/node-lab-hardware --host
 오차 상한을 넘는 응답은 버리고, 시각을 신뢰하기 전에는 보고를 보내지 않고 새 출력을 차단한다.
 NTP 서버와 기기별 오차 실측은 필요 없다. Windows 방화벽의 MQTT 포트 허용은 환경에서 준비한다. 최종 시연 구성(`tools.final_demo`)은 방화벽 규칙 스크립트 `firewall.ps1`을 함께 만든다.
 
-합성 모델은 `models/node-lab/synthetic-1.json`이다. 좌표와 파라미터는 초기 예시다.
-실측 모델을 쓸 때는 `server.toml`의 모델 루트와 장소별 버전을 바꾼다.
-장소 ID는 이 도구의 시험 장소인 `node-lab`과 일치해야 한다.
+합성 모델은 `models/synthetic-2.json`이다. 저장소의 공통 합성 모델(`config/final-demo/models/synthetic-2.json`)을 그대로 복사하며, 기기와 좌표를 모른다.
+실측 모델을 쓸 때는 `server.toml`의 `[proximity]` `model_root`와 `model_version`을 바꾼다. 모델은 장소와 상관없이 하나다.
+기기가 둘이면 자동 영점을 찾지 못한다. 그래서 근접 지정(`nearest:`)은 보수적 사후확률로 판정해서, 기기 바로 앞의 강한 신호가 아니면 `ASK`가 난다.
 
 ## USB 설정 주입
 

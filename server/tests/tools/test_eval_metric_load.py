@@ -384,8 +384,8 @@ def test_NFR03_load_sends_concurrent_requests_and_retransmit_pairs():
 
     visitors = [user.user_id for user in config.users if user.role == "visitor"]
     lockers = [node.node_id for node in config.nodes if node.kind == "locker" and node.trusted]
-    near = {user_id: config.rssi["near"] for user_id in visitors}  # trusted 사물함마다 모든 방문자가 near로 들린다
-    assert harness.heard == {node.node_id: near if node.node_id in lockers else {} for node in config.nodes}
+    near = {user_id: config.rssi["near"] for user_id in visitors}  # 첫 trusted 사물함 하나에만 모든 방문자가 near로 들린다
+    assert harness.heard == {node.node_id: near if node.node_id == lockers[0] else {} for node in config.nodes}
     assert outcome.raw["lockers"] == lockers
     assert [row["metric"] for row in outcome.rows] == ["m3_double_occupancy", "m3_duplicate_execution", "m3_lock_errors"]
     assert (outcome.rows[0]["trials"], outcome.rows[1]["trials"]) == (0, 0)  # 가짜 하네스는 세션과 구동이 없다

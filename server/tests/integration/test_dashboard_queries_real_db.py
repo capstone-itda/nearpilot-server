@@ -153,7 +153,7 @@ def test_FR12A_장소_점유_승인_점검은_실제_행에서_만든다(world):
     [place] = places["places"]
     assert places["weakRssiDbm"] == WEAK_RSSI_DBM
     assert (place["placeId"], place["placeName"], place["modelVersion"], place["calibrationVersion"]) == (
-        "place-a", "lab", "syn-a-1", "none-1")
+        "place-a", "lab", "syn-common-1", "0")
     assert [device["nodeId"] for device in place["devices"]] == [
         "light-1", "light-2", "locker-1", "locker-2", "locker-3", "speaker-1"]
 
@@ -183,7 +183,7 @@ def test_FR12A_장소_점유_승인_점검은_실제_행에서_만든다(world):
     for user_id in (VISITOR_A, VISITOR_B):
         assert 0 <= beacons[user_id]["lastSeenSec"] < world.settings.beacon_recent_sec
         assert "note" not in beacons[user_id]
-    assert health["server"] == {"database": True, "mqtt": True, "model": "syn-a-1 · none-1"}
+    assert health["server"] == {"database": True, "mqtt": True, "model": "syn-common-1 · 0"}
 
 
 def test_FR12A_시간이_지나면_대여_초과_승인_만료_연결_끊김이_보인다(world):

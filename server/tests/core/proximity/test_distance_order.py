@@ -33,7 +33,7 @@ AT = T0 + timedelta(seconds=30)  # 거리 순서를 묻는 시각
 
 @pytest.fixture
 def estimator() -> HmmProximityEstimator:
-    return HmmProximityEstimator({}, SETTINGS)  # 모델이 없다. 거리 순서는 모델 파일을 쓰지 않는다.
+    return HmmProximityEstimator(None, SETTINGS)  # 모델이 없다(수집 전용). 거리 순서는 모델 파일을 쓰지 않는다.
 
 
 def at(offset_sec: float) -> datetime:
@@ -124,7 +124,7 @@ def test_FR16_distance_order_window_bounds_use_received_at(estimator):
     ],
 )
 def test_FR16_distance_order_window_follows_anchor_recent_sec(recent_sec, expected):
-    estimator = HmmProximityEstimator({}, replace(SETTINGS, anchor_recent_sec=recent_sec))
+    estimator = HmmProximityEstimator(None, replace(SETTINGS, anchor_recent_sec=recent_sec))
     report(estimator, "light-1", at(-5))
     report(estimator, "light-2", at(-2))
     report(estimator, "light-3", at(-0.5))
@@ -252,7 +252,7 @@ def test_FR09_selector_tie_by_node_id(estimator):
 def test_FR16_buffer_retention_covers_anchor_recent_window(frame_sec, extra, kept):
     settings = replace(SETTINGS, rssi_frame_sec=frame_sec)
     retain = timedelta(seconds=settings.anchor_recent_sec + frame_sec)  # 모델이 없어서 최근 구간이 보존 길이를 정한다
-    estimator = HmmProximityEstimator({}, settings)
+    estimator = HmmProximityEstimator(None, settings)
     # seen은 구간 시작에 받았다. later는 seen보다 retain(+extra) 늦게 받아서 at보다 뒤라 이 구간에는 쓰이지 않는다.
     seen_at = AT - RECENT
     later_at = seen_at + retain + extra
@@ -286,7 +286,7 @@ def test_FR16_distance_order_computes_outside_lock(estimator, monkeypatch):
 
 
 def test_FR16_estimator_satisfies_distance_protocol():
-    estimator = HmmProximityEstimator({}, SETTINGS)
+    estimator = HmmProximityEstimator(None, SETTINGS)
 
     assert isinstance(estimator, ProximityEstimator)
     # runtime_checkable은 메서드 이름만 본다. 인자 이름과 종류도 Protocol과 같아야 한다.

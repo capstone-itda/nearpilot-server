@@ -1,8 +1,10 @@
-"""시험 회차로 근접 모델의 정면 오선택률과 ECE를 계산한다 (specs/core-ops-cli/spec.md 6절 "eval", 지표 8의 일부).
+"""시험 회차로 공통 근접 모델의 정면 오선택률과 ECE를 계산한다 (specs/core-ops-cli/spec.md 6절 "eval", 지표 8의 일부,
+specs/core-proximity-common-model/spec.md 6절 결정 4, 11, 13).
 
-`collect_samples`는 시험 회차의 평가 시각마다 모델의 사후확률을 읽어 표본으로 만들고, `compute_metrics`는 표본에서
-오선택률과 ECE를 센다. `metric_rows`는 그 값을 `report.write_report`가 받는 지표 행으로 바꾼다.
-평가 시각과 후보를 만드는 법은 `core/proximity/fit.py`의 `validation_log_loss`와 같다. DB와 파일을 열지 않고,
+`collect_samples`는 시험 회차를 장소 하나의 회차로 보고 앵커와 자동 영점을 정한 뒤 (라벨은 쓰지 않는다),
+시험 회차의 평가 시각마다 모델의 사후확률을 읽어 표본으로 만든다. `compute_metrics`는 표본에서 오선택률과 ECE를 센다.
+`metric_rows`는 그 값을 `report.write_report`가 받는 지표 행으로 바꾼다.
+평가 시각과 후보를 만드는 법은 `core/proximity/common_fit.py`의 `validation_log_loss`와 같다. DB와 파일을 열지 않고,
 현재 시각과 무작위를 쓰지 않아서 같은 입력에는 같은 값이 나온다.
 이동 뒤 대상 전환 시간과 정지 시 깜빡임 감소는 정의가 미결이라 계산하지 않고 보고서에 "미측정"으로 쓴다.
 """
@@ -15,12 +17,17 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
+from nearpilot.core.proximity.common_fit import (
+    NONE_LABEL, LabeledRun, PlaceRuns, place_anchors, place_frames, place_zeros,
+)
+from nearpilot.core.proximity.common_model import CommonModel
 from nearpilot.core.proximity.files import AcceptanceSettings
-from nearpilot.core.proximity.filter import compute_posteriors
-from nearpilot.core.proximity.fit import NONE_LABEL, AnchorLayout, LabeledRun, PlaceLayout, run_frames
-from nearpilot.core.proximity.model import ProximityModel
+from nearpilot.core.proximity.posterior import compute_posteriors
 from nearpilot.shared.enums import DeviceState, Occupancy, TrustState
 from nearpilot.shared.models import NodeInfo
+
+AUTO_ZERO_CALIB = "auto-zero"  # 평가 결과의 보정 버전. 평가는 시험 회차에서 찾은 자동 영점을 쓴다
+_EVAL_PLACE = "eval"  # 시험 회차를 한 장소로 볼 때 붙이는 이름. 공통 모델에는 장소가 없어서 어디에도 쓰이지 않는다
 
 
 class EvaluationError(ValueError):
@@ -47,13 +54,15 @@ class Metrics:
     ece_samples: int  # 모든 표본 수
 
 
-def collect_samples(model: ProximityModel, runs: Sequence[LabeledRun], *, bin_sec: float) -> list[Sample]:
+def collect_samples(model: CommonModel, runs: Sequence[LabeledRun], *, bin_sec: float) -> list[Sample]:
     """시험 회차의 평가 시각마다 모델의 사후확률을 읽어 표본을 만든다. 순서는 회차 순서, 시각 순서다.
 
+    회차 전부를 장소 하나의 `PlaceRuns`로 본다. 앵커는 `place_anchors`이고, 자동 영점은 시험 회차 전부의 프레임에서
+    라벨 없이 `model.auto_zero_min_bins`로 찾는다 (`place_zeros`). 찾지 못한 앵커는 보정하지 않는다 (`unzeroed`).
     회차마다 평가 시각은 `started_at + window_sec`부터 `bin_sec` 간격으로 `ended_at` 이하까지다.
-    시각마다 모델의 모든 기기를 후보로 `compute_posteriors`에 넘긴다. 배치 파일 없이 모델의 `nodes`로 만든다.
+    시각마다 앵커 전부를 후보와 근접 참여 기기로 `compute_posteriors`에 넘기고, 보정 버전은 `AUTO_ZERO_CALIB`다.
     `NONE_LABEL`의 확률은 1 − (기기 확률의 합)이고 0보다 작으면 0이다.
-    `bin_sec`가 잘못됐거나, 평가 시각이 없는 회차가 있거나, 라벨이 모델의 기기도 `NONE_LABEL`도 아니면 `EvaluationError`다.
+    `bin_sec`가 잘못됐거나 평가 시각이 없는 회차가 있으면 `EvaluationError`다.
     """
     if not math.isfinite(bin_sec) or bin_sec <= 0:
         raise EvaluationError(f"bin_sec: 0보다 큰 유한한 수여야 한다 ({bin_sec!r})")
@@ -61,19 +70,14 @@ def collect_samples(model: ProximityModel, runs: Sequence[LabeledRun], *, bin_se
     if step <= timedelta(0):
         raise EvaluationError(f"bin_sec: 1 마이크로초 단위로 0보다 커야 한다 ({bin_sec!r})")
 
-    # run_frames는 배치의 기기 ID만 본다. 좌표는 쓰지 않는다.
-    layout = PlaceLayout(
-        model.place_id,
-        {
-            node_id: AnchorLayout(node.x, node.y, node.front_x, node.front_y)
-            for node_id, node in model.nodes.items()
-        },
-    )
+    group = PlaceRuns(_EVAL_PLACE, runs)
+    anchors = place_anchors(group)
+    zeros = place_zeros([group], bin_sec=bin_sec, min_bins=model.auto_zero_min_bins)
     # 근접 추정은 node_id, place_id, trust_state만 읽는다. 나머지 필드는 자리 채움 값이다 (`validation_log_loss`와 같다).
     nodes = [
         NodeInfo(
             node_id=node_id,
-            place_id=model.place_id,
+            place_id=_EVAL_PLACE,
             kind="light",
             occupancy=Occupancy.SHARED,
             trust_state=TrustState.TRUSTED,
@@ -81,17 +85,13 @@ def collect_samples(model: ProximityModel, runs: Sequence[LabeledRun], *, bin_se
             exclusive_group=None,
             last_seen_at=None,
         )
-        for node_id in model.nodes
+        for node_id in sorted(anchors)
     ]
     window = timedelta(seconds=model.window_sec)
 
     samples: list[Sample] = []
     for run in runs:
-        if run.label != NONE_LABEL and run.label not in model.nodes:
-            raise EvaluationError(
-                f"회차 {run.run_id!r}: 라벨 {run.label!r}에 해당하는 기기가 모델에 없다 ({NONE_LABEL!r}도 아니다)"
-            )
-        frames = run_frames(run, layout)
+        frames = place_frames(run, anchors)
         # k번째 시각은 매번 첫 시각에서 정수 마이크로초로 센다. float 초를 더해 가면 경계의 시각이 미끄러진다.
         first = run.started_at + window
         times = [first + k * step for k in range((run.ended_at - first) // step + 1)]
@@ -100,7 +100,10 @@ def collect_samples(model: ProximityModel, runs: Sequence[LabeledRun], *, bin_se
                 f"회차 {run.run_id!r}: 구간이 window_sec({model.window_sec:g}초)보다 짧아 평가 시각이 없다"
             )
         for at in times:
-            posteriors = compute_posteriors(model, frames, run.beacon, nodes, nodes, at, bin_sec=bin_sec).posteriors
+            posteriors = compute_posteriors(
+                model, frames, run.beacon, nodes, nodes, at,
+                bin_sec=bin_sec, participants=anchors, zeros=zeros, calib_version=AUTO_ZERO_CALIB,
+            ).posteriors
             none_probability = max(0.0, 1.0 - math.fsum(posteriors.values()))
             samples.append(Sample(run.run_id, run.label, {**posteriors, NONE_LABEL: none_probability}))
     return samples

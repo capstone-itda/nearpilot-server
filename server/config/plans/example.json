@@ -6,18 +6,18 @@
   "runs": [
     {"label": "locker-1", "spot": "locker-1 앞 위치, 손에 들고 화면 위"},
     {"label": "locker-2", "spot": "locker-2 앞 위치, 손에 들고 화면 위"},
-    {"label": "none", "spot": "두 기기에서 먼 곳 (배치 파일의 none_points 근처)"},
+    {"label": "none", "spot": "두 기기에서 먼 곳"},
     {"label": "locker-1", "spot": "locker-1 앞 위치, 손에 들고 화면 위"},
     {"label": "locker-2", "spot": "locker-2 앞 위치, 손에 들고 화면 위"},
-    {"label": "none", "spot": "두 기기에서 먼 곳 (배치 파일의 none_points 근처)"},
+    {"label": "none", "spot": "두 기기에서 먼 곳"},
     {"label": "locker-1", "spot": "locker-1 앞 위치, 손에 들고 화면 위"},
     {"label": "locker-2", "spot": "locker-2 앞 위치, 손에 들고 화면 위"},
-    {"label": "none", "spot": "두 기기에서 먼 곳 (배치 파일의 none_points 근처)"},
+    {"label": "none", "spot": "두 기기에서 먼 곳"},
     {"label": "locker-1", "spot": "locker-1 앞 위치, 손에 들고 화면 위"},
     {"label": "locker-2", "spot": "locker-2 앞 위치, 손에 들고 화면 위"},
-    {"label": "none", "spot": "두 기기에서 먼 곳 (배치 파일의 none_points 근처)"},
+    {"label": "none", "spot": "두 기기에서 먼 곳"},
     {"label": "locker-1", "spot": "locker-1 앞 위치, 손에 들고 화면 위"},
     {"label": "locker-2", "spot": "locker-2 앞 위치, 손에 들고 화면 위"},
-    {"label": "none", "spot": "두 기기에서 먼 곳 (배치 파일의 none_points 근처)"}
+    {"label": "none", "spot": "두 기기에서 먼 곳"}
   ]
 }

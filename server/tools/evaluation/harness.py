@@ -1,7 +1,8 @@
 """서버 지표 평가 하네스 (specs/db-evaluation-server-metrics/spec.md 6절 "결정").
 
 임시 폴더에 Mosquitto, `nearpilot serve` 하위 프로세스, 같은 프로세스 안의 시뮬레이터 기기(`SimDevice`)를 띄우고
-`nearpilot seed`로 계정, 장소, 기기, 정책을 넣는다. MCP와 REST는 HTTP로 부르고, DB는 읽기 전용 연결로만 읽는다 (NFR-13).
+`nearpilot seed`로 계정, 장소, 기기, 정책을 넣고, 기기마다 자동 영점 0 dB 행을 한 번 넣는다 (`_seed_auto_zeros`).
+MCP와 REST는 HTTP로 부르고, 지표를 재는 동안 DB는 읽기 전용 연결로만 읽는다 (NFR-13).
 운영 DB, 운영 브로커, 실제 기기에는 접속하지 않는다. 포트는 비어 있는 localhost 포트를 고른다.
 `tools/`는 `tests/`를 import하지 않는다. 서버와 시드는 운영과 같은 `nearpilot` 명령이다.
 `workdir`은 ASCII 경로여야 한다. Mosquitto가 한글 경로의 설정 파일을 열지 못한다. 아니면 프로세스를 띄우기 전에 `HarnessError`다.
@@ -29,16 +30,18 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from nearpilot.core.proximity.model import load_models
-from nearpilot.core.proximity.estimator import HmmProximityEstimator
+from nearpilot.core.proximity.common_model import load_model_version
+from nearpilot.core.proximity.posterior import compute_posteriors
 from nearpilot.db.repositories.repository import SqliteRepository
+from nearpilot.db.schema import connect
 from nearpilot.shared.config import Settings
+from nearpilot.shared.enums import TrustState
 from tools.evaluation.db import open_readonly
 from tools.evaluation.server_config import EvalConfig
 from tools.node_sim import Beacon, BrokerConfig, CommandStore, Credentials, Scenario, SimDevice, SimNode
 from tools.node_sim.config import REPORTS
 
-PLACE_ID = "place-a"  # 모든 기기가 놓이는 장소. 근접 모델 파일은 <model_root>/place-a/ 에 있다
+PLACE_ID = "place-a"  # 모든 기기가 놓이는 장소. 근접 모델은 공통 모델 하나라서 장소 이름이 파일에 없다
 SERVER_ACCOUNT = "nearpilot-server"  # server.example.toml의 [mqtt].username이자 ACL의 서버 계정이다
 
 # PATH에 없을 때 Mosquitto를 찾아볼 폴더 (Homebrew, 리눅스 패키지, Windows 설치 폴더)
@@ -80,7 +83,7 @@ class Harness:
     """`with` 블록 동안 브로커, 서버, 시뮬레이터 기기가 떠 있고 시드를 마친 상태를 만든다.
 
     시작 순서: 브로커 → 서버(HTTP 포트가 열릴 때까지) → 시뮬레이터 기기 → DB에 기기가 생길 때까지 →
-    `nearpilot seed` → 서버 재시작 → 기기가 복원을 마칠 때까지. 시작에 실패하거나 블록이 끝나면
+    `nearpilot seed` → 자동 영점 넣기 → 서버 재시작 → 기기가 복원을 마칠 때까지. 시작에 실패하거나 블록이 끝나면
     시뮬레이터 → 서버 → 브로커 순으로 끈다. 제한 시간 안에 못 뜨면 `HarnessError`다.
     `startup_timeout_sec`은 시작을 기다리는 시간이자 HTTP 요청 한 번의 제한 시간이다.
     """
@@ -157,6 +160,7 @@ class Harness:
                                f"{self._log_tail('serve')}")
 
         self.tokens = self._seed(_first_owner(config))
+        self._seed_auto_zeros()
         self._restart_server()
         self._wait_restored()
 
@@ -227,10 +231,17 @@ class Harness:
             conn.close()
 
     def proximity_ready(self, user_id: str, node_id: str) -> bool:
-        """평가 장면의 근접 확률을 저장 관측으로 재현한다. 조회 목록은 임계값 통과를 뜻하지 않는다."""
+        """평가 장면의 근접 확률을 저장 관측으로 재현한다. 조회 목록은 임계값 통과를 뜻하지 않는다.
+
+        서버의 추정기는 메모리 상태라서 쓰지 않고, 읽기 전용 연결로 읽은 프레임과 자동 영점으로 `compute_posteriors`를 직접 부른다.
+        DB에는 보고 시각이 없어서, 근접 참여 기기는 최근 구간(`anchor_recent_sec`)에 프레임을 받은 trusted 기기로 근사한다.
+        빈 보고만 보낸 기기는 빠진다. 대상 확률은 판정과 같이 `threshold_probability`다. 대상이 자동 영점을 찾지 못했으면(`unzeroed`)
+        보수적 사후확률이 임계값 이상일 때만 준비된 것이다 (spec 결정 17).
+        """
         settings = Settings(**tomllib.loads(self._server_toml.read_text(encoding="utf-8"))["settings"])
-        models = load_models(self.config.model_root, {PLACE_ID: self.config.model_version})
+        model = load_model_version(self.config.model_root, self.config.model_version)
         now = datetime.now(timezone.utc)
+        recent = now - timedelta(seconds=settings.anchor_recent_sec)
         conn = open_readonly(_uri_path(self._db_path))
         try:
             repo = SqliteRepository(conn, settings)  # 읽기 전용 연결이다. 마이그레이션을 실행하지 않는다.
@@ -242,11 +253,17 @@ class Harness:
             if threshold is None:
                 return False
             place_nodes = [n for n in nodes if n.place_id == target.place_id]
-            estimator = HmmProximityEstimator(models, settings)
-            estimator.restore(repo.rssi_since(
-                beacons, now - timedelta(seconds=models[PLACE_ID].window_sec)), nodes)
-            result = estimator.posterior(beacons, [target], now, place_nodes=place_nodes)
-            return result.posteriors.get(node_id, 0.0) >= threshold
+            frames = repo.rssi_since(beacons, now - timedelta(seconds=max(model.window_sec, settings.anchor_recent_sec)))
+            trusted = {n.node_id for n in place_nodes if n.trust_state == TrustState.TRUSTED}
+            participants = {f.node_id for f in frames if f.node_id in trusted and recent <= f.received_at <= now}
+            state = repo.auto_zeros()
+            result = compute_posteriors(
+                model, frames, beacons[0], [target], place_nodes, now, bin_sec=settings.rssi_frame_sec,
+                participants=participants,
+                zeros={n: row.zero_db for n, row in state.zeros.items() if row.zero_db is not None},
+                calib_version=str(state.revision),
+            )
+            return node_id in result.posteriors and result.threshold_probability(node_id) >= threshold
         finally:
             conn.close()
 
@@ -280,17 +297,13 @@ class Harness:
     # ── 시작의 조각 ──────────────────────────────────────────────────
 
     def _check_model(self) -> None:
-        """장소의 trusted 기기가 모두 근접 모델에 있어야 한다. 하나라도 없으면 서버는 모든 요청에서 모델 오류를 낸다."""
+        """공통 근접 모델 파일을 읽을 수 있어야 한다. 모델은 기기를 모르므로 기기 목록은 보지 않는다."""
         config = self.config
         try:
-            model = load_models(config.model_root, {PLACE_ID: config.model_version})[PLACE_ID]
+            load_model_version(config.model_root, config.model_version)
         except (OSError, ValueError, LookupError) as error:
-            raise HarnessError(f"근접 모델을 읽을 수 없다 ({config.model_root}/{PLACE_ID}/{config.model_version}.json): "
+            raise HarnessError(f"근접 모델을 읽을 수 없다 ({config.model_root}/{config.model_version}.json): "
                                f"{error}") from error
-        missing = sorted(node.node_id for node in config.nodes if node.trusted and node.node_id not in model.nodes)
-        if missing:
-            raise HarnessError(f"근접 모델 {config.model_version}에 없는 trusted 기기가 있다: {missing} "
-                               f"(모델의 기기: {sorted(model.nodes)})")
 
     def _secret_file(self, account: str) -> Path:
         """계정의 원문 비밀번호 파일. `.env.*`는 커밋하지 않는 파일 이름이다."""
@@ -339,8 +352,7 @@ class Harness:
         raw["settings"] = dict(settings)
         raw["http"] = {**raw["http"], "port": self._http_port}
         raw["database"] = {"path": str(self._db_path), "audit_jsonl": str(self.workdir / "audit.jsonl")}
-        raw["proximity"] = {"model_root": str(self.config.model_root),
-                            "models": {PLACE_ID: self.config.model_version}}
+        raw["proximity"] = {"model_root": str(self.config.model_root), "model_version": self.config.model_version}
         raw["mqtt"] = {**raw["mqtt"], "port": mqtt_port, "password_file": str(self._secret_file(SERVER_ACCOUNT))}
         raw.pop("dashboard", None)
         self._server_toml.write_text(_toml(raw), encoding="utf-8")
@@ -379,6 +391,29 @@ class Harness:
         if missing:
             raise HarnessError(f"nearpilot seed 출력에서 토큰을 읽지 못했다: {missing}\n{shown}")
         return tokens
+
+    def _seed_auto_zeros(self) -> None:
+        """장소가 이미 보정된 채로 시작한다: trusted 기기마다 자동 영점 0 dB 개정을 DB에 넣는다.
+
+        서버가 영점을 스스로 찾으려면 방문자가 기기 사이를 걸으며 모델의 `min_bins`칸 이상 관측해야 하고, 칸의 1등은 표본이
+        아니라서 항상 1등인 기기는 영점을 찾지 못한다. 평가 장면은 방문자를 한 기기 앞에 세우거나 모든 기기가 같은 값으로 듣게
+        해서 그런 기기가 생긴다. 영점이 없는 1등은 보수적 사후확률로 판정해서 신호가 약하면 `ASK`라서, 보정 차이가 없는 시뮬레이터 기기의 영점을 지표를 재기 전에
+        0 dB로 넣어 둔다. 서버를 다시 띄울 때 읽는다.
+        `vendor`는 기기가 발표한 선언 그대로다. 다르면 서버가 첫 관측에서 이 영점을 버린다.
+        DB에 쓰는 때는 시작 한 번뿐이다. 지표를 재는 동안은 읽기 전용 연결로만 읽는다.
+        """
+        conn = connect(str(self._db_path))
+        try:
+            repo = SqliteRepository(conn)
+            now = datetime.now(timezone.utc)
+            for node in repo.nodes():
+                if node.trust_state != TrustState.TRUSTED:
+                    continue
+                vendor = (None, None) if node.descriptor is None else (
+                    node.descriptor.vendor.model, node.descriptor.vendor.firmware)
+                repo.save_auto_zero(node.node_id, 0.0, vendor[0], vendor[1], now)
+        finally:
+            conn.close()
 
     def _stored_nodes(self) -> set[str]:
         """서버 DB에 있는 기기 ID. DB가 아직 없으면 빈 집합이다."""

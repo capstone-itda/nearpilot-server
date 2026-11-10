@@ -1,8 +1,11 @@
-"""시험 회차의 정면 오선택률과 ECE (NFR-06, specs/core-ops-cli/spec.md 5절·6절 "eval").
+"""시험 회차의 정면 오선택률과 ECE (NFR-06, specs/core-ops-cli/spec.md 5절·6절 "eval",
+specs/core-proximity-common-model/spec.md 6절 결정 4, 11, 13).
 
 `compute_metrics`와 `metric_rows`는 `Sample`을 손으로 만들어 손으로 계산한 값과 맞춘다.
-`collect_samples`는 기기 둘(a, b)의 작은 모델과 손으로 정한 RSSI 회차로 확인한다. 모델은 기기마다 자기 앞 −50 dBm,
-다른 기기 앞 −70 dBm, 어느 기기 앞도 아님 −90 dBm을 기대하고 흔들림이 2 dB라서, 정답이 아닌 상태의 확률은 0으로 떨어진다.
+`collect_samples`는 공통 모델(`MODEL`)과 손으로 정한 RSSI 회차로 확인한다. 모델은 기기 앞 −50 dBm, 다른 기기 앞 −70 dBm,
+어느 기기 앞도 아님 −90 dBm을 기대하고 흔들림이 2 dB라서, 정답이 아닌 상태의 확률은 0으로 떨어진다.
+기기가 둘(a, b)인 회차는 자동 영점을 찾을 수 없다 (가장 센 기기를 뺀 기기가 둘 이상이어야 표본이 생긴다). 그래서 값 그대로 쓴다.
+기기가 셋인 시험은 자동 영점의 손계산 값을 따로 확인한다.
 평가 시각은 `validation_log_loss`가 쓰는 시각과 같은지 맞춰 본다.
 프레임은 정수 초 사이(t + 0.5초)에 받고 수신은 관측과 같은 시각이다. 평가 시각이 정수 초이고 회차의 끝 시각 이후 프레임은 없어서,
 정수 초에 프레임을 두면 마지막 평가 시각의 마지막 칸이 비고 사후확률이 `stay`로 흐려진다.
@@ -19,14 +22,15 @@ from pathlib import Path
 
 import pytest
 
-from nearpilot.core.proximity import fit as fit_module
+from nearpilot.core.proximity import common_fit
+from nearpilot.core.proximity.common_fit import LabeledRun, PlaceRuns, validation_log_loss
+from nearpilot.core.proximity.common_model import CommonModel, RoleParams
 from nearpilot.core.proximity.files import AcceptanceSettings
-from nearpilot.core.proximity.fit import AnchorLayout, LabeledRun, PlaceLayout, validation_log_loss
-from nearpilot.core.proximity.model import NodeModel, ProximityModel
 from nearpilot.shared.enums import TrustState
 from nearpilot.shared.models import BeaconKey, ProximityResult, RssiFrame
 from tools.evaluation import proximity
 from tools.evaluation.proximity import (
+    AUTO_ZERO_CALIB,
     EvaluationError,
     Metrics,
     Sample,
@@ -41,18 +45,12 @@ BEACON = BeaconKey("11111111-2222-3333-4444-555555555555", 1, 1)
 OTHER_BEACON = BeaconKey(BEACON.uuid, 1, 2)
 ACCEPTANCE = AcceptanceSettings(max_misselection=0.05, max_ece=0.05)
 
-# 기기 a는 앵커가 (0, 0), 앞이 (1, 0)이고 b는 앵커가 (11, 0), 앞이 (10, 0)이다. 자기 앞은 1 m, 다른 기기 앞은 10 m다.
-# A = −50, n = 2라서 자기 앞은 −50 dBm, 다른 기기 앞은 −50 − 20 × log10(10) = −70 dBm이다.
-MODEL = ProximityModel(
-    place_id="place-a", model_version="v1", calib_version="c1", window_sec=3.0, stay=0.9, min_distance_m=0.3,
-    calibration_method="none", validation={},
-    nodes={
-        node_id: NodeModel(node_id, x, 0.0, front, 0.0, A=-50.0, n=2.0, sigma=2.0, none_rssi=-90.0, none_sigma=2.0)
-        for node_id, x, front in (("a", 0.0, 1.0), ("b", 11.0, 10.0))
-    },
-)
-LAYOUT = PlaceLayout(
-    "place-a", {node_id: AnchorLayout(node.x, node.y, node.front_x, node.front_y) for node_id, node in MODEL.nodes.items()}
+# 기기 앞은 −50 dBm, 다른 기기 앞은 −70 dBm, 어느 기기 앞도 아님은 −90 dBm이고 모두 흔들림이 2 dB다.
+# 자동 영점은 40개 이상의 표본이 있어야 찾는다 (기기가 셋인 시험이 40개를 만든다).
+MODEL = CommonModel(
+    model_version="v1", window_sec=3.0, stay=0.9, calibration_method="none", calibration_tau=1.0,
+    front=RoleParams(-50.0, 2.0), other=RoleParams(-70.0, 2.0), none=RoleParams(-90.0, 2.0),
+    auto_zero_min_bins=40, auto_zero_bound_db=0.0, validation={},
 )
 LEVELS = {  # 라벨 → 앵커마다 받는 RSSI
     "a": {"a": -50.0, "b": -70.0},
@@ -273,9 +271,11 @@ def recorded_times(monkeypatch: pytest.MonkeyPatch, module, call) -> list[dateti
     real = module.compute_posteriors
     times: list[datetime] = []
 
-    def spy(model, frames, beacon, candidates, place_nodes, at, *, bin_sec):
+    def spy(model, frames, beacon, candidates, place_nodes, at, *, bin_sec, participants, zeros, calib_version):
         times.append(at)
-        return real(model, frames, beacon, candidates, place_nodes, at, bin_sec=bin_sec)
+        return real(
+            model, frames, beacon, candidates, place_nodes, at,
+            bin_sec=bin_sec, participants=participants, zeros=zeros, calib_version=calib_version)
 
     monkeypatch.setattr(module, "compute_posteriors", spy)
     call()
@@ -298,7 +298,7 @@ def test_NFR06_eval_collect_samples_uses_validation_log_loss_times(monkeypatch, 
     model = replace(MODEL, window_sec=window_sec)
     run = make_run("r1", "a")
     expected = recorded_times(
-        monkeypatch, fit_module, lambda: validation_log_loss(model, LAYOUT, [run], bin_sec=bin_sec))
+        monkeypatch, common_fit, lambda: validation_log_loss(model, [PlaceRuns("p", [run])], {}, bin_sec=bin_sec))
 
     actual = recorded_times(monkeypatch, proximity, lambda: collect_samples(model, [run], bin_sec=bin_sec))
 
@@ -338,8 +338,8 @@ def test_NFR06_eval_collect_samples_none_probability_is_one_minus_sum_and_not_ne
     # 합이 0.75와 1 + 1e-12다. 후보 확률의 합은 반올림 때문에 1을 조금 넘을 수 있다 (`ProximityResult`가 허용하는 오차다)
     results = iter([{"a": 0.5, "b": 0.25}, {"a": 0.5, "b": 0.500000000001}])
 
-    def fake(model, frames, beacon, candidates, place_nodes, at, *, bin_sec):
-        return ProximityResult(next(results), at - timedelta(seconds=3), at, "v1", "c1")
+    def fake(model, frames, beacon, candidates, place_nodes, at, *, bin_sec, participants, zeros, calib_version):
+        return ProximityResult(next(results), at - timedelta(seconds=3), at, "v1", calib_version)
 
     monkeypatch.setattr(proximity, "compute_posteriors", fake)
     run = make_run("r1", "a", seconds=4)  # 평가 시각이 3초, 4초 둘이다
@@ -350,12 +350,12 @@ def test_NFR06_eval_collect_samples_none_probability_is_one_minus_sum_and_not_ne
     assert dict(second.probabilities) == {"a": 0.5, "b": 0.500000000001, "none": 0.0}  # −1e-12는 0으로 자른다
 
 
-def test_NFR06_eval_collect_samples_passes_every_model_node_as_trusted_candidates(monkeypatch):
+def test_NFR06_eval_collect_samples_passes_every_anchor_as_trusted_candidate_and_participant(monkeypatch):
     seen = []
 
-    def spy(model, frames, beacon, candidates, place_nodes, at, *, bin_sec):
-        seen.append((model, list(frames), beacon, candidates, place_nodes, bin_sec))
-        return ProximityResult({"a": 0.5, "b": 0.5}, at - timedelta(seconds=3), at, "v1", "c1")
+    def spy(model, frames, beacon, candidates, place_nodes, at, *, bin_sec, participants, zeros, calib_version):
+        seen.append((model, list(frames), beacon, candidates, place_nodes, bin_sec, participants, zeros, calib_version))
+        return ProximityResult({"a": 0.5, "b": 0.5}, at - timedelta(seconds=3), at, "v1", calib_version)
 
     monkeypatch.setattr(proximity, "compute_posteriors", spy)
     run = make_run("r1", "a", seconds=4)
@@ -363,11 +363,73 @@ def test_NFR06_eval_collect_samples_passes_every_model_node_as_trusted_candidate
     collect_samples(MODEL, [run], bin_sec=0.5)
 
     assert len(seen) == 3  # 3초, 3.5초, 4초
-    model, frames, beacon, candidates, place_nodes, bin_sec = seen[0]
+    model, frames, beacon, candidates, place_nodes, bin_sec, participants, zeros, calib_version = seen[0]
     assert model is MODEL and beacon == BEACON and bin_sec == 0.5
     assert candidates == place_nodes and [node.node_id for node in candidates] == ["a", "b"]
-    assert {(node.place_id, node.trust_state) for node in candidates} == {("place-a", TrustState.TRUSTED)}
+    assert {node.trust_state for node in candidates} == {TrustState.TRUSTED}
+    assert len({node.place_id for node in candidates}) == 1  # 시험 회차 전부를 장소 하나로 본다
+    assert set(participants) == {"a", "b"}  # 앵커 전부가 근접 참여 기기다
+    assert dict(zeros) == {}  # 기기가 둘이면 자동 영점을 찾을 수 없다
+    assert calib_version == AUTO_ZERO_CALIB == "auto-zero"
     assert len(frames) == 8 and set(frames) == set(run.frames)  # 쓸 수 있는 프레임이 모두 간다
+
+
+def three_device_runs() -> list[LabeledRun]:
+    """기기 셋(a, b, c)의 회차 넷. 칸마다 가장 센 기기를 뺀 둘의 평균이 −70이다 (손으로 센 자동 영점은 a 1.0, b 0.0, c −1.0).
+
+    r-a는 b +4, c −4, r-b는 a −2, c +2, r-c는 a +4, b −4를 표본으로 20개씩 준다. r-none은 값이 모두 같아서 표본이 없다.
+    회차마다 시작을 60초씩 떨어뜨려서 다른 회차의 프레임이 같은 칸에 섞이지 않게 한다.
+    """
+    levels = {
+        "r-a": ("a", {"a": -50.0, "b": -66.0, "c": -74.0}),
+        "r-b": ("b", {"a": -72.0, "b": -50.0, "c": -68.0}),
+        "r-c": ("c", {"a": -66.0, "b": -74.0, "c": -50.0}),
+        "r-none": ("none", {"a": -90.0, "b": -90.0, "c": -90.0}),
+    }
+    return [
+        make_run(run_id, label, observed, start=T0 + timedelta(seconds=60 * index))
+        for index, (run_id, (label, observed)) in enumerate(levels.items())
+    ]
+
+
+def recorded_arguments(monkeypatch: pytest.MonkeyPatch, model: CommonModel) -> list[dict]:
+    """세 기기 회차로 `collect_samples`를 돌려 `compute_posteriors`에 넘긴 참여 기기, 영점, 보정 버전을 모은다."""
+    seen: list[dict] = []
+
+    def spy(model, frames, beacon, candidates, place_nodes, at, *, bin_sec, participants, zeros, calib_version):
+        seen.append({"participants": set(participants), "zeros": dict(zeros), "calib_version": calib_version})
+        return ProximityResult({"a": 0.4, "b": 0.3, "c": 0.2}, at - timedelta(seconds=3), at, "v1", calib_version)
+
+    monkeypatch.setattr(proximity, "compute_posteriors", spy)
+    collect_samples(model, three_device_runs(), bin_sec=1.0)
+    return seen
+
+
+def test_NFR06_eval_collect_samples_finds_auto_zero_from_the_test_runs(monkeypatch):
+    # a: −2가 20개, +4가 20개라서 가운데 둘(−2, +4)의 평균 1.0. b: −4 20개, +4 20개 → 0.0. c: −4 20개, +2 20개 → −1.0.
+    seen = recorded_arguments(monkeypatch, MODEL)
+
+    assert len(seen) == 4 * 18  # 회차마다 평가 시각이 18개
+    assert all(arguments["zeros"] == {"a": 1.0, "b": 0.0, "c": -1.0} for arguments in seen)
+    assert all(arguments["participants"] == {"a", "b", "c"} for arguments in seen)
+    assert all(arguments["calib_version"] == "auto-zero" for arguments in seen)
+
+
+def test_NFR06_eval_collect_samples_uses_the_model_auto_zero_min_bins(monkeypatch):
+    # 표본이 기기마다 40개다. 모델이 41개를 요구하면 영점을 하나도 찾지 못하고, 그래도 평가는 영점 없이(0 dB) 돈다.
+    seen = recorded_arguments(monkeypatch, replace(MODEL, auto_zero_min_bins=41))
+
+    assert len(seen) == 4 * 18 and all(arguments["zeros"] == {} for arguments in seen)
+    assert all(arguments["participants"] == {"a", "b", "c"} for arguments in seen)
+
+
+def test_NFR06_eval_collect_samples_label_device_is_an_anchor_even_without_frames():
+    # 앵커는 프레임에 나온 기기와 라벨 기기의 합집합이다. 보고를 한 번도 하지 않은 라벨 기기도 상태에 들어가서 표본의 확률이 있다.
+    samples = collect_samples(MODEL, [make_run("r1", "c", LEVELS["a"])], bin_sec=1.0)
+
+    assert len(samples) == 18
+    assert all(set(s.probabilities) == {"a", "b", "c", "none"} for s in samples)
+    assert all(s.label == "c" and s.probabilities["c"] < 0.01 for s in samples)  # 프레임이 a 앞의 값이라 c는 거의 0이다
 
 
 def test_NFR06_eval_collect_samples_ignores_frames_the_run_does_not_use():
@@ -375,7 +437,6 @@ def test_NFR06_eval_collect_samples_ignores_frames_the_run_does_not_use():
     at = T0 + timedelta(seconds=10)
     junk = [
         RssiFrame("a", OTHER_BEACON, -90.0, at, "junk", 1, at, at),  # 다른 비콘
-        RssiFrame("z", BEACON, -90.0, at, "junk", 2, at, at),  # 모델에 없는 기기
         RssiFrame("a", BEACON, -90.0, T0 + timedelta(seconds=25), "junk", 3, at, at),  # 회차의 끝 뒤
         RssiFrame("a", BEACON, -90.0, T0 - timedelta(seconds=1), "junk", 4, at, at),  # 회차의 시작 앞
         RssiFrame("b", BEACON, math.nan, at, "junk", 5, at, at),  # 유한하지 않은 RSSI
@@ -407,11 +468,6 @@ def test_NFR06_eval_collect_samples_rejects_runs_without_evaluation_times():
         collect_samples(MODEL, [make_run("r1", "a"), short], bin_sec=1.0)
     # 회차 길이와 window_sec이 같으면 시각이 하나(끝 시각)다
     assert len(collect_samples(MODEL, [make_run("edge", "a", seconds=3)], bin_sec=1.0)) == 1
-
-
-def test_NFR06_eval_collect_samples_rejects_unknown_label():
-    with pytest.raises(EvaluationError, match=r"'r1'.*'c'.*'none'"):
-        collect_samples(MODEL, [make_run("r1", "c", LEVELS["a"])], bin_sec=1.0)
 
 
 @pytest.mark.parametrize(

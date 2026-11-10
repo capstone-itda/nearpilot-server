@@ -44,7 +44,7 @@ def test_FR16_cli_missing_default_file_lists_candidates(server_dir):
 
     # 폴더가 없거나 비었으면 목록 자리에 (없음)을 쓴다.
     dirs.plans.mkdir()
-    for folder in (dirs.plans, dirs.layouts):
+    for folder in (dirs.plans, dirs.fit):  # 비어 있는 폴더, 없는 폴더
         with pytest.raises(CliError) as error:
             resolve_input("c.json", folder, kind="계획")
         assert error.value.exit_code == 2
@@ -83,8 +83,9 @@ def test_FR16_cli_default_dirs_follow_config_location(tmp_path):
     server = (tmp_path / "server").resolve()
     dirs = dirs_for(tmp_path / "server" / "config" / "server.toml")  # 파일이 없어도 정한다
     assert dirs.config_dir == server / "config"
-    assert (dirs.seed, dirs.plans, dirs.layouts, dirs.fit) == tuple(
-        server / "config" / name for name in ("seed", "plans", "layouts", "fit"))
+    assert (dirs.seed, dirs.plans, dirs.fit) == tuple(
+        server / "config" / name for name in ("seed", "plans", "fit"))
+    assert not hasattr(dirs, "layouts")  # 공통 모델은 배치 파일을 받지 않는다
     # var/ 는 설정 파일 폴더의 부모 기준이다
     assert (dirs.splits, dirs.records, dirs.reports) == tuple(
         server / "var" / name for name in ("splits", "records", "reports"))
@@ -125,13 +126,16 @@ def test_FR16_cli_invalid_config_creates_nothing(server_dir, run_cli, write_conf
     assert not (server_dir / "var").exists()  # DB도 감사 파일도 만들지 않는다
 
 
-def test_FR16_cli_load_cli_config_checks_models_only_on_request(server_dir):
-    path = str(server_dir / "config" / "server.toml")
-    assert load_cli_config(path).proximity.versions == {}  # 기본은 모델 표를 요구하지 않는다
+def test_FR16_cli_load_cli_config_checks_models_only_on_request(server_dir, write_config):
+    path = str(write_config(server_dir, name="no-version.toml", proximity={"model_root": "../var/models"}))
+    assert load_cli_config(path).proximity.model_version is None  # 기본은 모델 버전을 요구하지 않는다
     with pytest.raises(CliError) as error:
         load_cli_config(path, require_models=True)
     assert error.value.exit_code == EXIT_INVALID and error.value.message.startswith("설정 오류: ")
-    assert "proximity.models" in error.value.message
+    assert "proximity.model_version" in error.value.message
+    # 모델 버전이 있는 기본 설정은 요구해도 읽힌다
+    assert load_cli_config(str(server_dir / "config" / "server.toml"), require_models=True).proximity.model_version \
+        == "syn-common-1"
     assert not (server_dir / "var").exists()  # 설정만 읽고 DB를 열지 않는다
 
 

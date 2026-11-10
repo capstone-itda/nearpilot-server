@@ -14,10 +14,15 @@ import sqlite3
 import subprocess
 import sys
 import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+from nearpilot.db.repositories.repository import SqliteRepository
+from nearpilot.db.schema import connect
+from nearpilot.shared.models import BeaconKey, RssiFrame
+import tools.evaluation.harness as harness_module
 from tools.evaluation.harness import Harness, HarnessError, find_mosquitto
 from tools.evaluation.server_config import NodeSpec, load_eval_config
 from tools.node_sim import Beacon, CommandStore, Scenario, SimNode
@@ -82,13 +87,15 @@ def test_NFR13_harness_requires_mosquitto(monkeypatch, ascii_tmp_path, spawned):
     assert not workdir.exists()
 
 
-def test_NFR13_harness_rejects_trusted_node_missing_from_model(ascii_tmp_path, spawned):
+def test_NFR13_harness_rejects_unreadable_model(ascii_tmp_path, spawned):
     config = small_config()
+    # 공통 모델은 기기를 모른다. 목록에 없는 기기를 trusted로 두어도 모델 때문에 막히지 않는다.
     config = dataclasses.replace(config, nodes=(*config.nodes, NodeSpec("ghost-1", "locker", "rental")))
+    broken = dataclasses.replace(config, model_version="missing-version")
 
-    with pytest.raises(HarnessError, match="ghost-1"):  # 모델에 없는 trusted 기기는 모든 요청을 모델 오류로 만든다
-        with Harness(config, ascii_tmp_path / "work", server_root=SERVER):
-            pytest.fail("모델이 맞지 않으면 시작하지 않아야 한다")
+    with pytest.raises(HarnessError, match="missing-version"):  # 모델 파일을 읽지 못하면 서버가 시작하지 못한다
+        with Harness(broken, ascii_tmp_path / "work", server_root=SERVER):
+            pytest.fail("모델을 읽을 수 없으면 시작하지 않아야 한다")
 
     assert spawned == []
 
@@ -124,6 +131,70 @@ def test_NFR13_harness_set_rssi_and_scenario_replace_simulated_scenario(tmp_path
         assert node.scenario.beacons == ()
     finally:
         store.close()
+
+
+def ready_scene(root, rssi):
+    """하네스가 읽는 DB 파일과 서버 설정 파일만 놓는다 (프로세스를 띄우지 않는다).
+
+    방문자가 사물함 locker-1 앞에서 `rssi`로 들리는 프레임 셋이 방금 들어왔다 (칸 길이 1초).
+    (연결, 저장소, 지금, 준비 확인 함수)를 돌려준다. 연결은 부른 쪽이 닫는다.
+    """
+    config = small_config()
+    harness = Harness(config, root / "work", server_root=SERVER)
+    harness._db_path.parent.mkdir(parents=True)
+    harness._server_toml.write_text('[settings]\nversion = "t1"\n', encoding="utf-8")
+    minor = next(user.minor for user in config.users if user.user_id == "visitor-1")
+    beacon = BeaconKey(config.beacon_uuid, config.beacon_major, minor)
+    conn = connect(str(harness._db_path))
+    for user_id, role in (("owner", "owner"), ("visitor-1", "visitor")):
+        conn.execute("INSERT INTO user (user_id, name, token_hash, role) VALUES (?, ?, ?, ?)",
+                     (user_id, user_id, f"hash-{user_id}", role))
+    conn.execute("INSERT INTO beacon (beacon_id, user_id, uuid, major, minor, is_active) VALUES ('b-1', 'visitor-1', ?, ?, ?, 1)",
+                 (beacon.uuid, beacon.major, beacon.minor))
+    conn.execute("INSERT INTO place (place_id, owner_user_id, name) VALUES ('place-a', 'owner', 'lab')")
+    conn.execute("INSERT INTO node (node_id, place_id, kind, occupancy, trust_state, device_state, exclusive_group, release_policy) "
+                 "VALUES ('locker-1', 'place-a', 'locker', 'rental', 'trusted', 'AVAILABLE', NULL, '{}')")
+    repo = SqliteRepository(conn)
+    now = datetime.now(timezone.utc)
+    for seq in range(1, 4):  # 최근 구간 안의 프레임 셋
+        at = now - timedelta(seconds=seq - 0.8)
+        repo.save_rssi(RssiFrame("locker-1", beacon, rssi, at, "s-1", seq, at, at))
+    return conn, repo, now, lambda: harness.proximity_ready("visitor-1", "locker-1")
+
+
+def test_NFR13_harness_ready_uses_conservative_probability(tmp_path, monkeypatch):
+    """근접 준비 확인은 판정과 같이 `threshold_probability`로 임계값(사물함 0.95)을 본다 (결정 17).
+
+    대상이 자동 영점을 찾지 못했으면(`unzeroed`) 보수적 사후확률이다. 시험 모델(`syn-common-1`)에서 강한 신호(`near`)는
+    자동 영점이 없어도 보수적 사후확률이 임계값을 넘어 준비됐다. 6 dB 약한 신호는 사후확률만 임계값을 넘는다.
+    그래서 자동 영점 행이 없거나 마지막 행이 버림이면 준비되지 않았고, 0 dB 행이 있으면 같은 관측으로 준비됐다.
+    """
+    near = small_config().rssi["near"]
+    strong_conn, strong_repo, now, strong_ready = ready_scene(tmp_path / "strong", near)
+    weak_conn, weak_repo, scene_now, weak_ready = ready_scene(tmp_path / "weak", near - 6.0)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return scene_now
+
+    # 준비 확인의 현재 시각을 장면 시각으로 고정한다. 실행이 느려도 프레임이 관측 구간 밖으로 밀려나지 않는다
+    monkeypatch.setattr(harness_module, "datetime", FrozenDatetime)
+    try:
+        assert strong_ready()  # 자동 영점 행이 없어도 보수적 사후확률이 임계값 이상이다
+        strong_repo.save_auto_zero("locker-1", 0.0, None, None, now)
+        assert strong_ready()
+        strong_repo.save_auto_zero("locker-1", None, None, None, now)
+        assert strong_ready()  # 마지막 행이 버림이어도 같다
+
+        assert not weak_ready()  # 자동 영점 행이 없고 보수적 사후확률이 임계값 미만이다
+        weak_repo.save_auto_zero("locker-1", 0.0, None, None, now)
+        assert weak_ready()  # 영점이 있으면 같은 관측으로 준비됐다
+        weak_repo.save_auto_zero("locker-1", None, None, None, now)
+        assert not weak_ready()  # 마지막 행이 버림이라 영점이 없다
+    finally:
+        strong_conn.close()
+        weak_conn.close()
 
 
 @pytest.mark.parametrize("server_script", [

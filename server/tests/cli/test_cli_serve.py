@@ -1,6 +1,6 @@
 """`nearpilot serve` (FR-16, specs/core-ops-cli/spec.md 5절·6절 "serve").
 
-일반 serve만 모델 표가 필요하고 `--collect-only`는 모델 표 없이 시작한다.
+일반 serve만 `model_version`이 필요하고 `--collect-only`는 모델 버전 없이 시작한다.
 서버 실행(`run_server`)과 uvicorn은 가짜로 대신한다. 수집 전용 서버의 실제 동작은 `tests/integration/test_cli_collect_only.py`가 확인한다.
 """
 
@@ -15,47 +15,43 @@ from nearpilot.runtime import ConfigError, load_config
 MODEL_ROOT = "../var/models"
 
 
-@pytest.mark.parametrize("proximity", [
-    {"model_root": MODEL_ROOT},  # 모델 표가 없다
-    {"model_root": MODEL_ROOT, "models": {}},  # 빈 표다
-], ids=["no-table", "empty-table"])
-def test_FR16_serve_requires_models_without_collect_only(
-        server_dir, run_cli, run_server_calls, write_config, proximity):
-    path = write_config(server_dir, name="no-models.toml", proximity=proximity)
+def test_FR16_serve_requires_models_without_collect_only(server_dir, run_cli, run_server_calls, write_config):
+    path = write_config(server_dir, name="no-models.toml", proximity={"model_root": MODEL_ROOT})  # model_version이 없다
 
     code, _, err = run_cli(["--config", str(path), "serve"], cwd=server_dir)
-    assert code == EXIT_INVALID and err.startswith("설정 오류: ") and "proximity.models" in err
+    assert code == EXIT_INVALID and err.startswith("설정 오류: ") and "proximity.model_version" in err
     assert run_server_calls == []  # 서버를 시작하지 않는다
 
     code, _, _ = run_cli(["--config", str(path), "serve", "--collect-only"], cwd=server_dir)
     assert code == EXIT_OK
     [(config, collect_only)] = run_server_calls
-    assert collect_only is True and config.proximity.versions == {}
+    assert collect_only is True and config.proximity.model_version is None
 
-    # load_config의 기본값은 그대로 모델 표를 요구한다
-    with pytest.raises(ConfigError, match=r"proximity\.models"):
+    # load_config의 기본값은 그대로 model_version을 요구한다
+    with pytest.raises(ConfigError, match=r"proximity\.model_version"):
         load_config(path)
-    assert load_config(path, require_models=False).proximity.versions == {}
+    assert load_config(path, require_models=False).proximity.model_version is None
     assert not (server_dir / "var").exists()  # 설정만 읽고 DB를 열지 않는다
 
 
 def test_FR16_serve_collect_only_follows_option_not_models(server_dir, run_cli, run_server_calls, write_config):
     path = write_config(server_dir, name="models.toml",
-                        proximity={"model_root": MODEL_ROOT, "models": {"place-a": "v1"}})
+                        proximity={"model_root": MODEL_ROOT, "model_version": "v1"})
 
     for argv in (["serve", "--config", str(path)], ["serve", "--collect-only", "--config", str(path)]):
         assert run_cli(argv, cwd=server_dir)[0] == EXIT_OK
-    # 모델 표가 있어도 수집 전용은 옵션으로만 켠다. 설정은 그대로 읽는다 (모델은 Runtime이 읽지 않는다).
+    # 모델 버전이 있어도 수집 전용은 옵션으로만 켠다. 설정은 그대로 읽는다 (모델은 Runtime이 읽지 않는다).
     assert [collect_only for _, collect_only in run_server_calls] == [False, True]
-    assert all(dict(config.proximity.versions) == {"place-a": "v1"} for config, _ in run_server_calls)
+    assert all(config.proximity.model_version == "v1" for config, _ in run_server_calls)
 
 
 @pytest.mark.parametrize("proximity, key", [
-    ({"model_root": MODEL_ROOT, "models": {"place-a": 3}}, "proximity.models.place-a"),
-    ({"model_root": MODEL_ROOT, "models": "v1"}, "proximity.models"),
-    ({"models": {}}, "proximity.model_root"),  # model_root는 항상 필수다
+    ({"model_root": MODEL_ROOT, "model_version": 3}, "proximity.model_version"),
+    ({"model_root": MODEL_ROOT, "model_version": ""}, "proximity.model_version"),
+    ({"model_root": MODEL_ROOT, "models": {"place-a": "v1"}}, "proximity.models"),  # 장소별 표는 없어졌다 (#252)
+    ({"model_version": "v1"}, "proximity.model_root"),  # model_root는 항상 필수다
     ({"model_root": MODEL_ROOT, "extra": 1}, "proximity.extra"),
-], ids=["model-version-type", "models-not-table", "no-model-root", "unknown-key"])
+], ids=["model-version-type", "model-version-empty", "models-table", "no-model-root", "unknown-key"])
 def test_FR16_serve_collect_only_still_checks_proximity_format(
         server_dir, run_cli, run_server_calls, write_config, proximity, key):
     path = write_config(server_dir, name="bad.toml", proximity=proximity)

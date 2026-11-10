@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -32,8 +32,8 @@ from nearpilot.core.lifecycle.release import ReleaseService
 from nearpilot.core.lifecycle.restore import RestoreService
 from nearpilot.core.lifecycle.shared_light import SharedHolder, SharedLightService
 from nearpilot.core.policy.checker import RepositoryPolicyChecker
+from nearpilot.core.proximity.common_model import CommonModel, ModelMismatchError, load_model_version
 from nearpilot.core.proximity.estimator import HmmProximityEstimator
-from nearpilot.core.proximity.model import ProximityModel, load_models
 from nearpilot.db.repositories import SqliteDashboardReads
 from nearpilot.iot.mqtt import (
     ConnectionFailure, MqttCommandGateway, MqttConnection, MqttNodeRestarter, OccupancyPublisher,
@@ -54,7 +54,7 @@ from nearpilot.shared.models import Decision, ExecutionContext, ExecutionResult,
 
 log = logging.getLogger(__name__)
 
-ProximityFactory = Callable[[Mapping[str, ProximityModel], Settings], ProximityEstimator]
+ProximityFactory = Callable[[CommonModel | None, Settings], ProximityEstimator]
 
 
 def utc_now() -> datetime:
@@ -236,7 +236,7 @@ class Runtime:
     def __init__(
         self, config: ServerConfig, *, clock: Callable[[], datetime] = utc_now,
         client_factory: Callable[..., Any] = mqtt.Client,
-        proximity_factory: ProximityFactory = HmmProximityEstimator,
+        proximity_factory: ProximityFactory | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         collect_only: bool = False,
         mdns_factory: Callable[..., Any] = MdnsAdvertiser,
@@ -274,7 +274,8 @@ class Runtime:
         self._started: list[str] = []
         self._state = "new"
         self._started_at: datetime | None = None  # start() 가 기록한다. 대시보드가 "서버가 시작한 뒤"를 셀 기준이다
-        self._models: Mapping[str, ModelVersions] = {}  # 시작할 때 읽은 장소별 모델 버전. 수집 전용이면 빈 표다
+        self._model: CommonModel | None = None  # 시작할 때 읽은 공통 모델. 수집 전용이면 None 이다
+        self._proximity: ProximityEstimator | None = None  # 시작할 때 만든 근접 추정기. 대시보드가 보정 버전을 읽는다
         self.dashboard: DashboardParts | None = (
             None if config.dashboard is None else self._dashboard_parts(config.dashboard))
 
@@ -307,25 +308,26 @@ class Runtime:
 
     def _start(self) -> None:
         cfg, s = self.config, self.settings
-        # 1. 모델 — 설정은 load_config 가 이미 검증했다. 수집 전용이면 읽지 않고 빈 모델로 만든다
+        # 1. 모델 — 설정은 load_config 가 이미 검증했다. 수집 전용이면 읽지 않는다. 파일이 없으면 ModelMismatchError 로 시작하지 않는다
+        model: CommonModel | None
         if self._collect_only:
             log.info("수집 전용 모드: 근접 모델을 읽지 않는다. MCP 를 열지 않는다")
-            models: dict[str, ProximityModel] = {}
+            model = None
+        elif cfg.proximity.model_version is None:
+            raise ModelMismatchError("설정에 [proximity] model_version 이 없다")
         else:
-            models = load_models(cfg.proximity.model_root, cfg.proximity.versions)
-        for place_id, model in models.items():
-            log.info("근접 모델: place=%s model=%s calib=%s", place_id, model.model_version,
-                     model.calib_version)
-        self._models = {place_id: ModelVersions(model.model_version, model.calib_version)
-                        for place_id, model in models.items()}
-        proximity = self._proximity_factory(models, s)
+            model = load_model_version(cfg.proximity.model_root, cfg.proximity.model_version)
+        self._model = model
         # 2. DB — 연결이 스키마를 최신으로 맞춘다
         with self.db.scope():
             pass
         self._started.append("db")
         self.db.export_jsonl()
-        # 3. 근접 추정 복원
-        self._restore_proximity(proximity, models)
+        # 3. 근접 추정기를 만들고 복원한다 — 기본 추정기는 DB 의 최신 자동 영점을 읽고 새로 찾은 자동 영점을 쓴다
+        proximity = self._proximity = self._make_proximity(model, s)
+        log.info("근접 모델: model=%s 자동 영점 개정=%s", "없음" if model is None else model.model_version,
+                 getattr(proximity, "calib_version", "0"))
+        self._restore_proximity(proximity, model)
         # 4. 서비스와 콜백
         svc = self.services = self._build(proximity)
         # 5. MQTT 구독. SUBACK 전후의 보고는 보고 작업 시작 전까지 수신 큐에 남는다
@@ -352,11 +354,23 @@ class Runtime:
         # 10. 요청 접수
         self.gate.open()
 
-    def _restore_proximity(self, proximity: ProximityEstimator, models: Mapping[str, ProximityModel]) -> None:
+    def _make_proximity(self, model: CommonModel | None, settings: Settings) -> ProximityEstimator:
+        if self._proximity_factory is not None:
+            return self._proximity_factory(model, settings)
+        store = self.db.auto_zero_store()
+        return HmmProximityEstimator(model, settings, zeros=store.auto_zeros(), store=store)
+
+    def _model_versions(self) -> ModelVersions | None:
+        """대시보드가 모든 장소에 보여 줄 모델과 보정 버전. 모델이 없으면(수집 전용, 시작 전) None 이다."""
+        if self._model is None:
+            return None
+        return ModelVersions(self._model.model_version, getattr(self._proximity, "calib_version", "0"))
+
+    def _restore_proximity(self, proximity: ProximityEstimator, model: CommonModel | None) -> None:
         restore = getattr(proximity, "restore", None)
-        if restore is None or not models:
+        if restore is None or model is None:
             return
-        window = max(model.window_sec for model in models.values()) + self.settings.rssi_frame_sec
+        window = model.window_sec + self.settings.rssi_frame_sec
         since = self._clock() - timedelta(seconds=window)
         with self.db.scope() as bound:
             beacons = self.db.active_beacons()
@@ -477,7 +491,7 @@ class Runtime:
         hub = MonitorHub(PersonNames(), dashboard.api)
         queries = DashboardQueryService(
             open_reads=open_reads, settings=lambda: self.settings, weak_rssi_dbm=dashboard.weak_rssi_dbm,
-            models=lambda: self._models, mqtt_ready=mqtt_ready, holders=holders,
+            model=self._model_versions, mqtt_ready=mqtt_ready, holders=holders,
             reports_dir=dashboard.reports_dir, clock=self._clock, started_at=started_at)
         # 따라 읽기는 주기 작업이 멈추는 종료 순서를 따르므로 접수 문을 지나지 않는다
         tail = MonitorTail(open_reads=self.db.dashboard_reads, feed=hub, settings=lambda: self.settings,

@@ -275,7 +275,7 @@ class FakeReads:
 
 
 def make_service(
-    reads: FakeReads, *, holders=(), models=None, mqtt: bool = True, reports: Path | None = None,
+    reads: FakeReads, *, holders=(), model=None, mqtt: bool = True, reports: Path | None = None,
     tz=timezone.utc, now: datetime = NOW, started: datetime = T0, weak: float = -80.0,
 ) -> DashboardQueryService:
     def outside(value):
@@ -285,7 +285,7 @@ def make_service(
         return read
 
     return DashboardQueryService(
-        open_reads=reads.open, settings=Settings, weak_rssi_dbm=weak, models=outside(models or {}),
+        open_reads=reads.open, settings=Settings, weak_rssi_dbm=weak, model=outside(model),
         mqtt_ready=outside(mqtt), holders=outside(list(holders)),
         reports_dir=reports or Path("no-such-reports"), clock=lambda: now, started_at=lambda: started, tz=tz,
     )
@@ -405,16 +405,27 @@ def test_FR12A_places_skip_node_without_descriptor():
     assert [d["nodeId"] for d in service.health()["devices"]] == ["locker-1", "locker-2"]
 
 
-def test_FR12A_모델이_없는_장소는_버전이_없음():
+def test_FR12A_모델이_없으면_모든_장소의_버전이_없음():
     reads = FakeReads(places=[DashboardPlace("place-1", "라운지"), DashboardPlace("place-2", "옆방")])
-    service = make_service(reads, models={"place-1": ModelVersions("model-1", "cal-1")})
+    service = make_service(reads)  # 수집 전용이거나 시작 전이라 모델이 없다
 
     places = service.places()["places"]
 
-    assert [(p["modelVersion"], p["calibrationVersion"]) for p in places] == [("model-1", "cal-1"), ("없음", "없음")]
-    assert service.health()["server"]["model"] == "model-1 · cal-1 / 없음"
+    assert [(p["modelVersion"], p["calibrationVersion"]) for p in places] == [("없음", "없음"), ("없음", "없음")]
+    assert service.health()["server"]["model"] == "없음 / 없음"
     assert make_service(FakeReads()).places() == {"weakRssiDbm": -80.0, "places": []}
     assert make_service(FakeReads()).health()["server"]["model"] == "없음"  # 장소가 없다
+
+
+def test_FR16_dashboard_shows_auto_zero_revision():
+    """모델이 공통이라 모든 장소가 같은 모델 버전과 자동 영점 개정 번호를 보인다 (FR-16)."""
+    reads = FakeReads(places=[DashboardPlace("place-1", "라운지"), DashboardPlace("place-2", "옆방")])
+    service = make_service(reads, model=ModelVersions("synthetic-2", "4"))
+
+    places = service.places()["places"]
+
+    assert [(p["modelVersion"], p["calibrationVersion"]) for p in places] == [("synthetic-2", "4"), ("synthetic-2", "4")]
+    assert service.health()["server"]["model"] == "synthetic-2 · 4 / synthetic-2 · 4"
 
 
 # ── 점유 ─────────────────────────────────────────────────────────────
@@ -1228,7 +1239,7 @@ def test_FR12A_조회_중_DB_오류는_예외를_올린다(name):
 def test_FR12A_조회_하나는_읽기_트랜잭션_하나다(name):
     reads = rich_world()
     service = make_service(reads, holders=[SharedHolder("light-1", VISITOR_ID, ago(30))],
-                           models={"place-1": ModelVersions("model-1", "cal-1")})
+                           model=ModelVersions("model-1", "cal-1"))
 
     CALLS[name](service)  # 모델·연결·유지 대상자는 트랜잭션 밖에서 읽는다 (make_service 가 확인한다)
 
@@ -1246,7 +1257,7 @@ def test_FR12A_조회_서비스는_접점을_구현한다():
 def test_FR11_조회_결과와_이벤트에_사용자_ID가_없다(tmp_path):
     reads = rich_world()
     service = make_service(reads, holders=[SharedHolder("light-1", VISITOR_ID, ago(30))],
-                           models={"place-1": ModelVersions("model-1", "cal-1")}, reports=tmp_path)
+                           model=ModelVersions("model-1", "cal-1"), reports=tmp_path)
     results = [name for name in CALLS if name != "current_events"]
 
     texts = [s for name in results for s in strings(CALLS[name](service))]
@@ -1260,7 +1271,7 @@ def test_FR12A_조회_결과가_형식_검사를_통과한다(tmp_path):
     (tmp_path / "report.csv").write_text(
         "# generated_at: 2026-10-20T01:00:00+00:00\nmetric,passed,trials,note\nece,True,12,\n", encoding="utf-8")
     service = make_service(rich_world(), holders=[SharedHolder("light-1", VISITOR_ID, ago(30))],
-                           models={"place-1": ModelVersions("model-1", "cal-1")}, reports=tmp_path)
+                           model=ModelVersions("model-1", "cal-1"), reports=tmp_path)
     names = PersonNames()
     data = {
         "places": service.places(), "uses": service.uses(), "approvals": service.approvals(),

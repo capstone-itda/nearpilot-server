@@ -3,7 +3,7 @@
 명령은 같은 프로세스에서 `main(argv)`로 부른다. 실제 Mosquitto, 서버, 시뮬레이터는 띄우지 않는다 (그 시험은 `tests/tools/test_eval_*.py`가
 실제 프로세스로 한다). `evaluate-server`는 `Harness`와 지표 함수를 가짜로 바꿔서 명령이 하는 일을 확인한다: 설정과 인자 검사,
 출력 경로 확인, 지표 순서와 시드, 지표 사이의 기기 정리, 보고서·원자료·그래프 쓰기, 실패 때의 종료 코드와 남는 파일.
-`evaluate-reask`는 `test_cli_eval.py`처럼 실제 SQLite 파일의 합성 회차와 손으로 쓴 모델을 읽는다. 곡선 계산은 `test_eval_reask.py`가 확인한다.
+`evaluate-reask`는 `test_cli_eval.py`처럼 실제 SQLite 파일의 합성 회차와 손으로 쓴 공통 모델을 읽는다. 곡선 계산은 `test_eval_reask.py`가 확인한다.
 그래프를 실제로 그리는 시험은 matplotlib이 있을 때만 돈다 (`pytest.importorskip`).
 """
 
@@ -23,8 +23,7 @@ import pytest
 from nearpilot.cli import EXIT_FAILED, EXIT_INVALID, EXIT_OK
 from nearpilot.cli import evaluate
 from nearpilot.core.dashboard.evaluation import evaluation_of
-from nearpilot.core.proximity.fit import AnchorLayout, PlaceLayout, write_model_file
-from nearpilot.core.proximity.model import NodeModel, ProximityModel
+from nearpilot.core.proximity.common_model import CommonModel, RoleParams, write_common_model_file
 from tools.evaluation import report as report_module
 from tools.evaluation.db import EXPECTED_SCHEMA_VERSION
 from tools.evaluation.harness import HarnessError
@@ -171,6 +170,14 @@ def read_raw(path: Path) -> dict:
 def reports_listing(server: Path) -> list[str]:
     reports = server / "var" / "reports"
     return sorted(path.name for path in reports.iterdir()) if reports.exists() else []
+
+
+@pytest.fixture
+def server_dir(tmp_path: Path, write_config) -> Path:
+    """기본 설정은 저장소의 시험용 모델 폴더를 가리킨다. 이 시험은 모델 파일을 쓰므로 임시 폴더 `var/models`를 가리킨다."""
+    server = tmp_path / "server"
+    write_config(server, proximity={"model_root": "../var/models"})
+    return server
 
 
 @pytest.fixture(autouse=True)
@@ -838,7 +845,8 @@ def test_NFR13_evaluate_commands_are_registered(run_cli, tmp_path):
     code, out, err = run_cli(["evaluate-server", "--help"], cwd=tmp_path)
     assert code == EXIT_OK and "EVAL_TOML" in out and "--metrics" in out and "--seed" in out and "--force" in out
     code, out, err = run_cli(["evaluate-reask", "--help"], cwd=tmp_path)
-    assert code == EXIT_OK and "PLACE/VERSION" in out and "--split" in out and "--ratios" in out and "--force" in out
+    assert code == EXIT_OK and "VERSION" in out and "--split" in out and "--ratios" in out and "--force" in out
+    assert "PLACE" not in out  # 모델은 버전으로만 고른다. 장소는 분할 결과가 정한다
     code, out, err = run_cli(["evaluate-server"], cwd=tmp_path)  # 설정 파일 인자가 빠졌다
     assert code == EXIT_INVALID and "EVAL_TOML" in err
 
@@ -846,21 +854,14 @@ def test_NFR13_evaluate_commands_are_registered(run_cli, tmp_path):
 # ── evaluate-reask ────────────────────────────────────────────────────
 
 T0 = datetime(2026, 10, 17, 9, 0, 0, tzinfo=timezone.utc)
-LAYOUT = PlaceLayout(
-    "place-a",
-    {"locker-1": AnchorLayout(0.0, 0.0, 0.0, 0.5), "locker-2": AnchorLayout(4.0, 0.0, 4.0, 0.5)},
-    none_points=((2.0, 3.0),),
-)
-# 손으로 쓴 모델 (`test_cli_eval.py`와 같다): 기기마다 A = −50, n = 2, 흔들림 2 dB. 아래 STATE_RSSI는 이 모델이 확신하는 RSSI라서
-# 정답 상태의 확률이 1로 포화된다. 확률이 0 아니면 1이라 곡선의 값을 손으로 센다.
-HAND_MODEL = ProximityModel(
-    place_id="place-a", model_version="v1", calib_version="c1", window_sec=2.5, stay=0.9, min_distance_m=0.3,
-    calibration_method="temperature", calibration_tau=1.0, validation={},
-    nodes={
-        node_id: NodeModel(node_id, a.x, a.y, a.front_x, a.front_y, A=-50.0, n=2.0, sigma=2.0, none_rssi=-90.0,
-                           none_sigma=2.0)
-        for node_id, a in LAYOUT.nodes.items()
-    },
+DEVICES = ("locker-1", "locker-2")
+# 손으로 쓴 공통 모델 (`test_cli_eval.py`와 같다): 기기 앞은 −44 dBm, 방문자가 선 기기가 아닌 기기는 −62 dBm, 어느 기기 앞도 아니면
+# −90 dBm이고 흔들림은 모두 2 dB다. 아래 STATE_RSSI는 이 모델이 확신하는 RSSI라서 정답 상태의 확률이 1로 포화된다.
+# 확률이 0 아니면 1이라 곡선의 값을 손으로 센다.
+HAND_MODEL = CommonModel(
+    model_version="v1", window_sec=2.5, stay=0.9, calibration_method="none", calibration_tau=1.0,
+    front=RoleParams(-44.0, 2.0), other=RoleParams(-62.0, 2.0), none=RoleParams(-90.0, 2.0),
+    auto_zero_min_bins=120, auto_zero_bound_db=0.0, validation={},
 )
 STATE_RSSI = {  # 방문자가 선 상태 → 앵커마다 받는 RSSI
     "locker-1": {"locker-1": -44.0, "locker-2": -62.0},
@@ -881,8 +882,8 @@ def hand_runs() -> list[tuple]:
     return [hand_run(0, "locker-1"), hand_run(1, "locker-2"), hand_run(2, "none"), hand_run(3, "locker-1", looks_like="locker-2")]
 
 
-def write_model(server: Path, model: ProximityModel = HAND_MODEL) -> Path:
-    return write_model_file(server / "var" / "models", model)
+def write_model(server: Path, model: CommonModel = HAND_MODEL) -> Path:
+    return write_common_model_file(server / "var" / "models", model)
 
 
 def write_split(server: Path, train, validation, test, *, place_id: str = "place-a", name: str = "place-a-seed42.json") -> Path:
@@ -895,14 +896,14 @@ def write_split(server: Path, train, validation, test, *, place_id: str = "place
 
 def build_hand(server: Path, make_collection_db, runs: list[tuple] | None = None) -> tuple[str, ...]:
     """DB에 `runs`(기본은 `hand_runs()`)를 만들고, 모두를 시험 회차로 둔 분할 결과 파일과 손으로 쓴 모델을 쓴다. 시험 회차 ID를 돌려준다."""
-    ids = make_collection_db(server, LAYOUT, hand_runs() if runs is None else runs)
+    ids = make_collection_db(server, {"place-a": list(DEVICES)}, hand_runs() if runs is None else runs)
     write_model(server)
     write_split(server, (), (), ids)
     return tuple(ids)
 
 
-def reask_argv(*extra: str, model: str = "place-a/v1") -> list[str]:
-    return ["evaluate-reask", model, "--split", "place-a-seed42.json", *extra]
+def reask_argv(*extra: str, version: str = "v1") -> list[str]:
+    return ["evaluate-reask", version, "--split", "place-a-seed42.json", *extra]
 
 
 def schema_version(server: Path) -> int:
@@ -941,13 +942,13 @@ def test_NFR06_evaluate_reask_writes_report(server_dir, run_cli, hand, fake_plot
         assert f"재질문률 0.2500, 확률 임계값 {threshold}" in row["note"] and "미판정" in row["note"]
     # 무엇을 평가했는지 모든 행에 남는다 (eval과 같다)
     assert {(row["place_id"], row["model_version"], row["calib_version"], row["split_file"]) for row in rows} == {
-        ("place-a", "v1", "c1", str((server_dir / "var" / "splits" / "place-a-seed42.json").resolve()))}
+        ("place-a", "v1", "auto-zero", str((server_dir / "var" / "splits" / "place-a-seed42.json").resolve()))}
     assert comments == [
         f"# db_path: {(server_dir / 'var' / 'nearpilot.db').resolve()}", f"# schema_version: {schema_version(server_dir)}",
         "# git_commit: test-commit", "# sample_count: 72", "# generated_at: 2026-10-27T05:00:00+00:00"]
     raw = read_raw(raw_path)
     assert (raw["command"], raw["model"], raw["calib_version"], raw["ratios"], raw["samples"]) == (
-        "evaluate-reask", "place-a/v1", "c1", [1.0, 2.0, 5.0, 10.0], 72)
+        "evaluate-reask", "v1", "auto-zero", [1.0, 2.0, 5.0, 10.0], 72)
     assert raw["curve"] == [{"cost_ratio": float(r), "threshold": r / (1 + r), "reask_rate": 0.25, "misoperation_rate": 0.25}
                             for r in (1, 2, 5, 10)]
     # 그래프는 곡선만 그린다. 통과 막대는 이 명령의 행이 모두 판정 안 함이라 그리지 않는다
@@ -958,6 +959,20 @@ def test_NFR06_evaluate_reask_writes_report(server_dir, run_cli, hand, fake_plot
     png_path = csv_path.parent / f"{REASK_NAME}-reask.png"
     assert out.splitlines()[-4:] == [f"작성: {path}" for path in (csv_path, md_path, raw_path, png_path)]
     assert [metric["pass"] for metric in evaluation_of(csv_path.parent)["metrics"]] == [None] * 5  # 대시보드가 읽는다
+
+
+def test_FR16_evaluate_reask_place_comes_from_the_split(server_dir, run_cli, hand, fake_plots):
+    # 공통 모델 파일에는 장소가 없다. 같은 모델과 시험 회차를 다른 장소의 분할 결과로 주면 보고서의 장소가 바뀐다.
+    write_split(server_dir, (), (), hand, place_id="place-b", name="place-b-seed42.json")
+
+    code, out, err = run_cli(["evaluate-reask", "v1", "--split", "place-b-seed42.json"], cwd=server_dir)
+
+    csv_path, _, raw_path = report_files(server_dir, "place-b-v1-reask-20261027")
+    assert (code, err) == (EXIT_OK, "")
+    rows = read_report(csv_path)[1]
+    assert {(row["place_id"], row["model_version"], row["calib_version"]) for row in rows} == {
+        ("place-b", "v1", "auto-zero")}
+    assert read_raw(raw_path)["model"] == "v1"
 
 
 def test_NFR06_evaluate_reask_ratios_come_from_the_option(server_dir, run_cli, hand, fake_plots):
@@ -1056,33 +1071,29 @@ def test_NFR06_evaluate_reask_rejects_bad_ratios(server_dir, run_cli, hand, fake
     assert not (server_dir / "var" / "reports").exists()  # DB를 읽거나 폴더를 만들기 전에 거부한다
 
 
-@pytest.mark.parametrize("model", ["place-a", "place-a/v1/v2", "/v1", "place-a/", "place-a\\v1", "../v1", "place-a/.."])
-def test_NFR06_evaluate_reask_model_argument_must_be_place_slash_version(server_dir, run_cli, model):
-    code, out, err = run_cli(reask_argv(model=model), cwd=server_dir)
+@pytest.mark.parametrize("version", ["", ".", "..", "a/b", "a\\b", "../v1", "./v1", "/v1", "v1/"])
+def test_NFR06_evaluate_reask_version_must_be_a_name(server_dir, run_cli, version):
+    code, out, err = run_cli(reask_argv(version=version), cwd=server_dir)
 
     assert (code, out) == (EXIT_INVALID, "")
-    assert err == f"평가할 모델은 PLACE/VERSION 형식으로 쓴다: {model}\n"
+    assert err == f"VERSION은(는) 경로 구분자가 없는 이름이어야 한다: {version!r}\n"
     assert not (server_dir / "var").exists()
 
 
 def test_NFR06_evaluate_reask_input_errors_are_exit_2(server_dir, run_cli, make_collection_db):
-    models = (server_dir / "var" / "models" / "place-a").resolve()
+    models = (server_dir / "var" / "models").resolve()
     code, out, err = run_cli(reask_argv(), cwd=server_dir)
     assert (code, out) == (EXIT_INVALID, "")
-    assert err == f"모델 파일이 없다: {models / 'v1.json'}. {models}에 있는 파일: (없음)\n"
+    assert err == f"모델 파일 오류: 모델 'v1'의 파일이 없다: {models / 'v1.json'}\n"
 
     build_hand(server_dir, make_collection_db)
-    code, out, err = run_cli(["evaluate-reask", "place-a/v1", "--split", "nowhere.json"], cwd=server_dir)
+    code, out, err = run_cli(["evaluate-reask", "v1", "--split", "nowhere.json"], cwd=server_dir)
     assert (code, out) == (EXIT_INVALID, "")
     assert err.startswith("분할 결과 파일이 없다: ")
 
-    other = write_split(server_dir, (), (), ("col-001",), place_id="place-b", name="other.json")  # 다른 장소의 분할 결과
-    code, out, err = run_cli(["evaluate-reask", "place-a/v1", "--split", str(other)], cwd=server_dir)
-    assert (code, out) == (EXIT_INVALID, "")
-    assert err == "분할 결과의 장소(place-b)와 평가할 장소(place-a)가 다르다\n"
-
+    other = write_split(server_dir, (), (), ("col-001",), name="other.json")
     other.write_text("JSON이 아니다", encoding="utf-8")
-    code, out, err = run_cli(["evaluate-reask", "place-a/v1", "--split", str(other)], cwd=server_dir)
+    code, out, err = run_cli(["evaluate-reask", "v1", "--split", str(other)], cwd=server_dir)
     assert (code, out) == (EXIT_INVALID, "") and err.startswith("분할 결과 파일 오류: ")
 
     (models / "v1.json").write_text("JSON이 아니다", encoding="utf-8")  # build_hand가 쓴 모델을 망가뜨린다

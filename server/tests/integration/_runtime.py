@@ -15,6 +15,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -31,16 +32,17 @@ from nearpilot.db.schema import connect  # noqa: E402
 from nearpilot.runtime import Runtime, ShutdownError  # noqa: E402
 from nearpilot.runtime.config import ServerConfig, parse_config  # noqa: E402
 from nearpilot.shared.descriptor import legacy_descriptor  # noqa: E402
-from nearpilot.shared.models import ProximityResult  # noqa: E402
+from nearpilot.shared.models import BeaconKey, ProximityResult, RssiFrame  # noqa: E402
 from nearpilot.shared.tokens import hash_token  # noqa: E402
 
-MODEL_ROOT = SERVER / "tests" / "core" / "proximity" / "fixtures" / "models"
+MODEL_ROOT = SERVER / "tests" / "core" / "proximity" / "fixtures" / "common"
+MODEL_VERSION = "syn-common-1"  # 시험용 합성 공통 모델 (장소와 기기 정보가 없다)
 GRANTED = [1, 0, 1, 1, 0]  # announce, rssi, status, result, time_request (#236)
 OWNER, VISITOR_A, VISITOR_B = "owner", "visitor-a", "visitor-b"
 TOKENS = {OWNER: "tok-owner", VISITOR_A: "tok-a", VISITOR_B: "tok-b"}
 UUID = "11111111-2222-3333-4444-555555555555"
 MINOR = {OWNER: 1, VISITOR_A: 2, VISITOR_B: 3}
-# fixture 모델(place-a)의 기기와 같다
+# place-a의 시험 기기다 (tests/core/proximity/conftest.py의 PLACE_A_NODES와 같다)
 NODES = {
     "locker-1": ("locker", "rental"),
     "locker-2": ("locker", "rental"),
@@ -67,7 +69,7 @@ def wait_until(predicate: Callable[[], Any], timeout: float = 5.0, interval: flo
 
 def make_config(tmp: Path, *, settings: Mapping[str, Any] | None = None,
                 runtime: Mapping[str, Any] | None = None, delivery: Mapping[str, Any] | None = None,
-                database: Mapping[str, Any] | None = None, models: Mapping[str, str] | None = None,
+                database: Mapping[str, Any] | None = None, model_version: str = MODEL_VERSION,
                 mqtt: Mapping[str, Any] | None = None, http: Mapping[str, Any] | None = None) -> ServerConfig:
     secret = tmp / ".env.mqtt-password"
     secret.write_text("test-only-password\n", encoding="utf-8")
@@ -78,7 +80,7 @@ def make_config(tmp: Path, *, settings: Mapping[str, Any] | None = None,
                     "shutdown_timeout_sec": 5.0, **(runtime or {})},
         "http": {"host": "127.0.0.1", "port": 8000, **(http or {})},
         "database": {"path": "np.db", "audit_jsonl": "audit.jsonl", **(database or {})},
-        "proximity": {"model_root": str(MODEL_ROOT), "models": dict(models or {"place-a": "syn-a-1"})},
+        "proximity": {"model_root": str(MODEL_ROOT), "model_version": model_version},
         "mqtt": {"host": "127.0.0.1", "port": 1883, "client_id": "test-server",
                  "username": "nearpilot-server", "password_file": secret.name, "keepalive_sec": 30,
                  "connect_timeout_sec": 1.0, "start_timeout_sec": 2.0, "stop_timeout_sec": 2.0,
@@ -154,7 +156,39 @@ class FakeProximity:
             table = table.get(user, {})
         wanted = {n.node_id for n in candidates}
         return ProximityResult({k: v for k, v in table.items() if k in wanted}, at, at,
-                               "syn-a-1", "none-1")
+                               MODEL_VERSION, "0")
+
+
+# ── 자동 영점을 찾게 하는 프레임 ────────────────────────────────────
+
+AUTO_ZEROS = (1.0, -1.0)  # `feed_auto_zero_frames`가 둘째와 셋째 앵커에게 찾게 하는 자동 영점 (dB)
+
+
+def feed_auto_zero_frames(runtime: Runtime, node_ids: tuple[str, str, str], *, bins: int) -> None:
+    """실제 `Runtime`의 근접 추정기가 자동 영점을 찾게 한다: 방문자 A의 비콘 프레임을 `bins`칸만큼 IOT 인계 접점으로 넣는다.
+
+    앵커 셋은 모든 칸에서 -50, -70, -72 dBm으로 듣는다. 첫째가 모든 칸의 1등이라 표본도 영점도 없고, 1등이 아닌 둘째와 셋째는
+    칸마다 표본(+1, -1 dB)을 하나씩 낸다. 칸은 마지막 둘이 열려 있어서 표본은 `bins − 2`개이고, 모델의 `min_bins` 이상이면
+    둘째와 셋째가 `AUTO_ZEROS`를 찾는다. 프레임은 `rssi_frame_sec` 간격이고 마지막 프레임이 지금이다.
+    기기가 실행할 수 있을 때까지 기다린 뒤 넣는다 (기기 연결 ID가 있어야 인계가 받는다).
+    인계는 IOT 보고 작업처럼 프레임 하나마다 DB 연결 범위 하나 안에서 한다.
+    """
+    services = runtime.services
+    assert services is not None
+    wait_until(lambda: all(services.restore.can_execute(node_id) for node_id in node_ids))
+    with runtime.db.scope() as bound:
+        sessions = {node.node_id: node.session_id for node in bound.repo.nodes()}
+    rssi = dict(zip(node_ids, (-50.0, -70.0, -72.0)))
+    beacon = BeaconKey(UUID, 1, MINOR[VISITOR_A])
+    step = timedelta(seconds=runtime.settings.rssi_frame_sec)
+    end = datetime.now(timezone.utc)
+    for k in range(bins):
+        at = end - step * (bins - 1 - k)
+        for node_id in node_ids:
+            # 순번은 시뮬레이터 보고(1부터)보다 크게 둔다. 같은 연결에서 순번이 앞선 프레임은 중복으로 버린다.
+            frame = RssiFrame(node_id, beacon, rssi[node_id], at, sessions[node_id], 1000 + k, at, at)
+            with runtime.db.scope():
+                services.node_events.on_rssi(frame)
 
 
 # ── 기기 시뮬레이터와 fake Paho ─────────────────────────────────────

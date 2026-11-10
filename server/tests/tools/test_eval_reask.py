@@ -2,8 +2,9 @@
 
 `reask_curve`는 `Sample`을 손으로 만들어 손으로 센 값과 맞춘다. 임계값 `r / (1 + r)`의 경계에 놓는 확률(0.5, 0.75)은 이진수로 정확해서
 "확률이 임계값과 같으면 구동한다"를 부동소수점 오차 없이 확인한다. `collect_samples`가 만든 표본으로 돌리는 시험은 하나다:
-기기 둘(a, b)의 작은 모델과 손으로 정한 RSSI 회차를 쓰고, 모델은 기기마다 자기 앞 −50 dBm, 다른 기기 앞 −70 dBm,
+기기 둘(a, b)과 손으로 정한 RSSI 회차를 쓰고, 공통 모델은 기기 앞 −50 dBm, 다른 기기 앞 −70 dBm,
 어느 기기 앞도 아님 −90 dBm을 기대하며 흔들림이 2 dB라서 정답이 아닌 상태의 확률은 0으로 떨어진다 (`test_evaluation_proximity.py`와 같은 모델).
+기기가 둘이라 자동 영점을 찾지 못하고 값 그대로 쓴다.
 """
 
 from __future__ import annotations
@@ -16,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from nearpilot.core.proximity.fit import LabeledRun
-from nearpilot.core.proximity.model import NodeModel, ProximityModel
+from nearpilot.core.proximity.common_fit import LabeledRun
+from nearpilot.core.proximity.common_model import CommonModel, RoleParams
 from nearpilot.shared.models import BeaconKey, RssiFrame
 from tools.evaluation.proximity import EvaluationError, Sample, collect_samples
 from tools.evaluation.report import write_report
@@ -27,13 +28,10 @@ COLUMNS = ["metric", "value", "limit", "passed", "trials", "failures", "note"]
 GENERATED_AT = datetime(2026, 10, 27, 5, 0, tzinfo=timezone.utc)
 T0 = datetime(2026, 10, 17, 9, 0, 0, tzinfo=timezone.utc)
 BEACON = BeaconKey("11111111-2222-3333-4444-555555555555", 1, 1)
-MODEL = ProximityModel(
-    place_id="place-a", model_version="v1", calib_version="c1", window_sec=3.0, stay=0.9, min_distance_m=0.3,
-    calibration_method="none", validation={},
-    nodes={
-        node_id: NodeModel(node_id, x, 0.0, front, 0.0, A=-50.0, n=2.0, sigma=2.0, none_rssi=-90.0, none_sigma=2.0)
-        for node_id, x, front in (("a", 0.0, 1.0), ("b", 11.0, 10.0))
-    },
+MODEL = CommonModel(
+    model_version="v1", window_sec=3.0, stay=0.9, calibration_method="none", calibration_tau=1.0,
+    front=RoleParams(-50.0, 2.0), other=RoleParams(-70.0, 2.0), none=RoleParams(-90.0, 2.0),
+    auto_zero_min_bins=40, auto_zero_bound_db=0.0, validation={},
 )
 LEVELS = {  # 라벨 → 앵커마다 받는 RSSI
     "a": {"a": -50.0, "b": -70.0},
