@@ -49,7 +49,7 @@
 | 신규 조작 접수 제한 | `dedup_entry_limit` | 10만 건 | 1건 이상의 정수 | 서버 전체의 중복 방지 항목 수다 (FR-22). |
 | 보존기간 정리 주기 | `retention_cleanup_interval_sec` | 60초 | 1초 이상의 정수 | 서버 조립(상태 관리)이 시작할 때와 이 간격마다 `RetentionStore.cleanup`을 부른다 (FR-21, FR-22, #164). |
 | 인자 상한 | `param_max.{kind}.{action}.{arg}` | 조명 `param_max.light.on.brightness` 64, 스피커 `param_max.speaker.on.volume` 20, 디스플레이(M5) `param_max.display.set_volume.volume` 50 | 정수 | 선택 설정이다. 서버는 기기 선언의 `maximum`과 이 값 중 작은 값으로 인자를 검사한다. 설정이 없으면 선언의 범위만 쓴다 (FR-09, #245). 기존 `light_brightness_max`와 `speaker_volume_max`는 이 형식으로 옮긴다. |
-| 전역 할당 허용 종류 | `any_allowed_kinds` | `["locker"]` | 종류 이름의 목록 | 전역 할당(`any:{kind}`)을 받는 종류다. 목록에 없는 종류의 `any:` 요청은 거부한다 (FR-23, #245). `display` 종류는 이 목록에 넣지 않는다. 근접 모델 파일에 배치가 없는 기기는 전역 할당의 후보가 아니다 (FR-05). |
+| 전역 할당 허용 종류 | `any_allowed_kinds` | `["locker"]` | 종류 이름의 목록 | 전역 할당(`any:{kind}`)을 받는 종류다. 목록에 없는 종류의 `any:` 요청은 거부한다 (FR-23, #245). `display` 종류는 이 목록에 넣지 않는다. 근접 참여 기기가 아닌 기기는 전역 할당의 후보가 아니다 (FR-05). |
 | 인자 기본값 | `param_default.{kind}.{action}.{arg}` | 조명 `param_default.light.on.brightness` 64, `param_default.light.on.color` `#FFFFFF`, 스피커 `param_default.speaker.on.volume` 20, 디스플레이(M5) `param_default.display.set_volume.volume` 20 | 선언의 인자 스키마와 인자 상한 설정을 만족하는 값 | 선택 설정이다. 같은 동작의 앞선 성공 명령이 없을 때 생략한 인자에 쓴다 (FR-09, #245). 기존 `light_default_brightness`, `light_default_color`, `speaker_default_volume`은 이 형식으로 옮긴다. `display` 종류의 기본값은 첫 실행에서 음량이 크게 나오지 않도록 낮게 둔다. |
 | SmartThings 상태 확인 주기 | `smartthings_poll_sec` | 5초 | `status_report_sec` 이상이고 `online_ttl_sec` 이하 | SmartThings 클라우드 기기의 하트비트다. 서버는 이 주기로 기기 상태를 조회해서 `on_status`로 넘기고 `last_seen_at`을 갱신한다 (FR-13, #259). |
 

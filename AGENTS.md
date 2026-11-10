@@ -11,6 +11,7 @@ NearPilot 서버는 AI 호스트의 요청을 판정해서 ESP32 기기의 실�
 | `docs/architecture.md` | 영역, 담당, 영역 간 계약, 외부 계약 | 다른 영역과 닿는 코드를 쓸 때 |
 | `docs/glossary.md` | 문체 규칙과 용어 | 문서를 쓸 때 |
 | `specs/{계층}-{요약}/spec.md` | 작업 명세 | 구현하기 전 |
+| `docs/adr/` | 설계를 바꾸며 지운 spec과 바꾼 이유 | 옛 설계를 찾을 때 |
 | `specs/_template/`, `.github/` 템플릿 | spec, 이슈, PR 양식 | 해당 글을 쓸 때 |
 
 문서 내용이 서로 다르면 product > requirements > architecture > spec 순서로 따른다.
@@ -66,6 +67,7 @@ pytest tests/<계층>      # 계층 하나
 | 오탈자나 형식을 고친다 (뜻은 그대로) | 해당 문서 | docs PR |
 | 에이전트가 실수했다 | `AGENTS.md` "Gotchas" 절 | 실수가 나온 feat PR 또는 fix PR |
 | 머지된 spec의 동작을 바꾼다 | spec | fix PR |
+| 새 spec이 옛 spec을 대체한다 | 옛 spec을 지우고 `docs/adr/`에 이전 설계와 바꾼 이유를 남긴다 | 대체하는 feat PR |
 
 - `docs/`에는 확정된 내용만 쓴다. 정하지 않은 내용은 `미결`로 쓴다. 이슈가 생기면 `미결 — #이슈번호`로 바꾼다.
 

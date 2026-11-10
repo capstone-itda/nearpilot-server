@@ -1,4 +1,4 @@
-"""`tests/core/proximity/` 공통 도우미 (specs/core-proximity-estimator/spec.md).
+"""`tests/core/proximity/` 공통 도우미 (specs/core-proximity-common-model/spec.md).
 
 일반 함수와 상수로 두어서 테스트 모듈이 `from .conftest import ...`로 가져다 쓴다.
 `fixtures/common/`의 모델 파일은 테스트용 합성 값이다. 운영 값이 아니다.

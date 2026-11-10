@@ -207,7 +207,7 @@ spec 규칙
 - 외부 요청의 중복 방지 보장기간이 지나면 DB가 외부 `request_id`를 비운다 (FR-22). 그 뒤 같은 `request_id`가 오면 ⓪은 새 요청으로 본다. 판정은 ⓪~⑥을 처음부터 검사한다.
 - 신규 조작 접수 제한은 ⓪에서 새 요청으로 확인한 요청에만 적용한다 (FR-22). 한도 이상이면 `DENY` / `CAPACITY_EXCEEDED`다. 같은 요청의 재전송에는 기존 결과를 반환한다.
 - #165가 접점을 정했다. DB는 `link_request()`에서 외부 `request_id`를 비운 행을 만들고 `capacity_exceeded=True`를 반환한다. 판정은 이 플래그를 ⓪에서 검사해 기존 저장·감사 경로로 거부를 기록한다.
-- 후보가 있는데 관측이 없으면 `posterior()`는 처음 분포(균등)를 반환한다 (#26, `specs/core-proximity-estimator`). 판정은 빈 `posteriors`도 `LOW_CONFIDENCE`로 처리한다.
+- 후보가 있는데 관측이 없으면 `posterior()`는 처음 분포(균등)를 반환한다 (#26, `specs/core-proximity-common-model`). 판정은 빈 `posteriors`도 `LOW_CONFIDENCE`로 처리한다.
 - 실행 직전 재검사는 판정이 제공하고 상태 관리가 호출한다. 재검사 실패의 미전송 취소도 상태 관리가 시작한다.
 - `threshold_explicit_*`는 이전 설정과 저장된 스냅샷의 호환 필드다. 판정에는 쓰지 않는다.
 - 미결: 스피커의 근접 임계값. 설정 이름은 `threshold_speaker`다. 기본값 `None`이면 판정은 스피커의 근접 지정 요청을 실행하지 않는다 (#61).

@@ -613,7 +613,7 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - 전역 할당은 `any_allowed_kinds`에 있는 종류의 `any:{kind}` 요청을 종류별로 묶고 `threshold_{kind}`를 적용한다. 초기 설정은 `any:locker`와 `threshold_locker`다. 명시 지정의 확률 검사 생략을 적용하지 않는다 (#245).
 - 판정은 근접 참여 기기가 아닌 기기를 근접 지정, 전역 할당, 거리 선택자의 후보에서 뺀다. 이 기기는 명시 지정으로만 쓴다 (FR-05, #252).
 - 근접 지정과 전역 할당에서 판정은 자동 영점을 찾은 기기만 후보로 쓴다. 사후확률이 가장 큰 기기에 자동 영점이 없으면 판정은 다른 후보를 고르지 않고 `ASK`를 반환한다 (FR-17, #252).
-- 근접 추정은 근접 참여 여부와 자동 영점 유무를 판정에 알린다. `shared` 접점의 모양은 근접 추정 spec에서 정한다.
+- 근접 추정은 근접 참여 후보만 `ProximityResult.posteriors`에 넣는다. 그중 자동 영점이 없는 기기는 `ProximityResult.unzeroed`로 알린다 (`specs/core-proximity-common-model`).
 - 감사 기록의 후보 확률은 다시 정규화하지 않은 값이다.
 - `threshold_explicit_locker`, `threshold_explicit_light`, `threshold_explicit_speaker`는 이전 설정과 저장된 스냅샷의 호환 필드다. 기존 값 검증은 유지하지만 판정에는 쓰지 않는다.
 - 미결: 스피커의 근접 임계값. 설정 이름은 `threshold_speaker`다. 기본값 `None`이면 스피커의 근접 지정 실행을 허가하지 않는다 (#61).
@@ -677,7 +677,7 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 
 **근접**
 
-- SmartThings 기기는 RSSI를 보고하지 않는다. 서버는 이 기기를 근접 모델 파일에 배치하지 않는다. FR-05 규칙대로 근접 지정(`nearest:`)과 전역 할당(`any:`), 거리 선택자(`near:`·`far:`)의 후보에서 빠지고 명시적 지정으로만 쓴다. 코드 변경이 없다.
+- SmartThings 기기는 RSSI를 보고하지 않는다. 그래서 근접 참여 기기가 되지 않는다. FR-05 규칙대로 근접 지정(`nearest:`)과 전역 할당(`any:`), 거리 선택자(`near:`·`far:`)의 후보에서 빠지고 명시적 지정으로만 쓴다. 코드 변경이 없다.
 - FR-15의 ① 비콘 검사는 명시적 지정에도 그대로 적용한다. 방문자는 이 기기가 있는 장소의 등록 비콘을 최근 T초 안에 보내야 실행할 수 있다. 원격 요청은 거부한다.
 
 **실행 응답 제한 — 확인 필요**
@@ -763,7 +763,7 @@ M5를 `occupancy: shared`로 선언하면 FR-20 "공용형 기기" 규칙이 그
 
 ### 근접 모델 파일과 버전
 
-[#252](https://github.com/capstone-itda/nearpilot-server/issues/252)의 A안을 따른다. [#40](https://github.com/capstone-itda/nearpilot-server/issues/40) B안의 장소별 모델 파일을 대체한다.
+[#252](https://github.com/capstone-itda/nearpilot-server/issues/252)의 A안을 따른다. [#40](https://github.com/capstone-itda/nearpilot-server/issues/40) B안의 장소별 모델 파일을 대체한다. 바꾼 이유와 이전 모델은 [ADR 0001](adr/0001-proximity-common-model.md)에 있다.
 근접 추정은 버전이 붙은 공통 모델 파일 하나를 시작할 때 읽는다. 모든 장소가 같은 파일을 쓴다.
 
 - 파일은 모든 장소에 공통인 관측 파라미터, HMM 전이와 보정 값을 묶는다.
@@ -773,8 +773,7 @@ M5를 `occupancy: shared`로 선언하면 FR-20 "공용형 기기" 규칙이 그
 - 파일 내용을 바꾸면 새 버전을 만든다. 같은 버전의 파일을 덮어쓰지 않는다.
 - 근접 추정은 판정 기록이 참조하는 과거 버전 파일과 검증 결과를 보존한다.
 - DB는 판정에 적용한 버전을 기록한다. 파라미터와 기기 배치를 `node`에 저장하지 않는다.
-- `NodeInfo.anchor_params`와 논리 데이터 계약의 `node.anchor_params`를 제거한다. 관리 쓰기 접점은 추가하지 않는다.
-- 배포한 DB 스키마가 없어서 데이터 이전은 필요 없다. 후속 DB 구현은 제거한 필드를 만들지 않는다.
+- `NodeInfo`와 논리 데이터 계약의 `node`에는 근접 파라미터가 없다. 근접 파라미터의 관리 쓰기 접점도 없다.
 - 파일의 경로와 필드는 근접 추정 spec에서 정한다 (`specs/core-proximity-common-model`).
 - 실측 전에는 합성 값으로 만든 파일을 쓴다.
   - 시드를 고정한 생성기가 가상의 방 여러 곳에 기기를 무작위로 놓고 RSSI를 만든다. 그 RSSI로 공통 적합 함수를 돌려 파일을 만든다.
@@ -791,8 +790,8 @@ M5를 `occupancy: shared`로 선언하면 FR-20 "공용형 기기" 규칙이 그
 - 기기 선언의 `vendor.model`이나 `vendor.firmware`가 바뀌면 근접 추정은 그 기기의 자동 영점을 버리고 다시 찾는다. 버린 사실도 DB에 남겨, 재시작 뒤에 옛 자동 영점을 쓰지 않는다.
 - 기기가 재부팅하거나 동작 선언만 바뀌면 근접 추정은 자동 영점을 유지한다.
 - 근접 추정은 `vendor`를 자동 영점을 버리는 조건으로만 쓴다. 판정 분기에는 `vendor`를 쓰지 않는다.
-- 개정 번호의 단위, `shared` 접점, 테이블 이름은 근접 추정 spec과 DB spec에서 정한다.
-- 미결: 자동 영점을 찾는 방법과 "찾았다"의 기준. 근접 추정 담당이 spec에서 정한다 (FR-16).
+- 개정 번호는 서버 전체에 하나다. `auto_zero` 행 하나가 개정 하나다. `shared` 접점은 `AutoZeroStore`다.
+- 자동 영점을 찾는 방법과 "찾았다"의 기준은 `specs/core-proximity-common-model` 결정 4에 있다. 기기가 1~2대인 장소는 자동 영점을 찾지 못한다 (FR-16).
 
 ### 기기 보고의 인계
 
@@ -1575,7 +1574,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `approval` | PK `approval_id`, FK `node_id`, `requester_user_id`, `internal_request_id`, `approved_by_user_id`, `action`, 정책 리비전 참조, `status` (`pending`, `approved`, `denied`), `created_at`, `pending_until`, `valid_until`, `used_count`. 요청 참조는 승인 신청의 출처다. 허용 범위는 요청자, 기기, 동작, 정책 버전으로 검사한다. |
 | `approval_usage` | PK `usage_id`, FK `approval_id`, `internal_request_id`, 명령 연결, `state` (`reserved`, `held`, `consumed`, `released`). 요청별로 중복 예약을 막는다. 허용 횟수는 예약, 보류, 소진을 합쳐서 검사한다. `used_count`는 소진 집계값이며 중복으로 계산하지 않는다. 미전송이 확정되면 자동으로 반환한다. 결과가 실패하거나 불명이면 보류하고 복구 뒤 정산한다. 검증된 `DEVICE_BUSY`의 접수·실행 전 거부이면 이번 요청의 사용분을 반환한다. 공용형 제한 기기의 요청에도 행을 만든다. 무제한이면 횟수 검사만 생략한다. |
 | `collection_run` | PK `collection_id`, FK `beacon_id`, `label` (기기 1~7 앞 또는 none), `started_at`, nullable `ended_at`. 같은 비콘의 수집 구간은 겹치지 않는다. |
-| 자동 영점 | FK `node_id`, 자동 영점 값(dB), 개정 번호. 판정 기록의 보정 버전이 개정 번호를 참조한다. 엔터티의 코드 이름은 DB spec에서 정한다 (#252). |
+| `auto_zero` | PK `revision`(개정 번호), FK `node_id`, 자동 영점 `zero_db`(dB. 버림이면 NULL), 기기 선언의 `vendor_model`, `vendor_firmware`, `recorded_at`. 행을 고치거나 지우지 않는다. 판정 기록의 보정 버전이 개정 번호를 참조한다 (#252). |
 | `rssi_observation` | PK `obs_id`, FK `node_id`, `beacon_id`, `rssi` (dBm), `frame_ts` (약 1초 프레임), 서버 수신 시각 `received_at`, 발행 시각 `sent_at`, 기기 연결 ID `session_id`, 순번 `seq`, `(node_id, session_id, seq, beacon_id)` UNIQUE, nullable FK `collection_id`. 등록된 활성 비콘의 관측만 저장한다. 라벨은 연결한 수집 회차에서 읽는다. |
 | `request` | TEXT PK `internal_request_id`, FK `user_id`, 외부 `request_id`, UNIQUE `(user_id, request_id)`, 정규화 입력 요약 `input_digest`, nullable FK `parent_internal_request_id`, 거리 선택자 하위 요청의 nullable 상위 요청 연결, nullable FK `node_id`, `target_spec`, `action`, `verdict`, `reason_code`, `p_max`, 버전 `model`, `calib`, `policy_ver`, `config_ver`, 실제 설정을 포함한 JSON `decision_context`, `host_kind` |
 | `node_command` | TEXT PK `command_id`, FK `internal_request_id`, `node_id`, 대상 동작과 입력 요약, 서버가 정한 동작 인자 JSON `arguments`(없을 수 있다. 기존 `light`, `speaker`를 대체한다), 전송 시도, 실행 상태, 결과, 시각. 승인 사용분과 연결한다. 결과 불명은 실패, 미전송과 구분한다. 접수·실행 전 거부는 미전송, 실패와 구분한다. 기록은 재시작 뒤에도 보존한다. |
