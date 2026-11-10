@@ -68,11 +68,12 @@
 - `server/config/` — 설정 예시, `final-demo` 설정과 모델, README
 - `specs/core-proximity-estimator/spec.md`, `specs/core-proximity-model-fit/spec.md` — 머리의 상태 줄만 (`대체됨`)
 - `specs/core-ops-cli/spec.md`, `specs/core-server-assembly/spec.md`, `specs/db-evaluation-server-metrics/spec.md`, `specs/core-dashboard-queries/spec.md` — 머리의 상태 줄만 (바뀐 부분을 이 spec으로 가리킨다)
+- `docs/architecture.md` — 저장소 트리의 `config/layouts/` 줄과 §4 "근접 모델 파일과 버전"의 spec 참조만 (지운 폴더와 대체된 spec을 가리키던 줄, 담당자 지시)
 - 각 계층의 테스트
 
 ### 고치지 않는 곳
 
-- 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/pyproject.toml`, `.github/`
+- 항상: `docs/` (위의 `architecture.md` 두 줄은 제외), `AGENTS.md` (Gotchas 절은 제외), `server/pyproject.toml`, `.github/`
 - 이 작업: 거리 순서의 계산(`distance_order`), 명시 지정과 거리 선택자의 판정 규칙, 실행 직전 재검사, IOT, 펌웨어, 시뮬레이터, 대시보드 화면, 수집 도구(`tools/data_collection`), 분할 도구
 
 `docs/architecture.md` §4 "근접 사후확률의 범위"가 `shared` 접점의 모양을 근접 추정 spec에 맡겼다. 그래서 이 작업은 `shared`를 고친다.

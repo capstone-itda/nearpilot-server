@@ -68,7 +68,6 @@ nearpilot-server/
 │   ├── config/                 서버 설정 예시와 README
 │   │   ├── seed/               시드 파일 예시 (계정, 비콘, 장소, 정책)
 │   │   ├── plans/              수집 계획 예시
-│   │   ├── layouts/            기기 배치 예시
 │   │   ├── fit/                적합 설정 예시 (분할, 후보 값, 통과 기준)
 │   │   └── eval/               서버 지표 평가 설정 예시 (횟수, 통과 기준, 시뮬레이터 장면)
 │   ├── src/nearpilot/
@@ -776,7 +775,7 @@ M5를 `occupancy: shared`로 선언하면 FR-20 "공용형 기기" 규칙이 그
 - DB는 판정에 적용한 버전을 기록한다. 파라미터와 기기 배치를 `node`에 저장하지 않는다.
 - `NodeInfo.anchor_params`와 논리 데이터 계약의 `node.anchor_params`를 제거한다. 관리 쓰기 접점은 추가하지 않는다.
 - 배포한 DB 스키마가 없어서 데이터 이전은 필요 없다. 후속 DB 구현은 제거한 필드를 만들지 않는다.
-- 파일의 경로와 필드는 근접 추정 spec에서 정한다 (`specs/core-proximity-estimator`, `specs/core-proximity-model-fit`).
+- 파일의 경로와 필드는 근접 추정 spec에서 정한다 (`specs/core-proximity-common-model`).
 - 실측 전에는 합성 값으로 만든 파일을 쓴다.
   - 시드를 고정한 생성기가 가상의 방 여러 곳에 기기를 무작위로 놓고 RSSI를 만든다. 그 RSSI로 공통 적합 함수를 돌려 파일을 만든다.
   - 생성기의 배치는 파일에 넣지 않는다. 생성에는 공개 데이터의 숫자와 팀 보드나 케이스의 값을 쓰지 않는다.
