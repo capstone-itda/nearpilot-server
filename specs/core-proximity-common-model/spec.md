@@ -67,16 +67,16 @@
 - `server/tools/evaluation/` — 근접 표본 수집, 평가 harness, 평가 서버 설정, 지표 3 장면(결정 21), `EXPECTED_SCHEMA_VERSION`
 - `server/tools/node_lab/` — 실험실 모델 파일과 설정(`setup.py`), 시연의 대상 지정(`session.py`, 결정 20)
 - `server/config/` — 설정 예시, `final-demo` 설정과 모델, README
-- `specs/core-proximity-estimator/`, `specs/core-proximity-model-fit/` — 지운다. 이전 모델과 바꾼 이유는 `docs/adr/0001-proximity-common-model.md`에 남긴다 (담당자 지시)
+- `specs/core-proximity-estimator/`, `specs/core-proximity-model-fit/` — 지운다. 지운 사실과 읽는 방법은 `docs/requirements.md` §1.5의 #252 항목에 남긴다 (담당자 지시)
 - `specs/core-decision-pipeline/spec.md` — 지운 spec을 가리키던 참조와 머리의 상태 줄만
 - `specs/core-ops-cli/spec.md`, `specs/core-server-assembly/spec.md`, `specs/db-evaluation-server-metrics/spec.md`, `specs/core-dashboard-queries/spec.md` — 머리의 상태 줄만 (바뀐 부분을 이 spec으로 가리킨다)
 - `docs/architecture.md`, `docs/requirements.md`, `docs/glossary.md`, `docs/device-protocol.md` — 옛 배치 모델을 가리키던 표현을 공통 모델로 맞춘다. 결정 22의 보수적 사후확률을 반영한다 (담당자 지시)
-- `docs/adr/0001-proximity-common-model.md` — 새로 쓴다. `docs/sensor-removal-review.md` — 지운 spec의 링크만
+- `docs/sensor-removal-review.md` — 지운 spec의 링크만
 - 각 계층의 테스트
 
 ### 고치지 않는 곳
 
-- 항상: `docs/` (위의 파일은 제외), `AGENTS.md` (Gotchas 절과 ADR을 더한 두 표의 행은 제외), `server/pyproject.toml`, `.github/`
+- 항상: `docs/` (위의 파일은 제외), `AGENTS.md` (Gotchas 절은 제외), `server/pyproject.toml`, `.github/`
 - 이 작업: 거리 순서의 계산(`distance_order`), 명시 지정과 거리 선택자의 판정 규칙, 거리 선택자 요청의 재검사, IOT, 펌웨어, 시뮬레이터, 대시보드 화면, 수집 도구(`tools/data_collection`), 분할 도구
 
 `docs/architecture.md` §4 "근접 사후확률의 범위"가 `shared` 접점의 모양을 근접 추정 spec에 맡겼다. 그래서 이 작업은 `shared`를 고친다.
@@ -224,7 +224,7 @@
 13. `nearpilot fit`은 `--split`을 여러 번 받는다 (장소마다 하나). 배치 인자를 지운다. 적합 설정 `[fit]`에서 `calib_version`, `min_distance_m`을 지우고 `auto_zero_min_bins`를 더한다. `eval`과 `evaluate-reask`는 `PLACE/VERSION` 대신 `VERSION`을 받고 장소는 분할 결과에서 읽는다. 보고서의 `calib_version`은 `"auto-zero"`다 — 평가는 시험 회차에서 자동 영점을 찾는다.
 14. 대시보드의 `modelVersion`은 공통 모델 버전, `calibrationVersion`은 조회 순간의 최신 개정 번호다. 모든 장소가 같은 값이다. 수집 전용 모드면 둘 다 모델 없음이다.
 15. 근접 추정기는 DB 쓰기를 잠금 밖에서 한다. 저장 중인 기기는 표시해서 같은 기기를 두 번 저장하지 않는다. 쓰기가 끝나면 잠금 안에서 개정 번호를 반영한다.
-16. 옛 `synthetic-1.json`(final-demo)은 지우지 않는다 — 판정 기록이 참조할 수 있다. 서버는 읽지 않는다. `core-proximity-estimator`, `core-proximity-model-fit` spec은 지우고, 이전 모델과 바꾼 이유를 ADR 0001에 남긴다. 담당자가 2026-11-10에 정했다.
+16. 옛 `synthetic-1.json`(final-demo)은 지우지 않는다 — 판정 기록이 참조할 수 있다. 서버는 읽지 않는다. `core-proximity-estimator`, `core-proximity-model-fit` spec은 지우고, 지운 사실을 `docs/requirements.md` §1.5에 남긴다. 이전 모델과 바꾼 이유는 #40, #252에 있다. 담당자가 2026-11-10에 정했다.
 17. 평가 harness의 근접 준비 확인은 DB에서 보고 시각을 읽을 수 없다. 최근 구간 안에 받은 프레임이 있는 `trusted` 기기를 근접 참여 기기로 근사한다. 대상이 `unzeroed`면 준비되지 않은 것이다.
     - harness는 시작할 때 한 번 `trusted` 기기마다 자동 영점 0 dB 행을 DB에 쓰고(`vendor`는 기기 선언 그대로) 서버를 다시 띄운다. 지표를 재는 동안은 읽기 전용 연결만 쓴다 (NFR-13). 평가 장면은 방문자를 한 기기 앞에 세워서, 늘 1등인 기기는 자동 영점 표본을 얻지 못한다. 시뮬레이터 기기는 영점 차이가 없다. 담당자가 2026-11-09에 5단계 보고를 보고 정했다.
 18. `fit`의 적합 설정 기본 파일은 `fit/common.toml`이다 — 공통 모델은 장소 이름이 없다. `eval`은 통과 기준을 기존처럼 `fit/<장소>.toml`에서 읽는다.

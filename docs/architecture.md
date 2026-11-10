@@ -763,7 +763,7 @@ M5를 `occupancy: shared`로 선언하면 FR-20 "공용형 기기" 규칙이 그
 
 ### 근접 모델 파일과 버전
 
-[#252](https://github.com/capstone-itda/nearpilot-server/issues/252)의 A안을 따른다. [#40](https://github.com/capstone-itda/nearpilot-server/issues/40) B안의 장소별 모델 파일을 대체한다. 바꾼 이유와 이전 모델은 [ADR 0001](adr/0001-proximity-common-model.md)에 있다.
+[#252](https://github.com/capstone-itda/nearpilot-server/issues/252)의 A안을 따른다. [#40](https://github.com/capstone-itda/nearpilot-server/issues/40) B안의 장소별 모델 파일을 대체한다.
 근접 추정은 버전이 붙은 공통 모델 파일 하나를 시작할 때 읽는다. 모든 장소가 같은 파일을 쓴다.
 
 - 파일은 모든 장소에 공통인 관측 파라미터, HMM 전이와 보정 값을 묶는다. 보수적 사후확률이 가정하는 자동 영점의 폭 Δ도 담는다. Δ는 적합이 찾은 자동 영점에서 정한다.

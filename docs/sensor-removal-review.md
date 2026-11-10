@@ -64,8 +64,8 @@
 | [specs/core-policy-check/spec.md](../specs/core-policy-check/spec.md) | 계약 유지 | 접근 정책과 승인 검사를 유지한다. |
 | [specs/core-policy-reasons/spec.md](../specs/core-policy-reasons/spec.md) | 계약 유지 | 승인 필요 사유와 정책 분기를 유지한다. |
 | [specs/core-proximity-data-collection/spec.md](../specs/core-proximity-data-collection/spec.md) | 계약 유지 | BLE RSSI와 수집 라벨의 수집 계약을 유지한다. |
-| `specs/core-proximity-estimator/spec.md` (#252로 지움, [ADR 0001](adr/0001-proximity-common-model.md)) | 계약 유지 | RSSI 기반 근접 추정과 현재 기기 후보의 계약을 유지한다. |
-| `specs/core-proximity-model-fit/spec.md` (#252로 지움, [ADR 0001](adr/0001-proximity-common-model.md)) | 계약 유지 | 근접 모델 적합과 평가를 유지한다. 물리 완료 검증과 별개다. |
+| `specs/core-proximity-estimator/spec.md` (#252로 지움) | 계약 유지 | RSSI 기반 근접 추정과 현재 기기 후보의 계약을 유지한다. |
+| `specs/core-proximity-model-fit/spec.md` (#252로 지움) | 계약 유지 | 근접 모델 적합과 평가를 유지한다. 물리 완료 검증과 별개다. |
 | [specs/core-recheck/spec.md](../specs/core-recheck/spec.md) | 계약 유지 | 실행 직전 계정·근접·정책과 자기 예약 검사를 유지한다. |
 | [specs/core-request-use/spec.md](../specs/core-request-use/spec.md) | 후속 확인 | 출력 완료의 성공을 호스트 응답으로 연결한다. 결과별 판정과 정보 최소화는 유지한다. |
 | [specs/core-server-assembly/spec.md](../specs/core-server-assembly/spec.md) | 후속 확인 | 검사 게이트웨이·타이머·설정을 제거하고 복원·복구와 새 상태를 연결한다. |
