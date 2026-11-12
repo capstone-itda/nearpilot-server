@@ -87,6 +87,7 @@ keepalive, 접속·시작·종료 제한 시간, 재접속 최소·최대 대기
 - 키는 `token_file`, `confirm_poll_sec`(확인 조회 간격), `request_timeout_sec`(HTTP 요청 하나의 제한 시간), `bindings`(`node_id`·`device_id` 쌍) 넷이고 모두 필수다. 빈 값이나 중복 `node_id`·`device_id`는 시작을 막는다. 오류 메시지에는 `device_id` 값을 쓰지 않는다.
 - `token_file`은 JSON 객체 `{"access_token": "..."}`다. 서버는 요청마다 파일을 다시 읽는다. 파일을 교체 저장하면 재시작 없이 새 토큰을 쓴다. 개발 중에는 PAT를 같은 형식으로 넣는다. OAuth 연결과 자동 갱신은 아래 절의 후속 작업이다.
 - `display` 종류의 실행 응답 제한은 초기값 10초다(`"exec_timeout_sec.display"`로 바꾼다). `request_timeout_sec`는 이보다 짧게 둔다.
+- 근접 지정(`near:display:…`)을 쓰려면 `[settings]`에 `threshold_display`를 적는다. 기본값이 없어서, 없으면 명시 지정(`display-1`)만 된다 (FR-17).
 - 동작 8개(`on`, `off`, `set_volume`, `set_mute`, `set_picture_mode`, `set_sound_mode`, `set_channel`, `launch_app`)의 SmartThings 명령과 성공 확인은 `docs/requirements.md` FR-07 표와 `server/src/nearpilot/iot/smartthings/actions.py`를 따른다.
 - 토큰과 `device_id`는 호스트 응답, 로그, 감사에 남기지 않는다 (NFR-08).
 
