@@ -342,6 +342,7 @@ class FakeClient:
     def __init__(self, **options):
         self.options = options
         self.published = []
+        self.raw = []
         self.subscribed = []
 
     def reconnect_delay_set(self, minimum, maximum):
@@ -367,6 +368,7 @@ class FakeClient:
         return 0, 1
 
     def publish(self, topic, payload, qos, retain):
+        self.raw.append((topic, payload))
         self.published.append((topic.rsplit("/", 1)[-1], json.loads(payload), qos, retain))
 
 
@@ -428,3 +430,35 @@ def test_NFR08_simulator_uses_node_credentials(device, caplog):
                if line.endswith("/cmd"))  # No device writes commands.
     assert "safety_check" not in text
     assert all(".env." in str(d.password_file) for d in fleet.devices)
+
+
+def test_FR04_simulator_display_announce_within_limit(tmp_path):
+    """동반 기기 display 선언(동작 8개)의 발표가 서버의 2048바이트 상한 안에서 받아진다 (iot-smartthings-companion).
+
+    시뮬레이터는 펌웨어처럼 공백 없는 UTF-8 JSON 으로 발행한다. 서버 디코더가 같은 바이트를 잰다.
+    """
+    from nearpilot.iot.messages import decode_message
+    from nearpilot.iot.smartthings.actions import ACTIONS
+    from nearpilot.shared.descriptor import ANNOUNCE_MAX_BYTES
+
+    descriptor = {"format": "nearpilot.device/1", "kind": "display", "occupancy": "shared",
+                  "vendor": {"name": "nearpilot", "model": "display", "firmware": "v3"},
+                  "actions": [dict(a.declaration) for a in ACTIONS.values()]}
+    node_id = "d" * 64  # 가장 긴 기기 ID
+    secret = tmp_path / ".env.node-display"
+    secret.write_text("node-private-password\n", encoding="utf-8")
+    node = SimNode(node_id, descriptor, CommandStore(tmp_path / "d.sqlite3"), Scenario(actuation_sec=0))
+    device = SimDevice(node, BrokerConfig("127.0.0.1", 1883, 30, 1, 4), Credentials(node_id, secret),
+                       Settings(rssi_frame_sec=5.0, status_report_sec=5.0, beacon_recent_sec=5.0,
+                                anchor_recent_sec=5.0), client_factory=FakeClient)
+    try:
+        device.start()
+        device._on_connect(device._client, None, None, 0, None)
+        assert wait_for(lambda: any(t.endswith("/announce") for t, _ in device._client.raw))
+        topic, payload = next((t, p) for t, p in device._client.raw if t.endswith("/announce"))
+    finally:
+        device.stop()
+    assert isinstance(payload, bytes) and len(payload) <= ANNOUNCE_MAX_BYTES
+    assert "켜기".encode("utf-8") in payload  # ASCII 이스케이프하지 않는다
+    announce = decode_message(topic, payload, received_at=datetime.now(timezone.utc))
+    assert [a.name for a in announce.descriptor.actions] == list(ACTIONS)

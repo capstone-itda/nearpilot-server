@@ -57,6 +57,7 @@
 - `server/src/nearpilot/runtime/config.py`, `runtime/assembly.py`: `[smartthings]` 절과 라우팅 조립
 - `server/config/server.example.toml`, `server/config/README.md`: `[smartthings]` 절 설명
 - `firmware/lib/np_descriptor/np_descriptors.h`, `firmware/platformio.ini`: 동반 기기 선언과 빌드 env
+- `server/tools/node_sim/device.py`: 발행 인코딩만 고친다 (결정 20, 담당자 지시)
 - `specs/iot-smartthings-descriptor/spec.md`, `specs/iot-smartthings-adapter/spec.md`: 동작 표가 바뀐 부분만 고친다.
 - `server/tests/iot/`, `server/tests/core/lifecycle/`, `server/tests/shared/`, `server/tests/tools/`, `server/tests/integration/` (설정 시험은 `test_runtime_config.py`)
 
@@ -112,6 +113,7 @@
 | `[smartthings]` 바인딩의 `node_id`·`deviceId`가 비었거나 중복 | 설정 오류 | `test_FR06_smartthings_config_rejects_bad_bindings` |
 | 펌웨어 동반 기기 선언과 서버 동작 표 비교 | 동작 이름, 역할, 인자 스키마가 같다 | `test_FR04_display_firmware_matches_server_actions` |
 | 펌웨어 동반 기기 선언의 발표 크기 | 2048바이트 이하 | `test_FR04_firmware_announce_within_limit` (기존 매개변수에 더함) |
+| 시뮬레이터가 동반 기기 선언을 발표 | 가장 긴 기기 ID로도 2048바이트 이하이고 서버 디코더가 받는다 | `test_FR04_simulator_display_announce_within_limit` |
 | 동반 기기에 거리 선택자로 요청(시뮬레이터 + 가짜 SmartThings) | 실행 `succeeded`, 기기 `FAULT` 아님 | `test_FR05_companion_display_near_selector_succeeds` |
 | 유지 대상자가 모두 이탈 | 서버가 `off`를 SmartThings로 보낸다 | `test_FR20_companion_display_off_on_leave` |
 
@@ -136,7 +138,7 @@
 17. 펌웨어 동반 기기 선언 상수는 `DISPLAY_SMARTTHINGS_DESCRIPTOR`다. 빌드 env는 출력 핀이 없는 `esp32dev-display-1`이다. 펌웨어 실행 코드는 고치지 않는다 — 동반 기기에는 명령이 가지 않는다.
 18. 동작 8개의 선언은 가장 긴 기기 ID(64바이트)로도 발표 2048바이트를 넘지 않게 줄인다 (구현 중 확인: 처음 설명으로는 2252바이트였다). 인자 없는 동작의 스키마는 `{"type": "object", "additionalProperties": false}`로 쓰고 빈 `properties`·`required`를 쓰지 않는다. 설명은 짧게 쓴다(예: `켜기`, `채널 번호나 up·down`). 서버 동작 표와 펌웨어 선언이 같은 값을 쓴다. 인자의 `required`는 줄이지 않는다 — 생략한 인자는 FR-09 규칙으로 채운다.
 19. 명령을 보내기 전의 조회(대응표, `changed`의 전송 전 값)가 실행 응답 제한을 다 쓰면 보내지 않고 `NOT_SENT`다 — 보내지 않았으므로 확정할 수 있다.
-20. 시험의 fake Paho(`tests/integration/_runtime.py`)는 펌웨어처럼 공백 없는 UTF-8 JSON으로 보고를 넣는다. 발표 상한은 이 바이트 수로 잰다.
+20. 시뮬레이터(`tools/node_sim/device.py`)와 시험의 fake Paho(`tests/integration/_runtime.py`)는 펌웨어처럼 공백 없는 UTF-8 JSON으로 보고를 보낸다. 서버는 발표 상한을 이 바이트 수로 잰다. 기본 `json.dumps`(ASCII 이스케이프, 공백)로는 동반 기기 선언의 발표가 2228바이트라 서버가 거부했다.
 
 ## 7. 가정
 
@@ -144,13 +146,12 @@
 - 화면 모드의 현재 값(`pictureMode`)은 ID나 이름 중 하나라고 가정한다. 그래서 둘 다 성공으로 본다 — #270.
 - 명령 응답 시간 초과는 SmartThings가 명령을 받았을 수 있는 상황으로 본다. 그래서 `NOT_SENT`로 확정하지 않는다 — FR-07.
 - 화면·소리 모드 ID는 32자 이하 문자열이라고 가정한다(`maxLength: 32`). #270은 ID 형식을 남기지 않았다. 다르면 실기 점검에서 fix로 고친다 — #270.
-- `tools/node_sim`의 실제 MQTT 발행(`device.py`)은 기본 `json.dumps`(ASCII 이스케이프, 공백)라서 이 선언의 발표가 2048바이트를 넘는다(2228바이트). 시뮬레이터로 실제 브로커에 동반 기기를 띄우는 일은 이 작업의 범위가 아니다 — 경계 밖이다.
 
 ## 8. 테스트
 
 | 요구사항 | 테스트 | 확인하는 것 |
 |---|---|---|
-| FR-04 | `tests/tools/test_firmware_descriptors.py`, `tests/iot/test_smartthings_descriptor.py` | 펌웨어 동반 기기 선언과 서버 동작 표의 일치, 발표 크기, 새 표로 합성 |
+| FR-04 | `tests/tools/test_firmware_descriptors.py`, `tests/iot/test_smartthings_descriptor.py`, `tests/iot/test_node_sim.py` | 펌웨어 동반 기기 선언과 서버 동작 표의 일치, 발표 크기, 새 표로 합성 |
 | FR-05 | `tests/integration/test_smartthings_companion_flow.py` | 동반 기기가 거리 선택자로 실행된다 |
 | FR-06 | `tests/iot/test_routing_gateway.py`, `tests/iot/test_smartthings_gateway.py`, `tests/iot/test_smartthings_http.py` | 라우팅, 미전송 분류, 상대 명령 재전송 금지 |
 | FR-07 | `tests/iot/test_smartthings_gateway.py`, `tests/core/lifecycle/` 실행 결과 시험, `tests/shared/test_config.py` | 확인 방식 3종, `refresh`, 대응표, `confirmation` 수용, 종류별 응답 제한 |

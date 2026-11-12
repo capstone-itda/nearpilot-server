@@ -145,7 +145,9 @@ class SimDevice:
     def _publish(self, messages: list[Message]) -> None:
         for kind, body in messages:
             qos, retain = PUBLISH[kind]
-            self._client.publish(self.topic(kind), json.dumps(body), qos=qos, retain=retain)
+            # 펌웨어처럼 공백 없는 UTF-8 JSON 이다. 서버는 발표 상한(2048바이트)을 이 바이트 수로 잰다
+            payload = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            self._client.publish(self.topic(kind), payload, qos=qos, retain=retain)
 
     # ── periodic reports ────────────────────────────────────────────
 
