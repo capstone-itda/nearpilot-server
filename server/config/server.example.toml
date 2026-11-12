@@ -14,6 +14,8 @@ threshold_locker = 0.95
 threshold_light = 0.75
 retention_cleanup_interval_sec = 60
 # 새 종류(kind)를 붙이면 threshold_{kind} 를 추가한다. 없으면 그 종류는 명시 지정으로만 쓴다 (FR-17, #245).
+# SmartThings 동반 기기(display)의 근접 지정을 쓸 때만 적는다 (#271).
+# threshold_display = 0.75
 # 전역 할당(any:{kind})을 받는 종류다 (FR-23).
 any_allowed_kinds = ["locker"]
 # 거리 선택자(near:/far:)의 근접 참여 기기: 이 시간 안에 rssi 보고(빈 보고 포함)를 보낸 기기다 (FR-09, #252). rssi_frame_sec 이상이다.

@@ -139,6 +139,7 @@
 18. 동작 8개의 선언은 가장 긴 기기 ID(64바이트)로도 발표 2048바이트를 넘지 않게 줄인다 (구현 중 확인: 처음 설명으로는 2252바이트였다). 인자 없는 동작의 스키마는 `{"type": "object", "additionalProperties": false}`로 쓰고 빈 `properties`·`required`를 쓰지 않는다. 설명은 짧게 쓴다(예: `켜기`, `채널 번호나 up·down`). 서버 동작 표와 펌웨어 선언이 같은 값을 쓴다. 인자의 `required`는 줄이지 않는다 — 생략한 인자는 FR-09 규칙으로 채운다.
 19. 명령을 보내기 전의 조회(대응표, `changed`의 전송 전 값)가 실행 응답 제한을 다 쓰면 보내지 않고 `NOT_SENT`다 — 보내지 않았으므로 확정할 수 있다.
 20. 시뮬레이터(`tools/node_sim/device.py`)와 시험의 fake Paho(`tests/integration/_runtime.py`)는 펌웨어처럼 공백 없는 UTF-8 JSON으로 보고를 보낸다. 서버는 발표 상한을 이 바이트 수로 잰다. 기본 `json.dumps`(ASCII 이스케이프, 공백)로는 동반 기기 선언의 발표가 2228바이트라 서버가 거부했다.
+21. `display`의 근접 임계값(`threshold_display`)은 `Settings` 기본값으로 두지 않는다. 운영 설정 `[settings]`에 적어야 근접 지정(`near:display:…`)이 실행된다. 없으면 명시 지정(`display-1`)만 된다 (FR-17, #245). 결정 12와 같은 이유로 예시 설정에는 주석으로만 둔다. 키가 없으면 판정 ② 후보 단계에서 `INVALID_INPUT`이다.
 
 ## 7. 가정
 
