@@ -31,7 +31,7 @@ CORE가 허가한 명령만 기존 MQTT 경로로 보낸다.
 | event | 확인한 내용 |
 |---|---|
 | `node_configured` | 등록한 시험 기기의 발표를 받아 장소·신뢰·정책을 연결했다 |
-| `inventory_reloaded` | 새 기기를 기존 복원 경로로 읽도록 시험 Runtime을 재시작했다 |
+| `inventory_reloaded` | 복원 목록에 없는 기기(`restore_not_loaded`)를 다시 읽도록 시험 Runtime을 재시작했다 |
 | `node_readiness` | 연결 ID, 온라인, 신뢰, 장소, `FAULT`, 실행 가능 여부·차단 사유가 바뀌었다. 바뀐 때만 쓴다 |
 | `node_observation` | RSSI, 관측·수신 시각, 명령 처리 상태, 실행 가능 여부와 차단 사유다 |
 | `proximity_pending` | 유효한 현재 비콘 관측이 아직 없다 |
@@ -89,8 +89,8 @@ quit
 `on light-1`처럼 명시 지정도 입력할 수 있다.
 `recover <node_id>`는 시험 장소 소유자(`owner_id`)로 `FAULT` 복구를 승인한다. 운영의 `nearpilot recover`와 같은 복구 서비스를 부른다. 먼저 준비 상태(`recovery_readiness`)를 남기고, `ready`일 때만 승인한 결과(`recovery_approval`)를 남긴다. DB를 직접 고치지 않는다.
 다만 명시 지정 임계값은 미결이므로 기본 설정은 명시 실행을 허가하지 않는다.
-시험 도구가 실행되면서 발표한 기기만 초기 복원 목록에 없으면 실행이 차단된다.
-도구는 첫 발표 후 Runtime을 정상 재시작해서 이 목록을 읽는다. 진행 중인 명령은 종료 절차가 기다린다.
+서버 실행 중에 처음 발표한 기기는 첫 상태 보고에서 복원 상태를 얻는다. 재시작하지 않아도 된다 (`specs/state-management/core-restore.md`).
+최초 복원 조회가 실패해 `restore_not_loaded`가 남으면 도구는 Runtime을 정상 재시작해서 목록을 다시 읽는다. 진행 중인 명령은 종료 절차가 기다린다.
 
 ## 실제 ESP32를 받은 뒤
 

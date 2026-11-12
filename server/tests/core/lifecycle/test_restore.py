@@ -979,3 +979,62 @@ def test_FR07_restore_late_success_keeps_fault(env):
     assert env.store.result_calls[-1][1] == CommandOutcome.SUCCEEDED
     assert env.repository.items["locker-1"].device_state == DeviceState.FAULT
     assert len(env.store.recoveries) == 1
+
+
+def _register(env, node_id="locker-2"):
+    """서버 실행 중에 처음 발표되고 신뢰된 기기의 저장소 행이다."""
+    env.repository.items[node_id] = replace(env.repository.items["locker-1"], node_id=node_id,
+                                            session_id=f"connection-{node_id}")
+
+
+def test_FR13_node_registered_after_restore_becomes_candidate_after_status(env):
+    env.service.restore()
+    _register(env)
+    assert not env.service.can_execute("locker-2")
+    # 재시작 없이 첫 현재 연결 보고로 복원 상태를 만들고 확인을 마친다.
+    status(env, "locker-2")
+    assert env.service.can_execute("locker-2")
+    assert env.service.blockers("locker-2") == ()
+    env.service.tick()
+    assert env.service.can_execute("locker-2")
+    assert env.store.result_calls == []
+
+
+def test_FR13_shared_node_registered_after_restore_resumes_light_rule(env):
+    env.service.restore()
+    light(env)
+    status(env, "light-1")
+    assert env.service.can_execute("light-1")
+    assert env.light.tick() == ()
+    advance(env, 15)
+    status(env, "light-1")
+    assert env.light.tick() == ("light-1",)
+
+
+def test_FR19_node_registered_before_failed_restore_is_not_adopted(env):
+    env.store.restore_error = StoreNotApplied("read")
+    with pytest.raises(StoreError):
+        env.service.restore()
+    _register(env)
+    status(env, "locker-2")
+    assert not env.service.can_execute("locker-2")
+    assert env.service.blockers("locker-2") == ("restore_not_loaded",)
+
+
+def test_FR19_status_of_unregistered_node_is_ignored(env):
+    env.service.restore()
+    report = NodeStatus("ghost-1", env.clock(), "connection-x", 1, env.clock(), env.clock(),
+                        CommandState.IDLE)
+    env.service.on_status(report)
+    assert not env.service.can_execute("ghost-1")
+    assert env.service.blockers("ghost-1") == ("restore_not_loaded",)
+
+
+def test_FR19_node_registered_after_restore_waits_for_normal_status(env):
+    env.service.restore()
+    _register(env)
+    status(env, "locker-2", command_state=CommandState.BUSY)
+    assert not env.service.can_execute("locker-2")
+    advance(env, 1)
+    status(env, "locker-2")
+    assert env.service.can_execute("locker-2")

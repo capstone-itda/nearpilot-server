@@ -1,7 +1,7 @@
 # 재시작 복원
 
 - 담당: JM-220 (상태 관리)
-- 요구사항: FR-19, FR-20, NFR-04
+- 요구사항: FR-13, FR-19, FR-20, NFR-04
 - 따르는 결정: #15, #17, #78, #81, #82, #83, #88, 2026-10-26 센서 기반 물리 검증 제외 (#196), 2026-10-27 팀 결정 (스피커도 공용형 규칙, fix/core-small-gaps)
 
 ## 1. 왜
@@ -13,7 +13,7 @@
 
 ## 2. 무엇
 
-- 입력: `ExecutionStore.restore_pending()`이 반환한 `RestoreBundle` 목록, 재시작 뒤의 기기 보고
+- 입력: `ExecutionStore.restore_pending()`이 반환한 `RestoreBundle` 목록, 재시작 뒤의 기기 보고, 최초 복원 뒤 처음 생긴 기기의 저장소 행
 - 출력: 기기별 복원 상태. `ExecutionReadiness.can_execute(node_id)`로 판정과 `core-execution`에 제공한다 (#82).
 - 바뀌는 상태:
   - 전송을 시작하지 않은 예약 중 예약 대기 제한을 넘긴 예약의 취소 (`cancel_not_sent(expected=PENDING, RESERVATION_EXPIRED)`)
@@ -52,6 +52,7 @@
 - 공용 조명의 유지 대상자를 복원하지 않는다. 기기별 복원을 마친 뒤 `core-shared-light`에 관측 재개를 알린다 (FR-20). 이 문서의 "공용 조명"은 점유 방식이 `shared`인 모든 기기(조명·스피커)를 뜻한다 (2026-10-27 팀 결정).
 - 공용 조명의 규칙은 대여형 점유 세션의 복원을 생략하지 않는다 (FR-19).
 - 만료 취소의 근거는 처음 만든 내용을 보존한다. `StoreOutcomeUnknown`이면 명령은 `execution()`으로 확인하고, 확인하지 못하면 같은 근거로 재시도한다. `CONFLICT`이면 실행 차단을 유지하고 예외로 알린다.
+- 최초 복원 뒤 서버 실행 중에 처음 생긴 기기(발표 → 저장소 행 생성 → 신뢰)도 재시작 없이 후보가 될 수 있어야 한다 (FR-13). 그 기기의 첫 현재 연결 보고에서 저장소를 다시 읽고, 행이 있으면 빈 복원 묶음으로 복원 상태를 만든다. 현재 연결의 신선한 정상 보고 확인은 기존 기기와 같다. 최초 복원 조회 전이거나 조회가 실패했으면 만들지 않는다 (FR-19).
 - `can_execute()`는 `ExecutionReadiness` 계약을 따른다. 최초 복원 조회가 실패했거나 현재 연결의 정상 보고를 확인하지 못한 기기는 `False`다 (architecture.md §4 "재시작 복원 조회").
 
 ## 4. 경계
@@ -98,6 +99,11 @@
 | 복원 묶음에 과거 검사 근거가 있다 | 근거로 쓰지 않고 같은 논리 조건으로 종료한다 | `test_FR20_restore_closing_ignores_saved_check_evidence` |
 | 기기가 재시작 뒤 `status`를 보내지 않는다 | 복원 상태를 끝내지 않는다. 새 실행을 막는다 | `test_FR19_restore_blocks_new_execution_until_confirmed` |
 | 미완료 복구 건이 있다 | 같은 `recovery_id`로 복원한다. 새 복구 건을 만들지 않는다 | `test_NFR04_restore_keeps_recovery_id_and_evidence_without_trusting_it` |
+| 최초 복원 뒤 처음 생긴 기기가 현재 연결의 정상 보고를 보낸다 | 재시작 없이 복원 상태를 만들고 확인을 마친다. 실행 후보가 된다 (FR-13) | `test_FR13_node_registered_after_restore_becomes_candidate_after_status` |
+| 최초 복원 뒤 처음 생긴 공용형 기기가 보고한다 | 관측 재개를 알리고 초기 참여 대기를 둔다 | `test_FR13_shared_node_registered_after_restore_resumes_light_rule` |
+| 최초 복원 뒤 처음 생긴 기기의 첫 보고가 `busy`다 | 복원 상태를 끝내지 않는다. `idle` 보고 뒤 실행을 연다 | `test_FR19_node_registered_after_restore_waits_for_normal_status` |
+| 최초 복원 조회가 실패한 뒤 처음 생긴 기기가 보고한다 | 복원 상태를 만들지 않는다. 새 실행을 막는다 | `test_FR19_node_registered_before_failed_restore_is_not_adopted` |
+| 저장소에 없는 기기가 보고한다 | 복원 상태를 만들지 않는다 | `test_FR19_status_of_unregistered_node_is_ignored` |
 | 저장한 생성 시각과 기준 시각이 있다 | 재시작 시각으로 바꾸지 않는다 | `test_FR20_pending_uses_stored_time_and_settings_snapshot` |
 
 ## 6. 결정
@@ -117,6 +123,7 @@
 - 조회·저장·인계가 실패하면 예외로 알리고 실행 차단을 유지한다 — 한 기기의 실패 뒤에도 다른 기기는 재시도한다.
 - 예약 만료 취소는 기기 처리 안에서 바로 한다 — 모든 만료 예약을 취소한 뒤 현재 기록으로 기기를 다시 확인한다. 남은 예약이 있으면 실행 차단을 유지한다.
 - 명령 미연결 요청의 취소 완료는 메모리에 표시한다 — 복원 묶음은 재조회하지 않으므로 같은 요청을 다시 취소하지 않는다.
+- 최초 복원 뒤 처음 생긴 기기의 복원 상태는 그 기기의 첫 `on_status()`에서 만든다 — 담당자가 2026-11-12에 발표 때 등록, `tick()` 재조회 안 대신 선택했다. `restore.py` 안에서 끝나고 MQTT 기기와 SmartThings 하트비트를 모두 덮는다. 신뢰 직후 다음 보고에서 후보가 된다.
 
 ## 7. 가정
 
@@ -128,6 +135,7 @@
 - `in_progress` 명령을 `record_result(UNKNOWN)`으로 저장하는 근거는 서버의 재시작이다. 기기가 보고한 `unknown`과 구분하도록 근거에 출처를 남긴다 (FR-07).
 - 신선한 보고의 검증은 IOT가 맡는다고 가정한다. 이 서비스는 재시작 뒤 수신, 현재 연결과 온라인 유지 시간을 추가로 확인한다.
 - 명령 처리 상태가 `busy`나 `unknown`인 보고로 새 실행을 열지 않는다. 현재 연결의 명령 처리 대기(`idle`) 보고를 기다린다.
+- 최초 복원 조회에 없던 기기에는 재시작 전의 요청·명령·세션·복구 건이 없다. 복원은 요청 수신 전에 실행하고(#88 A안), 기록은 기기 행을 참조하기 때문이다. 그래서 늦게 만든 복원 상태는 빈 묶음으로 시작한다.
 - 예약 대기 제한은 최초 조회 때 받은 설정을 보존한다. 저장한 예약 시각으로 만료 여부를 구분한다.
 
 ## 8. 테스트
@@ -148,6 +156,9 @@
 | FR-20 | `test_FR20_restore_overdue_kept` | 점유와 기준 시각을 유지하고 서버 중단 시간을 초과시간에 포함한다 |
 | FR-20 | `test_FR20_restore_closing_resumes_logical_close` | 현재 연결 확인 뒤 논리적 종료를 다시 저장한다 |
 | NFR-04 | `test_NFR04_completed_recovery_rechecks_current_status` | 복구 정산 완료 기록과 현재 보고를 확인한다 |
+| FR-13 | `test_FR13_node_registered_after_restore_becomes_candidate_after_status` | 서버 실행 중에 등록·신뢰한 기기가 재시작 없이 상태 보고 뒤 실행 후보가 된다 |
+| FR-13 | `test_FR13_shared_node_registered_after_restore_resumes_light_rule` | 늦게 등록한 공용형 기기도 관측 재개와 초기 참여 대기를 거친다 |
+| FR-19 | `test_FR19_node_registered_before_failed_restore_is_not_adopted` | 최초 복원이 실패하면 늦게 생긴 기기도 막는다 |
 | NFR-03 | `test_NFR03_concurrent_restore_settles_once` | 동시 복원에서도 불명 저장과 복구 건 생성을 중복하지 않는다 |
 
 - DB와 IOT는 `shared` 계약의 fake로 대신한다. 반납·복구·공용 조명·실행 서비스 연결도 검증한다.

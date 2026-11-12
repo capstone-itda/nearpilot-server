@@ -72,9 +72,10 @@ def test_FR05_FR06_FR16_FR22_lab_real_broker_command(lab_world):
         stack.callback(device.stop)
         device.start()
         devices.append(device)
-    demo(lab)  # Includes first-discovery restart and actual HMM probabilities.
+    demo(lab)  # Includes first discovery and actual HMM probabilities.
     events = read_events(lab)
-    assert any(event["event"] == "inventory_reloaded" for event in events)
+    # 실행 중에 처음 발표한 기기도 재시작 없이 첫 상태 보고로 복원 상태를 얻는다 (FR-13, fix/core-restore-new-node).
+    assert not any(event["event"] == "inventory_reloaded" for event in events)
     # 재시작 직후에는 근접 참여 기기가 없어서 확률이 비고 best가 None이다 (보고가 다시 올 때까지)
     assert any(event["event"] == "proximity" and event["best"] is not None and event["best"][0] == "light-1"
                and event["best"][1] >= lab.config.settings.threshold_light for event in events)

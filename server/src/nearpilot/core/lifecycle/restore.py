@@ -46,6 +46,7 @@ class RestoreService:
 
     can_execute는 ExecutionReadiness 구현이다. 판정의 ②와 실행 서비스의 전송 직전 검사가 쓴다.
     on_status는 Repository의 현재 연결과 마지막 수신을 저장한 뒤 호출한다.
+    최초 복원 뒤 처음 생긴 기기는 첫 on_status에서 빈 복원 상태를 만든다.
     lock_for는 실행·반납·복구·관측에 쓰는 동일한 기기별 재진입 잠금이다.
     """
 
@@ -106,7 +107,7 @@ class RestoreService:
     def on_status(self, report: NodeStatus) -> None:
         """검증을 마친 현재 연결의 보고만 받는다. 온라인 시각은 갱신하지 않는다."""
         with self._lock_for(report.node_id):
-            state = self._state(report.node_id)
+            state = self._state(report.node_id) or self._adopt(report.node_id)
             if state is None:
                 return
             node = self._node(report.node_id)
@@ -411,3 +412,19 @@ class RestoreService:
     def _state(self, node_id: str) -> _Restoring | None:
         with self._index_lock:
             return self._states.get(node_id) if self._loaded else None
+
+    def _adopt(self, node_id: str) -> _Restoring | None:
+        """최초 복원 뒤 저장소에 처음 생긴 기기에 빈 복원 묶음의 상태를 만든다.
+
+        최초 조회에 없던 기기는 재시작 전의 요청·명령·세션·복구 건이 없다.
+        최초 복원 전이거나 실패했으면 만들지 않는다 (FR-19). 현재 상태 확인은 기존 기기와 같다.
+        """
+        with self._index_lock:
+            if not self._loaded:
+                return None
+        node = self._node(node_id)
+        if node is None:
+            return None
+        state = _Restoring(RestoreBundle(node, self._clock()), self._settings())
+        with self._index_lock:
+            return self._states.setdefault(node_id, state)
