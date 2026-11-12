@@ -965,3 +965,75 @@ def test_FR20_internal_request_begin_conflict_cancels(env):
     assert (result.status, result.reason) == (ExecutionStatus.NOT_SENT, ReasonCode.COMMAND_IN_PROGRESS)
     assert calls(env, "cancel")[0][2:4] == (ExecutionStatus.PENDING, ReasonCode.COMMAND_IN_PROGRESS)
     assert env.gateway.calls == []
+
+
+# ── 서버 상태 확인 성공과 종류별 응답 제한 (specs/iot-smartthings-companion) ──
+
+CONFIRMATION = {"source": "smartthings_state", "capability": "switch", "attribute": "switch", "value": "on"}
+
+
+def confirmed_outcome(env, outcome, confirmation):
+    def send(command):
+        return CommandResult(command.command_id, outcome, reported_at=env.clock(), confirmation=confirmation)
+    env.gateway.hook = send
+
+
+def test_FR07_server_confirmed_success_recorded(env):
+    confirmed_outcome(env, CommandOutcome.SUCCEEDED, CONFIRMATION)
+    result = env.service.execute(env.ctx)
+    assert result.status == ExecutionStatus.SUCCEEDED
+    saved = calls(env, "result")[0]
+    assert saved[2] == CommandOutcome.SUCCEEDED
+    assert saved[5] == {"source": "server_state_confirmed", "confirmation": CONFIRMATION}
+    assert type(saved[5]["confirmation"]) is dict  # 감사 JSON 으로 쓸 수 있는 일반 dict
+    assert env.repository.items[env.ctx.node_id].device_state != DeviceState.FAULT
+    assert env.store.recoveries == {}
+    assert env.service.execute(env.ctx).status == ExecutionStatus.SUCCEEDED  # 같은 사건을 다시 저장하지 않는다
+    assert len(calls(env, "result")) == 1
+
+
+@pytest.mark.parametrize("confirmation", [None, {}])
+def test_FR07_unconfirmed_success_still_unknown(env, confirmation):
+    confirmed_outcome(env, CommandOutcome.SUCCEEDED, confirmation)
+    assert env.service.execute(env.ctx).status == ExecutionStatus.UNKNOWN
+    assert calls(env, "result")[0][5] == {"source": "gateway", "outcome": "succeeded"}
+    assert env.repository.items[env.ctx.node_id].device_state == DeviceState.FAULT
+
+
+@pytest.mark.parametrize("outcome", [CommandOutcome.FAILED, CommandOutcome.REJECTED, CommandOutcome.UNKNOWN])
+def test_FR07_confirmation_ignored_for_failed(env, outcome):
+    confirmed_outcome(env, outcome, CONFIRMATION)
+    assert env.service.execute(env.ctx).status == ExecutionStatus.UNKNOWN
+    assert calls(env, "result")[0][5] == {"source": "gateway", "outcome": outcome.value}
+    assert env.repository.items[env.ctx.node_id].device_state == DeviceState.FAULT
+
+
+def display_context(env, settings):
+    now = env.clock()
+    env.repository.items["display-1"] = NodeInfo(
+        "display-1", "place-1", "display", Occupancy.SHARED, TrustState.TRUSTED,
+        DeviceState.AVAILABLE, None, now, session_id="connection-1")
+    env.locks["display-1"], env.restored["display-1"] = RLock(), True
+    request = UseRequest("visitor-1", "external-3", TargetSpec.parse("display-1"), "on", "test", now)
+    ctx = ExecutionContext("request-3", request, "display-1", None, None, settings, ExecutionKind.SHARED)
+    env.store.contexts[ctx.internal_request_id] = ctx
+    return ctx
+
+
+def test_FR07_exec_timeout_per_kind(env):
+    settings = Settings(exec_timeout_sec=3.0, exec_timeouts={"display": 10.0})
+    ctx = display_context(env, settings)
+    confirmed_outcome(env, CommandOutcome.SUCCEEDED, CONFIRMATION)
+    assert env.service.execute(ctx).status == ExecutionStatus.SUCCEEDED
+    command, timeout = env.gateway.calls[-1]
+    assert timeout == 10.0
+    assert command.expires_at - command.issued_at == timedelta(seconds=10)
+
+
+def test_FR07_exec_timeout_falls_back_to_global(env):
+    env.ctx = replace(env.ctx, settings=Settings(exec_timeout_sec=2.5, exec_timeouts={"display": 10.0}))
+    env.store.contexts[env.ctx.internal_request_id] = env.ctx
+    env.service.execute(env.ctx)
+    command, timeout = env.gateway.calls[-1]
+    assert timeout == 2.5
+    assert command.expires_at - command.issued_at == timedelta(seconds=2.5)

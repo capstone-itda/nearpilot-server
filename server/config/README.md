@@ -51,6 +51,7 @@ keepalive, 접속·시작·종료 제한 시간, 재접속 최소·최대 대기
   스피커 임계값을 비워 두면 스피커의 근접 지정 실행을 허가하지 않는다.
   명시 지정은 장소의 비콘 수신을 확인하고 기기별 근접 확률 검사를 생략한다.
   `threshold_explicit_*`는 이전 설정의 호환 필드다. 서버는 판정에 쓰지 않는다.
+  실행 응답 제한의 종류별 재정의는 따옴표 키 `"exec_timeout_sec.{kind}" = 10.0`으로 쓴다. 재정의가 없는 종류는 `exec_timeout_sec`를 쓴다. `display`의 초기값은 10초다 (#271).
 - `[http]`의 `public_hosts`는 선택이다. 터널 같은 공개 주소로 `/mcp`를 열 때 그 Host를 쓴다 (예: `["mcp.example.com"]`).
   `/mcp`는 localhost와 이 Host로 온 요청만 받는다. 다른 Host는 토큰이 맞아도 `421`이다.
 - `[runtime]`은 주기 작업 간격, SQLite 대기시간과 종료 대기 제한이다. 모두 선택이다.
@@ -77,7 +78,21 @@ keepalive, 접속·시작·종료 제한 시간, 재접속 최소·최대 대기
 
 # SmartThings 연동 설정
 
-[#259](https://github.com/capstone-itda/nearpilot-server/issues/259)의 결정을 따른다 (`docs/architecture.md` §4 "SmartThings 실행 어댑터"). 아래는 결정 사항이고 구현은 후속 feat PR이 한다.
+[#259](https://github.com/capstone-itda/nearpilot-server/issues/259)와 [#271](https://github.com/capstone-itda/nearpilot-server/issues/271)의 결정을 따른다 (`docs/architecture.md` §4 "SmartThings 실행 어댑터").
+
+## 동반 기기 실행 (`[smartthings]`)
+
+- 상용 기기 옆에 동반 기기(펌웨어 env `esp32dev-display-1`, 선언 `DISPLAY_SMARTTHINGS_DESCRIPTOR`)를 붙인다. 동반 기기는 상용 기기의 동작을 발표하고 RSSI·상태를 보낸다. 명령은 실행하지 않는다.
+- `[smartthings]`가 있으면 서버는 `[[smartthings.bindings]]`의 `node_id` 명령을 SmartThings REST(`https://api.smartthings.com/v1`)로 보내고 상태를 다시 조회해서 결과를 확인한다. 그 밖의 명령은 MQTT로 보낸다.
+- 키는 `token_file`, `confirm_poll_sec`(확인 조회 간격), `request_timeout_sec`(HTTP 요청 하나의 제한 시간), `bindings`(`node_id`·`device_id` 쌍) 넷이고 모두 필수다. 빈 값이나 중복 `node_id`·`device_id`는 시작을 막는다. 오류 메시지에는 `device_id` 값을 쓰지 않는다.
+- `token_file`은 JSON 객체 `{"access_token": "..."}`다. 서버는 요청마다 파일을 다시 읽는다. 파일을 교체 저장하면 재시작 없이 새 토큰을 쓴다. 개발 중에는 PAT를 같은 형식으로 넣는다. OAuth 연결과 자동 갱신은 아래 절의 후속 작업이다.
+- `display` 종류의 실행 응답 제한은 초기값 10초다(`"exec_timeout_sec.display"`로 바꾼다). `request_timeout_sec`는 이보다 짧게 둔다.
+- 동작 8개(`on`, `off`, `set_volume`, `set_mute`, `set_picture_mode`, `set_sound_mode`, `set_channel`, `launch_app`)의 SmartThings 명령과 성공 확인은 `docs/requirements.md` FR-07 표와 `server/src/nearpilot/iot/smartthings/actions.py`를 따른다.
+- 토큰과 `device_id`는 호스트 응답, 로그, 감사에 남기지 않는다 (NFR-08).
+
+## OAuth 연결 (후속)
+
+아래는 결정 사항이고 구현은 후속 feat PR(`feat/iot-smartthings-oauth`)이 한다.
 
 - 서버는 SmartThings SmartApp(API_ONLY, 스코프 `r:devices:*`·`x:devices:*`, 필요하면 `w:devices:*`)을 하나 만들어 쓴다. `client_id`·`client_secret`은 `.env.smartthings-client` 같은 파일에 담고 기존 `.env.*` ignore 규칙을 따른다.
 - 소유자는 최초 1회 `nearpilot smartthings link <node_id>`로 동의 절차를 밟는다. 이 명령은 로컬 루프백에 임시 콜백 서버를 띄우고 브라우저로 `https://api.smartthings.com/oauth/authorize`를 연다. `redirect_uri`는 `http://localhost:{고정 포트}/callback`이고 SmartApp 등록 값과 같아야 한다.

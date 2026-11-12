@@ -120,3 +120,4 @@ pytest tests/<계층>      # 계층 하나
 - 공동 모델의 필드(`NodeInfo.capability`)를 지운 뒤 전체 `pytest` 통과만 보고, Mosquitto가 없어 건너뛴 시험이 쓰는 `server/tools/` 코드에 남은 옛 필드 접근을 놓쳤다. 필드를 지우면 `src`와 `tools` 전체에서 그 이름을 검색하고, 건너뛴 시험의 대상 코드를 따로 확인한다.
 - 마이그레이션을 더하는 단계 문서의 고치는 파일에 스키마 버전을 하드코딩한 `tools/evaluation/db.py`의 `EXPECTED_SCHEMA_VERSION`과 `user_version` 단언 시험을 빠뜨려 구현자가 막혔다. 마이그레이션을 더하면 `src`·`tools`·`tests` 전체에서 현재 버전 숫자를 검색해 고칠 곳에 넣는다.
 - 전체 `pytest` 출력을 마지막 줄만 받아, 한 번 실패한 시험의 이름을 놓치고 불안정한 시험을 찾지 못했다. 전체 실행은 `-rf`로 실패 이름을 함께 받는다.
+- 예시 설정 `[settings]`에 `Settings` 필드가 아닌 키(따옴표 키 `"exec_timeout_sec.display"`)를 넣어, 그 표를 `Settings(**표)`로 바로 넘기는 `tools/evaluation`의 시험 46개가 실패했다. 예시 설정에 필드 밖 키를 더하면 `tools`에서 `server.example.toml`과 `Settings(**`를 검색하고, 초기값은 `Settings` 기본값에 둔다.

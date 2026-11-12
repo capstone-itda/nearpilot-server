@@ -120,3 +120,43 @@ def test_FR13_smartthings_poll_sec_validated_against_online_ttl_sec():
     with pytest.raises(ValueError):
         Settings(online_ttl_sec=15.0, smartthings_poll_sec=16.0)
     assert Settings(online_ttl_sec=15.0, smartthings_poll_sec=15.0).smartthings_poll_sec == 15.0
+
+
+# ── 종류별 실행 응답 제한 (specs/iot-smartthings-companion 결정 12) ──
+
+
+def test_FR07_exec_timeout_for_kind_and_fallback():
+    s = Settings(exec_timeout_sec=3.0, exec_timeouts={"display": 10.0})
+    assert s.exec_timeout_for("display") == 10.0
+    assert s.exec_timeout_for("locker") == 3.0
+    assert s.exec_timeout_for(None) == 3.0
+    assert Settings().exec_timeouts == {"display": 10.0}  # requirements.md §1.2 초기값
+    assert Settings(exec_timeouts={}).exec_timeout_for("display") == Settings().exec_timeout_sec
+
+
+@pytest.mark.parametrize("value", [0, -1, 0.0, float("nan"), float("inf"), True, "10", None])
+def test_FR07_exec_timeout_override_validated(value):
+    with pytest.raises(ValueError, match=r"exec_timeout_sec\.display"):
+        Settings(exec_timeouts={"display": value})
+
+
+def test_FR07_exec_timeout_override_kind_name_validated():
+    with pytest.raises(ValueError):
+        Settings(exec_timeouts={"Display": 10.0})
+    with pytest.raises(ValueError):
+        Settings(exec_timeouts=[("display", 10.0)])
+
+
+def test_FR07_exec_timeout_override_round_trips_snapshot():
+    from nearpilot.shared.config import migrate_settings_table, settings_from_data, settings_to_data
+
+    s = Settings(exec_timeouts={"display": 10.0})
+    assert settings_from_data(settings_to_data(s)) == s
+    table, _ = migrate_settings_table({"exec_timeout_sec": 3.0, "exec_timeout_sec.display": 12.0,
+                                       "exec_timeout_sec.fan": 5.0})
+    assert table == {"exec_timeout_sec": 3.0, "exec_timeouts": {"display": 12.0, "fan": 5.0}}
+    table, _ = migrate_settings_table({"exec_timeout_sec.fan": 5.0})  # 초기 기준 위에 더한다
+    assert table == {"exec_timeouts": {"display": 10.0, "fan": 5.0}}
+    assert migrate_settings_table({"exec_timeouts": {}})[0] == {"exec_timeouts": {}}  # 스냅샷은 그대로
+    with pytest.raises(ValueError, match="두 번"):
+        migrate_settings_table({"exec_timeout_sec.display": 10.0, "exec_timeouts": {"display": 9.0}})

@@ -1,8 +1,8 @@
 """SmartThings capability 조회로 기기 선언을 합성한다 (FR-04·FR-09, specs/iot-smartthings-descriptor).
 
 종류는 `display`, 점유 방식은 `shared`다. `switch` capability가 없으면 `off`를
-`deactivate`로 선언할 수 없어 선언 자체를 만들지 않는다. 그 밖의 capability는
-있을 때만 동작을 더한다. 이 모듈은 네트워크를 호출하지 않는다.
+`deactivate`로 선언할 수 없어 선언 자체를 만들지 않는다. 그 밖의 동작은 동작 표가 요구하는
+capability가 모두 있을 때만 더한다 (specs/iot-smartthings-companion 결정 16). 이 모듈은 네트워크를 호출하지 않는다.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def smartthings_descriptor(
     actions = [
         dict(action.declaration)
         for name, action in ACTIONS.items()
-        if name in ALWAYS_DECLARED or action.capability in ids
+        if name in ALWAYS_DECLARED or all(capability in ids for capability in action.requires)
     ]
 
     return parse_descriptor({

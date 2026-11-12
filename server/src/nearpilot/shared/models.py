@@ -743,12 +743,20 @@ class CommandResult:
     report 는 이 결과의 근거가 된 기기 보고다. 서버가 만든 결과(NOT_SENT, 타임아웃, 통신 오류)는
     report 가 None 이다. 그래서 서버가 만든 결과에는 event_id 가 없다.
     같은 기기 보고는 `NodeEventSink.on_result` 에도 같은 event_id 로 온다.
+
+    confirmation 은 서버가 기기 상태를 다시 조회해서 확인한 성공의 근거다 (FR-07, #271).
+    report 가 없고 confirmation 이 있는 SUCCEEDED 만 core 가 성공으로 받는다. 토큰과 기기 외부 ID 는 담지 않는다.
     """
 
     command_id: str
     outcome: CommandOutcome
     report: NodeResult | None = None
     reported_at: datetime | None = None  # 서버가 결과를 정한 시각
+    confirmation: Mapping[str, Any] | None = None  # 상태 조회로 확인한 근거. 감사에 남는다
+
+    def __post_init__(self) -> None:
+        if self.confirmation is not None:
+            object.__setattr__(self, "confirmation", _freeze(self.confirmation))
 
 
 

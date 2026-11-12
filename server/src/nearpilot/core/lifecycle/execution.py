@@ -23,8 +23,9 @@ from nearpilot.shared.interfaces import (
 )
 from nearpilot.shared.models import (
     CommandRecord, CommandResult, Decision, ExecutionContext, ExecutionResult,
-    NodeCommand, NodeResult, RecoveryEvidence,
+    NodeCommand, NodeInfo, NodeResult, RecoveryEvidence,
 )
+from nearpilot.shared.frozen import thaw
 
 # begin_send 충돌 사유 → 판정에 알리는 중단 사유 (architecture.md §4 "실행 인계와 재검사")
 _BEGIN_REASONS = {
@@ -123,8 +124,10 @@ class ExecutionService:
 
         # IOT가 결과를 다른 스레드에서 인계해도 기기 잠금을 기다리지 않게 한다.
         source = "gateway"
+        # 명령의 유효 시간과 전송 대기 한도를 같은 값으로 쓴다 (종류별 실행 응답 제한, #271).
+        timeout_sec = (command.expires_at - command.issued_at).total_seconds()
         try:
-            result = self._gateway.send(command, ctx.settings.exec_timeout_sec)
+            result = self._gateway.send(command, timeout_sec)
         except Exception:
             source = "gateway_error"
             result = CommandResult(command.command_id, CommandOutcome.UNKNOWN,
@@ -239,7 +242,8 @@ class ExecutionService:
             # 재검사 중의 시간 경과와 연결 변경을 전송 직전에 다시 확인한다.
             if not self._within_wait(attempt) or not self._ready(attempt):
                 return None
-        session_id = self._session_id(ctx.node_id)
+        node = self._node(ctx.node_id)
+        session_id = None if node is None or not node.session_id else node.session_id
         if session_id is None:
             attempt.blockers = ("connection_unconfirmed",)
             self._cancel(attempt, ExecutionStatus.PENDING, ReasonCode.NODE_NOT_CONNECTED, "no_connection")
@@ -272,9 +276,10 @@ class ExecutionService:
         attempt.blockers = ()
         now = self._clock()
         # 동작 인자는 저장한 명령 기록에서 읽는다. 인계 값으로 바꾸지 않는다 (FR-09, FR-19).
+        # 유효 시간은 저장한 기기 종류의 실행 응답 제한이다 (requirements.md §1.2, #271).
         return NodeCommand(current.command_id, ctx.node_id, _action(ctx),
                            attempt.target_session_id, now,
-                           now + timedelta(seconds=ctx.settings.exec_timeout_sec),
+                           now + timedelta(seconds=ctx.settings.exec_timeout_for(node.kind)),
                            arguments=current.arguments)
 
     def _link_internal(self, attempt: _Attempt) -> bool:
@@ -349,11 +354,13 @@ class ExecutionService:
             "source": source, "reason": reason.value, "confirmed_at": self._clock()})
         self._retry(attempt)
 
-    def _session_id(self, node_id: str) -> str | None:
+    def _node(self, node_id: str) -> NodeInfo | None:
         nodes = [node for node in self._repository.nodes() if node.node_id == node_id]
-        if len(nodes) != 1 or not nodes[0].session_id:
-            return None
-        return nodes[0].session_id
+        return nodes[0] if len(nodes) == 1 else None
+
+    def _session_id(self, node_id: str) -> str | None:
+        node = self._node(node_id)
+        return None if node is None or not node.session_id else node.session_id
 
     def _receive(self, attempt: _Attempt, result: CommandResult, *, source: str) -> None:
         if result.command_id != attempt.command.command_id:
@@ -389,11 +396,16 @@ class ExecutionService:
                         "source": source, "reason": ReasonCode.COMMAND_NOT_SENT.value,
                         "confirmed_at": result.reported_at or self._clock()})
                 return
-            # 기기 완료 근거가 없는 성공·실패·거부는 결과 불명이다.
-            outcome = CommandOutcome.UNKNOWN
             key = "server:" + attempt.command.command_id
             occurred_at = result.reported_at or self._clock()
-            evidence = {"source": source, "outcome": result.outcome.value}
+            if outcome == CommandOutcome.SUCCEEDED and result.confirmation:
+                # 서버가 상태 조회로 확인한 성공이다. 확인 근거를 남긴다 (FR-07, #271).
+                evidence = {"source": "server_state_confirmed",
+                            "confirmation": thaw(result.confirmation)}
+            else:
+                # 기기 완료 근거가 없는 성공·실패·거부는 결과 불명이다.
+                outcome = CommandOutcome.UNKNOWN
+                evidence = {"source": source, "outcome": result.outcome.value}
         previous = attempt.events.get(key)
         if previous is not None:
             if (previous.outcome != outcome or previous.occurred_at != occurred_at

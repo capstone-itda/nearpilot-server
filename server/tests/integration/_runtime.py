@@ -293,7 +293,9 @@ class FakePaho:
     def _deliver(self, node_id: str, messages) -> None:
         for kind, body in messages:
             self.on_message(self, None, SimpleNamespace(
-                topic=f"nearpilot/node/{node_id}/{kind}", payload=json.dumps(body).encode(),
+                # 펌웨어처럼 공백 없는 UTF-8 JSON 으로 보낸다. 발표 상한(2048바이트)은 이 바이트 수로 잰다
+                topic=f"nearpilot/node/{node_id}/{kind}",
+                payload=json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
                 qos=1, retain=kind == "announce", dup=False))
 
     def _connect(self) -> None:

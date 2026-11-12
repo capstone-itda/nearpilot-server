@@ -22,7 +22,7 @@
 - `command_id` 중복 처리는 `MqttCommandGateway`와 같은 규칙이다. 같은 ID에 다른 내용이 오면 `ValueError`, 같은 내용이면 기존 호출에 합류한다 (FR-06, `iot/mqtt/commands.py`).
 - 접수 응답만으로 성공을 확정하지 않는다. 명령을 보낸 뒤 확인 속성이 기대값과 같아질 때까지 `timeout_sec` 안에서 상태를 다시 조회한다 (FR-07).
 - 명령 전송 자체가 실패하면(연결·인증 오류) `NOT_SENT`다. 전송에 성공했지만 `timeout_sec` 안에 확인하지 못하면 `UNKNOWN`이다. 이 작업은 `FAILED`를 만들지 않는다 — SmartThings 상태 조회만으로는 "확실한 실패"를 구분할 근거가 없다 (FR-07).
-- `custom.launchapp`·`samsungvd.remoteControl.send`처럼 확인 속성이 없는 동작은 선언하지 않으므로(`iot-smartthings-descriptor`) 이 게이트웨이도 다루지 않는다.
+- `samsungvd.remoteControl.send`처럼 확인 속성이 없는 동작은 선언하지 않으므로(`iot-smartthings-descriptor`) 이 게이트웨이도 다루지 않는다. 동작 8개의 명령·인자·확인 방식은 `specs/iot-smartthings-companion`을 따른다 (#271).
 - capability.command·확인 속성 매핑은 `iot-smartthings-descriptor`의 선언 생성과 같은 표를 쓴다. 두 곳에 중복해서 적지 않는다 (`iot-smartthings-descriptor` spec 결정 1).
 - 온라인 하트비트는 `smartthings_poll_sec`마다 상태를 조회해서 성공하면 `NodeEventSink.on_status()`를 부른다. 실패하면 부르지 않는다 — `last_seen_at`은 유효한 응답에만 갱신된다 (FR-13).
 - `CLOCK_UNVERIFIED`·`clock_skew_sec`은 적용하지 않는다. 이 어댑터는 `iot/mqtt/delivery.py`를 거치지 않는다 (`architecture.md` §4 "시각").
@@ -79,13 +79,13 @@
 
 1. capability.command·확인 속성·기대값 계산 표는 `iot/smartthings/actions.py`에 `ACTIONS: dict[str, SmartThingsAction]`로 둔다. `iot-smartthings-descriptor`의 `descriptor.py`는 이 표에서 선언(`declaration`)만 꺼내 쓰도록 고친다 — 매핑을 한 곳에만 둔다(이 spec 제약 6).
 2. `send()`의 명령 전송 실패와 확인 실패는 둘 다 `SmartThingsTransport`가 던지는 공통 예외(`SmartThingsTransportError`)로 구분하지 않는다. 전송 단계의 예외는 `NOT_SENT`, 확인 단계의 예외는 폴링 계속(시간이 끝나면 `UNKNOWN`)으로 다르게 처리한다 — 전송 실패는 "보냈는지 모른다"가 아니라 "확실히 못 보냈다"이고, 확인 실패는 일시적 네트워크 문제일 수 있어 재시도할 가치가 있다.
-3. `command_id` 재사용의 동시 호출 합류(여러 스레드가 같은 새 `command_id`로 동시에 `send()`를 부르는 경우)는 `MqttCommandGateway`처럼 조건변수로 합류시킨다. 완료된 `command_id`의 같은 내용 재전송은 결과를 캐시하지 않고 다시 전송·확인한다 — 이 작업이 다루는 동작(`on`·`off`·`set_volume`·`mute`·`unmute`·`set_input_source`)은 모두 절대값을 지정하는 멱등 명령이라 다시 보내도 안전하다. 내용이 다른 재사용만 `ValueError`로 막는다(`_known` 사전은 완료 뒤에도 비우지 않는다).
+3. `command_id` 재사용의 동시 호출 합류(여러 스레드가 같은 새 `command_id`로 동시에 `send()`를 부르는 경우)는 `MqttCommandGateway`처럼 조건변수로 합류시킨다. 완료된 `command_id`의 같은 내용 재전송은 결과를 캐시하지 않고 다시 전송·확인한다 — 절대값을 지정하는 멱등 명령이라 다시 보내도 안전하다. 상대 명령(`set_channel`의 `up`·`down`)은 예외로 처음 결과를 돌려준다 (`specs/iot-smartthings-companion` 결정 6). 내용이 다른 재사용만 `ValueError`로 막는다(`_known` 사전은 완료 뒤에도 비우지 않는다).
 4. 하트비트는 `switch` capability의 상태 조회 성공 여부로만 온라인을 판단한다. 조회에 성공하면 `command_state=IDLE`로 `on_status`를 부른다 — 이 어댑터는 명령 처리 중 여부를 별도로 추적하지 않는다. 더 정밀한 `BUSY` 구분은 후속 작업으로 미룬다.
 5. `smartthings_poll_sec`의 검증은 `0 < smartthings_poll_sec <= online_ttl_sec`만 본다. `status_report_sec`과의 관계는 두지 않는다 — `architecture.md`·`requirements.md`에 적은 "status_report_sec 이상"은 ESP32 보고 주기를 그대로 베낀 과한 제약이었다. `docs/`는 이 작업에서 고치지 않으므로(경계) 문서 쪽 문구는 별도 docs PR로 고친다 — #259.
 
 ## 7. 가정
 
-- `audioMute`의 확인 속성 값은 `muted`/`unmuted` 문자열이고, `mediaInputSource`의 확인 속성 이름은 `inputSource`라고 가정한다. `architecture.md` §4 "구현 전 확인"의 M5 실기 조회 전에 세운 가정이라 실제와 다를 수 있다. 다르면 fix PR로 고친다 — #259.
+- `audioMute`의 확인 속성 값은 `muted`/`unmuted` 문자열이라고 가정한다. `architecture.md` §4 "구현 전 확인"의 M5 실기 조회 전에 세운 가정이라 실제와 다를 수 있다. 다르면 fix PR로 고친다 — #259.
 
 ## 8. 테스트
 

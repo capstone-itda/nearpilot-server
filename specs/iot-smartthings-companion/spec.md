@@ -128,18 +128,23 @@
 9. `launch_app`의 앱 표(`youtube` → 인자 `["", "YouTube"]`, 식별자 `9Ur5IzDKqV.TizenYouTube`)는 동작 표에 둔다. #270 실기 값이다.
 10. `CommandResult.confirmation`은 `{"source": "smartthings_state", "capability", "attribute", "value"}`다. `changed`면 `before`도 담는다. 값은 감사에 남으므로 토큰과 `deviceId`를 담지 않는다.
 11. core는 확인 근거를 결과 사건의 근거(`evidence`)에 `{"source": "server_state_confirmed", "confirmation": ...}`로 남긴다. 사건 키는 지금의 서버 결과 키 `server:{command_id}`를 쓴다.
-12. 종류별 실행 응답 제한은 `Settings.exec_timeouts: Mapping[str, float]`에 두고 `exec_timeout_for(kind)`로 읽는다. 설정 파일에서는 문서의 이름 그대로 따옴표 키 `"exec_timeout_sec.display" = 10.0`로 쓴다. TOML은 숫자 `exec_timeout_sec`와 표 `exec_timeout_sec.display`를 함께 둘 수 없기 때문이다.
+12. 종류별 실행 응답 제한은 `Settings.exec_timeouts: Mapping[str, float]`에 두고 `exec_timeout_for(kind)`로 읽는다. 설정 파일에서는 문서의 이름 그대로 따옴표 키 `"exec_timeout_sec.display" = 10.0`로 쓴다. TOML은 숫자 `exec_timeout_sec`와 표 `exec_timeout_sec.display`를 함께 둘 수 없기 때문이다. 초기값 `display` 10초(`requirements.md` §1.2)는 `Settings`의 기본값이고, 설정 파일의 키는 그 위에 더한다. 평가 도구는 예시 설정의 `[settings]`를 `Settings`에 그대로 넘기므로 예시 설정에는 이 키를 주석으로만 둔다.
 13. `ExecutionService`는 명령을 만들 때 저장한 기기의 종류로 제한 시간을 정한다. `send`에 넘기는 제한 시간은 그 명령의 `expires_at - issued_at`이다 — 한 시도 안에서 두 값이 어긋나지 않는다.
 14. HTTP 오류 분류: 연결 실패, 401, 그 밖의 4xx는 "보내지 못함"(`NOT_SENT`)이다. 응답 시간 초과와 5xx는 "보냈을 수 있음"이라 확인 조회를 계속한다. 명령 응답 본문의 상태 값은 쓰지 않는다 (FR-07).
-15. 접근 토큰 파일은 JSON 객체이고 `access_token` 필드를 읽는다. 요청마다 파일을 다시 읽는다 — 후속 OAuth 작업이 같은 파일을 교체 저장하면 재시작 없이 반영된다. PAT도 같은 형식으로 넣는다.
+15. 접근 토큰 파일은 JSON 객체이고 `access_token` 필드를 읽는다. 요청마다 파일을 다시 읽는다 — 후속 OAuth 작업이 같은 파일을 교체 저장하면 재시작 없이 반영된다. PAT도 같은 형식으로 넣는다. `[smartthings]`의 키는 `token_file`, `confirm_poll_sec`(확인 조회 간격), `request_timeout_sec`(HTTP 요청 제한 시간), `[[smartthings.bindings]]`(`node_id`·`device_id`)이고 모두 필수다.
 16. 동작 표가 바뀌어서 선언 합성(`descriptor.py`)도 새 표를 쓴다. `set_input_source`, `mute`, `unmute`는 표에서 빠진다. 합성은 계속 `switch`가 없으면 거부한다.
 17. 펌웨어 동반 기기 선언 상수는 `DISPLAY_SMARTTHINGS_DESCRIPTOR`다. 빌드 env는 출력 핀이 없는 `esp32dev-display-1`이다. 펌웨어 실행 코드는 고치지 않는다 — 동반 기기에는 명령이 가지 않는다.
+18. 동작 8개의 선언은 가장 긴 기기 ID(64바이트)로도 발표 2048바이트를 넘지 않게 줄인다 (구현 중 확인: 처음 설명으로는 2252바이트였다). 인자 없는 동작의 스키마는 `{"type": "object", "additionalProperties": false}`로 쓰고 빈 `properties`·`required`를 쓰지 않는다. 설명은 짧게 쓴다(예: `켜기`, `채널 번호나 up·down`). 서버 동작 표와 펌웨어 선언이 같은 값을 쓴다. 인자의 `required`는 줄이지 않는다 — 생략한 인자는 FR-09 규칙으로 채운다.
+19. 명령을 보내기 전의 조회(대응표, `changed`의 전송 전 값)가 실행 응답 제한을 다 쓰면 보내지 않고 `NOT_SENT`다 — 보내지 않았으므로 확정할 수 있다.
+20. 시험의 fake Paho(`tests/integration/_runtime.py`)는 펌웨어처럼 공백 없는 UTF-8 JSON으로 보고를 넣는다. 발표 상한은 이 바이트 수로 잰다.
 
 ## 7. 가정
 
 - `supportedPictureModesMap`·`supportedSoundModesMap`의 값은 `{"id", "name"}` 객체의 목록이라고 가정한다. #270은 ID와 이름의 대응을 기록했지만 원문 형식을 남기지 않았다. 다르면 실기 점검에서 fix로 고친다 — #270.
 - 화면 모드의 현재 값(`pictureMode`)은 ID나 이름 중 하나라고 가정한다. 그래서 둘 다 성공으로 본다 — #270.
 - 명령 응답 시간 초과는 SmartThings가 명령을 받았을 수 있는 상황으로 본다. 그래서 `NOT_SENT`로 확정하지 않는다 — FR-07.
+- 화면·소리 모드 ID는 32자 이하 문자열이라고 가정한다(`maxLength: 32`). #270은 ID 형식을 남기지 않았다. 다르면 실기 점검에서 fix로 고친다 — #270.
+- `tools/node_sim`의 실제 MQTT 발행(`device.py`)은 기본 `json.dumps`(ASCII 이스케이프, 공백)라서 이 선언의 발표가 2048바이트를 넘는다(2228바이트). 시뮬레이터로 실제 브로커에 동반 기기를 띄우는 일은 이 작업의 범위가 아니다 — 경계 밖이다.
 
 ## 8. 테스트
 

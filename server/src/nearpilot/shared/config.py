@@ -25,6 +25,9 @@ _THRESHOLD_FIELDS = {"locker": "threshold_locker", "light": "threshold_light", "
 _PARAM_MAX = {"light": {"on": {"brightness": 64}}, "speaker": {"on": {"volume": 20}}}
 _PARAM_DEFAULT = {"light": {"on": {"brightness": 64, "color": "#FFFFFF"}}, "speaker": {"on": {"volume": 20}}}
 
+# 종류별 실행 응답 제한의 초기 기준 (requirements.md §1.2, #271). SmartThings 클라우드 왕복과 refresh 뒤 재조회를 담는다.
+_EXEC_TIMEOUTS = {"display": 10.0}
+
 # 옛 설정 키 → 새 경로 (requirements.md §1.2 "기존 ... 은 이 형식으로 옮긴다")
 LEGACY_PARAM_KEYS = {
     "light_brightness_max": ("param_max", "light", "on", "brightness"),
@@ -35,10 +38,15 @@ LEGACY_PARAM_KEYS = {
 }
 
 
+# 종류별 실행 응답 제한의 설정 키 접두사. 설정 파일에서는 따옴표 키 `"exec_timeout_sec.{kind}"` 로 쓴다 (#271).
+EXEC_TIMEOUT_PREFIX = "exec_timeout_sec."
+
+
 def migrate_settings_table(table: Mapping[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
     """설정 파일 표나 저장한 스냅샷을 `Settings` 인자로 바꾼다. 옮긴 옛 키 목록도 반환한다.
 
     - 필드가 아닌 `threshold_{kind}` 키는 `thresholds` 로 모은다.
+    - `exec_timeout_sec.{kind}` 키는 `exec_timeouts` 로 모은다.
     - 옛 키 5개는 `param_max`·`param_default` 의 같은 자리로 옮긴다. 같은 표에 새 형식이 함께 있으면 거부한다.
     형식이 틀리면 ValueError 다. 값의 검증은 `Settings` 가 한다.
     """
@@ -52,6 +60,17 @@ def migrate_settings_table(table: Mapping[str, Any]) -> tuple[dict[str, Any], tu
             thresholds[kind] = out.pop(key)
     if thresholds:
         out["thresholds"] = thresholds
+    # 스냅샷은 표 전체(`exec_timeouts`)를 담는다. 설정 파일의 키는 초기 기준 위에 더한다.
+    explicit = out.pop("exec_timeouts", None)
+    overrides: dict[str, Any] = {}
+    for key in list(out):
+        if key.startswith(EXEC_TIMEOUT_PREFIX):
+            kind = key[len(EXEC_TIMEOUT_PREFIX):]
+            if explicit is not None and kind in explicit:
+                raise ValueError(f"{key} 를 두 번 썼다")
+            overrides[kind] = out.pop(key)
+    if explicit is not None or overrides:
+        out["exec_timeouts"] = {**(_EXEC_TIMEOUTS if explicit is None else explicit), **overrides}
     legacy = tuple(key for key in LEGACY_PARAM_KEYS if key in out)
     for section in sorted({LEGACY_PARAM_KEYS[key][0] for key in legacy}):
         if section in out:
@@ -137,6 +156,9 @@ class Settings:
     smartthings_poll_sec: float = 5.0  # SmartThings 하트비트 주기: online_ttl_sec 이하 (FR-13, #259)
     reservation_wait_sec: float = 10.0  # 예약 대기 제한: 예약부터 전송 시작까지 (FR-19)
     exec_timeout_sec: float = 3.0  # 실행 응답 제한: 전송 시도 뒤 결과 대기 (FR-07)
+    # 종류별 실행 응답 제한. 설정 파일에서는 `"exec_timeout_sec.{kind}"` 로 쓴다. 없는 종류는 exec_timeout_sec (#271).
+    # 초기값 display 10초는 requirements.md §1.2 의 값이다. 설정에 쓴 키는 이 표에 더해진다. 전송은 `exec_timeout_for` 로만 읽는다.
+    exec_timeouts: Mapping[str, float] = field(default_factory=lambda: dict(_EXEC_TIMEOUTS))
     rental_duration_sec: float = 3600.0  # 대여 기본 시간: 자동 반납 기준이 아니라 초과시간 계산 기준 (FR-20)
     approval_ttl_sec: int = 3600  # 승인 기본 유효시간: 승인 시점부터. 접근 승인에만 쓴다 (FR-14)
     approval_pending_ttl_sec: int = 600  # 승인 대기 만료: 신청 시점부터 (FR-03)
@@ -162,6 +184,12 @@ class Settings:
         name = _THRESHOLD_FIELDS.get(kind)
         return getattr(self, name) if name is not None else self.thresholds.get(kind)
 
+    def exec_timeout_for(self, kind: str | None) -> float:
+        """기기 종류의 실행 응답 제한. 재정의가 없으면 전역 `exec_timeout_sec` 다 (requirements.md §1.2)."""
+        if kind is None:
+            return self.exec_timeout_sec
+        return self.exec_timeouts.get(kind, self.exec_timeout_sec)
+
     def param_caps(self, kind: str, action: str) -> Mapping[str, int | float]:
         """인자별 서버 상한. 없으면 빈 맵이다 (FR-09)."""
         return self.param_max.get(kind, {}).get(action, {})
@@ -172,6 +200,7 @@ class Settings:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "thresholds", freeze(self.thresholds))
+        object.__setattr__(self, "exec_timeouts", freeze(self.exec_timeouts))
         object.__setattr__(self, "param_max", freeze(self.param_max))
         object.__setattr__(self, "param_default", freeze(self.param_default))
         object.__setattr__(self, "any_allowed_kinds", freeze(self.any_allowed_kinds))
@@ -207,6 +236,13 @@ class Settings:
             raise ValueError("any_allowed_kinds 는 종류 이름의 목록이어야 한다")
         if len(set(self.any_allowed_kinds)) != len(self.any_allowed_kinds):
             raise ValueError("any_allowed_kinds 에 같은 종류가 두 번 있다")
+        if not isinstance(self.exec_timeouts, Mapping):
+            raise ValueError("exec_timeouts 는 표여야 한다")
+        for kind, v in self.exec_timeouts.items():
+            if not is_name(kind):
+                raise ValueError(f"{EXEC_TIMEOUT_PREFIX}{kind} 는 쓸 수 없는 종류 이름이다")
+            if not _number(v) or v <= 0:
+                raise ValueError(f"{EXEC_TIMEOUT_PREFIX}{kind} 는 양수여야 한다")
         _check_param_table("param_max", self.param_max, "number")
         _check_param_table("param_default", self.param_default, "scalar")
         for kind, actions in self.param_default.items():
