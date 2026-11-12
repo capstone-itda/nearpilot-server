@@ -20,6 +20,9 @@ any_allowed_kinds = ["locker"]
 anchor_recent_sec = 3.0
 # 거리 선택자 경계의 두 기기 정렬 값 차이가 이 값(dB)보다 작으면 응답에 similar 를 표시한다 (FR-09, #253). 실험으로 정한다.
 order_similar_db = 3.0
+# 실행 응답 제한의 종류별 재정의다. 따옴표 키 "exec_timeout_sec.{kind}" 로 쓴다. 없는 종류는 exec_timeout_sec(초기 3초)다.
+# display(SmartThings 클라우드 왕복과 refresh 뒤 재조회)의 초기값은 10초다 (requirements.md §1.2, #271). 바꿀 때만 쓴다.
+# "exec_timeout_sec.display" = 10.0
 
 # 동작 인자의 서버 상한 param_max.{kind}.{action}.{arg} 다 (FR-09). 기기 선언의 maximum 과 비교해서 작은 값을 쓴다.
 # 표를 쓰면 기본값 전체를 대신한다. 쓰지 않은 종류·동작·인자에는 상한이 없다.
@@ -107,4 +110,15 @@ tail_interval_sec = 0.5  # 따라 읽기 간격. 사건이 화면에 보이기�
 # fleet = "fleet.json"            # 기기 목록 파일 (nearpilot provision 과 같은 형식)
 # mdns_name = "nearpilot"         # 기기는 nearpilot.local 로 접속한다
 # mdns_address = "192.168.0.10"   # 기기가 접속할 이 PC의 IPv4 주소
+
+# SmartThings 동반 기기 (선택, #271). 이 섹션이 있으면 바인딩한 동반 기기 node_id 의 명령을 SmartThings 로 보내고,
+# 그 밖의 명령은 MQTT 로 보낸다. 없으면 모든 명령을 MQTT 로 보낸다. 키 4개가 모두 필수다.
+# token_file 은 JSON 객체 {"access_token": "..."} 이다. 요청마다 다시 읽는다. device_id 는 호스트·로그·감사에 남기지 않는다.
+# [smartthings]
+# token_file = ".env.smartthings-token"
+# confirm_poll_sec = 1.0           # 명령 뒤 상태 확인 조회 간격
+# request_timeout_sec = 4.0        # HTTP 요청 하나의 제한 시간. exec_timeout_sec.display 보다 짧게 둔다
+# [[smartthings.bindings]]
+# node_id = "display-1"            # 동반 기기(펌웨어 env esp32dev-display-1)의 node_id
+# device_id = "00000000-0000-0000-0000-000000000000"  # SmartThings deviceId
 

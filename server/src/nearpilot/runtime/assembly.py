@@ -39,15 +39,20 @@ from nearpilot.iot.mqtt import (
     ConnectionFailure, MqttCommandGateway, MqttConnection, MqttNodeRestarter, OccupancyPublisher,
     ReportDelivery, TimeResponder,
 )
+from nearpilot.iot.routing import RoutingCommandGateway
+from nearpilot.iot.smartthings.gateway import SmartThingsCommandGateway
+from nearpilot.iot.smartthings.http import HttpSmartThingsTransport
+from nearpilot.iot.smartthings.transport import SmartThingsTransport
 from nearpilot.runtime.auth_audit import AuditedAuthenticator
-from nearpilot.runtime.config import DashboardConfig, ServerConfig
+from nearpilot.runtime.config import DashboardConfig, ServerConfig, SmartThingsConfig
 from nearpilot.runtime.database import ThreadDatabase
 from nearpilot.runtime.provisioning import FleetProvisioningSource, MdnsAdvertiser
 from nearpilot.runtime.tasks import CallGate, Late, NodeLocks, NotAccepting, PeriodicTask
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import ExecutionStatus
 from nearpilot.shared.interfaces import (
-    AdminService, ApprovalService, CoreService, ProximityEstimator, RecoveryService, RetentionStore,
+    AdminService, ApprovalService, CoreService, NodeCommandGateway, ProximityEstimator, RecoveryService,
+    RetentionStore,
 )
 from nearpilot.shared.interfaces import NodeAdminService as NodeAdminApi
 from nearpilot.shared.models import Decision, ExecutionContext, ExecutionResult, UseRequest
@@ -59,6 +64,10 @@ ProximityFactory = Callable[[CommonModel | None, Settings], ProximityEstimator]
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _http_smartthings(config: SmartThingsConfig) -> SmartThingsTransport:
+    return HttpSmartThingsTransport(token_file=config.token_file, request_timeout_sec=config.request_timeout_sec)
 
 
 class ShutdownError(RuntimeError):
@@ -86,6 +95,8 @@ class Services:
     node_events: NodeEventService
     retention: RetentionStore
     core: CoreService
+    # CORE 에 넘긴 게이트웨이. `[smartthings]` 바인딩이 있으면 MQTT 게이트웨이를 감싼 라우터다
+    command_gateway: NodeCommandGateway | None = None
 
 
 @dataclass(frozen=True)
@@ -240,8 +251,11 @@ class Runtime:
         monotonic: Callable[[], float] = time.monotonic,
         collect_only: bool = False,
         mdns_factory: Callable[..., Any] = MdnsAdvertiser,
+        smartthings_transport_factory: Callable[[SmartThingsConfig], SmartThingsTransport] | None = None,
     ) -> None:
         self.config = config
+        # 시험은 가짜 transport 를 넘긴다. 기본은 urllib HTTP 다
+        self._smartthings_transport_factory = smartthings_transport_factory or _http_smartthings
         self.settings = config.settings
         self._clock = clock
         self._client_factory = client_factory
@@ -401,6 +415,7 @@ class Runtime:
                                     client_factory=self._client_factory, clock=clock)
         time_responder.connection = connection
         gateway = MqttCommandGateway(connection, delivery, clock=clock)
+        command_gateway = self._command_gateway(gateway, clock)
         # 점유 표시는 저장한 기기 상태만 옮긴다. 판정과 상태를 바꾸지 않는다.
         occupancy = OccupancyPublisher(connection, repo.nodes, clock=clock)
 
@@ -428,7 +443,7 @@ class Runtime:
                                  lock_for=locks)
         rechecker = Rechecker(repo, proximity, policy, audit, clock)
         execution = ExecutionService(
-            repository=repo, store=store, rechecker=rechecker, gateway=gateway, clock=clock,
+            repository=repo, store=store, rechecker=rechecker, gateway=command_gateway, clock=clock,
             lock_for=locks, can_execute=restore.can_execute,
             record_isolated=recovery.record_isolated,
             confirm_internal=lambda ctx: shared_light.can_request_off(ctx.node_id))
@@ -463,7 +478,22 @@ class Runtime:
             self.tasks.append(PeriodicTask("dashboard_tail", cfg.dashboard.tail_interval_sec,
                                            self.dashboard.tail.tick, scope=db.scope))
         return Services(connection, delivery, gateway, proximity, window, execution, release,
-                        restore, recovery, shared_light, node_events, retention, core)
+                        restore, recovery, shared_light, node_events, retention, core, command_gateway)
+
+    def _command_gateway(self, mqtt_gateway: MqttCommandGateway,
+                         clock: Callable[[], datetime]) -> NodeCommandGateway:
+        """바인딩한 동반 기기의 명령은 SmartThings 로, 그 밖은 MQTT 로 보낸다 (architecture.md "동반 기기")."""
+        smartthings = self.config.smartthings
+        if smartthings is None:
+            return mqtt_gateway
+        transport = self._smartthings_transport_factory(smartthings)
+        routes = {
+            binding.node_id: SmartThingsCommandGateway(
+                transport, binding.device_id, poll_interval_sec=smartthings.confirm_poll_sec, clock=clock)
+            for binding in smartthings.bindings
+        }
+        log.info("SmartThings 바인딩 %d개: %s", len(routes), ", ".join(sorted(routes)))
+        return RoutingCommandGateway(mqtt_gateway, routes)
 
     def _dashboard_parts(self, dashboard: DashboardConfig) -> DashboardParts:
         """조회 서비스와 따라 읽기를 만든다. `create_app` 이 서버를 시작하기 전에 라우터를 붙이므로 여기서 만든다.

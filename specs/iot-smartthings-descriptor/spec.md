@@ -22,9 +22,9 @@
 - 점유 방식은 `shared`다. `off`는 `role: deactivate`로 선언한다. 정확히 하나만 선언해야 한다 (`device-protocol.md` 3절).
 - `switch` capability가 없으면 선언을 만들지 않고 거부한다. `deactivate` 동작(`off`) 없이는 `shared` 선언이 성립하지 않는다 (`device-protocol.md` 3절).
 - 선언할 동작 이름은 이름 규칙(`^[a-z][a-z0-9_]*$`, 32바이트 이하)을 지킨다 (`device-protocol.md` 4절, #262).
-- `audioVolume`, `audioMute`, `mediaInputSource` capability는 SmartThings 조회 결과에 있을 때만 그 동작을 선언에 더한다. 없으면 그 동작을 뺀다 (`architecture.md` §4 "선언 합성").
-- `custom.picturemode`(`set_picture_mode`)는 1차 범위에 넣지 않는다. M5 실기 capability 조회로 확인되면 후속 작업이 더한다 (`requirements.md` FR-07).
-- `custom.launchapp`, `samsungvd.remoteControl`은 선언하지 않는다. 확인할 상태가 없다 (`requirements.md` FR-07).
+- `on`·`off` 밖의 동작은 동작 표가 요구하는 capability가 SmartThings 조회 결과에 모두 있을 때만 선언에 더한다. 없으면 그 동작을 뺀다 (`architecture.md` §4 "선언 합성"). 동작 표는 `requirements.md` FR-07 표의 8개다 (`specs/iot-smartthings-companion` 결정 16).
+- `launch_app`은 `custom.launchapp`과 확인 속성의 `tvChannel`이 모두 있어야 선언한다.
+- `samsungvd.remoteControl`은 선언하지 않는다. 확인할 상태가 없다 (`requirements.md` FR-07).
 - `vendor.firmware`가 빈 값이면 고정 문자열 `unknown`을 쓴다. 빈 문자열은 선언 검증을 통과하지 못한다 (`requirements.md` FR-04).
 - 선언 해시는 `kind`, `occupancy`, `actions` 전체로 계산한다. `vendor`는 넣지 않는다. 이 규칙은 `shared/descriptor.py`가 이미 구현하고 있으므로 이 작업은 그 함수를 그대로 부른다 (FR-04).
 - 판정은 바꾸지 않는다. 이 작업은 판정 분기를 추가하지 않는다 (NFR-07).
@@ -58,26 +58,27 @@
 | 상황 | 기대 동작 | 테스트 |
 |---|---|---|
 | `switch` capability 없음 | `UnsupportedDeviceError`(선언을 만들지 않음) | `test_FR04_missing_switch_capability_rejected` |
-| `audioVolume`·`audioMute`·`mediaInputSource`가 모두 없음 | `on`·`off`만 선언 | `test_FR04_minimal_capabilities_declares_switch_only` |
+| `switch` 밖의 capability가 없음 | `on`·`off`만 선언 | `test_FR04_minimal_capabilities_declares_switch_only` |
 | `audioVolume`만 있음 | `on`·`off`·`set_volume`만 선언 | `test_FR04_audio_volume_adds_set_volume` |
-| 전체 capability(4개) 있음 | 동작 6개(`on`·`off`·`set_volume`·`mute`·`unmute`·`set_input_source`) 선언 | `test_FR04_full_capabilities_declares_all_actions` |
-| capability id 목록에 모르는 값이 섞임(예: `custom.launchapp`) | 무시하고 나머지로 선언 | `test_FR04_unknown_capability_ignored` |
+| 동작 표의 capability가 모두 있음 | 동작 8개(`on`·`off`·`set_volume`·`set_mute`·`set_picture_mode`·`set_sound_mode`·`set_channel`·`launch_app`) 선언 | `test_FR04_full_capabilities_declares_all_actions` |
+| `mediaInputSource`가 있음 | `mute`·`unmute`·`set_input_source`는 선언하지 않는다 | `test_FR04_removed_actions_not_declared` |
+| `custom.launchapp`만 있고 `tvChannel`이 없음 | `launch_app`을 선언하지 않는다 | `test_FR04_launch_app_needs_tv_channel_for_confirmation` |
+| capability id 목록에 모르는 값이 섞임(예: `samsungvd.remoteControl`) | 무시하고 나머지로 선언 | `test_FR04_unknown_capability_ignored` |
 | capability id 중복 | 한 번만 반영 | `test_FR04_duplicate_capability_id_deduplicated` |
 | `firmware`가 빈 문자열이거나 없음 | `vendor.firmware`가 `"unknown"` | `test_FR04_missing_firmware_defaults_to_unknown` |
 | 선언 전체 검증(해시, 상한, 이름 규칙) | `parse_descriptor`와 같은 결과 | `test_FR04_result_passes_parse_descriptor_contract` |
 
 ## 6. 결정
 
-1. 선언할 동작 이름은 `on`, `off`, `set_volume`, `mute`, `unmute`, `set_input_source`로 쓴다 (#262). SmartThings `capability.command` 매핑(`switch.on`, `audioVolume.setVolume`, `audioMute.mute`/`audioMute.unmute`, `mediaInputSource.setInputSource`)은 모듈 상수 테이블로 둔다. 실제 REST 호출(`iot-smartthings-adapter`)은 이 테이블을 그대로 읽는다 — 매핑을 두 곳에 중복해서 적지 않는다.
-2. `mute`와 `unmute`는 토글 하나가 아니라 인자 없는 동작 둘로 나눈다. SmartThings `audioMute` capability의 명령이 `mute()`/`unmute()` 두 개이기 때문이다.
-3. `off`에만 `role: deactivate`를 붙인다. `on`, `set_volume`, `mute`, `unmute`, `set_input_source`는 역할이 없는 일반 동작이다. `device-protocol.md` 3절 규칙대로 이 동작들은 모두 "새 점유를 시작하는 일반 동작"(공용형의 켜기 요청)으로 취급된다 — 조명의 "인자를 바꾸는 켜기 요청도 켜기 요청이다"(FR-20)와 같은 일반 규칙이고 이 작업이 새로 만드는 규칙이 아니다.
+1. 선언할 동작 이름은 `requirements.md` FR-07 표의 `on`, `off`, `set_volume`, `set_mute`, `set_picture_mode`, `set_sound_mode`, `set_channel`, `launch_app`이다 (#271, `specs/iot-smartthings-companion` 결정 16). SmartThings `capability.command` 매핑은 `iot/smartthings/actions.py`의 모듈 상수 테이블로 둔다. 실제 REST 호출과 펌웨어 동반 기기 선언 시험은 이 테이블을 그대로 읽는다 — 매핑을 두 곳에 중복해서 적지 않는다.
+2. `set_mute`는 인자 `state`(`muted`·`unmuted`)로 `audioMute.mute`/`audioMute.unmute`를 고른다. 판정이 생략한 인자를 채우는 규칙(FR-09)이 동작 하나에 적용되도록 동작을 둘로 나누지 않는다 (#271).
+3. `off`에만 `role: deactivate`를 붙인다. 나머지 동작은 역할이 없는 일반 동작이다. `device-protocol.md` 3절 규칙대로 이 동작들은 모두 "새 점유를 시작하는 일반 동작"(공용형의 켜기 요청)으로 취급된다 — 조명의 "인자를 바꾸는 켜기 요청도 켜기 요청이다"(FR-20)와 같은 일반 규칙이고 이 작업이 새로 만드는 규칙이 아니다.
 4. capability id 비교는 정확한 문자열 일치만 본다. 대소문자를 바꾸거나 접두사를 추론하지 않는다 — SmartThings capability id는 고정된 문자열이라 다른 처리가 필요 없다.
 5. 지원하지 않는 capability id가 섞여 있어도 오류로 보지 않는다. 그 capability만 무시한다 — SmartThings 기기는 이 작업이 모르는 capability를 더 가질 수 있고, 그 존재 자체는 문제가 아니다.
 
 ## 7. 가정
 
 - `set_volume`의 인자 스키마(`volume`: `integer`, `minimum` 0, `maximum` 100)는 SmartThings `audioVolume` capability의 공개 속성 범위를 따른다. M5 실기 조회(`architecture.md` §4 "구현 전 확인") 전에 세운 값이라 실제와 다를 수 있다. 다르면 fix PR로 고친다 — #259.
-- `set_input_source`의 `inputSource` 인자는 `type: string`만 두고 `enum`을 넣지 않는다. 실제 입력 소스 목록을 M5 조회 전에는 모른다. 조회 뒤 `enum`을 채우는 것은 후속 fix다 — #259.
 
 ## 8. 테스트
 

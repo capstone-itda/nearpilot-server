@@ -14,14 +14,14 @@ import math
 import re
 import tomllib
 from collections.abc import Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
 from nearpilot.api.ws.settings import DashboardSettings
 from nearpilot.iot.mqtt.connection import MqttConfig
 from nearpilot.iot.mqtt.delivery import DeliveryConfig
-from nearpilot.shared.config import LEGACY_PARAM_KEYS, Settings, migrate_settings_table
+from nearpilot.shared.config import EXEC_TIMEOUT_PREFIX, LEGACY_PARAM_KEYS, Settings, migrate_settings_table
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +94,24 @@ class DashboardConfig:
 
 
 @dataclass(frozen=True)
+class SmartThingsBinding:
+    """동반 기기 `node_id`와 SmartThings `deviceId`의 쌍. `deviceId`는 호스트·로그·감사에 남기지 않는다 (NFR-08)."""
+
+    node_id: str
+    device_id: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class SmartThingsConfig:
+    """선택 섹션 `[smartthings]` (specs/iot-smartthings-companion). 없으면 모든 명령을 MQTT로 보낸다."""
+
+    token_file: Path  # JSON 객체의 access_token. 요청마다 다시 읽는다
+    confirm_poll_sec: float  # 명령 뒤 상태 확인 조회 간격
+    request_timeout_sec: float  # HTTP 요청 하나의 제한 시간
+    bindings: tuple[SmartThingsBinding, ...]
+
+
+@dataclass(frozen=True)
 class ServerConfig:
     source: Path
     settings: Settings
@@ -105,10 +123,12 @@ class ServerConfig:
     delivery: DeliveryConfig
     dashboard: DashboardConfig | None = None  # [dashboard] 가 없으면 None
     provisioning: ProvisioningConfig | None = None  # [provisioning] 이 없으면 None (#234)
+    smartthings: SmartThingsConfig | None = None  # [smartthings] 가 없으면 None
 
 
-_SECTIONS = {"settings", "runtime", "http", "database", "proximity", "mqtt", "delivery", "dashboard", "provisioning"}
-_REQUIRED_SECTIONS = _SECTIONS - {"runtime", "dashboard", "provisioning"}
+_SECTIONS = {"settings", "runtime", "http", "database", "proximity", "mqtt", "delivery", "dashboard", "provisioning",
+             "smartthings"}
+_REQUIRED_SECTIONS = _SECTIONS - {"runtime", "dashboard", "provisioning", "smartthings"}
 # mDNS 이름 하나(DNS 라벨). `.local` 은 붙이지 않는다.
 _MDNS_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 
@@ -143,6 +163,7 @@ def parse_config(raw: Mapping[str, Any], *, base: Path, source: Path | None = No
             delivery=_delivery(_table(raw, "delivery")),
             dashboard=_dashboard(_table(raw, "dashboard"), base) if "dashboard" in raw else None,
             provisioning=_provisioning(_table(raw, "provisioning"), base) if "provisioning" in raw else None,
+            smartthings=_smartthings(_table(raw, "smartthings"), base) if "smartthings" in raw else None,
         )
     except ConfigError:
         raise
@@ -159,9 +180,12 @@ def _settings(table: Mapping[str, Any]) -> Settings:
 
     옛 조명·스피커 키는 새 형식으로 옮겨 읽고 경고를 남긴다 (requirements.md §1.2, #245).
     """
-    names = {f.name for f in fields(Settings)} - {"thresholds"}
+    names = {f.name for f in fields(Settings)} - {"thresholds", "exec_timeouts"}
     thresholds = {key for key in table if key.startswith("threshold_")}
-    _keys(table, "settings", required={"version"}, allowed=names | thresholds | set(LEGACY_PARAM_KEYS))
+    # 종류별 실행 응답 제한은 따옴표 키 `"exec_timeout_sec.{kind}"` 로 쓴다 (#271)
+    exec_timeouts = {key for key in table if key.startswith(EXEC_TIMEOUT_PREFIX)}
+    _keys(table, "settings", required={"version"},
+          allowed=names | thresholds | exec_timeouts | set(LEGACY_PARAM_KEYS))
     if not isinstance(table["version"], str) or not table["version"].strip():
         raise ConfigError("settings.version 은 빈 문자열이 아니어야 한다")
     values, legacy = migrate_settings_table(table)
@@ -250,6 +274,37 @@ def _provisioning(table: Mapping[str, Any], base: Path) -> ProvisioningConfig:
     if not isinstance(table["mdns_address"], str) or address.is_unspecified or address.is_multicast:
         raise ConfigError("provisioning.mdns_address 는 기기가 접속할 IPv4 주소여야 한다")
     return ProvisioningConfig(fleet, name, str(address))
+
+
+def _smartthings(table: Mapping[str, Any], base: Path) -> SmartThingsConfig:
+    """`[smartthings]`. 바인딩은 `[[smartthings.bindings]]` 의 `node_id`·`device_id` 쌍이다.
+
+    오류 메시지에는 몇 번째 바인딩인지만 쓰고 `device_id` 값은 쓰지 않는다 (NFR-08).
+    """
+    _keys(table, "smartthings", required={"token_file", "confirm_poll_sec", "request_timeout_sec", "bindings"})
+    for key in ("confirm_poll_sec", "request_timeout_sec"):
+        if not _finite_number(table[key]) or table[key] <= 0:
+            raise ConfigError(f"smartthings.{key} 는 0보다 큰 유한한 수여야 한다")
+    raw = table["bindings"]
+    if not isinstance(raw, list) or not raw:
+        raise ConfigError("smartthings.bindings 는 바인딩 하나 이상의 배열이어야 한다")
+    bindings: list[SmartThingsBinding] = []
+    for index, item in enumerate(raw):
+        where = f"smartthings.bindings[{index}]"
+        if not isinstance(item, Mapping):
+            raise ConfigError(f"{where} 는 표여야 한다")
+        _keys(item, where, required={"node_id", "device_id"})
+        for key in ("node_id", "device_id"):
+            value = item[key]
+            if not isinstance(value, str) or not value.strip() or value != value.strip():
+                raise ConfigError(f"{where}.{key} 는 앞뒤 공백 없는 빈 문자열이 아닌 값이어야 한다")
+        bindings.append(SmartThingsBinding(item["node_id"], item["device_id"]))
+    for key in ("node_id", "device_id"):
+        values = [getattr(b, key) for b in bindings]
+        if len(set(values)) != len(values):
+            raise ConfigError(f"smartthings.bindings 에 같은 {key} 가 두 번 있다")
+    return SmartThingsConfig(_path(table, "smartthings", "token_file", base),
+                             table["confirm_poll_sec"], table["request_timeout_sec"], tuple(bindings))
 
 
 def _dashboard(table: Mapping[str, Any], base: Path) -> DashboardConfig:

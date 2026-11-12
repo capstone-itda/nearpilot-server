@@ -297,3 +297,63 @@ def test_FR09_invalid_kind_settings_stop_startup(tmp_path, change, key):
     raw["settings"].update(change)
     with pytest.raises(ConfigError, match=key.replace(".", r"\.")):
         parse_config(raw, base=tmp_path)
+
+
+# ── [smartthings] 절과 종류별 실행 응답 제한 (specs/iot-smartthings-companion) ──
+
+
+def _smartthings(tmp: Path) -> dict:
+    return {"token_file": ".env.smartthings-token", "confirm_poll_sec": 1.0, "request_timeout_sec": 4.0,
+            "bindings": [{"node_id": "display-1", "device_id": "device-secret-1"}]}
+
+
+def test_FR06_smartthings_config_optional_and_parsed(tmp_path):
+    raw = _raw(tmp_path)
+    assert parse_config(raw, base=tmp_path).smartthings is None
+    raw["smartthings"] = _smartthings(tmp_path)
+    st = parse_config(raw, base=tmp_path).smartthings
+    assert st.token_file == (tmp_path / ".env.smartthings-token").resolve()
+    assert (st.confirm_poll_sec, st.request_timeout_sec) == (1.0, 4.0)
+    assert [(b.node_id, b.device_id) for b in st.bindings] == [("display-1", "device-secret-1")]
+    assert "device-secret-1" not in repr(st)  # deviceId 는 repr 에 남기지 않는다 (NFR-08)
+
+
+@pytest.mark.parametrize("change, key", [
+    (lambda s: s.update(bindings=[]), "smartthings.bindings"),
+    (lambda s: s.update(bindings={"node_id": "display-1"}), "smartthings.bindings"),
+    (lambda s: s["bindings"][0].update(node_id=""), r"smartthings.bindings[0].node_id"),
+    (lambda s: s["bindings"][0].update(device_id=" "), r"smartthings.bindings[0].device_id"),
+    (lambda s: s["bindings"][0].pop("device_id"), r"smartthings.bindings[0].device_id"),
+    (lambda s: s["bindings"][0].update(extra=1), r"smartthings.bindings[0].extra"),
+    (lambda s: s["bindings"].append({"node_id": "display-1", "device_id": "device-secret-2"}), "node_id"),
+    (lambda s: s["bindings"].append({"node_id": "display-2", "device_id": "device-secret-1"}), "device_id"),
+    (lambda s: s.update(confirm_poll_sec=0), "smartthings.confirm_poll_sec"),
+    (lambda s: s.update(request_timeout_sec=True), "smartthings.request_timeout_sec"),
+    (lambda s: s.pop("token_file"), "smartthings.token_file"),
+    (lambda s: s.update(token=1), "smartthings.token"),
+])
+def test_FR06_smartthings_config_rejects_bad_bindings(tmp_path, change, key):
+    raw = _raw(tmp_path)
+    raw["smartthings"] = _smartthings(tmp_path)
+    change(raw["smartthings"])
+    with pytest.raises(ConfigError) as caught:
+        parse_config(raw, base=tmp_path)
+    assert key in str(caught.value)
+    assert "device-secret" not in str(caught.value)
+
+
+def test_FR07_exec_timeout_override_from_quoted_key(tmp_path):
+    example = load_config(SERVER / "config" / "server.example.toml")
+    assert example.settings.exec_timeout_for("display") == 10.0 and example.smartthings is None
+    raw = _raw(tmp_path)
+    assert parse_config(raw, base=tmp_path).settings.exec_timeout_for("display") == 10.0  # 초기값
+    raw["settings"]["exec_timeout_sec.display"] = 12.0
+    s = parse_config(raw, base=tmp_path).settings
+    assert (s.exec_timeout_for("display"), s.exec_timeout_for("locker")) == (12.0, 3.0)
+    raw["settings"]["exec_timeout_sec.display"] = 0
+    with pytest.raises(ConfigError, match=r"exec_timeout_sec\.display"):
+        parse_config(raw, base=tmp_path)
+    raw["settings"].pop("exec_timeout_sec.display")
+    raw["settings"]["exec_timeouts"] = {"display": 10.0}  # 파일에서는 따옴표 키로만 쓴다
+    with pytest.raises(ConfigError, match=r"settings\.exec_timeouts"):
+        parse_config(raw, base=tmp_path)
