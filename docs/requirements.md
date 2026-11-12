@@ -35,7 +35,7 @@
 | 항목 | 설정 이름 | 초기 기준 | 허용 범위 | 적용 기준 |
 |---|---|---|---|---|
 | 예약 대기 제한 | `reservation_wait_sec` | 10초 | 0 초과 | 예약부터 전송 시작까지 잰다. 서버는 미전송이 확실할 때만 만료 취소한다 (FR-19). |
-| 실행 응답 제한 | `exec_timeout_sec` | 3초 | 0 초과 | 전송 시도 뒤부터 잰다. 응답이 없을 때의 장애 대응은 FR-07과 FR-19를 따른다. 제안: 종류별 재정의 `exec_timeout_sec.{kind}`를 추가한다. `display` 종류(삼성 스마트 모니터 M5)의 제안값은 10초다. 이 제안은 core 담당자(JM-220)의 확인 전이다 (#259). |
+| 실행 응답 제한 | `exec_timeout_sec` | 3초 | 0 초과 | 전송 시도 뒤부터 잰다. 응답이 없을 때의 장애 대응은 FR-07과 FR-19를 따른다. 종류별 재정의 `exec_timeout_sec.{kind}`를 둔다. 재정의가 없는 종류는 이 값을 쓴다. `display` 종류(삼성 스마트 모니터 M5)는 10초다 (#271). |
 | 최근 비콘 기준 | `beacon_recent_sec` | 3초 | 관측 주기 이상 | 서버가 받은 유효 관측의 최근 구간이다 (FR-15). |
 | 근접 참여 최근 구간 | `anchor_recent_sec` | 3초 | 관측 주기 이상 | 서버가 받은 기기의 마지막 `rssi` 보고부터 잰다. 근접 참여 기기를 정한다. 근접 추정은 근접 참여 기기를 전체 상태와 거리 순서에 쓴다 (FR-16, #252). |
 | 온라인 유지 시간 | `online_ttl_sec` | 15초 | 기기 상태 보고 주기 이상 | 유효한 기기 메시지의 마지막 수신부터 잰다 (FR-13). |
@@ -49,7 +49,7 @@
 | 신규 조작 접수 제한 | `dedup_entry_limit` | 10만 건 | 1건 이상의 정수 | 서버 전체의 중복 방지 항목 수다 (FR-22). |
 | 보존기간 정리 주기 | `retention_cleanup_interval_sec` | 60초 | 1초 이상의 정수 | 서버 조립(상태 관리)이 시작할 때와 이 간격마다 `RetentionStore.cleanup`을 부른다 (FR-21, FR-22, #164). |
 | 인자 상한 | `param_max.{kind}.{action}.{arg}` | 조명 `param_max.light.on.brightness` 64, 스피커 `param_max.speaker.on.volume` 20, 디스플레이(M5) `param_max.display.set_volume.volume` 50 | 정수 | 선택 설정이다. 서버는 기기 선언의 `maximum`과 이 값 중 작은 값으로 인자를 검사한다. 설정이 없으면 선언의 범위만 쓴다 (FR-09, #245). 기존 `light_brightness_max`와 `speaker_volume_max`는 이 형식으로 옮긴다. |
-| 전역 할당 허용 종류 | `any_allowed_kinds` | `["locker"]` | 종류 이름의 목록 | 전역 할당(`any:{kind}`)을 받는 종류다. 목록에 없는 종류의 `any:` 요청은 거부한다 (FR-23, #245). `display` 종류는 이 목록에 넣지 않는다. 근접 참여 기기가 아닌 기기는 전역 할당의 후보가 아니다 (FR-05). |
+| 전역 할당 허용 종류 | `any_allowed_kinds` | `["locker"]` | 종류 이름의 목록 | 전역 할당(`any:{kind}`)을 받는 종류다. 목록에 없는 종류의 `any:` 요청은 거부한다 (FR-23, #245). `display` 종류는 이 목록에 넣지 않는다 (#271). |
 | 인자 기본값 | `param_default.{kind}.{action}.{arg}` | 조명 `param_default.light.on.brightness` 64, `param_default.light.on.color` `#FFFFFF`, 스피커 `param_default.speaker.on.volume` 20, 디스플레이(M5) `param_default.display.set_volume.volume` 20 | 선언의 인자 스키마와 인자 상한 설정을 만족하는 값 | 선택 설정이다. 같은 동작의 앞선 성공 명령이 없을 때 생략한 인자에 쓴다 (FR-09, #245). 기존 `light_default_brightness`, `light_default_color`, `speaker_default_volume`은 이 형식으로 옮긴다. `display` 종류의 기본값은 첫 실행에서 음량이 크게 나오지 않도록 낮게 둔다. |
 | SmartThings 상태 확인 주기 | `smartthings_poll_sec` | 5초 | `status_report_sec` 이상이고 `online_ttl_sec` 이하 | SmartThings 클라우드 기기의 하트비트다. 서버는 이 주기로 기기 상태를 조회해서 `on_status`로 넘기고 `last_seen_at`을 갱신한다 (FR-13, #259). |
 
@@ -266,6 +266,7 @@
   - 전환 기간에 서버는 기기가 마지막으로 발표한 버전으로 명령을 보낸다. v2로 발표한 기기에는 v2 명령을 보낸다 (#245 담당자 결정).
   - v2 발표의 수신은 팀 기기를 모두 v3로 올린 뒤 fix PR로 끝낸다.
   - MQTT로 스스로 발표하지 못하는 기기(SmartThings 클라우드 기기)는 서버가 선언을 대신 만든다. 서버는 기기의 capability 조회로 선언을 만들고, 만든 선언을 `announce`를 받은 것과 같은 경로로 저장한다. 선언 해시와 신뢰 규칙은 같다 (#259 담당자 결정).
+  - 상용 기기에 동반 기기를 붙이면 동반 기기가 상용 기기의 동작을 자기 선언으로 발표한다. 서버는 이 기기의 선언을 대신 만들지 않는다. 동반 기기의 신뢰와 선언 해시는 다른 기기와 같은 규칙을 따른다 (#271).
   - 서버가 대신 만든 선언도 제작사 정보를 담는다. `vendor.firmware`에는 SmartThings 기기 조회 응답의 버전 값을 쓴다. 조회 응답에 버전이 없으면 서버는 고정 문자열 `unknown`을 쓴다. 빈 문자열은 선언 검증을 통과하지 못한다.
 - 인수 기준: 지표 5
 - 관련: FR-13, NFR-04
@@ -336,20 +337,27 @@
   - 미결: 새 메시지 버전과 상태 필드 형식이다. 기존 MQTT v1과 혼용하지 않는다.
   - **SmartThings 클라우드 기기의 결과 확인** (#259 담당자 결정)
     - SmartThings 클라우드 기기는 `status`·`result` 토픽을 쓰지 않는다. 서버는 명령을 보낸 뒤 기기 상태를 다시 조회해서 선언한 동작의 결과를 확인한다.
-    - 조회한 속성 값이 요청한 값과 같으면 서버는 `succeeded`로 본다. 실행 응답 제한 안에 같은 값을 확인하지 못하면 `unknown`이다.
-    - 서버는 상태 조회로 결과를 확인할 수 있는 동작만 선언한다. 1차 대상(삼성 스마트 모니터 M5, 종류 `display`)의 동작은 아래 표를 따른다.
+    - 조회한 속성이 아래 표의 성공 확인을 만족하면 서버는 `succeeded`로 본다. 실행 응답 제한 안에 확인하지 못하면 `unknown`이다.
+    - 서버가 상태를 조회해서 확인한 성공은 기기 보고가 없어도 `succeeded`다. 서버는 확인한 속성과 값을 성공 근거로 남긴다. 확인 근거가 없는 결과는 `unknown`이다 (#271).
+    - 서버는 상태 조회로 결과를 확인할 수 있는 동작만 선언한다. 1차 대상(삼성 스마트 모니터 M5, 종류 `display`)의 동작은 아래 표를 따른다. 표는 #270의 실기 확인 결과를 근거로 한다 (#271).
 
 | 선언할 동작 | SmartThings capability.command | 인자 | 성공 확인(조회할 속성) |
 |---|---|---|---|
 | `on` / `off` | `switch.on` / `switch.off` | 없음 | `switch` 속성이 요청한 값과 같다 |
 | `set_volume` | `audioVolume.setVolume` | `volume` | `audioVolume.volume` 속성이 요청한 값과 같다 |
-| `mute` / `unmute` | `audioMute.mute` / `audioMute.unmute` | 없음 | `audioMute.mute` 속성이 요청한 값(`muted` 또는 `unmuted`)과 같다 |
-| `set_input_source` | `mediaInputSource.setInputSource` | `inputSource` | `mediaInputSource.inputSource` 속성이 요청한 값과 같다 |
+| `set_mute` | `state`가 `muted`면 `audioMute.mute`, `unmuted`면 `audioMute.unmute` | `state` | `audioMute.mute` 속성이 요청한 값과 같다 |
+| `set_picture_mode` | `custom.picturemode.setPictureMode` | `mode`(모드 ID) | `refresh` 뒤 `custom.picturemode.pictureMode`가 요청한 모드다 |
+| `set_sound_mode` | `custom.soundmode.setSoundMode` | `mode`(모드 ID) | `refresh` 뒤 `custom.soundmode.soundMode`가 요청한 모드다 |
+| `set_channel` | 번호면 `tvChannel.setTvChannel`, `up`·`down`이면 `tvChannel.channelUp`·`channelDown` | `channel` | `refresh` 뒤 `tvChannel.tvChannel`이 번호와 같다. `up`·`down`은 전송 전 값에서 바뀐다 |
+| `launch_app` | `custom.launchapp.launchApp` | `app` | `refresh` 뒤 `tvChannel.tvChannelName`이 앱 식별자와 같다 |
 
-    - `custom.picturemode.setPictureMode`는 1차 표에 넣지 않는다. M5 실기에서 `GET /v1/devices/{deviceId}`로 이 capability를 확인하면 서버는 `setPictureMode` 동작과 확인 속성 `custom.picturemode.pictureMode`를 표에 더한다.
-    - 서버는 `custom.launchapp.launchApp`과 `samsungvd.remoteControl.send`를 선언하지 않는다. 두 동작은 조회로 확인할 속성이 없다. 선언하면 서버는 모든 실행을 `unknown`으로 보고 기기를 반복해서 `FAULT`로 격리하게 된다. SmartThings가 확인 가능한 속성을 더하면 팀은 이 제외를 다시 검토한다.
+    - 선언 동작은 기기 선언 상한(8개) 안에 둔다. 한 선언 동작이 인자 값에 따라 SmartThings 명령을 고를 수 있다.
+    - 화면 모드와 소리 모드의 인자는 모드 ID다. 서버는 기기가 반환한 ID와 이름의 대응으로 이름을 골라 보낸다. 실기에서 영어 이름은 동작하지 않았다 (#270).
+    - `set_channel`의 `up`·`down`은 결과가 앞선 상태에 달린 상대 명령이다. 서버는 같은 `command_id`의 재전송에 명령을 다시 보내지 않고 처음 결과를 쓴다.
+    - `refresh`의 완료 응답은 성공 근거가 아니다. 서버는 실행 응답 제한 안에서 `refresh`와 재조회를 되풀이한다.
+    - 서버는 `samsungvd.remoteControl.send`와 `tvChannel.setTvChannelName`을 선언하지 않는다. 리모컨 키는 확인할 속성이 없거나 토글이다. 채널 이름 지정은 실기에서 완료 응답 뒤에도 채널이 바뀌지 않았다 (#270).
     - 서버는 SmartThings 클라우드 기기에 MQTT 시각 동기화와 `CLOCK_UNVERIFIED`를 적용하지 않는다. 서버는 명령 전송과 상태 조회를 모두 서버 자신의 시각으로 기록한다.
-    - SmartThings 클라우드 기기의 실행 응답 제한은 종류별로 다른 값을 쓸 수 있다. `display` 종류(M5)의 제안값은 10초다 (§1.2). 이 제안은 core 영역 담당자(JM-220)의 확인이 끝나지 않았다.
+    - SmartThings 클라우드 기기의 실행 응답 제한은 종류별 재정의를 쓴다. `display` 종류는 10초다 (§1.2, #271).
 - 인수 기준: 지표 6
 - 관련: FR-06, NFR-04
 

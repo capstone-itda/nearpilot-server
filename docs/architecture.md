@@ -645,12 +645,22 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 ### SmartThings 실행 어댑터
 
 [#259](https://github.com/capstone-itda/nearpilot-server/issues/259)의 B안을 따른다. 담당자는 시연 일정과 JM-220의 의견을 근거로 A안(외부 브리지) 대신 B안을 골랐다.
+동반 기기는 [#271](https://github.com/capstone-itda/nearpilot-server/issues/271)의 B안을 따른다.
 서버는 iot 영역 안에 SmartThings 실행 어댑터를 둔다. 서버는 SmartThings REST API(`https://api.smartthings.com/v1`)를 직접 부른다. 별도 브리지 프로세스는 두지 않는다.
 판정은 core만 한다(NFR-07). 어댑터는 `NodeCommandGateway`를 구현하고 `NodeEventSink`를 호출한다. 판정과 DB는 고치지 않는다. 1차 대상은 삼성 스마트 모니터 M5(이하 M5) 1대다. 종류 이름(`kind`)은 텔레비전과 모니터를 함께 가리키는 `display`를 쓴다.
 
 **구현 전 확인**
 
 - 구현을 시작하기 전에 M5를 SmartThings에 등록하고 `GET /v1/devices/{deviceId}`로 실제 capability와 각 속성의 상태 반영 시간을 확인한다. 서버는 이 확인 결과로 아래 동작 표(`requirements.md` FR-07 "SmartThings 클라우드 기기의 결과 확인")를 확정한다.
+
+**동반 기기**
+
+- 상용 기기 옆에 팀 ESP32 기기를 붙이면 그 기기가 상용 기기의 동반 기기가 된다. 동반 기기는 상용 기기의 동작을 자기 선언으로 발표하고, RSSI 프레임·RSSI 보고·`status`를 보낸다. 동반 기기는 명령을 직접 실행하지 않는다.
+- 서버 설정은 동반 기기의 `node_id`와 SmartThings `deviceId`를 잇는 바인딩을 담는다. IOT의 라우팅 게이트웨이는 바인딩한 `node_id`의 명령을 SmartThings 실행 어댑터로 보낸다. 그 밖의 명령은 MQTT 게이트웨이로 보낸다. CORE는 게이트웨이 하나만 본다.
+- 정체성, 신뢰, 장소, 온라인, 시각, 근접, FAULT 복구의 명령 처리 대기 보고는 모두 동반 기기의 값을 쓴다. 판정과 근접 모델은 바뀌지 않는다.
+- 동반 기기의 선언은 서버 동작 표(`requirements.md` FR-07 "SmartThings 클라우드 기기의 결과 확인")와 동작 이름·인자 스키마가 같아야 한다. 펌웨어는 빌드마다 선언 상수 하나를 고른다(`device-protocol.md`).
+- 동반 기기를 붙인 상용 기기는 아래 "선언 합성"과 "온라인과 하트비트"를 쓰지 않는다. 두 절은 동반 기기가 없는 SmartThings 기기의 경로로 남긴다.
+- 새 상용 기기를 붙이는 절차: 실기로 동작과 성공 근거를 확인한다 → FR-07 표에 동작을 더한다 → 펌웨어 선언 상수와 빌드를 더한다 → 서버 동작 표와 바인딩을 더한다.
 
 **선언 합성**
 
@@ -663,8 +673,14 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 
 - `NodeCommandGateway.send(command, timeout_sec)`를 구현한다. `command_id` 중복 처리(같은 ID·같은 내용은 합류, 다른 내용은 거부)는 `MqttCommandGateway`와 같은 규칙을 쓴다(FR-06).
 - SmartThings는 `status`·`result` 토픽이 없다. `send()`는 `POST /v1/devices/{id}/commands`로 명령을 보낸 뒤, 선언한 동작의 확인 속성이 요청한 값과 같아질 때까지 상태를 다시 조회한다. 확인하면 `succeeded`, `timeout_sec` 안에 확인하지 못하면 `unknown`이다(FR-07). 접수 응답만으로 성공을 확정하지 않는다.
-- `send()`는 전송과 확인을 한 호출 안에서 끝낸다. 결과는 서버가 만들기 때문에 `CommandResult.report`는 항상 `None`이다. 어댑터는 `NodeEventSink.on_result`를 부르지 않는다. 기기가 비동기로 결과를 보내는 경로가 없어서 늦은 결과 정산도 생기지 않는다.
-- 동작과 확인 속성의 표는 `requirements.md` FR-07 "SmartThings 클라우드 기기의 결과 확인"에 있다. `custom.launchapp.launchApp`과 `samsungvd.remoteControl.send`는 확인할 속성이 없어서 선언하지 않는다.
+- `send()`는 전송과 확인을 한 호출 안에서 끝낸다. 결과는 서버가 만들기 때문에 `CommandResult.report`는 항상 `None`이고, 성공 근거는 `confirmation`이다. 어댑터는 `NodeEventSink.on_result`를 부르지 않는다. 기기가 비동기로 결과를 보내는 경로가 없어서 늦은 결과 정산도 생기지 않는다.
+- 동작과 확인 속성의 표는 `requirements.md` FR-07 "SmartThings 클라우드 기기의 결과 확인"에 있다. `samsungvd.remoteControl.send`는 확인할 속성이 없어서 선언하지 않는다.
+- SmartThings 명령 인자는 순서가 있는 배열이다. 어댑터는 선언 인자를 동작 표의 순서로 바꿔 보낸다. 요청과 응답 본문은 UTF-8로 쓰고 읽는다.
+- 한 선언 동작이 인자 값에 따라 다른 SmartThings 명령을 고를 수 있다(예: `set_mute`의 `state`).
+- 확인 방식은 세 가지다. 속성 값이 기대값과 같아짐, 전송 전 값에서 바뀜, 다른 capability의 속성이 기대값과 같아짐. 동작 표가 동작마다 방식을 정한다.
+- 상태 반영이 늦는 동작은 확인 조회 전에 `refresh.refresh`를 보낸다. `refresh`의 완료 응답은 성공 근거가 아니다.
+- 값이 바뀜으로 확인하는 상대 명령(`set_channel`의 `up`·`down`)은 같은 `command_id`로 다시 와도 다시 보내지 않는다. 어댑터는 처음 결과를 돌려준다.
+- 확인에 성공하면 어댑터는 확인한 속성과 값을 `CommandResult.confirmation`에 담는다. CORE는 이 근거로 `succeeded`를 기록한다(§4 "기기 명령 인터페이스").
 
 **온라인과 하트비트**
 
@@ -677,15 +693,18 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 
 **근접**
 
-- SmartThings 기기는 RSSI를 보고하지 않는다. 그래서 근접 참여 기기가 되지 않는다. FR-05 규칙대로 근접 지정(`nearest:`)과 전역 할당(`any:`), 거리 선택자(`near:`·`far:`)의 후보에서 빠지고 명시적 지정으로만 쓴다. 코드 변경이 없다.
+- SmartThings 기기는 RSSI를 보고하지 않는다. 동반 기기가 없으면 근접 참여 기기가 되지 않는다. FR-05 규칙대로 근접 지정(`nearest:`)과 전역 할당(`any:`), 거리 선택자(`near:`·`far:`)의 후보에서 빠지고 명시적 지정으로만 쓴다.
+- 동반 기기가 있으면 동반 기기가 근접 참여 기기다. 근접 지정과 거리 선택자의 후보가 된다. 근접 지정에는 `threshold_display`가 필요하다. 공용형 거리 선택자는 임계값을 쓰지 않는다 (FR-17).
 - FR-15의 ① 비콘 검사는 명시적 지정에도 그대로 적용한다. 방문자는 이 기기가 있는 장소의 등록 비콘을 최근 T초 안에 보내야 실행할 수 있다. 원격 요청은 거부한다.
 
-**실행 응답 제한 — 확인 필요**
+**실행 응답 제한**
 
-- 제안: `exec_timeout_sec`에 종류별 재정의(`exec_timeout_sec.{kind}`)를 추가한다. `display` 종류(M5)의 제안값은 10초다(`requirements.md` §1.2). SmartThings 클라우드 왕복은 ESP32보다 느릴 수 있어서, 전역값을 그대로 쓰면 M5가 자주 `unknown`·`FAULT`가 되거나 ESP32 사물함·조명의 응답 제한이 불필요하게 늘어난다.
-- 이 설정은 `core/lifecycle/execution.py`가 `Settings.exec_timeout_sec`를 읽는 자리를 고치는 core 영역 변경이다. **core 담당자(JM-220)의 확인이 끝나지 않았다.** 확인 전에는 전역값 3초를 그대로 쓴다.
+- `exec_timeout_sec`에 종류별 재정의(`exec_timeout_sec.{kind}`)를 둔다. `display` 종류의 값은 10초다(`requirements.md` §1.2, #271). SmartThings 클라우드 왕복과 `refresh` 뒤 재조회는 ESP32보다 느리다. 전역값을 늘리면 사물함·조명의 응답 제한도 함께 늘어난다.
+- CORE는 명령의 `expires_at`을 대상 기기 종류의 실행 응답 제한으로 계산한다. 재정의가 없는 종류는 전역값을 쓴다.
 
-**점유 방식 — 선택지**
+**점유 방식**
+
+동반 기기의 선언은 A안(`shared` + `off`를 `deactivate`로 선언)을 쓴다 (#271). 동반 기기가 상용 기기 옆의 앵커가 되므로 아래 A안의 배치 문제(시청 자리에 앵커가 없음)가 줄어든다. 동반 기기가 없는 기기의 선택은 아래 표를 따른다.
 
 M5를 `occupancy: shared`로 선언하면 FR-20 "공용형 기기" 규칙이 그대로 적용된다. `shared` 기기는 `deactivate` 역할의 동작을 정확히 하나 선언해야 하므로(`device-protocol.md` 3절), `off`에 `role: deactivate`를 붙이면 **이탈 꺼짐이 자동으로 켜진다.** 유지 대상자(M5를 켠 계정)가 모두 이탈하면 서버가 `off`를 요청한다. 이탈 판단은 M5 자신의 RSSI가 아니라 같은 장소의 다른 앵커가 받은 방문자 비콘 관측을 쓴다("이탈 판단의 관측 계약"). 앵커의 유효 반경은 약 0.5 m다(NFR-10). M5 시청 자리에 앵커가 없으면 방문자가 화면 앞에 있어도 "이탈"로 판단될 수 있다.
 
@@ -704,8 +723,9 @@ M5를 `occupancy: shared`로 선언하면 FR-20 "공용형 기기" 규칙이 그
 | `param_max.display.set_volume.volume` | 50 | `requirements.md` §1.2 |
 | `param_default.display.set_volume.volume` | 20 | 첫 실행에서 음량이 크게 나오지 않게 한다 |
 | `smartthings_poll_sec` | 5초 | 하트비트 주기. `status_report_sec` 이상, `online_ttl_sec` 이하 |
-| `exec_timeout_sec.display` | 10초(제안) | 확인 필요 — 위 절 참고 |
-| `threshold_display` | 두지 않음 | 명시적 지정 전용이라 필요 없다(FR-05) |
+| `exec_timeout_sec.display` | 10초 | 위 "실행 응답 제한" 절 |
+| `threshold_display` | 동반 기기가 있으면 둔다 | 근접 지정(`nearest:display`)에 필요하다. 동반 기기가 없으면 필요 없다(FR-05) |
+| SmartThings 바인딩 | 없음 | 동반 기기 `node_id`와 SmartThings `deviceId`의 쌍. 호스트에 보내지 않는다(NFR-08) |
 | `any_allowed_kinds` | 바꾸지 않음(`["locker"]`) | `display` 종류는 전역 할당 대상이 아니다 |
 
 **OAuth 토큰 수명주기**
@@ -825,6 +845,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 - CORE는 IOT의 메모리 중복 목록만으로 DB 반영을 판단하지 않는다.
 - IOT는 서버의 타임아웃과 통신 오류를 기기가 보고한 `unknown`과 구분한다.
 - IOT는 서버가 만든 결과에 기기 보고의 `event_id`를 붙이지 않는다. 서버가 만든 `CommandResult`의 `report`는 없다. IOT는 서버가 만든 결과를 `NodeResult`로 만들지 않는다.
+- 기기 보고가 없는 전송 경로(SmartThings)는 서버가 기기 상태를 조회해서 확인한 근거를 `CommandResult.confirmation`에 담는다. CORE는 `report`가 없고 `confirmation`이 있는 `SUCCEEDED`만 성공으로 받는다. 근거가 없는 성공, 실패, 거부는 지금처럼 결과 불명이다 (FR-07, #271).
 - CORE는 과거 명령의 결과를 정산과 감사에 쓴다. CORE는 과거 결과만으로 현재 온라인 시각과 명령 처리 상태를 갱신하지 않는다.
 - CORE는 늦은 성공만으로 `FAULT`를 해제하거나 종료한 점유 세션을 되살리지 않는다.
 - CORE 인계가 실패하면 IOT는 실패를 기록하고 다시 인계한다. IOT는 인계에 실패한 결과를 전달 완료로 버리지 않는다.
