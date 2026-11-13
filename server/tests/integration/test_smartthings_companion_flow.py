@@ -82,6 +82,10 @@ class ReportedProximity(FakeProximity):
         with self._lock:
             return set(self._reported)
 
+    def forget(self) -> None:
+        with self._lock:
+            self._reported.clear()
+
     def distance_order(self, beacon: BeaconKey, candidates: Sequence[NodeInfo], at: datetime) -> DistanceOrder:
         order = tuple(sorted({n.node_id for n in candidates} & self.reported()))
         return DistanceOrder(nodes=order, values={n: -50.0 for n in order})
@@ -137,6 +141,8 @@ class Companion:
     def ready(self) -> None:
         restore = self.runtime.services.restore
         wait_until(lambda: restore.can_execute(DISPLAY) and restore.can_execute("light-1"))
+        # 이번에 보낸 관측이 저장될 때까지 기다린다. 지난 보고로 바로 통과하지 않게 지운다
+        self.proximity.forget()
         self.broker.rssi()
         wait_until(lambda: DISPLAY in self.proximity.reported())
 
