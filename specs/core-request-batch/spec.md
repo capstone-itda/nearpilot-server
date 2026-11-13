@@ -96,10 +96,10 @@
 | 항목 안에 묶음 표기 `batch:`가 있다 | `DENY`·`INVALID_INPUT` | `test_FR09_batch_malformed_items_invalid_input` |
 | 항목 수가 `batch_max_items`보다 많다 | `DENY`·`INVALID_INPUT`. 하위 요청을 만들지 않는다 | `test_FR09_batch_over_max_items_denied` |
 | API가 판정 전에 묶음 요청을 거부한다 | 응답에 `devices` 빈 목록, `selected_count` 0, `similar` `false`를 담는다 | `test_FR09_batch_api_rejection_keeps_batch_keys` |
-| 같은 기기를 두 항목이 고른다 (명시 지정 둘, 거리 선택자와 명시 지정) | `DENY`·`INVALID_INPUT`. 앞 항목의 예약을 취소한다. `devices`는 뒤 항목의 그 기기다 | `test_FR09_batch_duplicate_device_denied` |
+| 같은 기기를 두 항목이 고른다 (명시 지정 둘, 거리 선택자와 명시 지정, 전역 할당의 배정이나 ④에서 걸린 기기) | `DENY`·`INVALID_INPUT`. 앞 항목의 예약을 취소한다. `devices`는 뒤 항목의 그 기기다 | `test_FR09_batch_duplicate_device_denied`, `test_FR09_batch_any_item_duplicate_denied_after_assignment`, `test_FR09_batch_any_item_policy_stop_on_taken_device_denied` |
 | 두 번째 항목의 기기가 승인 필요다 | 아무것도 실행하지 않는다. 첫 항목의 예약과 사용분을 취소한다. 판정은 `NEED_APPROVAL`, `devices`는 걸린 기기 | `test_FR18_batch_one_fails_none_executes` |
 | 거리 선택자 항목에 고를 기기가 없다 / 경계 확률이 낮다 | 상위 판정이 `DENY`·`NO_CANDIDATE` / `ASK`·`ORDER_UNCERTAIN`. 앞 항목의 예약을 취소한다. `devices`는 빈 목록 | `test_FR09_batch_selector_item_stops_batch` |
-| 전역 할당 항목의 기기들이 모두 승인 필요다 | `NEED_APPROVAL`. 확률이 가장 큰 걸린 기기의 하위 요청을 만들어 `devices`에 낸다. 앞 예약을 취소한다 | `test_FR09_batch_any_item_policy_stop_reports_device` |
+| 전역 할당 항목의 기기들이 모두 승인 필요다 | `NEED_APPROVAL`. 확률이 가장 큰 걸린 기기의 하위 요청을 만들어 `devices`에 낸다. 앞 예약을 취소한다. 그 기기를 앞 항목이 골랐으면 위 행의 `INVALID_INPUT`이다 | `test_FR09_batch_any_item_policy_stop_reports_device` |
 | 근접 지정 항목의 사후확률이 임계값 미만이다 | `ASK`·`LOW_CONFIDENCE`. 아무것도 실행하지 않는다. 그 항목의 하위 요청은 만들지 않고 `devices`는 빈 목록이다 | `test_FR18_batch_one_fails_none_executes`, `test_FR18_batch_item_child_created_after_choosing` |
 | 한 기기의 실행이 실패한다 | 다른 기기의 결과는 그대로다. `devices`가 기기별 결과를 담는다 | `test_FR18_batch_partial_exec_failure_reported` |
 | 같은 `request_id`로 재전송한다 | 하위 요청들의 진행 상태와 결과를 항목 순서로 묶어 반환한다. 새 명령을 만들지 않는다 | `test_FR22_batch_resend_returns_children_results` |
@@ -146,7 +146,7 @@
 29. 걸린 하위 요청 때문에 하는 취소(`_cancel_siblings`)는 근거의 `source`를 인자로 받는다. 거리 선택자는 `selector_sibling`, 묶음 요청은 `batch_sibling`이다.
 30. 판정 중 예외 정리에서 하위 요청에 `INTERNAL_ERROR`를 저장할 때 `node_id`는 그 하위 요청의 기기다 — 하위 요청은 늘 기기를 가진다. `link_selector_child`의 `node_id`는 main과 같은 `str`이다.
 31. API는 항목의 형식(키, `target_spec`, `action`, `arguments`)을 단일 요청 인자와 같은 규칙으로 검사한다 — `UseItem`이 해석한 `TargetSpec`을 담기 때문이다. 항목 수 상한과 같은 기기 여부만 판정이 검사한다. 빈 배열은 API가 거부한다. architecture §4의 "항목 수와 항목 안쪽은 판정이 검사한다"를 이 구현에 맞춘다.
-32. 전역 할당 항목이 ③ 안의 ④ 정책 검사에서 걸리면(`NEED_APPROVAL`, `DENY`) 그 판정은 기기를 가진다. 판정은 그 기기로 하위 요청을 만들어 판정을 저장하고 `devices`에 낸다. 그 기기를 앞 항목이 이미 골랐으면 ④ 판정 대신 결정 8의 `DENY`·`INVALID_INPUT`을 저장한다 — 호스트가 결정 23대로 `devices`의 `node_id`로 `request_access`를 부를 수 있다. 결정 9의 다른 고르기 멈춤은 기기가 없으므로 하위 요청을 만들지 않는다.
+32. 전역 할당 항목이 ③ 안의 ④ 정책 검사에서 걸리면(`NEED_APPROVAL`, `DENY`) 그 판정은 기기를 가진다. 판정은 그 기기로 하위 요청을 만들어 판정을 저장하고 `devices`에 낸다 — 호스트가 결정 23대로 `devices`의 `node_id`로 `request_access`를 부를 수 있다. 그 기기를 앞 항목이 이미 골랐으면 ④ 판정 대신 결정 8의 `DENY`·`INVALID_INPUT`을 저장한다. 결정 9의 다른 고르기 멈춤은 기기가 없으므로 하위 요청을 만들지 않는다.
 
 ## 7. 가정
 
