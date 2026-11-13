@@ -262,6 +262,8 @@ class _SelectorRun:
     children: list[_Child] = field(default_factory=list)
     posterior: ProximityResult | None = None  # 첫 rental 하위 요청이 한 번 부른 결과
     parent_conflict: bool = False  # 상위 판정 기록의 저장이 CONFLICT 였다
+    # 묶음 요청이 판정을 시작한 항목들. 요청의 항목 순서에서 앞쪽부터다. 오류 판정의 묶음 기록에 쓴다. 거리 선택자 요청은 비어 있다
+    batch_items: list[_BatchItem] = field(default_factory=list)
 
 
 @dataclass
@@ -592,7 +594,10 @@ class DecisionPipeline:
     def _selector_failed(
         self, req: UseRequest, iid: str, exc: Exception, run: _SelectorRun
     ) -> SelectorDecision:
-        """판정 중 예외. 만든 하위 요청의 예약을 취소하고 INTERNAL_ERROR 로 거부한다."""
+        """판정 중 예외. 만든 하위 요청의 예약을 취소하고 INTERNAL_ERROR 로 거부한다.
+
+        묶음 요청의 상위 판정 기록은 묶음 기록(요청의 항목 전체와 예외 전까지 판정한 항목)도 담는다 (spec 결정 15, 27).
+        """
         # 오류 판정을 저장하기 전에 취소한다 (#80). 옆 기기 때문에 이미 취소한 하위 요청은 다시 취소하지 않는다
         for child in run.children:
             if child.applied.reserve_called and not child.cancelled:
@@ -609,8 +614,14 @@ class DecisionPipeline:
                 continue
             if result.outcome is StoreOutcome.CONFLICT:
                 log.warning("하위 요청의 거부 판정 저장 충돌: %s", child.iid)
+        batch = None
+        if req.target.is_batch:  # 거리 선택자 요청의 오류 판정은 묶음 기록이 없다
+            try:
+                batch = self._batch_record(req, run.batch_items)
+            except Exception:  # noqa: BLE001 - 기록을 만들지 못해도 오류 판정은 묶음 기록 없이 저장한다
+                log.exception("오류 판정의 묶음 기록 만들기 실패")
         return SelectorDecision(self._selector_view(
-            self._internal_error(req, iid, Step.EXEC, exc, save=not run.parent_conflict)))
+            self._internal_error(req, iid, Step.EXEC, exc, save=not run.parent_conflict, batch=batch)))
 
     def _resend(self, iid: str, previous: Decision) -> SelectorDecision:
         """재전송에는 저장된 상위·하위 판정을 돌려준다. 새 하위 요청도 예약도 인계도 만들지 않는다 (FR-22)."""
@@ -685,7 +696,7 @@ class DecisionPipeline:
         self, req: UseRequest, iid: str, digest: str, capacity_exceeded: bool, run: _SelectorRun
     ) -> SelectorDecision:
         """새 묶음 요청의 판정과 저장. 예외는 `_selector_failed` 가 정리한다."""
-        judged: list[_BatchItem] = []  # 판정을 시작한 항목들. 요청의 항목 순서에서 앞쪽부터다
+        judged = run.batch_items  # 판정을 시작한 항목들. 예외가 나면 `_selector_failed` 가 같은 목록으로 묶음 기록을 만든다
         detail: dict[str, Any] = {}
         devices: tuple[DeviceOutcome, ...] = ()
         outcomes: tuple[Decision, ...] = ()
@@ -699,7 +710,7 @@ class DecisionPipeline:
                 step = Step.CANDIDATE
                 detail = {"items": len(req.items), "batch_max_items": self._settings.batch_max_items}
             else:
-                failed = self._judge_items(req, iid, digest, run, judged)
+                failed = self._judge_items(req, iid, digest, run)
                 if failed is None:
                     parent = self._decision(req, iid, Verdict.OK, ReasonCode.OK)
                     step = Step.DEVICE_OCCUPANCY
@@ -743,11 +754,10 @@ class DecisionPipeline:
             raise _SaveConflict("같은 내부 요청에 다른 판정 기록이 있다")
         return SelectorDecision(parent, outcomes, contexts)
 
-    def _judge_items(
-        self, req: UseRequest, iid: str, digest: str, run: _SelectorRun, judged: list[_BatchItem]
-    ) -> _Child | None:
+    def _judge_items(self, req: UseRequest, iid: str, digest: str, run: _SelectorRun) -> _Child | None:
         """항목 순서대로 대상을 고르고 하위 요청을 판정한다. 처음 걸린 하위 요청을 반환하고 모두 통과하면 None 이다.
 
+        판정을 시작한 항목은 `run.batch_items` 에 붙인다.
         하위 요청을 만들기 전에 멈추면(항목의 고르기: ①②③, 거리 선택자 항목의 고를 기기 없음, 경계 확률) `_Stop` 이 그대로 올라간다.
         `taken` 은 지금까지 통과한 하위 요청의 기기다. 뒤 항목이 다시 고르면 그 하위 요청을 거부한다 (spec 결정 8).
         """
@@ -755,7 +765,7 @@ class DecisionPipeline:
         for index, item in enumerate(req.items, start=1):
             entry = _BatchItem(index, replace(
                 req, target=item.target, action=item.action, arguments=item.arguments, items=()))
-            judged.append(entry)
+            run.batch_items.append(entry)
             failed = (self._judge_selector_item(entry, iid, digest, run, taken) if item.target.is_selector
                       else self._judge_item_child(entry, iid, digest, run, taken))
             if failed is not None:
@@ -801,6 +811,7 @@ class DecisionPipeline:
         고르기(`_choose`)는 상위 요청 ID 로 감사한다. 멈추면 하위 요청 없이 `_Stop` 이 그대로 올라가 묶음이 멈춘다.
         예외는 전역 할당 항목이 ③ 안의 ④ 에서 걸린 경우다. 그 판정은 기기를 가지므로 그 기기로 하위 요청을 만들어 판정을 저장한다 —
         호스트가 `devices` 의 기기로 `request_access` 를 부를 수 있다 (spec 결정 32).
+        걸린 기기가 앞 항목이 고른 기기면 ④ 의 판정 대신 같은 기기의 거부(`DENY`·`INVALID_INPUT`)를 저장한다 (spec 결정 8).
         고른 기기로 하위 요청 행을 만들고, 나머지(`_finish`: 같은 기기 검사, 동작·인자 검사, ④, ⑤⑥)는 하위 요청 ID 로 감사한다.
         하위 요청의 판정 기록이 고르기에서 정한 근접 추정 값을 담는다. 걸린 하위 요청을 반환하고 통과하면 None 이다.
         """
@@ -808,9 +819,12 @@ class DecisionPipeline:
         try:
             node, p, check = self._choose(entry.req, iid, applied)
         except _Stop as stop:
-            if stop.decision.node_id is None:
+            node_id = stop.decision.node_id
+            if node_id is None:
                 raise
-            child = self._link_batch_child(iid, entry, stop.decision.node_id, digest, run, applied)
+            child = self._link_batch_child(iid, entry, node_id, digest, run, applied)
+            if node_id in taken:  # 앞 항목이 이미 고른 기기다. 배정이 없어도 ④ 의 판정 대신 같은 기기로 거부한다
+                stop = self._duplicate_stop(entry.req, child.iid, node_id, stop.decision.p_max)
             self._settle_child(child, replace(stop.decision, internal_request_id=child.iid), stop.step, iid)
             return child
         child = self._link_batch_child(iid, entry, node.node_id, digest, run, applied)
@@ -1281,8 +1295,13 @@ class DecisionPipeline:
     def _decision(req: UseRequest, iid: str, verdict: Verdict, reason: ReasonCode, **kw: Any) -> Decision:
         return make_decision(req.request_id, iid, verdict, reason, **kw)
 
-    def _internal_error(self, req: UseRequest, iid: str, step: Step, exc: Exception, save: bool) -> Decision:
-        """예외 내용은 감사 기록에만 남기고 호스트에는 일반 안내만 준다 (#25)."""
+    def _internal_error(
+        self, req: UseRequest, iid: str, step: Step, exc: Exception, save: bool, batch: BatchRecord | None = None
+    ) -> Decision:
+        """예외 내용은 감사 기록에만 남기고 호스트에는 일반 안내만 준다 (#25).
+
+        `batch` 는 판정 중 예외로 끝난 묶음 요청의 상위 판정 기록에 담는 묶음 기록이다 (FR-22, #284).
+        """
         log.exception("판정 중 예외")
         d = self._decision(req, iid, Verdict.DENY, ReasonCode.INTERNAL_ERROR)
         if iid:
@@ -1292,7 +1311,7 @@ class DecisionPipeline:
                 log.exception("거부 감사 기록 실패")
             if save:
                 try:
-                    self._repo.save_decision(d, DecisionRecord(settings=self._settings))
+                    self._repo.save_decision(d, DecisionRecord(settings=self._settings, batch=batch))
                 except Exception:  # noqa: BLE001
                     log.exception("거부 판정 저장 실패")
         return d

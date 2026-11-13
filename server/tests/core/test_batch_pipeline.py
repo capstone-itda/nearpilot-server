@@ -78,6 +78,22 @@ class ExplodingPolicy(FakePolicy):
         return super().check(user_id, node_id, action, now, **kw)
 
 
+class SpentApprovalPolicy(FakePolicy):
+    """정해 둔 기기의 첫 검사만 OK(승인 `ap-1`)이고 그다음부터는 `by_node` 의 결과다. 앞 항목이 남은 승인 하나를 쓴 상황이다."""
+
+    def __init__(self, node_id, by_node):
+        super().__init__(by_node)
+        self.node_id = node_id
+        self.spent = False
+
+    def check(self, user_id, node_id, action, now, **kw):
+        result = super().check(user_id, node_id, action, now, **kw)
+        if node_id == self.node_id and not self.spent:
+            self.spent = True
+            return PolicyCheckResult(Verdict.OK, ReasonCode.OK, 1, "ap-1")
+        return result
+
+
 # ── 항목 수 (FR-09) ───────────────────────────────────────────────────
 
 
@@ -199,6 +215,46 @@ def test_FR09_batch_any_item_policy_stop_reports_device():
     assert [r.internal_request_id for r in repo.reserved] == ["c1"]  # 걸린 하위 요청은 예약하지 않는다
     assert store.cancels == [sibling_cancel("c1", ReasonCode.APPROVAL_REQUIRED, "locker-1")]
     assert [item.nodes for item in repo.records[PARENT].batch.items] == [("light-1",), ("locker-1",)]
+
+
+def test_FR09_batch_any_item_policy_stop_on_taken_device_denied():
+    """전역 할당 항목이 ④ 에서 걸린 기기가 앞 항목이 고른 기기면 `DENY`·`INVALID_INPUT` 이다 (spec 3절, 결정 8·32).
+
+    앞 항목이 남은 승인을 써서 그 기기의 ④ 가 `NEED_APPROVAL` 이 된 상황이다. ④ 를 통과해 같은 기기를 배정받았을 때와
+    같은 판정이고, ④ 의 판정으로 바뀌지 않는다.
+    """
+    policy = SpentApprovalPolicy("locker-1", {
+        "locker-1": PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_EXHAUSTED, 2),
+        "locker-2": PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, 2)})
+    window = FakeWindow("locker-1")
+    pipe, repo, prox, store, audit = build_batch(
+        [locker("locker-1"), locker("locker-2")], {}, {"locker-1": 0.6, "locker-2": 0.3},
+        policy=policy, settings=batch_settings(threshold_locker=0.2), window=window)
+    req = batch_request(("locker-1", "open"), ("any:locker", "open"))
+    sd = pipe.decide_batch(req)
+    d = sd.decision
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INVALID_INPUT)
+    assert d.devices == (device("locker-1", 2, Verdict.DENY, ReasonCode.INVALID_INPUT),)
+    assert d.selected_count == 2 and (d.node_id, d.use_id, d.p_max) == (None, None, None)
+    assert sd.children == () and sd.contexts == ()
+    # 배정 전에 ④ 에서 걸렸다(결정 32). 걸린 기기가 앞 항목의 기기라 그 하위 요청을 거부한다
+    assert policy.calls == ["locker-1", "locker-1", "locker-2"] and window.requests == []
+    assert child_ids(repo) == ["c1", "c2"]
+    rejected = repo.decisions["c2"]
+    assert (rejected.verdict, rejected.reason, rejected.node_id, rejected.p_max) == (
+        Verdict.DENY, ReasonCode.INVALID_INPUT, "locker-1", 0.6)
+    assert repo.decisions["c1"].verdict is Verdict.OK  # 앞 하위 요청의 판정 기록은 OK 로 남는다
+    # 거부한 하위 요청은 예약하지 않는다. 앞 하위 요청의 예약은 취소한다
+    assert [r.internal_request_id for r in repo.reserved] == ["c1"]
+    assert store.cancels == [sibling_cancel("c1", ReasonCode.INVALID_INPUT, "locker-1")]
+    # 감사는 ② 후보 단계에 같은 기기를 다시 골랐음을 남기고, 그 하위 요청의 판정은 그 단계로 끝난다
+    assert {"duplicate": "locker-1"} in [thaw(e.payload) for e in events(audit, "c2", Step.CANDIDATE)]
+    last = events(audit, "c2")[-1]
+    assert (last.step, last.payload) == (Step.CANDIDATE, {
+        "verdict": "DENY", "reason": "INVALID_INPUT", "settings_version": "t", "batch_parent": PARENT})
+    assert events(audit, PARENT)[-1].step is Step.CANDIDATE
+    assert [item.nodes for item in repo.records[PARENT].batch.items] == [("locker-1",), ("locker-1",)]
+    assert pipe.decide_batch(req).decision == d  # 재전송도 같은 판정과 기기다
 
 
 # ── 거리 선택자 항목이 하위 요청 전에 멈춘다 (FR-09) ────────────────────
@@ -575,7 +631,11 @@ def test_FR18_batch_internal_error_cancels_children(case):
             Verdict.DENY, ReasonCode.INTERNAL_ERROR, unsaved_node)
     assert (repo.decisions[PARENT].verdict, repo.decisions[PARENT].reason) == (
         Verdict.DENY, ReasonCode.INTERNAL_ERROR)
-    assert repo.records[PARENT].batch is None  # 오류 판정은 묶음 기록을 담지 않는다
+    # 오류 판정의 상위 기록도 요청의 항목을 모두 항목 순서대로 담고, 만든 하위 요청을 모두 가리킨다 (spec 결정 15)
+    batch = repo.records[PARENT].batch
+    assert [(item.target_spec, item.action) for item in batch.items] == [
+        (item.target.serialize(), item.action) for item in req.items]
+    assert [child for item in batch.items for child in item.children] == child_ids(repo)
     assert any("secret" in str(e.payload) for e in audit.events)  # 예외 내용은 감사에만 남는다
 
 
@@ -652,6 +712,97 @@ def test_FR22_batch_record_has_all_requested_items():
     assert pipe.decide_batch(batch_request(*items)).decision.reason is ReasonCode.CAPACITY_EXCEEDED
     assert list(repo.records[PARENT].batch.items) == requested
     assert repo.child_links == []
+
+
+def test_FR22_batch_internal_error_record_has_items():
+    """판정 중 예외로 끝난 묶음 요청의 상위 판정 기록도 요청의 항목을 모두 항목 순서대로 담는다 (FR-22, spec 결정 15·27).
+
+    예외 전에 판정을 시작한 항목은 만든 하위 요청과 고른 기기를, 판정하지 않은 뒤 항목은 받은 요청뿐이다.
+    응답은 이전과 같다. 기기 없는 `DENY`·`INTERNAL_ERROR` 다.
+    """
+    items = (("light-1", "on"), ("speaker-1", "off"), ("light-3", "on"))
+
+    # 둘째 항목(명시 지정)의 예약에서 예외가 난다. 첫 항목은 하위 요청을 만들었고 셋째 항목은 판정하지 않았다
+    pipe, repo, prox, store, audit = build_batch()
+    real = repo.reserve_if_free
+
+    def reserve(reserve_request):
+        if reserve_request.node_id == "speaker-1":
+            raise RuntimeError("secret internal detail")
+        return real(reserve_request)
+
+    repo.reserve_if_free = reserve
+    d = pipe.decide_batch(batch_request(*items)).decision
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    assert (d.devices, d.selected_count, d.similar) == ((), 0, False)
+    assert (repo.decisions[PARENT].verdict, repo.decisions[PARENT].reason) == (
+        Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    batch = repo.records[PARENT].batch
+    assert batch is not None and len(batch.items) == 3
+    first, second, third = batch.items
+    assert (first.target_spec, first.action, first.children, first.nodes) == ("light-1", "on", ("c1",), ("light-1",))
+    # 예외가 난 항목도 기기를 고른 뒤에 하위 요청을 만들었다
+    assert (second.target_spec, second.action, second.children, second.nodes) == (
+        "speaker-1", "off", ("c2",), ("speaker-1",))
+    assert third == BatchItemRecord("light-3", "on", None)  # 판정하지 않았다. 받은 요청뿐이다
+    # 기록이 가리키는 하위 요청은 읽을 수 있다. 예외 뒤 정리가 둘째 하위 요청에 그 기기의 INTERNAL_ERROR 를 저장했다
+    stored = repo.batch_children(PARENT)
+    assert [(c.internal_request_id, c.node_id, c.decision.verdict) for entry in stored.items for c in entry.children] == [
+        ("c1", "light-1", Verdict.OK), ("c2", "speaker-1", Verdict.DENY)]
+
+    # 첫 항목이 하위 요청을 만들기 전(① 비콘)에 예외가 난다. 하위 요청이 하나도 없어도 항목은 셋이다
+    pipe, repo, *_ = build_batch()
+
+    def beacons_of(user_id):
+        raise RuntimeError("secret internal detail")
+
+    repo.beacons_of = beacons_of
+    d = pipe.decide_batch(batch_request(*items)).decision
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    assert repo.child_links == []
+    assert list(repo.records[PARENT].batch.items) == [BatchItemRecord(target, action, None) for target, action in items]
+
+    # 거리 선택자 항목의 둘째 하위 요청에서 예외가 난다. 그 항목은 거리 선택자 기록과 만든 하위 요청을 담는다
+    pipe, repo, *_ = build_batch(policy=ExplodingPolicy("light-1"))
+    d = pipe.decide_batch(batch_request(("speaker-1", "off"), ("near:light:1:2", "on"), ("light-3", "on"))).decision
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    speaker_item, selector_item, last_item = repo.records[PARENT].batch.items
+    assert (speaker_item.children, speaker_item.nodes) == (("c1",), ("speaker-1",))
+    assert (selector_item.children, selector_item.nodes) == (("c2", "c3"), ("light-2", "light-1"))
+    assert (selector_item.selector.selected, selector_item.selector.children) == (
+        ("light-2", "light-1"), ("c2", "c3"))
+    assert last_item == BatchItemRecord("light-3", "on", None)
+
+    # 거리 선택자 요청의 오류 판정은 묶음 기록을 담지 않는다
+    pipe, repo, *_ = build_batch(policy=ExplodingPolicy("light-1"))
+    d = pipe.decide_selector(request("near:light:1:2")).decision
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    assert repo.records[PARENT].batch is None
+
+
+def test_FR22_batch_internal_error_saved_without_record_when_record_fails(monkeypatch, caplog):
+    """오류 판정의 묶음 기록을 만들다 다시 예외가 나도 오류 판정은 저장한다. 묶음 기록 없이 저장하고 로그를 남긴다 (FR-22)."""
+    pipe, repo, prox, store, audit = build_batch()
+    real = repo.reserve_if_free
+
+    def reserve(reserve_request):
+        if reserve_request.node_id == "speaker-1":
+            raise RuntimeError("secret internal detail")
+        return real(reserve_request)
+
+    def broken(req, judged):
+        raise RuntimeError("record failure")
+
+    repo.reserve_if_free = reserve
+    monkeypatch.setattr(pipe, "_batch_record", broken)
+    d = pipe.decide_batch(batch_request(("light-1", "on"), ("speaker-1", "off"))).decision
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    assert (d.devices, d.selected_count, d.similar) == ((), 0, False)
+    assert (repo.decisions[PARENT].verdict, repo.decisions[PARENT].reason) == (
+        Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    assert repo.records[PARENT].batch is None  # 기록을 만들지 못해 묶음 기록 없이 저장했다
+    assert [cancel[0] for cancel in store.cancels] == ["c1", "c2"]  # 하위 요청의 정리는 그대로다
+    assert any("묶음 기록" in record.getMessage() for record in caplog.records)
 
 
 @pytest.mark.parametrize("case", ["all_ok", "selector_child_fails"])

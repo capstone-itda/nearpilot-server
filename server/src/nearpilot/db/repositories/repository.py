@@ -653,8 +653,7 @@ class SqliteRepository:
     def _batch_child(self, parent_internal_request_id: str, request_id: str, child_id: str) -> SelectorChild:
         """하위 행 하나와 그 판정이다. 하위 요청의 기기는 행의 `node_id`다.
 
-        판정을 저장하면 `save_decision`이 판정의 `node_id`로 행을 채운다. 판정이 기기 없이 끝났으면
-        `SelectorChild.node_id`는 `""`다.
+        판정을 저장하면 `save_decision`이 판정의 `node_id`로 행을 채운다.
         """
         row = self._conn.execute(
             "SELECT verdict, reason_code, node_id, p_max FROM request "
@@ -674,7 +673,7 @@ class SqliteRepository:
                 use_id=self._decision_use_id(child_id, row["verdict"]),
                 p_max=row["p_max"],
             )
-        return SelectorChild(child_id, row["node_id"] or "", decision)
+        return SelectorChild(child_id, row["node_id"], decision)
 
     def _batch_to_data(self, batch: BatchRecord) -> dict[str, Any]:
         """판정 기록(`decision_context`)의 `"batch"` 값. 항목마다 받은 요청과 그 항목이 만든 하위 요청이다.

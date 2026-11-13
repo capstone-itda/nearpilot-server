@@ -45,7 +45,7 @@ class BatchRepo(FakeRepo):
     """
 
     def batch_children(self, parent_internal_request_id: str) -> BatchChildren | None:
-        """저장한 상위 기록의 `batch` 가 가리키는 하위 요청들. 기기가 없으면 `""` 다 (DB 와 같다)."""
+        """저장한 상위 기록의 `batch` 가 가리키는 하위 요청들 (DB 와 같다)."""
         self._hit("batch_children")
         record = self.records.get(parent_internal_request_id)
         if record is None or record.batch is None:
@@ -58,7 +58,7 @@ class BatchRepo(FakeRepo):
         decision = self._stored(child_id)
         linked = next((link.node_id for link in self.child_links if link.child == child_id), None)
         node_id = linked if decision is None else decision.node_id
-        return SelectorChild(child_id, node_id or "", decision)
+        return SelectorChild(child_id, node_id, decision)
 
 
 class FakeWindow:

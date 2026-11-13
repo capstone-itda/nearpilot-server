@@ -151,13 +151,13 @@ def test_FR22_batch_record_round_trip(conn, repo):
     shown = repo.batch_children(parent)
     assert {child.decision.request_id for item in shown.items for child in item.children} == {""}
 
-    # 판정 전의 하위 요청은 decision 이 None 이고 node_id 는 행을 만들 때 받은 기기다. 판정을 저장한 뒤에는 저장된 판정의
-    # node_id 이고, 판정이 기기 없이 끝났으면 "" 다.
+    # 판정 전의 하위 요청은 decision 이 None 이고 node_id 는 행을 만들 때 받은 기기다. 오류로 끝난 하위 요청은 그 기기의
+    # INTERNAL_ERROR 판정을 저장하고, 조회는 그 판정과 기기를 돌려준다.
     parent_b = _parent(repo, LIGHTS, play, request_id="r-batch-b")
     waiting = _child(repo, parent_b, LIGHTS, "light-3", "r-batch-b")
     errored = _child(repo, parent_b, LIGHTS, "light-2", "r-batch-b")
     undecided = _child(repo, parent_b, play, "speaker-1", "r-batch-b")
-    _save(repo, Decision(errored, "r-batch-b", Verdict.DENY, ReasonCode.INTERNAL_ERROR))
+    _save(repo, Decision(errored, "r-batch-b", Verdict.DENY, ReasonCode.INTERNAL_ERROR, "light-2"))
     selector_b = SelectorRecord(
         SELECTOR, ("light-3", "light-2"), {"light-3": None, "light-2": None}, ("light-3", "light-2"), True,
         (waiting, errored),
@@ -170,7 +170,8 @@ def test_FR22_batch_record_round_trip(conn, repo):
     assert [item.children for item in repo.batch_children(parent_b).items] == [
         (
             SelectorChild(waiting, "light-3", None),
-            SelectorChild(errored, "", Decision(errored, "r-batch-b", Verdict.DENY, ReasonCode.INTERNAL_ERROR)),
+            SelectorChild(errored, "light-2", Decision(
+                errored, "r-batch-b", Verdict.DENY, ReasonCode.INTERNAL_ERROR, "light-2")),
         ),
         (SelectorChild(undecided, "speaker-1", None),),
     ]
