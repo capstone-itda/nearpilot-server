@@ -3,7 +3,7 @@
 - 상태: 완료
 - 담당: 작업 지시자 (shared, IOT, 근접 추정, 판정, 상태 관리, DB, API 연결 구현)
 - 요구사항: FR-09, FR-16, FR-17, FR-18, FR-22
-- 따르는 결정: #253 (decision PR #254). 근접 참여 기기의 정의는 #252의 담당자 결정을 따른다.
+- 따르는 결정: #253 (decision PR #254). 근접 참여 기기의 정의는 #252의 담당자 결정을 따른다. 경계 확률은 #278 (decision PR #280)과 2026-11-13 보완 댓글을 따른다.
 
 ## 1. 왜
 
@@ -11,6 +11,7 @@
 - 판정은 요청 하나에 기기 하나만 고르고 실행한다.
 - IOT는 비콘을 하나도 보지 못한 빈 `rssi` 보고를 버린다. 서버는 "켜져 있지만 비콘이 안 보이는 먼 기기"와 "RSSI를 보고하지 않는 기기"를 구분하지 못한다.
 - 서버는 기기별 마지막 `rssi` 보고 시각을 따로 기록하지 않는다. `last_seen_at`은 상태 보고로도 바뀐다.
+- 판정은 경계의 두 기기가 비슷해도 실행한다. 정렬 값의 고정 오차는 평균으로 줄지 않아서, 판정이 순서가 틀린 기기를 실행할 수 있다 (#278).
 
 ## 2. 무엇
 
@@ -20,6 +21,7 @@
 - 출력:
   - 거리 선택자 요청의 응답은 기존 키에 `devices`, `selected_count`, `similar`를 더한다. `devices`는 기기마다 `node_id`, `verdict`, `reason`, `use_id`를 담는다.
   - 다른 대상 지정의 응답 키와 값은 바뀌지 않는다.
+  - `near:` 요청의 경계 확률이 기준 확률보다 작으면 응답은 `ASK`와 `ORDER_UNCERTAIN`이다 (#278).
 - 바뀌는 상태:
   - `request` 테이블의 하위 요청 상위 연결 열 `selector_parent_id` (마이그레이션 `0012`)
   - 근접 추정의 기기별 마지막 `rssi` 보고 시각 (메모리)
@@ -27,6 +29,7 @@
   - 서버가 요청 순간의 거리 순서로 기기를 고른다. AI 호스트는 RSSI와 사후확률을 보지 않는다.
   - `shared` 기기는 순서만 쓴다. `rental` 기기는 고른 기기마다 `threshold_{kind}`와 비교한다.
   - 고른 기기 중 하나라도 검사에 걸리면 어느 기기도 실행하지 않는다.
+  - `near:` 요청은 경계 확률이 기준 확률 이상일 때만 하위 요청을 만든다. `far:` 요청은 경계 확률을 검사하지 않는다 (#278).
   - `nearest:`, `any:`, 명시 지정의 판정, 중복 판단 요약, 응답은 이전과 같다.
 
 ## 3. 제약
@@ -38,12 +41,18 @@
 - 비콘을 보지 못한 기기는 가장 먼 쪽에 둔다. 정렬 값이 같은 기기끼리는 기기 ID 순서다 (FR-09).
 - 서버는 시작부터 개수만큼 고른다. 모자라면 있는 만큼 고른다. 하나도 없으면 `DENY`와 `NO_CANDIDATE`다 (FR-09).
 - 고른 범위의 경계에서 안쪽 기기와 바깥 기기의 정렬 값 차이가 기준 값보다 작으면 그대로 실행하고 `similar`를 표시한다 (FR-09).
+- 경계는 고른 범위와 그 바로 바깥 기기 사이다. 고른 범위의 앞뒤에 바깥 기기가 있는 만큼 경계가 있다 (FR-09, #278 보완).
+- 경계 확률은 `Φ(D / s)`다. `D`는 경계의 두 기기 중 가까운 순서에서 앞선 기기의 정렬 값에서 뒤 기기의 정렬 값을 뺀 값이다. `s² = σf²(1/N안 + 1/N밖) + 2σs²`다. `σf`는 `order_frame_sigma_db`, `σs`는 `order_static_sigma_db`다. `N`은 최근 구간 안의 그 기기의 프레임 수다 (FR-09).
+- 뒤 기기만 비콘을 보지 못했으면 경계 확률은 1이다 (비콘을 보지 못한 기기는 순서의 끝에 있다). 두 기기 모두 보지 못했으면 0.5다 (#278 보완).
+- `near:` 요청에서 가장 낮은 경계 확률이 `order_boundary_min_prob`보다 작으면, 판정은 하위 요청을 만들지 않고 `ASK`와 `ORDER_UNCERTAIN`을 반환한다. 경계가 없으면 검사하지 않는다 (FR-09).
+- `far:` 요청은 경계 확률을 계산하지 않는다 (#278).
 - `shared` 기기는 사후확률 검사를 하지 않는다. ① 비콘 검사는 유지한다 (FR-17).
 - `rental` 기기는 고른 기기마다 사후확률을 `threshold_{kind}`와 비교한다. 미만이면 `ASK`와 `LOW_CONFIDENCE`다. `threshold_{kind}`가 없으면 `DENY`와 `INVALID_INPUT`이다 (FR-17, `nearest:`와 같은 사유).
 - 서버는 고른 기기마다 ④~⑥과 동작·인자 검사를 한다. 하나라도 걸리면 어느 기기도 실행하지 않는다. 서버는 거리 순서에서 처음 걸린 기기의 판정과 사유를 반환한다 (FR-09).
 - 판정은 이미 만든 하위 요청의 예약과 승인 사용분을 미전송으로 취소한다 (`architecture.md` §4 "거리 선택자의 판정").
 - 하위 요청은 단일 기기 요청과 같은 경로를 쓴다. 하위 요청에는 외부 `request_id`가 없다 (`architecture.md` §4, §6).
 - 상위 요청의 판정 기록은 거리 선택자, 거리 순서, 기기별 정렬 값, 고른 기기, `similar`를 담는다. 상위 요청의 `node_id`는 비어 있다 (FR-22).
+- 경계 확률을 계산한 상위 요청의 판정 기록은 기기별 프레임 수와 가장 낮은 경계 확률도 담는다. 적용한 설정은 기존 설정 스냅샷이 담는다 (FR-22, #278).
 - ⓪은 상위 요청의 외부 `(계정, request_id)`로 중복을 검사한다. 재전송에는 하위 요청들의 진행 상태와 결과를 묶어 반환한다 (`architecture.md` §4).
 - 하위 요청의 실행 직전 재검사는 대상을 다시 고르지 않는다. `shared` 기기는 비콘 수신만 확인한다. `rental` 기기는 근접 임계값을 다시 확인한다 (FR-18).
 - 한 하위 요청의 재검사 거부나 실행 실패는 다른 하위 요청의 실행을 되돌리지 않는다 (FR-09).
@@ -61,7 +70,8 @@
   - `RssiReport`, `NodeEventSink.on_rssi_report`
   - `ProximityEstimator.observe_report`, `ProximityEstimator.distance_order`와 결과 값 객체
   - `Repository`의 하위 요청 접점
-  - 설정 `anchor_recent_sec`, `order_similar_db`
+  - 설정 `anchor_recent_sec`, `order_similar_db`, `order_frame_sigma_db`, `order_static_sigma_db`, `order_boundary_min_prob`
+  - `ReasonCode.ORDER_UNCERTAIN`, `DistanceOrder.counts`, `SelectorRecord.counts`, `SelectorRecord.boundary_probability`
 - `server/src/nearpilot/iot/` — 빈 보고를 포함한 유효 `rssi` 보고의 전달
 - `server/src/nearpilot/core/proximity/` — 마지막 보고 시각, 거리 순서 (사후확률 계산은 고치지 않는다)
 - `server/src/nearpilot/core/decision/` — 거리 선택자 판정, 하위 요청, 재검사, 응답 묶음, 중복 판단 요약, `request_access`의 거부
@@ -70,13 +80,17 @@
 - `server/tools/evaluation/db.py` — 평가 도구가 기대하는 스키마 버전 (마이그레이션 `0012`)
 - `specs/db-retention-capacity/spec.md` 6절 — 완료 조건에 거리 선택자 상위 요청 (결정 22), 명령 항목에 하위 요청의 명령 (결정 23)
 - `server/src/nearpilot/api/mcp/` — 도구 설명, 응답
+- `server/src/nearpilot/core/dashboard/text.py` — `ORDER_UNCERTAIN`의 사유 문구
+- `dashboard/src/model/types.ts`, `dashboard/src/view/text.ts` — 화면의 사유 코드 목록과 문구 (화면 배치는 바꾸지 않는다)
+- `server/src/nearpilot/db/repositories/` — 판정 기록의 프레임 수와 경계 확률 (JSON, 마이그레이션 없음)
+- `docs/requirements.md` FR-09 "경계 확률" 절, `docs/glossary.md` "경계 확률" — #278 보완 댓글의 경계 정의
 - `server/src/nearpilot/runtime/` — 설정 로더, 앱 조립
 - `server/config/` — 설정 예시
 - 각 계층의 테스트
 
 ### 고치지 않는 곳
 
-- 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/pyproject.toml`, `.github/`
+- 항상: `docs/` (위 두 곳은 제외), `AGENTS.md` (Gotchas 절은 제외), `server/pyproject.toml`, `.github/`
 - 이 작업: 사후확률 계산(`core/proximity/filter.py`의 HMM, 모델 파일, `fit.py`), `nearest:`·`any:`·명시 지정의 판정 규칙, 펌웨어, 시뮬레이터, 대시보드 화면
 
 ### 다른 영역과 닿는 곳
@@ -112,6 +126,14 @@
 | 빈 보고만 보낸 기기 | 가장 먼 쪽에 선다 | `test_FR09_selector_empty_report_keeps_participant_last` |
 | 개수보다 기기가 적다 | 있는 만큼 실행한다. `selected_count`가 실제 개수다 | `test_FR09_selector_count_shortage_runs_available` |
 | 경계의 두 기기가 비슷하게 들린다 | 실행하고 `similar`를 `true`로 담는다 | `test_FR09_selector_similar_boundary_flag` |
+| `near:` 요청의 가장 낮은 경계 확률이 기준 확률보다 작다 | `ASK`·`ORDER_UNCERTAIN`. 하위 요청을 만들지 않는다. `devices`는 빈 목록, `selected_count`는 0, `similar`는 계산한 값이다 | `test_FR09_selector_boundary_low_probability_asks` |
+| `near:` 요청의 경계 확률이 모두 기준 확률 이상이다 | 지금처럼 하위 요청을 만들어 실행한다 | `test_FR09_selector_boundary_high_probability_runs` |
+| 시작이 2 이상인 `near:` 요청의 앞쪽 경계가 애매하다 (`near:light:2:all`) | `ASK`·`ORDER_UNCERTAIN` | `test_FR09_selector_boundary_front_edge_checked` |
+| 경계의 뒤 기기만 비콘을 보지 못했다 / 두 기기 모두 보지 못했다 | 경계 확률 1 / 0.5 | `test_FR09_selector_boundary_unheard_rules` |
+| `far:` 요청의 경계가 애매하다 | 경계 확률을 계산하지 않는다. 지금처럼 실행한다 | `test_FR09_selector_far_skips_boundary_probability` |
+| 경계 확률 설정이 허용 범위 밖이다 | 설정 검증이 거부한다. 옛 설정 스냅샷은 기본값으로 읽는다 | `test_FR09_settings_boundary_values_validated` |
+| `rental` 기기를 고른 `near:` 요청의 경계 확률은 통과했지만 사후확률이 임계값 미만이다 | `ASK`·`LOW_CONFIDENCE` | `test_FR17_selector_rental_checks_boundary_and_posterior` |
+| `ORDER_UNCERTAIN`으로 끝난 요청을 같은 `request_id`로 재전송한다 | 같은 판정을 반환한다. 하위 요청을 만들지 않는다 | `test_FR22_selector_resend_after_order_uncertain` |
 | 두 번째 기기가 승인 필요다 | 아무것도 실행하지 않는다. 첫 기기의 예약과 사용분을 취소한다. 판정은 `NEED_APPROVAL` | `test_FR18_selector_one_fails_none_executes` |
 | `rental` 기기를 고른 요청의 사후확률이 임계값 미만이다 | `ASK`·`LOW_CONFIDENCE`. 아무것도 실행하지 않는다 | `test_FR17_selector_rental_threshold_ask` |
 | `rental` 종류에 `threshold_{kind}`가 없다 | `DENY`·`INVALID_INPUT` | `test_FR17_selector_rental_without_threshold_denied` |
@@ -154,11 +176,21 @@
 21. `OK`로 저장된 상위 요청에 거리 선택자 기록이 없거나 하위 판정이 고른 기기 수만큼 `OK`가 아니면, 재전송은 저장하지 않고 `INTERNAL_ERROR`다 — `OK`는 실행 결과를 확인했을 때만 나간다 (#16).
 22. 보존 정리는 상위 요청과 그 하위 요청(`selector_parent_id`)이 모두 완료돼야 상위 요청을 완료로 본다. 완료 시각은 그중 가장 늦은 것이다 — 세션·명령·복구는 하위 요청 행에 붙는다. 진행 중인 요청의 외부 ID와 기록을 유지하는 FR-22를 상위 요청에도 지킨다. 외부 ID 비우기와 감사 행 삭제가 모두 이 판단을 쓴다. 단일 요청의 완료 판단은 바뀌지 않는다. `specs/db-retention-capacity` 6절 완료 조건에 5번으로 적었다.
 23. 하위 요청의 명령은 상위 요청이 외부 `request_id`를 유지하는 동안 중복 방지 항목으로 센다 — FR-22의 "그 명령을 만든 요청과 같은 보장기간"을 외부 ID를 가진 상위 요청의 보장기간으로 읽는다. 결정 22와 같은 해석이다. 진행 중인 명령은 전처럼 늘 센다. 담당자가 2026-11-09에 정했다. `specs/db-retention-capacity` 6절 명령 항목에도 적었다.
+24. 경계 확률은 판정의 순수 함수 `boundary_probability`가 계산한다. 근접 추정은 정렬 값과 프레임 수만 준다 — 판정 규칙과 설정은 판정이 갖는다 (#278).
+25. 경계 확률 검사는 고르기 뒤, 하위 요청을 만들기 전에 한다. `ORDER_UNCERTAIN`이면 하위 요청이 없으므로 취소할 예약도 없다. 담당자가 2026-11-13에 정했다.
+26. 새 사유 코드는 `ORDER_UNCERTAIN`이다. 대시보드 문구는 "어느 기기인지 순서가 애매함"이다. `LOW_CONFIDENCE`는 "더 가까이"로 풀리지만 순서의 애매함은 그렇지 않다. 담당자가 2026-11-13에 정했다 (#278 세부 질문 1).
+27. `ORDER_UNCERTAIN` 응답의 `devices`는 빈 목록, `selected_count`는 0이다. `similar`는 계산한 값이다. 판정 기록은 고른 기기와 경계 확률을 모두 담는다. 담당자가 2026-11-13에 정했다.
+28. `N`은 최근 구간 안에서 그 기기가 보고한 그 비콘의 유한한 프레임 수다. 정렬 값과 같은 프레임을 센다.
+29. 실행 직전 재검사는 경계 확률을 다시 계산하지 않는다 — 재검사는 대상을 다시 고르지 않는다 (FR-18). 담당자가 2026-11-13에 정했다.
+30. 재전송 응답도 `ORDER_UNCERTAIN`이면 `selected_count`가 0이다. 하위 요청이 없는 기록을 다시 읽어도 처음 응답과 같아야 한다.
+31. `near:` 요청의 판정 기록은 거리 순서의 기기별 프레임 수(`counts`)와 가장 낮은 경계 확률(`boundary_probability`)을 담는다. 경계가 없으면 경계 확률은 비어 있다. `far:` 요청은 둘 다 비어 있다. 옛 기록을 읽으면 둘 다 비어 있다.
+32. `DistanceOrder.counts`의 기본값은 빈 사전이다. 비어 있지 않으면 거리 순서의 기기와 같아야 하고, 정렬 값이 없는 기기만 0이다. 경계의 비콘을 본 기기에 프레임 수가 없으면 판정은 내부 오류로 거부한다.
 
 ## 7. 가정
 
 - 근접 참여 기기의 최근 구간 설정은 `anchor_recent_sec`, 초기값 3초, 허용 범위는 `rssi_frame_sec` 이상이다 — #252
 - "비슷함" 기준 설정은 `order_similar_db`, 초기값 3 dB, 허용 범위는 0 초과다 — #255 (실험으로 정한다)
+- 경계 확률 설정은 `order_frame_sigma_db` 4 dB(0 초과), `order_static_sigma_db` 3.5 dB(0 이상), `order_boundary_min_prob` 0.9(0.5 이상 1 미만)다 — #279 (실측으로 정한다)
 - 공개 규칙에 빈 보고 의무가 들어간다 — #252. 그 전까지 빈 보고를 보내지 않는 기기는 비콘이 안 보이면 거리 순서에서 빠진다. 팀 펌웨어는 빈 보고를 보낸다.
 
 ## 8. 테스트
@@ -189,10 +221,20 @@
 | FR-09 | `test_FR09_selector_internal_error_rejection_keeps_selector_keys` | 도구 처리 중 예외의 거부도 거리 선택자 키를 담는다 |
 | FR-09 | `test_FR09_existing_rejection_keys_unchanged` | 다른 대상 지정의 판정 전 거부는 기존 여섯 키만 담는다 |
 | FR-09 | `test_FR09_selector_non_participant_usable_by_node_id` | 거리 순서에 없는 기기를 기기 ID로는 실행할 수 있다 |
+| FR-09 | `test_FR09_boundary_probability_formula` | 경계 확률 식, 프레임 수와 두 설정의 영향, 못 들은 기기의 규칙 |
+| FR-09 | `test_FR09_selector_boundary_low_probability_asks` | 경계 확률이 기준보다 작으면 `ORDER_UNCERTAIN`, 하위 요청 없음, 응답 모양 |
+| FR-09 | `test_FR09_selector_boundary_high_probability_runs` | 경계 확률이 기준 이상이면 실행한다 |
+| FR-09 | `test_FR09_selector_boundary_front_edge_checked` | 시작이 2 이상이면 앞쪽 경계도 본다 |
+| FR-09 | `test_FR09_selector_boundary_unheard_rules` | 한쪽만 못 들으면 1, 둘 다 못 들으면 0.5 |
+| FR-09 | `test_FR09_selector_far_skips_boundary_probability` | `far:`는 경계 확률을 계산하지 않는다 |
+| FR-09 | `test_FR09_settings_boundary_values_validated` | 경계 확률 설정의 기본값, 허용 범위, 옛 설정 스냅샷 |
+| FR-09 | `test_FR09_tool_description_mentions_order_uncertain` | 도구 설명이 거리 선택자의 `ORDER_UNCERTAIN`을 안내한다 |
+| FR-16 | `test_FR16_distance_order_counts_frames` | 거리 순서가 기기별 프레임 수를 함께 준다 |
 | FR-16 | `test_FR16_distance_order_mean_of_recent_window` | 정렬 값은 최근 구간의 평균이다. 구간 밖 프레임은 쓰지 않는다 |
 | FR-16 | `test_FR16_report_time_only_trusted` | 신뢰한 기기의 보고만 기록한다 |
 | FR-17 | `test_FR17_selector_shared_skips_posterior` | `shared` 기기만 고른 요청은 `posterior`를 부르지 않는다. `threshold_{kind}`가 없어도 된다 |
 | FR-17 | `test_FR17_selector_rental_threshold_ask` | `rental` 기기는 임계값 미만이면 `ASK` |
+| FR-17 | `test_FR17_selector_rental_checks_boundary_and_posterior` | `rental` 기기는 경계 확률과 사후확률을 모두 통과해야 한다 |
 | FR-17 | `test_FR17_selector_rental_without_threshold_denied` | `rental` 종류에 임계값이 없으면 `INVALID_INPUT` |
 | FR-18 | `test_FR18_selector_children_follow_single_path` | 하위 요청마다 예약, 판정 기록, 실행 인계가 있다 |
 | FR-18 | `test_FR18_selector_one_fails_none_executes` | 하나가 걸리면 앞 하위 요청의 예약을 취소하고 아무것도 인계하지 않는다 |
@@ -209,6 +251,8 @@
 | FR-22 | `test_FR22_selector_parent_request_id_cleared_after_latest_child` | 하위 요청이 모두 끝나면 가장 늦은 완료 시각부터 보장기간을 센다 |
 | FR-22 | `test_FR22_selector_parent_audit_kept_while_child_in_progress` | 하위 요청이 진행 중이면 상위 요청의 감사 행을 지우지 않는다 |
 | FR-22 | `test_FR22_selector_child_command_counted_while_parent_id_kept` | 상위 요청이 외부 ID를 유지하는 동안 하위 요청의 끝난 명령을 중복 방지 항목으로 센다 |
+| FR-22 | `test_FR22_selector_record_has_boundary_probability` | 판정 기록이 프레임 수와 경계 확률을 담고 다시 읽는다 |
+| FR-22 | `test_FR22_selector_resend_after_order_uncertain` | `ORDER_UNCERTAIN` 재전송이 같은 판정을 반환한다 |
 | FR-22 | `test_FR22_selector_record_round_trip` | 거리 선택자 기록과 하위 요청을 저장하고 다시 읽는다 |
 | FR-22 | `test_FR22_selector_digest_includes_start_count` | 시작이나 개수가 다르면 충돌 |
 | FR-22 | `test_FR22_existing_digest_unchanged` | 기존 대상 지정의 중복 판단 요약이 그대로다 |
