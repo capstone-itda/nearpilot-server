@@ -372,7 +372,7 @@ def test_FR09_decision_selector_fields_default_for_other_targets():
 
 def test_FR11_selector_device_outcome_has_no_user_or_child_ids():
     names = {f.name for f in fields(DeviceOutcome)}
-    assert names == {"node_id", "verdict", "reason", "use_id"}
+    assert names == {"node_id", "verdict", "reason", "use_id", "item"}
     assert not names & {"user_id", "occupant", "occupant_user_id", "internal_request_id", "request_id"}
 
 

@@ -28,6 +28,8 @@ order_frame_sigma_db = 4.0
 order_static_sigma_db = 3.5
 # 거리 선택자 near: 요청의 가장 낮은 경계 확률이 이 값보다 작으면 ASK 와 ORDER_UNCERTAIN 을 반환한다. 0.5 이상 1 미만이다 (FR-09, #278). 실측으로 정한다 (#279).
 order_boundary_min_prob = 0.9
+# 묶음 요청(request_use 의 requests)의 항목 수 상한이다. 항목이 이 값보다 많으면 DENY 와 INVALID_INPUT 을 반환한다. 1 이상의 정수다 (FR-09, #284).
+batch_max_items = 8
 # 실행 응답 제한의 종류별 재정의다. 따옴표 키 "exec_timeout_sec.{kind}" 로 쓴다. 없는 종류는 exec_timeout_sec(초기 3초)다.
 # display(SmartThings 클라우드 왕복과 refresh 뒤 재조회)의 초기값은 10초다 (requirements.md §1.2, #271). 바꿀 때만 쓴다.
 # "exec_timeout_sec.display" = 10.0
