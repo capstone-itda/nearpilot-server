@@ -41,6 +41,8 @@ _TOOL_DESCRIPTION = (
     "거리 선택자의 응답은 devices(기기별 node_id, verdict, reason, use_id), selected_count(실제로 고른 개수), "
     "similar(경계의 기기들이 비슷한 거리라 고른 결과가 다를 수 있음)를 더 담는다. "
     "거리 선택자 요청이 NEED_APPROVAL 이면 devices 의 node_id 로 request_access 를 부른다. "
+    "near 거리 선택자는 경계의 기기들의 순서가 애매하면 아무것도 실행하지 않고 ASK 와 ORDER_UNCERTAIN 을 반환하며, "
+    "이때는 사용자에게 어느 기기인지 더 구체적으로 묻는다. "
     "action 은 find_available_devices 나 get_device_state 가 "
     "돌려준 그 기기의 actions[].name 중 하나다. 각 동작의 description 이 하는 일을 설명한다. "
     "선택 인자 arguments 는 객체이고, 그 동작의 actions[].input_schema 를 따른다. "

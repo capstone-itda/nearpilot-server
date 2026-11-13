@@ -163,6 +163,7 @@ def test_FR12A_모든_사유_코드에_문구가_있다():
     assert len(set(texts.values())) == len(texts)  # 사유마다 다른 문구다
     assert texts[ReasonCode.BEACON_NOT_SEEN] == "비콘 수신 없음"
     assert texts[ReasonCode.LOW_CONFIDENCE] == "어느 기기 앞인지 확신 부족"
+    assert texts[ReasonCode.ORDER_UNCERTAIN] == "어느 기기인지 순서가 애매함"  # spec 결정 26 (#278)
     assert texts[ReasonCode.DEVICE_BUSY] == "다른 사람이 점유 중"
 
 

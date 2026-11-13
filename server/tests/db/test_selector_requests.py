@@ -121,12 +121,14 @@ def test_FR22_selector_record_round_trip(conn, repo):
             second, "r-sel", Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, "light-1", p_max=0.93)),
     )
     # 저장 형식: 거리 선택자 부분은 "selector" 키 하나이고, 정렬 값이 없는 기기는 null 이다.
+    # 프레임 수와 경계 확률이 없으면 {} 와 null 이다.
     context = json.loads(_decision_context(conn, parent))
     assert set(context) == {"posteriors", "window_start", "window_end", "message", "selector"}
     assert context["selector"] == {
         "target_spec": SELECTOR, "order": ["light-2", "light-1", "light-3"],
         "values": {"light-1": -61.5, "light-2": -55.0, "light-3": None},
         "selected": ["light-2", "light-1"], "similar": False, "children": [first, second],
+        "counts": {}, "boundary_probability": None,
     }
 
     # 판정을 저장하지 않은 하위 요청은 decision 이 None 이다. 오류 판정은 행의 node_id 를 비워 저장하지만
@@ -165,6 +167,59 @@ def test_FR22_selector_record_round_trip(conn, repo):
     # 판정이 없는 행은 판정 기록 열에 거리 선택자가 남아 있어도 None 이다.
     conn.execute("UPDATE request SET verdict = NULL WHERE internal_request_id = ?", (parent,))
     assert repo.selector_children(parent) is None
+
+
+def test_FR22_selector_record_has_boundary_probability(conn, repo):
+    _seed(conn)
+    counts = {"light-2": 4, "light-1": 3, "light-3": 0}
+    values = {"light-1": -61.5, "light-2": -55.0, "light-3": None}
+    order = ("light-2", "light-1", "light-3")
+
+    # 하위 요청을 만든 요청: 프레임 수와 가장 낮은 경계 확률을 저장하고 다시 읽으면 같다.
+    req = _request()
+    parent = repo.link_request(req, "digest-sel").internal_request_id
+    first = repo.link_selector_child(parent, req, "light-2", "digest-sel")
+    second = repo.link_selector_child(parent, req, "light-1", "digest-sel")
+    _save(repo, Decision(first, "r-sel", Verdict.OK, ReasonCode.OK, "light-2"))
+    _save(repo, Decision(second, "r-sel", Verdict.OK, ReasonCode.OK, "light-1"))
+    record = SelectorRecord(SELECTOR, order, values, ("light-2", "light-1"), False, (first, second), counts, 0.9137)
+    _save(repo, Decision(parent, "r-sel", Verdict.OK, ReasonCode.OK), record)
+
+    stored = repo.selector_children(parent).record
+    assert stored == record
+    assert (stored.counts, stored.boundary_probability) == (counts, 0.9137)
+    selector = json.loads(_decision_context(conn, parent))["selector"]
+    assert (selector["counts"], selector["boundary_probability"]) == (counts, 0.9137)
+
+    # ORDER_UNCERTAIN 으로 끝난 요청: 하위 요청이 없어도 고른 기기와 경계 확률이 남는다 (spec 결정 27).
+    req_b = _request(request_id="r-sel-b")
+    parent_b = repo.link_request(req_b, "digest-b").internal_request_id
+    uncertain = SelectorRecord(SELECTOR, order, values, ("light-2", "light-1"), True, (), counts, 0.62)
+    _save(repo, Decision(parent_b, "r-sel-b", Verdict.ASK, ReasonCode.ORDER_UNCERTAIN), uncertain)
+    stored_b = repo.selector_children(parent_b)
+    assert (stored_b.record, stored_b.children) == (uncertain, ())
+    assert stored_b.record.boundary_probability == 0.62
+
+    # 두 키가 없는 옛 JSON 기록은 {} 와 None 으로 읽는다.
+    req_c = _request(request_id="r-sel-c")
+    parent_c = repo.link_request(req_c, "digest-c").internal_request_id
+    _save(repo, Decision(parent_c, "r-sel-c", Verdict.OK, ReasonCode.OK))
+    old_context = {
+        "posteriors": {}, "window_start": None, "window_end": None, "message": None,
+        "selector": {
+            "target_spec": SELECTOR, "order": ["light-1", "light-2"], "values": {"light-1": -60.0, "light-2": None},
+            "selected": ["light-1"], "similar": False, "children": [],
+        },
+    }
+    conn.execute(
+        "UPDATE request SET decision_context = ? WHERE internal_request_id = ?",
+        (json.dumps(old_context, ensure_ascii=False), parent_c),
+    )
+    old = repo.selector_children(parent_c)
+    assert old.record == SelectorRecord(SELECTOR, ("light-1", "light-2"), {"light-1": -60.0, "light-2": None},
+                                        ("light-1",), False)
+    assert (old.record.counts, old.record.boundary_probability) == ({}, None)
+    assert old.children == ()
 
 
 def test_FR22_selector_child_restore_uses_parent_request_id(conn, repo, store):

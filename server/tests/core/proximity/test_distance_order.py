@@ -149,6 +149,32 @@ def test_FR16_distance_order_non_finite_rssi_is_missing(estimator, bad_rssi):
     assert result.values == {"light-1": -60.0, "light-2": None}
 
 
+def test_FR16_distance_order_counts_frames(estimator):
+    # light-1 은 평균(-62)에 쓴 프레임이 셋이다. 구간 밖, 다른 비콘, 유한하지 않은 RSSI 프레임은 세지 않는다.
+    feed(
+        estimator, "light-1",
+        (at(-4), -40.0),  # 받은 시각이 구간 시작(at(-3))보다 이르다. 버퍼에는 남아 있다.
+        (at(-2), -60.0),
+        (at(-1.5), math.nan),  # 유한하지 않은 RSSI 는 결측이다
+        (at(-1), -64.0),
+        (at(-0.5), -62.0),
+    )
+    feed(estimator, "light-1", (at(-1), -20.0), beacon=OTHER_BEACON)  # 다른 비콘이다
+    feed(estimator, "light-3", (at(-2), -70.0), (at(-1), -70.0))  # 프레임 수가 light-1 과 다르다
+    for node_id in ("light-1", "light-2", "light-3"):
+        report(estimator, node_id, at(-1))  # light-2 는 프레임 없이 보고만 했다
+
+    result = order(estimator, ["light-1", "light-2", "light-3"])
+
+    assert result.nodes == ("light-1", "light-3", "light-2")
+    assert result.values == {"light-1": -62.0, "light-3": -70.0, "light-2": None}
+    assert result.counts == {"light-1": 3, "light-3": 2, "light-2": 0}  # 비콘을 보지 못한 기기는 0이다
+
+    # 근접 참여 기기가 없으면 프레임 수도 없다
+    assert estimator.distance_order(BEACON, [], AT).counts == {}
+    assert order(estimator, ["light-4"]).counts == {}  # 후보는 있지만 보고가 없다
+
+
 # ── 근접 참여 기기 ────────────────────────────────────────────────────
 
 

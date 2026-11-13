@@ -204,7 +204,9 @@ class HmmProximityEstimator:
         # 값이 큰(가까운) 기기부터, 같으면 기기 ID 순서다. 비콘을 보지 못한 기기는 끝에 기기 ID 순서로 둔다.
         heard = sorted(means, key=lambda node_id: (-means[node_id], node_id))
         unheard = sorted(participants - means.keys())
-        return DistanceOrder(nodes=(*heard, *unheard), values={**means, **dict.fromkeys(unheard)})
+        # 프레임 수는 평균을 낸 리스트의 길이다. 정렬 값과 같은 프레임을 센다. 비콘을 보지 못한 기기는 0이다 (경계 확률의 N, #278).
+        counts = {**{node_id: len(values) for node_id, values in rssis.items()}, **dict.fromkeys(unheard, 0)}
+        return DistanceOrder(nodes=(*heard, *unheard), values={**means, **dict.fromkeys(unheard)}, counts=counts)
 
     # ── 자동 영점 (잠금 안에서 부른다) ──────────────────────────────
 

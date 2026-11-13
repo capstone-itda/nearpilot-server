@@ -220,14 +220,23 @@ class FakeRepo:
         return ReserveResult(outcome, use_id=use_id)
 
 
+HEARD_FRAMES = 30  # `counts` 를 주지 않았을 때 정렬 값이 있는 기기의 프레임 수 (경계 확률의 N, #278)
+
+
 class FakeProximity:
-    """`values` 에 있는 후보만 근접 참여 기기다. 정렬 값이 None 이면 비콘을 못 본 기기다."""
+    """`values` 에 있는 후보만 근접 참여 기기다. 정렬 값이 None 이면 비콘을 못 본 기기다.
+
+    `counts` 는 기기별 프레임 수다. 주지 않으면(None) 정렬 값이 있는 기기는 `HEARD_FRAMES`, None 인 기기는 0 이다.
+    주면 근접 참여 기기의 값만 거리 순서에 그대로 넘긴다. 빈 사전이면 프레임 수가 없는 거리 순서가 된다.
+    """
 
     def __init__(
-        self, values: dict[str, float | None], posteriors: dict[str, float] | None = None
+        self, values: dict[str, float | None], posteriors: dict[str, float] | None = None,
+        counts: dict[str, int] | None = None,
     ) -> None:
         self.values = values
         self.posteriors = {} if posteriors is None else posteriors
+        self.counts = counts
         self.order_calls: list[list[str]] = []  # distance_order 에 넘긴 후보
         self.posterior_calls: list[tuple[list[str], list[str]]] = []  # (후보, 장소의 전체 기기)
 
@@ -239,7 +248,11 @@ class FakeProximity:
                        key=lambda n: (-self.values[n], n))
         unheard = sorted(n for n in participants if self.values[n] is None)
         nodes = (*heard, *unheard)
-        return DistanceOrder(nodes=nodes, values={n: self.values[n] for n in nodes})
+        if self.counts is None:
+            counts = {n: 0 if self.values[n] is None else HEARD_FRAMES for n in nodes}
+        else:
+            counts = {n: self.counts[n] for n in nodes if n in self.counts}
+        return DistanceOrder(nodes=nodes, values={n: self.values[n] for n in nodes}, counts=counts)
 
     def posterior(self, beacons: Any, candidates: Any, at: datetime, *, place_nodes: Any) -> ProximityResult:
         self.posterior_calls.append(
@@ -378,14 +391,18 @@ class FakeReadiness:
 
 def build(
     nodes: list[NodeInfo], values: dict[str, float | None], posteriors: dict[str, float] | None = None,
-    policy: FakePolicy | None = None, settings: Settings | None = None,
+    policy: FakePolicy | None = None, settings: Settings | None = None, counts: dict[str, int] | None = None,
 ) -> tuple[DecisionPipeline, FakeRepo, FakeProximity, FakeStore, FakeAudit]:
+    """`settings` 를 주지 않으면 경계 확률 기준을 0.5 로 둔다. 거리 순서는 정렬돼 있어 경계의 D ≥ 0 이므로
+    경계 확률은 0.5 이상이다. 그래서 경계 확률이 목적이 아닌 시험은 경계 검사에 걸리지 않는다.
+    경계 확률을 시험하는 시험은 설정을 직접 넘긴다 (FR-09, #278).
+    """
     repo = FakeRepo(nodes)
-    prox = FakeProximity(values, posteriors)
+    prox = FakeProximity(values, posteriors, counts)
     store = FakeStore()
     audit = FakeAudit()
     ids = iter(range(100_000))
     pipeline = DecisionPipeline(
-        repo, prox, policy or FakePolicy(), audit, settings or Settings(version="t"), FakeReadiness(),
-        new_id=lambda: f"e{next(ids)}", store=store)
+        repo, prox, policy or FakePolicy(), audit, settings or Settings(version="t", order_boundary_min_prob=0.5),
+        FakeReadiness(), new_id=lambda: f"e{next(ids)}", store=store)
     return pipeline, repo, prox, store, audit

@@ -417,13 +417,17 @@ class DistanceOrder:
     """근접 참여 기기의 가까운 순서와 기기별 정렬 값 (FR-09, FR-16, #253).
 
     정렬 값은 최근 구간에서 그 비콘 RSSI 의 평균(dBm)이다. 비콘을 보지 못한 기기는 None 이고 순서의 끝에 있다.
+    `counts` 는 기기별로 최근 구간 안에서 그 비콘을 보고한 유한한 프레임 수다. 정렬 값과 같은 프레임을 센다 (경계 확률의 N).
+    기본값은 빈 사전이다. 비어 있지 않으면 거리 순서의 기기와 같고, 정렬 값이 없는 기기만 0이다 (FR-09, #278).
     """
 
     nodes: tuple[str, ...]
     values: Mapping[str, float | None]
+    counts: Mapping[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "values", _freeze(self.values))
+        object.__setattr__(self, "counts", _freeze(self.counts))
         if len(set(self.nodes)) != len(self.nodes):
             raise ValueError("거리 순서에 같은 기기가 두 번 있다")
         if set(self.values) != set(self.nodes):
@@ -433,6 +437,17 @@ class DistanceOrder:
                 continue
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
                 raise ValueError(f"정렬 값은 None 또는 유한한 수여야 한다: {node_id}={value!r}")
+        if not self.counts:
+            return
+        if set(self.counts) != set(self.nodes):
+            raise ValueError("프레임 수의 기기는 거리 순서의 기기와 같아야 한다")
+        for node_id, count in self.counts.items():
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                raise ValueError(f"프레임 수는 0 이상의 정수여야 한다: {node_id}={count!r}")
+            if (self.values[node_id] is None) != (count == 0):
+                raise ValueError(
+                    f"정렬 값이 없는 기기의 프레임 수는 0이고, 있는 기기는 1 이상이어야 한다: {node_id}={count}"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1030,14 +1045,27 @@ class SelectorRecord:
     similar: bool
     # 만든 하위 요청의 internal_request_id. selected 앞쪽부터 같은 순서. 호스트에 내보내지 않는다
     children: tuple[str, ...] = ()
+    # near: 요청이면 거리 순서의 기기별 프레임 수. far: 요청과 옛 기록은 비어 있다 (FR-22, #278)
+    counts: Mapping[str, int] = field(default_factory=dict)
+    # near: 요청의 가장 낮은 경계 확률. 경계가 없는 요청, far: 요청, 옛 기록은 None 이다 (FR-22, #278)
+    boundary_probability: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "values", _freeze(self.values))
+        object.__setattr__(self, "counts", _freeze(self.counts))
         remaining = iter(self.order)
         if not all(node_id in remaining for node_id in self.selected):
             raise ValueError("고른 기기는 거리 순서 안에 같은 순서로 있어야 한다")
         if len(self.children) > len(self.selected):
             raise ValueError("하위 요청 수는 고른 기기 수 이하여야 한다")
+        if self.counts and set(self.counts) != set(self.order):
+            raise ValueError("프레임 수의 기기는 거리 순서의 기기와 같아야 한다")
+        probability = self.boundary_probability
+        if probability is not None and (
+            isinstance(probability, bool) or not isinstance(probability, (int, float))
+            or not isfinite(probability) or not 0.0 <= probability <= 1.0
+        ):
+            raise ValueError(f"경계 확률은 None 또는 [0, 1] 범위의 유한한 수여야 한다: {probability!r}")
 
 
 @dataclass(frozen=True, slots=True)

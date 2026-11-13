@@ -7,10 +7,12 @@
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
+from statistics import NormalDist
 from typing import Any, Protocol
 
 from nearpilot.core.allocation import AllocationRequest
@@ -116,6 +118,50 @@ def _similar_pair(a: float | None, b: float | None, similar_db: float) -> bool:
     return abs(a - b) < similar_db
 
 
+def selector_edges(
+    order: Sequence[str], start: int, count: int | None
+) -> tuple[tuple[str, str], ...]:
+    """고른 범위의 경계 쌍. 각 쌍은 (거리 순서에서 앞선 기기, 뒤 기기)다. 앞쪽 경계가 먼저다 (FR-09, #278).
+
+    경계는 고른 범위의 끝 기기와 그 바로 바깥 기기다. 앞뒤 중 바깥 기기가 있는 쪽만 있다. count None 은 끝까지다.
+    고를 기기가 없으면 () 다.
+    """
+    first = start - 1
+    end = len(order) if count is None else min(first + count, len(order))
+    if first >= end:
+        return ()
+    edges = []
+    if first > 0:
+        edges.append((order[first - 1], order[first]))
+    if end < len(order):
+        edges.append((order[end - 1], order[end]))
+    return tuple(edges)
+
+
+def boundary_probability(
+    a_value: float | None, a_count: int, b_value: float | None, b_count: int,
+    frame_sigma_db: float, static_sigma_db: float,
+) -> float:
+    """앞선 기기 a 가 뒤 기기 b 보다 가까울 확률 Φ(D/s) (FR-09, #278).
+
+    D 는 a 의 정렬 값에서 b 의 정렬 값을 뺀 값이고 s² = σf²(1/Na + 1/Nb) + 2σs² 다.
+    σf 는 프레임 잡음, σs 는 평균으로 줄지 않는 기기별 고정 오차, N 은 그 기기의 프레임 수다.
+    b 만 비콘을 보지 못했으면 1, 둘 다 보지 못했으면 0.5 다.
+    a 만 보지 못했으면 ValueError 다 (정렬된 순서에서는 생기지 않는다).
+    비콘을 본 기기의 프레임 수가 1 미만이어도 ValueError 다.
+    """
+    if a_value is None:
+        if b_value is not None:
+            raise ValueError("앞선 기기만 비콘을 보지 못했다. 정렬된 거리 순서에서는 생기지 않는다")
+        return 0.5
+    if a_count < 1 or (b_value is not None and b_count < 1):
+        raise ValueError(f"비콘을 본 기기의 프레임 수는 1 이상이어야 한다: 앞선 기기 {a_count}, 뒤 기기 {b_count}")
+    if b_value is None:
+        return 1.0
+    spread = math.sqrt(frame_sigma_db ** 2 * (1 / a_count + 1 / b_count) + 2 * static_sigma_db ** 2)
+    return NormalDist().cdf((a_value - b_value) / spread)
+
+
 def selector_cut(
     order: Sequence[str], values: Mapping[str, float | None], start: int, count: int | None,
     similar_db: float,
@@ -123,18 +169,12 @@ def selector_cut(
     """요청 방향의 거리 순서에서 시작·개수로 고르고 경계의 "비슷함"을 정한다 (FR-09, #253).
 
     count None 은 끝까지다. 고를 기기가 없으면 ((), False) 다.
-    경계는 고른 범위의 바깥 쪽 이웃과 이은 쌍이다. 앞뒤 중 있는 쪽만 보고, 한 쌍이라도 비슷하면 참이다.
+    경계는 `selector_edges` 의 쌍이다. 앞뒤 중 있는 쪽만 보고, 한 쌍이라도 비슷하면 참이다.
     """
     first = start - 1
     end = len(order) if count is None else min(first + count, len(order))
     selected = tuple(order[first:end])
-    if not selected:
-        return (), False
-    edges = []
-    if first > 0:
-        edges.append((order[first - 1], order[first]))
-    if end < len(order):
-        edges.append((order[end - 1], order[end]))
+    edges = selector_edges(order, start, count)
     return selected, any(_similar_pair(values[a], values[b], similar_db) for a, b in edges)
 
 
@@ -194,6 +234,8 @@ class _Pick:
     values: Mapping[str, float | None]
     selected: tuple[str, ...]
     similar: bool
+    counts: Mapping[str, int]  # near 는 거리 순서의 기기별 프레임 수. far 는 비어 있다
+    boundary_probability: float | None  # near 의 가장 낮은 경계 확률. 경계가 없는 요청과 far 는 None 이다 (#278)
 
 
 @dataclass
@@ -354,6 +396,11 @@ class DecisionPipeline:
                 if not pick.selected:  # 고를 기기가 없다. 거리 순서는 기록에 남긴다
                     raise _Stop(Step.PROXIMITY, self._decision(
                         req, iid, Verdict.DENY, ReasonCode.NO_CANDIDATE))
+                lowest = pick.boundary_probability
+                if lowest is not None and lowest < self._settings.order_boundary_min_prob:
+                    # 경계의 순서가 애매하다. 하위 요청을 만들기 전이라 취소할 예약이 없다 (spec 결정 25)
+                    raise _Stop(Step.PROXIMITY, self._decision(
+                        req, iid, Verdict.ASK, ReasonCode.ORDER_UNCERTAIN))
                 failed = self._judge_children(req, iid, digest, pick, run)
                 if failed is None:
                     parent = self._decision(req, iid, Verdict.OK, ReasonCode.OK)
@@ -374,15 +421,16 @@ class DecisionPipeline:
         except _Stop as stop:
             parent, step = stop.decision, stop.step
 
-        parent = self._selector_view(
-            parent, devices, 0 if pick is None else len(pick.selected),
-            False if pick is None else pick.similar)
+        # ORDER_UNCERTAIN 은 하위 요청 없이 끝나므로 고른 개수가 0이다. 재전송도 같다 (spec 결정 27, 30)
+        selected_count = 0 if pick is None or parent.reason is ReasonCode.ORDER_UNCERTAIN else len(pick.selected)
+        parent = self._selector_view(parent, devices, selected_count, False if pick is None else pick.similar)
         children = tuple(c.iid for c in run.children)
         self._audit_step(step, iid, {
             "verdict": parent.verdict.value, "reason": parent.reason.value,
             "settings_version": self._settings.version, "children": len(children), **detail})
         record = None if pick is None else SelectorRecord(
-            req.target.serialize(), pick.order, pick.values, pick.selected, pick.similar, children)
+            req.target.serialize(), pick.order, pick.values, pick.selected, pick.similar, children,
+            counts=pick.counts, boundary_probability=pick.boundary_probability)
         saved = self._repo.save_decision(parent, replace(self._record(run.applied), selector=record))
         if saved.outcome is StoreOutcome.CONFLICT:
             run.parent_conflict = True
@@ -392,6 +440,8 @@ class DecisionPipeline:
     def _pick(self, req: UseRequest, iid: str) -> _Pick:
         """① 비콘, ② 후보, 거리 순서에서 시작·개수로 고르기. 비콘이나 후보가 없으면 멈춘다 (FR-09).
 
+        near 요청이면 경계마다 경계 확률을 계산해 가장 낮은 값을 담는다. 기준과의 비교는 부른 쪽이 한다 (#278).
+        경계의 비콘을 본 기기에 프레임 수가 없으면 ValueError 다. 따로 잡지 않고 내부 오류로 거부한다.
         임계값은 여기서 검사하지 않는다. 하위 요청이 점유 방식별로 검사한다 (FR-17).
         """
         s = self._settings
@@ -405,16 +455,31 @@ class DecisionPipeline:
         if not candidates:
             raise _Stop(Step.CANDIDATE, self._decision(req, iid, Verdict.DENY, ReasonCode.NO_CANDIDATE))
         order = self._proximity.distance_order(beacons[0], candidates, now)
+        near = req.target.kind is TargetKind.NEAR
         # far 는 near 순서를 뒤집은 것이다 (spec 결정 6)
-        direction = order.nodes if req.target.kind is TargetKind.NEAR else tuple(reversed(order.nodes))
+        direction = order.nodes if near else tuple(reversed(order.nodes))
         selected, similar = selector_cut(
             direction, order.values, req.target.start, req.target.count, s.order_similar_db)
-        self._audit_step(Step.PROXIMITY, iid, {
+        detail: dict[str, Any] = {
             "selector": req.target.serialize(), "order": list(direction), "values": dict(order.values),
             "selected": list(selected), "similar": similar,
-            "anchor_recent_sec": s.anchor_recent_sec, "order_similar_db": s.order_similar_db})
+            "anchor_recent_sec": s.anchor_recent_sec, "order_similar_db": s.order_similar_db}
+        counts: Mapping[str, int] = {}
+        lowest: float | None = None
+        if near:  # far 는 경계 확률을 계산하지 않는다 (spec 결정 31)
+            counts = order.counts
+            lowest = min(
+                (boundary_probability(order.values[a], counts.get(a, 0), order.values[b], counts.get(b, 0),
+                                      s.order_frame_sigma_db, s.order_static_sigma_db)
+                 for a, b in selector_edges(order.nodes, req.target.start, req.target.count)),
+                default=None)
+            detail.update(
+                counts=dict(counts), boundary_probability=lowest,
+                order_frame_sigma_db=s.order_frame_sigma_db, order_static_sigma_db=s.order_static_sigma_db,
+                order_boundary_min_prob=s.order_boundary_min_prob)
+        self._audit_step(Step.PROXIMITY, iid, detail)
         return _Pick(beacons, candidates, [n for n in all_nodes if n.place_id == place_id],
-                     direction, order.values, selected, similar)
+                     direction, order.values, selected, similar, counts, lowest)
 
     def _judge_children(
         self, req: UseRequest, iid: str, digest: str, pick: _Pick, run: _SelectorRun
@@ -540,6 +605,8 @@ class DecisionPipeline:
                 raise ValueError("OK 판정에 거리 선택자 기록이 없다")
             return SelectorDecision(self._selector_view(previous))
         record = found.record
+        if previous.reason is ReasonCode.ORDER_UNCERTAIN:  # 하위 요청 없이 끝났다. 처음 응답처럼 고른 개수는 0이다 (spec 결정 30)
+            return SelectorDecision(self._selector_view(previous, (), 0, record.similar))
         stored = [(c, c.decision) for c in found.children if c.decision is not None]
         if previous.verdict is Verdict.OK:
             if len(stored) != len(record.selected) or any(d.verdict is not Verdict.OK for _, d in stored):

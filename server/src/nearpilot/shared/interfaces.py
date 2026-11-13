@@ -608,6 +608,7 @@ class ProximityEstimator(Protocol):
         근접 참여 기기는 at - anchor_recent_sec 이후에 rssi 보고(빈 보고 포함)를 보낸 TRUSTED 후보다.
         정렬 값은 [at - anchor_recent_sec, at] 안에 서버가 받은 그 비콘 RSSI 의 평균이다. 프레임이 없으면 None 이다.
         정렬 값이 큰(가까운) 기기부터, 같으면 기기 ID 순서다. None 인 기기는 끝에 기기 ID 순서로 둔다.
+        counts 는 기기별로 정렬 값에 쓴 프레임 수다. None 인 기기는 0이고, 근접 참여 기기가 없으면 빈 사전이다 (#278).
         순서를 자르지 않는다. 근접 모델 파일을 쓰지 않는다.
         """
         ...

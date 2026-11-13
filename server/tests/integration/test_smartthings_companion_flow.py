@@ -32,6 +32,7 @@ from nearpilot.shared.models import BeaconKey, DistanceOrder, NodeInfo, RssiRepo
 DISPLAY = "display-1"
 DEVICE_ID = "st-device-secret-0001"
 TOKEN = "st-token-secret"
+HEARD_FRAMES = 30  # 거리 순서에 선 기기의 프레임 수 (경계 확률의 N, #278)
 # 펌웨어 DISPLAY_SMARTTHINGS_DESCRIPTOR 와 같다 (tests/tools/test_firmware_descriptors.py 가 대조한다)
 DESCRIPTOR = parse_descriptor({
     "format": "nearpilot.device/1", "kind": "display", "occupancy": "shared",
@@ -88,7 +89,7 @@ class ReportedProximity(FakeProximity):
 
     def distance_order(self, beacon: BeaconKey, candidates: Sequence[NodeInfo], at: datetime) -> DistanceOrder:
         order = tuple(sorted({n.node_id for n in candidates} & self.reported()))
-        return DistanceOrder(nodes=order, values={n: -50.0 for n in order})
+        return DistanceOrder(nodes=order, values={n: -50.0 for n in order}, counts={n: HEARD_FRAMES for n in order})
 
 
 def seed_display(db_path) -> None:
