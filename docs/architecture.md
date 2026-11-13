@@ -916,6 +916,7 @@ IOT는 검증한 관측과 결과를 `shared`의 명시적인 필드로 CORE에 
 | 근접 추정의 `tools/data_collection` | 비콘, 라벨, 시작·끝 시각을 담은 수집 회차를 기록한다. 브로커를 별도로 구독하지 않는다. |
 | DB | 회차 중복과 구간 겹침을 검사한다. 관측을 한 회차에 연결하고 별도로 보존한다. |
 | DB의 `tools/evaluation` | 수집 회차 ID 단위로 학습·검증·시험 분할과 평가를 수행한다. |
+| 팀 | 실측 수집에서 기기 위치와 서는 위치의 좌표를 좌표표에 기록한다. `tools/evaluation`이 좌표표로 거리 순서 지표(지표 10)를 잰다. 서버는 좌표를 받지 않는다 ([#279](https://github.com/capstone-itda/nearpilot-server/issues/279)). |
 
 - 회차는 `collection_id`, `beacon_id`, `label`, `started_at`, `ended_at`을 담는다.
 - 라벨은 기기 1~7 앞 또는 `none`이다. "앞"의 거리 기준은 근접 추정 구현 담당이 spec에서 정한다.
