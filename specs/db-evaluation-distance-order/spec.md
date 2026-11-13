@@ -45,17 +45,18 @@
 ### 고치는 곳
 
 - `server/tools/evaluation/` — 좌표표·기록 파일 읽기, 거리 순서 평가, σ 추정, 보고서 행
-- `server/src/nearpilot/cli/` — `evaluate-order` 명령 등록 (`evaluate.py`)
+- `server/src/nearpilot/cli/` — `evaluate-order` 명령 등록 (`evaluate.py`), 기본 폴더에 `layouts` 추가 (`common.py`)
 - `server/src/nearpilot/core/proximity/files.py` — 적합 설정 `[acceptance]`의 `max_boundary_error` 읽기
 - `server/config/fit/example.toml` — `max_boundary_error` 예시 값
 - `server/config/layouts/` — 좌표표 예시 (새 폴더)
 - `server/config/README.md` — 좌표표와 `evaluate-order` 사용법
-- `server/tests/tools/`, `server/tests/cli/`
+- `server/tests/tools/`, `server/tests/cli/`, 적합 설정 TOML을 직접 쓴 시험 (`server/tests/core/proximity/`, `server/tests/integration/`) — 새 필수 키 한 줄
+- `specs/core-ops-cli/spec.md` — `[acceptance]`의 새 키를 적는 한 문장 (담당자가 2026-11-13에 이 PR에서 고치기로 정했다)
 
 ### 고치지 않는 곳
 
 - 항상: `docs/`, `AGENTS.md` (Gotchas 절은 제외), `server/src/nearpilot/shared/`, `server/pyproject.toml`, `.github/`
-- 이 작업: `server/src/nearpilot/`의 `cli/` 밖, `server/tools/data_collection/`, DB 스키마
+- 이 작업: `server/src/nearpilot/`의 `cli/`와 `core/proximity/files.py` 밖, `server/tools/data_collection/`, DB 스키마
 
 ### 다른 영역과 닿는 곳
 
@@ -84,9 +85,13 @@
 | 학습 회차에 1 m 이상 차이 나는 기기 쌍이 없어 σs를 추정할 수 없다 | `평가 실패: …`와 종료 코드 1 | `test_FR09_estimate_static_sigma_needs_pairs` |
 | σs 추정값이 탐색 범위의 끝이다 (모든 쌍을 맞혔거나 거의 다 틀렸다) | 계산은 하고, 보고서 note에 "탐색 범위 끝"을 쓴다 | `test_FR09_estimate_static_sigma_edge_noted` |
 | 시험 회차에 평가 시점이 없다 | `평가 실패: …`와 종료 코드 1 | `test_FR09_evaluate_order_without_test_samples_fails` |
+| 학습 회차로 σf를 구할 수 없거나(구간·기기마다 프레임이 2개 이상인 곳이 없다) σf가 0이다 | `평가 실패: …`와 종료 코드 1 | `test_FR09_evaluate_order_fails_when_frame_sigma_is_zero` |
+| 분할의 회차를 DB에서 읽을 수 없다 | 종료 코드 1 (`evaluate-reask`와 같다) | `test_FR09_evaluate_order_unreadable_runs_fail` |
+| `--records`를 생략했는데 `var/records/`에 `*.jsonl`이 없다 | `기록 파일이 없다: …`와 종료 코드 2 | `test_FR09_evaluate_order_input_errors` |
 | 적합 설정에 `max_boundary_error`가 없거나 0~1 밖이다 | `적합 설정 파일 오류: …`와 종료 코드 2 | `test_FR09_fit_file_reads_max_boundary_error` |
 | 검증 회차에서 목표 오류 비율 이하인 후보가 없다 | 기준 확률은 "고르지 못함", 시험 행은 비우고 note에 이유를 쓴다. 종료 코드 0 | `test_FR09_choose_threshold_none_satisfies` |
-| matplotlib이 없다 | 기존 그래프처럼 경고만 하고 그래프를 건너뛴다 | `test_FR09_order_plot_skipped_without_matplotlib` |
+| matplotlib이 없다 | 기존 그래프처럼 경고만 하고 그래프를 건너뛴다. 보고서와 원자료는 쓴다 | `test_FR09_order_plot_skipped_without_matplotlib` |
+| 그래프를 그리다 예외가 난다 | stderr에 경고하고 종료 코드 0. 보고서는 이미 썼다 | `test_FR09_evaluate_order_plot_failure_is_only_a_warning` |
 | 보고서가 이미 있다 | `--force` 없이는 종료 코드 2 | `test_FR09_evaluate_order_refuses_existing_report` |
 | 두 기기 모두 비콘을 보지 못한 쌍 | 순서가 없으므로 지표와 추정에서 뺀다 | `test_FR09_order_pairs_skip_both_unheard` |
 | 한 기기만 비콘을 보지 못한 쌍 | 지표에는 센다(못 본 기기가 뒤). 경계 확률은 1이라 σs 추정에서는 뺀다 | `test_FR09_order_pairs_one_unheard` |
@@ -101,16 +106,18 @@
 6. 평가 시점은 회차 시작부터 `anchor_recent_sec`가 지난 뒤 `rssi_frame_sec`마다다. 시점마다 서버처럼 최근 구간 평균으로 거리 순서를 세운다.
 7. 근접 참여 기기는 장소의 앵커(`place_anchors`)로 근사한다 — 평가에는 rssi 보고 시각이 없다. 공통 모델 평가와 같은 근사다.
 8. 좌표표는 TOML `server/config/layouts/<이름>.toml`이다. 최상위 `place_id`, 표 `[nodes]`(기기 ID → `[x, y]`), `[spots]`(spot → `[x, y]`). 단위는 m. 모르는 키는 거부한다. 담당자가 2026-11-13에 정했다.
-9. spot은 회차 기록 파일에서 읽는다 — DB의 수집 회차에는 spot이 없고, 수집 도구와 DB를 고치지 않는다. `--records`를 생략하면 `var/records/*.jsonl`을 모두 읽는다.
+9. spot은 회차 기록 파일에서 읽는다 — DB의 수집 회차에는 spot이 없고, 수집 도구와 DB를 고치지 않는다. `--records`를 생략하면 `var/records/*.jsonl`을 모두(이름 순) 읽는다. `--records`·`--layout`을 이름으로 주면 각각 `var/records/`, `config/layouts/`에서 찾고, `/`나 `\`가 있으면 실행 폴더 기준 경로다 (`--split`과 같은 규칙). 기록 파일의 `collection_id`·`spot`은 비어 있지 않은 문자열이어야 한다.
 10. 정답 순서는 서는 위치와 기기 좌표의 유클리드 거리다. 거리 차이가 1 m 미만인 쌍은 지표와 σs 추정에서 모두 뺀다.
 11. 경계 확률 표는 시점마다 관측 순서에서 이웃한 쌍(거리 선택자의 경계가 될 수 있는 쌍)으로 센다. "틀림"은 앞선 기기가 실제로 더 먼 경우다.
 12. σs 탐색은 0 dB부터 15 dB까지 0.05 dB 간격의 격자다 — 결과가 결정적이다. 탐색 범위는 측정 방법의 일부라 설정으로 두지 않는다.
-13. 명령 형식은 `nearpilot evaluate-order --split FILE --layout NAME [--fit FILE] [--records PATH ...] [--out NAME] [--force]`다. `--fit`을 생략하면 `split`·`eval`처럼 `<장소>.toml`을 읽는다. 입력 오류와 이미 있는 보고서는 종료 코드 2, 계산 실패는 1이다 (`evaluate-reask`와 같다).
+13. 명령 형식은 `nearpilot evaluate-order --split FILE --layout NAME [--fit FILE] [--records PATH ...] [--out NAME] [--force]`다. `--fit`을 생략하면 `split`·`eval`처럼 `<장소>.toml`을 읽는다. 입력 오류와 이미 있는 보고서는 종료 코드 2, 계산 실패와 DB에서 회차를 읽지 못한 경우는 1이다 (`evaluate-reask`와 같다). σf가 0이면 경계 확률을 계산할 수 없어 계산 실패다.
 14. 보고서 행의 `metric` 이름: `m10_frame_sigma_db`, `m10_static_sigma_db`, `m10_pair_order_agreement`, `m10_boundary_min_prob`(고른 기준 확률), `m10_boundary_pass_rate`, `m10_boundary_error_rate`(시험 회차). `m10_boundary_error_rate`만 `max_boundary_error`와 비교해 통과 칸을 쓴다. 나머지는 비운다 — 순서 일치율의 기준은 미결이다 (#279).
 15. 목표 오류 비율은 적합 설정 `[acceptance] max_boundary_error`(0 이상 1 이하)다 — 평가의 통과 기준을 한 파일에 둔다. 적합 설정 로더는 선택 키를 두지 않으므로 필수 키다. 담당자가 2026-11-13에 정했다.
 16. 그래프는 `{이름}-order.png` 한 장이다. 가로축은 기준 확률 후보, 세로축은 비율이고, 검증·시험의 통과 비율과 오류 비율 네 곡선, 목표선, 고른 값을 그린다. 기존 그래프처럼 matplotlib이 없으면 건너뛰고, 제목과 축 이름은 영어다. 담당자가 2026-11-13에 정했다.
 17. 원자료 JSON은 후보마다 검증·시험의 통과 비율과 오류 비율, 경계 수를 모두 담는다.
 18. 모듈은 `tools/evaluation/layout.py`(좌표표·기록 파일 읽기), `tools/evaluation/order.py`(시점별 순서, 쌍 채점, σ 추정, 기준 확률 고르기, 보고서 행)이고, 그래프는 `plots.py`의 `write_order_plot`이다. 거리 순서의 창과 σf의 구간은 서버처럼 서버 수신 시각(`received_at`) 기준이다.
+19. 좌표표 기본 폴더는 CLI 기본 폴더(`Dirs`)의 `layouts`(`config/layouts/`)다. #269가 넣은 "공통 모델은 배치 파일을 받지 않는다" 단언은 이 폴더가 평가 전용 좌표표가 되면서 폴더 위치 단언으로 바꿨다. 서버와 공통 모델은 여전히 좌표를 읽지 않는다.
+20. 검증·시험 두 표가 모두 비어 그릴 것이 없으면 그래프를 경고 없이 건너뛴다 (기존 `write_plots`와 같다). 보고서 CSV의 `sample_count`는 시험 회차의 평가 시점 수다.
 
 ## 7. 가정
 
@@ -147,5 +154,8 @@
 | FR-09 | `test_FR09_evaluate_order_rejects_place_mismatch` | 장소가 다르면 종료 코드 2 |
 | FR-09 | `test_FR09_evaluate_order_without_test_samples_fails` | 시험 시점이 없으면 종료 코드 1 |
 | FR-09 | `test_FR09_evaluate_order_refuses_existing_report` | 이미 있는 보고서는 `--force` 없이 거부 |
-| FR-09 | `test_FR09_evaluate_order_input_errors` | 기록 파일에 없는 회차, 좌표표에 없는 이름은 명령에서 종료 코드 2 |
+| FR-09 | `test_FR09_evaluate_order_input_errors` | 기록 파일에 없는 회차, 좌표표에 없는 이름, 기록 파일 없음은 명령에서 종료 코드 2 |
+| FR-09 | `test_FR09_evaluate_order_fails_when_frame_sigma_is_zero` | σf가 0이면 종료 코드 1 |
+| FR-09 | `test_FR09_evaluate_order_unreadable_runs_fail` | DB에서 회차를 읽지 못하면 종료 코드 1 |
+| FR-09 | `test_FR09_evaluate_order_plot_failure_is_only_a_warning` | 그래프 예외는 경고만 하고 종료 코드 0 |
 | FR-09 | `test_FR09_layout_example_is_valid` | `config/layouts/` 예시가 읽힌다 |
