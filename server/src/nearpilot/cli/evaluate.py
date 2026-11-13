@@ -437,14 +437,17 @@ def _evaluate_order(args: argparse.Namespace) -> int:
     train = runs[:len(split.train)]
     validation = runs[len(split.train):len(split.train) + len(split.validation)]
     test = runs[len(split.train) + len(split.validation):]
-    anchors = place_anchors(PlaceRuns(place, tuple(train)), PlaceRuns(place, tuple(validation)), PlaceRuns(place, tuple(test)))
+    # 참여 기기는 정하는 데 쓰는 학습+검증 회차와 시험 회차에서 따로 모은다 (`fit`, `eval`과 같다). 시험 회차에만 나온 기기가
+    # 학습·검증 시점에 "못 본 기기"로 끼면 고르는 값이 시험 회차에 따라 바뀐다
+    fit_anchors = place_anchors(PlaceRuns(place, tuple(train)), PlaceRuns(place, tuple(validation)))
+    test_anchors = place_anchors(PlaceRuns(place, tuple(test)))
     try:
-        check_layout_covers(layout, spots.values(), anchors)
+        check_layout_covers(layout, spots.values(), fit_anchors | test_anchors)
     except LayoutError as error:
         raise CliError(f"좌표표 오류: {error}", EXIT_INVALID) from None
     try:
         measured = _measure_order(
-            train, validation, test, spots, layout, anchors, max_error,
+            train, validation, test, spots, layout, fit_anchors, test_anchors, max_error,
             window_sec=config.settings.anchor_recent_sec, step_sec=config.settings.rssi_frame_sec)
     except EvaluationError as error:
         raise CliError(f"평가 실패: {error}", EXIT_FAILED) from None
@@ -495,28 +498,30 @@ def _record_paths(arguments: Sequence[str] | None, default_dir: Path) -> list[Pa
 
 def _measure_order(
     train: Sequence[LabeledRun], validation: Sequence[LabeledRun], test: Sequence[LabeledRun],
-    spots: Mapping[str, str], layout: Layout, anchors: Collection[str], max_error: float, *,
+    spots: Mapping[str, str], layout: Layout, fit_anchors: Collection[str], test_anchors: Collection[str],
+    max_error: float, *,
     window_sec: float, step_sec: float,
 ) -> _OrderMeasured:
     """학습 회차로 σf와 σs를 추정하고, 검증 회차로 기준 확률을 고르고, 시험 회차로 잰다. 계산이 안 되면 `EvaluationError`다.
 
     σs는 모든 쌍(`adjacent_only=False`)으로 추정하고, 경계 표는 이웃한 쌍으로 센다. 순서 일치율은 시험 회차의 모든 쌍으로 잰다.
     시험 회차는 값을 고르는 데 쓰지 않는다. 시험 회차의 경계 표는 고른 값의 행과 그래프를 위해 모든 후보로 센다.
+    참여 기기는 학습·검증 회차에 `fit_anchors`(학습+검증 회차의 기기), 시험 회차에 `test_anchors`(시험 회차의 기기)를 쓴다.
     """
 
-    def points(runs: Sequence[LabeledRun]) -> list[OrderPoint]:
+    def points(runs: Sequence[LabeledRun], anchors: Collection[str]) -> list[OrderPoint]:
         return [point for run in runs
                 for point in order_points(run, spots[run.run_id], anchors, window_sec=window_sec, step_sec=step_sec)]
 
     def pairs(at: Sequence[OrderPoint], *, adjacent_only: bool) -> list[ScoredPair]:
         return [pair for point in at for pair in scored_pairs(point, layout, adjacent_only=adjacent_only)]
 
-    frame_sigma = estimate_frame_sigma(train, anchors, window_sec=window_sec)
-    static_fit = estimate_static_sigma(pairs(points(train), adjacent_only=False), frame_sigma)
-    validation_table = boundary_table(pairs(points(validation), adjacent_only=True), frame_sigma, static_fit.sigma_db)
+    frame_sigma = estimate_frame_sigma(train, fit_anchors, window_sec=window_sec)
+    static_fit = estimate_static_sigma(pairs(points(train, fit_anchors), adjacent_only=False), frame_sigma)
+    validation_table = boundary_table(pairs(points(validation, fit_anchors), adjacent_only=True), frame_sigma, static_fit.sigma_db)
     chosen = choose_threshold(validation_table, max_error)
 
-    test_points = points(test)
+    test_points = points(test, test_anchors)
     if not test_points:
         raise EvaluationError(
             f"시험 회차에 평가 시점이 없다: 시험 회차가 없거나 회차 구간이 {window_sec:g}초(anchor_recent_sec)보다 짧다")

@@ -570,6 +570,12 @@ def test_FR09_order_rows():
         test_stat=BoundaryStat(0.9, 200, 100, 10, 0.5, 0.1), max_error=0.05,
     )
     assert worse[-1] == metric_row("m10_boundary_error_rate", value=0.1, limit=0.05, passed=False, trials=100, failures=10)
+    # 시험의 오류 비율이 목표와 같으면 통과다 (기준 확률을 고를 때와 같은 "목표 이하", spec 6절 결정 4)
+    equal = order_rows(
+        frame_sigma_db=4.1, static_fit=fit, agreement=(90, 100), chosen=0.9,
+        test_stat=BoundaryStat(0.9, 200, 100, 5, 0.5, 0.05), max_error=0.05,
+    )
+    assert equal[-1] == metric_row("m10_boundary_error_rate", value=0.05, limit=0.05, passed=True, trials=100, failures=5)
 
 
 def test_FR09_order_rows_chosen_none_and_edge_notes():

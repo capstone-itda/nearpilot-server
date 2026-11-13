@@ -235,7 +235,7 @@ nearpilot evaluate-order --split place-a-seed42.json --layout place-a.toml --rec
 - 평가 시점은 회차 시작 `anchor_recent_sec` 뒤부터 `rssi_frame_sec`마다다. 두 값은 서버 설정(`--config`)의 `[settings]`에서 읽는다.
 
 **목표 오류 비율**은 적합 설정의 `[acceptance] max_boundary_error`(0 이상 1 이하)다. 기준 확률을 고를 때와 시험 회차의 통과 여부를 가릴 때 같은 값을 쓴다.
-예시 `config/fit/example.toml`의 초기값은 0.05이고, 수치는 미결이다 (#279). 필수 키라서 없는 적합 설정 파일은 거부된다 (`split`, `fit`, `eval`도 같다). 쓰던 파일에는 이 키를 더한다.
+예시 `config/fit/example.toml`의 초기값은 0.05이고, 수치는 미결이다 (#279). 필수 키라서 없는 적합 설정 파일은 거부된다 (`split`, `fit`, `eval`, `collect list --summary`도 같다). 쓰던 파일에는 이 키를 더한다.
 
 **보고서** (`var/reports/<이름>.csv`, `.md`, `-raw.json`, `-order.png`)
 

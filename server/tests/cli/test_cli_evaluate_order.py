@@ -658,6 +658,23 @@ def test_FR09_evaluate_order_checks_devices_of_every_group(server_dir, run_cli, 
     assert not (server_dir / "var" / "reports").exists()
 
 
+def test_FR09_evaluate_order_test_only_device_does_not_change_choice(server_dir, run_cli, make_collection_db):
+    # 시험 회차 e2에만 나온 기기 locker-4는 학습·검증 회차의 참여 기기가 아니다 (spec 6절 결정 3, 7).
+    # locker-4는 검증 회차의 서는 위치 "locker-1 앞"에서 0.5 m라서, 검증 시점에 "못 본 기기"로 끼면 틀린 경계(확률 1)가 생겨
+    # 기준 확률이 바뀐다. 시험 회차가 정하는 데 쓰이지 않으면 σ와 고른 값은 locker-4가 없을 때와 같다.
+    build_data(server_dir, make_collection_db, extra_node_in="e2")
+    write_layout(server_dir, layout_file(nodes={**NODE_XY, "locker-4": (1.0, 0.5)}))
+
+    code, _, err = run_cli(order_argv(), cwd=server_dir)
+
+    assert (code, err) == (EXIT_OK, "")
+    rows = read_report(report_files(server_dir)[0])[1]
+    assert rows["m10_frame_sigma_db"]["value"] == "1.0"
+    sigma_s = best_static_sigma(train_pairs(), 1.0)
+    assert (float(rows["m10_static_sigma_db"]["value"]), rows["m10_static_sigma_db"]["trials"]) == (pytest.approx(sigma_s), "90")
+    assert float(rows["m10_boundary_min_prob"]["value"]) == lowest_candidate_above(boundary_probability(3, sigma_s))
+
+
 # ── 그래프 ────────────────────────────────────────────────────────────
 
 
