@@ -102,7 +102,7 @@ class StoreFake:
             raise self.execution_error
         return self.commands.get(internal_request_id)
 
-    def record_result(self, command_id, outcome, occurred_at, rental_due_at, evidence):
+    def record_result(self, command_id, outcome, occurred_at, rental_due_at, evidence, *, isolate=True):
         self.result_calls.append((command_id, outcome, occurred_at, rental_due_at, evidence))
         current = next(c for c in self.commands.values() if c.command_id == command_id)
         if self.result_conflict:

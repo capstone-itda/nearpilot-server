@@ -162,7 +162,7 @@ class StoreFake:
                 if c.node_id == node_id and c.status == ExecutionStatus.SUCCEEDED]
         return done[-1] if done else None
 
-    def record_result(self, command_id, outcome, occurred_at, rental_due_at, evidence):
+    def record_result(self, command_id, outcome, occurred_at, rental_due_at, evidence, *, isolate=True):
         self.calls.append(("result", command_id, outcome))
         self.fail("result")
         old = next(c for c in self.commands.values() if c.command_id == command_id)

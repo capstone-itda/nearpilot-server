@@ -191,6 +191,39 @@ def test_FR07_set_volume_uses_argument_as_expected_value():
     assert transport.posted == [(DEVICE, "audioVolume", "setVolume", [20])]
 
 
+def test_FR07_volume_reported_as_float_succeeds():
+    # 상태 조회가 숫자를 15.0 으로 돌려줘도 요청한 15 와 같은 값이다 (#276).
+    transport = FakeTransport()
+    transport.attribute_sequence = [15.0]
+    gateway = make_gateway(transport, FakeClock())
+    result = gateway.send(command("set_volume", arguments={"volume": 15}), timeout_sec=5)
+    assert result.outcome is CommandOutcome.SUCCEEDED
+    assert result.confirmation["value"] == 15.0
+
+
+@pytest.mark.parametrize(("observed", "requested"), [("15", 15), (True, 1), (16.0, 15)])
+def test_FR07_volume_other_value_is_unknown(observed, requested):
+    # 문자열·bool·다른 숫자는 같은 값이 아니다.
+    transport = FakeTransport()
+    transport.attribute_sequence = [observed]
+    gateway = make_gateway(transport, FakeClock())
+    result = gateway.send(command("set_volume", arguments={"volume": requested}), timeout_sec=2)
+    assert result.outcome is CommandOutcome.UNKNOWN
+
+
+def test_FR07_unconfirmed_logs_observed_value_without_device_id(caplog):
+    transport = FakeTransport()
+    transport.attribute_sequence = ["off"]
+    gateway = make_gateway(transport, FakeClock())
+    with caplog.at_level("WARNING", logger="nearpilot.iot.smartthings.gateway"):
+        result = gateway.send(command("on"), timeout_sec=2)
+    assert result.outcome is CommandOutcome.UNKNOWN
+    text = caplog.text
+    assert "node=display-1" in text and "command=cmd-1" in text
+    assert "switch.switch" in text and "'off'" in text and "'on'" in text
+    assert DEVICE not in text
+
+
 # ── 동반 기기 동작 표 (specs/iot-smartthings-companion) ─────────────────
 
 

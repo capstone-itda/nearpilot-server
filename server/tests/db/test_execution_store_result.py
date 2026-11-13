@@ -180,3 +180,24 @@ def test_FR07_record_result_late_success_keeps_fault(store, conn):
     assert node["device_state"] == "FAULT"
     session = conn.execute("SELECT state FROM use_session WHERE use_id = 'use1'").fetchone()
     assert session["state"] == "RESERVED"
+
+
+def test_FR07_record_result_unisolated_keeps_device_state(store, conn):
+    # CORE 가 외부 API 기기로 판정하면 결과와 감사만 남기고 기기를 격리하지 않는다 (#276).
+    command_id = _seed_reoperation_in_progress(conn, store, with_approval=True)
+    evidence = {"source": "gateway", "outcome": "unknown", "isolated": False}
+
+    result = store.record_result(command_id, CommandOutcome.UNKNOWN, _NOW, None, evidence, isolate=False)
+
+    assert result.outcome == StoreOutcome.APPLIED
+    assert result.command.outcome == CommandOutcome.UNKNOWN
+    node = conn.execute("SELECT device_state FROM node WHERE node_id = 'node1'").fetchone()
+    assert node["device_state"] == "ACTIVE"
+    usage = conn.execute("SELECT state FROM approval_usage WHERE usage_id = 'usage1'").fetchone()
+    assert usage["state"] == "consumed"
+    audit = conn.execute(
+        "SELECT payload_json FROM audit_log WHERE command_id = ? ORDER BY rowid DESC LIMIT 1", (command_id,),
+    ).fetchone()
+    assert '"isolated": false' in audit["payload_json"]
+    again = store.record_result(command_id, CommandOutcome.UNKNOWN, _NOW, None, evidence, isolate=False)
+    assert again.outcome == StoreOutcome.ALREADY_APPLIED

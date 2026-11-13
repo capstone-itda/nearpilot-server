@@ -298,7 +298,9 @@ class SqliteDashboardReads:
             "LEFT JOIN node_command c ON c.command_id = a.command_id "
             "WHERE json_extract(a.payload_json, '$.event') = ? "
             "OR (json_extract(a.payload_json, '$.event') = ? "
-            f"AND json_extract(a.payload_json, '$.outcome') IN ({_marks(_FAULT_OUTCOMES)}))"
+            f"AND json_extract(a.payload_json, '$.outcome') IN ({_marks(_FAULT_OUTCOMES)}) "
+            # 격리하지 않은 외부 API 기기의 결과는 고장 근거가 아니다 (#276)
+            "AND COALESCE(json_extract(a.payload_json, '$.isolated'), 1) <> 0)"
             f") WHERE fault_node IN ({_marks(unique)}) ORDER BY seq",
             ["isolate_device", "record_result", *_FAULT_OUTCOMES, *unique],
         ).fetchall()

@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -101,12 +101,15 @@ class ExecutionService:
         lock_for: Callable[[str], AbstractContextManager[Any]],
         can_execute: Callable[[str], bool], record_isolated: Callable[..., Any],
         confirm_internal: Callable[[ExecutionContext], bool] | None = None,
+        non_isolating_nodes: Collection[str] = (),
     ) -> None:
         self._repository, self._store = repository, store
         self._rechecker, self._gateway = rechecker, gateway
         self._clock, self._lock_for = clock, lock_for
         self._can_execute, self._record_isolated = can_execute, record_isolated
         self._confirm_internal = confirm_internal
+        # 외부 API 기기(SmartThings 동반 기기). 공용형 실행의 실패·불명이어도 FAULT 로 격리하지 않는다 (#276 담당자 결정)
+        self._non_isolating_nodes = frozenset(non_isolating_nodes)
         self._attempts: dict[str, _Attempt] = {}
         self._index_lock = Lock()
 
@@ -362,6 +365,14 @@ class ExecutionService:
         node = self._node(node_id)
         return None if node is None or not node.session_id else node.session_id
 
+    def _isolates(self, ctx: ExecutionContext) -> bool:
+        """실패·불명 결과에 기기를 FAULT 로 격리할지. 외부 API 기기의 공용형·서버 내부 실행만 격리하지 않는다.
+
+        외부 API 기기는 점유가 없고 명령이 멱등이라 다시 보내도 위험이 작다 (#276). 대여형은 지금 규칙을 따른다.
+        """
+        return not (ctx.node_id in self._non_isolating_nodes
+                    and ctx.execution_kind in (ExecutionKind.SHARED, ExecutionKind.SERVER_INTERNAL))
+
     def _receive(self, attempt: _Attempt, result: CommandResult, *, source: str) -> None:
         if result.command_id != attempt.command.command_id:
             raise StoreError("실행 결과의 명령 연결이 다르다")
@@ -406,6 +417,9 @@ class ExecutionService:
                 # 기기 완료 근거가 없는 성공·실패·거부는 결과 불명이다.
                 outcome = CommandOutcome.UNKNOWN
                 evidence = {"source": source, "outcome": result.outcome.value}
+        if outcome in (CommandOutcome.FAILED, CommandOutcome.UNKNOWN) and not self._isolates(attempt.context):
+            # 격리하지 않은 결과임을 근거에 남긴다. 대시보드가 이 표시로 문구를 고른다.
+            evidence = {**evidence, "isolated": False}
         previous = attempt.events.get(key)
         if previous is not None:
             if (previous.outcome != outcome or previous.occurred_at != occurred_at
@@ -455,7 +469,8 @@ class ExecutionService:
             conflict = False
             try:
                 saved = self._store.record_result(attempt.command.command_id, event.outcome,
-                                                  event.occurred_at, event.rental_due_at, event.evidence)
+                                                  event.occurred_at, event.rental_due_at, event.evidence,
+                                                  isolate=self._isolates(ctx))
                 current = saved.command or self._store.execution(ctx.internal_request_id)
                 conflict = saved.outcome == StoreOutcome.CONFLICT
             except StoreOutcomeUnknown:

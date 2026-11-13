@@ -122,3 +122,4 @@ pytest tests/<계층>      # 계층 하나
 - 전체 `pytest` 출력을 마지막 줄만 받아, 한 번 실패한 시험의 이름을 놓치고 불안정한 시험을 찾지 못했다. 전체 실행은 `-rf`로 실패 이름을 함께 받는다.
 - 예시 설정 `[settings]`에 `Settings` 필드가 아닌 키(따옴표 키 `"exec_timeout_sec.display"`)를 넣어, 그 표를 `Settings(**표)`로 바로 넘기는 `tools/evaluation`의 시험 46개가 실패했다. 예시 설정에 필드 밖 키를 더하면 `tools`에서 `server.example.toml`과 `Settings(**`를 검색하고, 초기값은 `Settings` 기본값에 둔다.
 - 주입 기록에 없는 COM 포트를 새 보드로 보고 펌웨어를 올려, BLE로 설정한 기존 사물함(locker-3)을 다른 종류 펌웨어로 덮어썼다. 업로드 전에 시리얼 부팅 로그의 `NODE_START node=`로 보드의 현재 ID를 확인한다.
+- SmartThings 확인 비교가 타입까지 같아야 성공으로 보고, 확인하지 못했을 때 관측 값을 남기지 않아 정상 동작의 `FAULT` 원인을 찾지 못했다. 외부 API 응답은 숫자 표현(15·15.0)이 달라질 수 있으므로 값으로 비교하고, `UNKNOWN`에는 마지막 관측 값을 로그에 남긴다.

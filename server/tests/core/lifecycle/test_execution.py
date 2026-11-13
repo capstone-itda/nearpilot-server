@@ -45,6 +45,7 @@ class StoreFake:
         self.repository, self.clock = repository, clock
         self.contexts, self.commands, self.recoveries = {}, {}, {}
         self.calls, self.failures = [], {}
+        self.isolate_flags = []
         self.read_error = None
         self.link_conflict = None
         self.closed_rental = False
@@ -131,8 +132,9 @@ class StoreFake:
         self.usages[internal_request_id] = "released"
         return self._after(failure, StoreResult(StoreOutcome.APPLIED, command=current))
 
-    def record_result(self, command_id, outcome, occurred_at, rental_due_at, evidence):
+    def record_result(self, command_id, outcome, occurred_at, rental_due_at, evidence, *, isolate=True):
         self.calls.append(("result", command_id, outcome, occurred_at, rental_due_at, evidence))
+        self.isolate_flags.append(isolate)
         failure = self._before("result")
         current = self._command(command_id)
         if current.outcome is not None:
@@ -142,7 +144,9 @@ class StoreFake:
         current = replace(current, status=ExecutionStatus(outcome.value), outcome=outcome,
                           occurred_at=occurred_at, evidence=evidence)
         self.commands[current.internal_request_id] = current
-        if outcome in (CommandOutcome.FAILED, CommandOutcome.UNKNOWN):
+        if outcome in (CommandOutcome.FAILED, CommandOutcome.UNKNOWN) and not isolate:
+            self.usages[current.internal_request_id] = "consumed"
+        elif outcome in (CommandOutcome.FAILED, CommandOutcome.UNKNOWN):
             node = self.repository.items[current.node_id]
             self.repository.items[current.node_id] = replace(node, device_state=DeviceState.FAULT)
             self.usages[current.internal_request_id] = "held"
@@ -804,7 +808,7 @@ def test_FR19_recheck_cancellation_races_external_begin(env):
 
 
 def test_FR19_unconfirmed_saved_success_does_not_expose_use(env):
-    def incorrect(command_id, outcome, occurred_at, rental_due_at, evidence):
+    def incorrect(command_id, outcome, occurred_at, rental_due_at, evidence, *, isolate=True):
         current = env.store._command(command_id)
         return StoreResult(StoreOutcome.APPLIED, command=replace(current,
             status=ExecutionStatus.SUCCEEDED, outcome=outcome, occurred_at=occurred_at,
@@ -865,8 +869,8 @@ def test_FR19_execution_uses_real_restore_gate(env):
 def test_NFR04_result_committed_but_query_failed_still_creates_recovery(env):
     gateway_outcome(env, CommandOutcome.UNKNOWN)
     original = env.store.record_result
-    def save(*args):
-        saved = original(*args)
+    def save(*args, **kwargs):
+        saved = original(*args, **kwargs)
         env.store.read_error = StoreNotApplied("query")
         raise StoreOutcomeUnknown("committed")
     env.store.record_result = save
@@ -1037,3 +1041,55 @@ def test_FR07_exec_timeout_falls_back_to_global(env):
     command, timeout = env.gateway.calls[-1]
     assert timeout == 2.5
     assert command.expires_at - command.issued_at == timedelta(seconds=2.5)
+
+
+# ── 외부 API 기기의 격리 예외 (#276) ─────────────────────────────────
+
+
+def external_service(env):
+    return ExecutionService(repository=env.repository, store=env.store, rechecker=env.rechecker,
+        gateway=env.gateway, clock=env.clock, lock_for=env.lock_for,
+        can_execute=lambda node_id: env.restored[node_id], record_isolated=env.recovery.record_isolated,
+        non_isolating_nodes={"display-1"})
+
+
+@pytest.mark.parametrize("outcome", [CommandOutcome.FAILED, CommandOutcome.UNKNOWN])
+def test_FR07_external_api_device_unconfirmed_not_fault(env, outcome):
+    ctx = display_context(env, Settings())
+    confirmed_outcome(env, outcome, None)
+    result = external_service(env).execute(ctx)
+    assert result.status == ExecutionStatus.UNKNOWN  # 성공으로 꾸미지 않는다
+    assert env.store.isolate_flags == [False]
+    assert calls(env, "result")[0][5] == {"source": "gateway", "outcome": outcome.value, "isolated": False}
+    assert env.repository.items["display-1"].device_state == DeviceState.AVAILABLE
+    assert env.store.recoveries == {}
+    assert env.store.usages[ctx.internal_request_id] == "consumed"
+
+
+def test_FR07_external_api_device_next_command_runs_after_unknown(env):
+    ctx = display_context(env, Settings())
+    service = external_service(env)
+    confirmed_outcome(env, CommandOutcome.UNKNOWN, None)
+    service.execute(ctx)
+    request = UseRequest("visitor-1", "external-4", TargetSpec.parse("display-1"), "on", "test", env.clock())
+    second = ExecutionContext("request-4", request, "display-1", None, None, Settings(), ExecutionKind.SHARED)
+    env.store.contexts[second.internal_request_id] = second
+    confirmed_outcome(env, CommandOutcome.SUCCEEDED, CONFIRMATION)
+    assert service.execute(second).status == ExecutionStatus.SUCCEEDED
+
+
+def test_FR07_unlisted_device_still_fault(env):
+    # 바인딩 밖 기기(MQTT)는 지금처럼 격리한다.
+    gateway_outcome(env, CommandOutcome.UNKNOWN)
+    external_service(env).execute(env.ctx)
+    assert env.store.isolate_flags == [True]
+    assert env.repository.items[env.ctx.node_id].device_state == DeviceState.FAULT
+
+
+def test_FR07_external_api_rental_still_fault(env):
+    # 대여형 실행은 점유를 보존해야 하므로 외부 API 기기여도 격리한다.
+    service = external_service(env)
+    ctx = display_context(env, Settings())
+    assert service._isolates(ctx) is False
+    for kind in (ExecutionKind.RENTAL_INITIAL, ExecutionKind.RENTAL_REOPERATION):
+        assert service._isolates(replace(ctx, execution_kind=kind, use_id="use-9")) is True

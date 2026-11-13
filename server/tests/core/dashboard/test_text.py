@@ -428,3 +428,20 @@ def test_FR12A_단계_상세_문구(step, payload, expected):
 )
 def test_FR12A_감사_문구는_event와_단계로_고른다(step, payload, expected):
     assert audit_text(audit(step, payload), NAMES) == expected
+
+
+# ── 외부 API 기기의 격리 예외 (#276) ─────────────────────────────────
+
+
+@pytest.mark.parametrize(("status", "result", "text"), [
+    (ExecutionStatus.UNKNOWN, "unknown", "결과 불명 · 격리 안 함"),
+    (ExecutionStatus.FAILED, "failed", "실행 실패 · 격리 안 함"),
+])
+def test_FR07_격리하지_않은_결과는_격리_안_함으로_쓴다(status, result, text):
+    unisolated = {"source": "gateway", "outcome": result, "isolated": False}
+    cmd = command(1, status, result, action="on", evidence=unisolated)
+    assert timeline_command(cmd) == text
+    code = ReasonCode.EXEC_UNKNOWN if result == "unknown" else ReasonCode.EXEC_FAILED
+    assert outcome(request(Verdict.OK, ReasonCode.OK, "on"), [cmd]) == (text, code)
+    row = audit(Step.EXEC, {"event": "record_result", "outcome": result, "evidence": unisolated, "isolated": False})
+    assert audit_text(row, NAMES) == text
