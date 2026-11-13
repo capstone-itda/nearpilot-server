@@ -55,10 +55,10 @@ def test_FR09_tool_description_mentions_selector():
                  "far:light:1:1", "near:light:2:all", "되묻는다",
                  "NEED_APPROVAL 이면 devices 의 node_id 로 request_access"):
         assert text in tool["description"], text
-    # 도구의 입력 스키마는 거리 선택자를 더하기 전과 같다 (FR-09)
+    # 거리 선택자는 입력 스키마를 바꾸지 않는다. 묶음 요청이 requests 를 더했다 (FR-09, #284)
     schema = tool["inputSchema"]
-    assert set(schema["properties"]) == {"target_spec", "action", "request_id", "arguments"}
-    assert set(schema["required"]) == {"target_spec", "action", "request_id"}
+    assert set(schema["properties"]) == {"target_spec", "action", "request_id", "arguments", "requests"}
+    assert set(schema["required"]) == {"request_id"}
 
 
 def test_FR09_tool_description_mentions_order_uncertain():

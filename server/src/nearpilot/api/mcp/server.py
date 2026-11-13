@@ -23,9 +23,9 @@ from nearpilot.api.mcp.response import (
     status_denied, status_response,
 )
 from nearpilot.shared.descriptor import is_name
-from nearpilot.shared.enums import ReasonCode
+from nearpilot.shared.enums import ReasonCode, TargetKind
 from nearpilot.shared.interfaces import CoreService
-from nearpilot.shared.models import Account, TargetSpec, UseRequest
+from nearpilot.shared.models import BATCH_ACTION, Account, TargetSpec, UseItem, UseRequest
 
 log = logging.getLogger(__name__)
 
@@ -37,12 +37,20 @@ _TOOL_DESCRIPTION = (
     "start 는 1부터 센 시작 위치이고, count 는 1 이상의 개수 또는 all(끝까지)이다. "
     "예: '가까운 조명 2개 꺼 줘' 는 near:light:1:2 와 off, '제일 먼 조명 켜 줘' 는 far:light:1:1 과 on, "
     "'나 있는 쪽 빼고 다 켜 줘' 는 near:light:2:all 과 on 이다. "
+    "'조명 다 켜 줘' 는 near:light:1:all 과 on 이다. "
     "'왼쪽 조명' 처럼 방향이나 장소 이름으로 가리키면 거리 선택자로 바꾸지 말고 사용자에게 되묻는다. "
     "거리 선택자의 응답은 devices(기기별 node_id, verdict, reason, use_id), selected_count(실제로 고른 개수), "
     "similar(경계의 기기들이 비슷한 거리라 고른 결과가 다를 수 있음)를 더 담는다. "
     "거리 선택자 요청이 NEED_APPROVAL 이면 devices 의 node_id 로 request_access 를 부른다. "
     "near 거리 선택자는 경계의 기기들의 순서가 애매하면 아무것도 실행하지 않고 ASK 와 ORDER_UNCERTAIN 을 반환하며, "
     "이때는 사용자에게 어느 기기인지 더 구체적으로 묻는다. "
+    "대상이나 동작이 다른 요청을 함께 실행하려면 target_spec, action, arguments 대신 requests 에 "
+    "항목(target_spec, action, 선택 인자 arguments)을 담는다. request_id 는 하나다. "
+    "예: '조명 다 켜고 스피커 꺼 줘' 는 "
+    "requests=[{target_spec: near:light:1:all, action: on}, {target_spec: near:speaker:1:all, action: off}] 이다. "
+    "묶음 요청은 하나라도 걸리면 아무것도 실행하지 않는다. "
+    "묶음 요청이 NEED_APPROVAL 이면 devices 의 node_id 로 request_access 를 부른다. "
+    "응답의 devices 에 기기마다 item(1부터 센 항목 순서)이 있다. 같은 기기를 두 항목에 넣지 않는다. "
     "action 은 find_available_devices 나 get_device_state 가 "
     "돌려준 그 기기의 actions[].name 중 하나다. 각 동작의 description 이 하는 일을 설명한다. "
     "선택 인자 arguments 는 객체이고, 그 동작의 actions[].input_schema 를 따른다. "
@@ -113,6 +121,28 @@ def _is_selector(target_spec: object) -> bool:
         return False
 
 
+# 묶음 요청의 항목이 가질 수 있는 키. 앞의 둘은 꼭 있어야 한다 (FR-09, #284)
+_ITEM_REQUIRED = frozenset({"target_spec", "action"})
+_ITEM_KEYS = _ITEM_REQUIRED | {"arguments"}
+
+
+def _batch_items(requests: Any) -> tuple[UseItem, ...]:
+    """`requests` 가 객체 배열이고 항목의 형식이 맞는지만 검사해 항목으로 바꾼다. 틀리면 ValueError.
+
+    항목 수의 상한은 검사하지 않는다. 판정이 설정으로 검사한다 (FR-09, #284).
+    """
+    if not isinstance(requests, list) or not requests:
+        raise ValueError("requests 는 비어 있지 않은 배열이어야 한다")
+    items = []
+    for raw in requests:
+        if not isinstance(raw, dict) or not _ITEM_REQUIRED <= raw.keys() <= _ITEM_KEYS:
+            raise ValueError("requests 의 항목은 target_spec, action 과 선택 인자 arguments 만 담는 객체여야 한다")
+        # 항목의 batch: 는 UseItem 이 거부한다
+        items.append(UseItem(
+            TargetSpec.parse(raw["target_spec"]), _action(raw["action"]), _arguments(raw.get("arguments"))))
+    return tuple(items)
+
+
 def build_app(
     core: CoreService, authenticator: Authenticator, clock: Callable[[], datetime],
     *, public_hosts: Sequence[str] = (),
@@ -123,13 +153,36 @@ def build_app(
     arguments_schema = WithJsonSchema({
         "type": "object",
         "description": "동작 인자. 대상 기기 actions[].input_schema 를 따른다. 인자가 없으면 생략한다."})
+    # 단일 요청의 target_spec 과 action, 묶음 요청의 requests 는 선택 인자다. 둘 중 하나만 보낸다 (FR-09, #284)
+    target_spec_schema = WithJsonSchema({
+        "type": "string",
+        "description": "대상 지정. 단일 요청에 쓴다. requests 를 보낼 때는 생략한다."})
+    action_schema = WithJsonSchema({
+        "type": "string",
+        "description": "동작 이름. 단일 요청에 쓴다. requests 를 보낼 때는 생략한다."})
+    requests_schema = WithJsonSchema({
+        "type": "array", "minItems": 1,
+        "items": {
+            "type": "object",
+            "properties": {
+                "target_spec": {"type": "string"}, "action": {"type": "string"}, "arguments": {"type": "object"}},
+            "required": ["target_spec", "action"], "additionalProperties": False},
+        "description": "묶음 요청의 항목. 대상이나 동작이 다른 요청을 함께 실행한다. "
+                       "항목마다 target_spec, action 과 선택 인자 arguments 를 담는다. "
+                       "보낼 때는 target_spec, action, arguments 를 보내지 않는다."})
 
     async def request_use(
-        target_spec: str, action: str, request_id: str, ctx: Context, arguments: Any = None,
+        request_id: str, ctx: Context, target_spec: Any = None, action: Any = None,
+        arguments: Any = None, requests: Any = None,
     ) -> dict:
         def deny(reason: ReasonCode) -> dict:
-            # 형식이 맞는 거리 선택자는 판정 전에 거부해도 거리 선택자 응답 키를 담는다 (FR-09)
-            return denied_response(reason, request_id, selector=_is_selector(target_spec))
+            if requests is None:
+                # 형식이 맞는 거리 선택자는 판정 전에 거부해도 거리 선택자 응답 키를 담는다 (FR-09)
+                with_devices = _is_selector(target_spec)
+            else:
+                # 묶음 형식(단일 요청 인자가 하나도 없다)은 묶음 응답 키를 담는다. 두 형식을 섞었으면 기존 여섯 키다 (FR-09)
+                with_devices = target_spec is None and action is None and arguments is None
+            return denied_response(reason, request_id, selector=with_devices)
 
         try:
             account = _account_of(ctx)
@@ -138,10 +191,20 @@ def build_app(
             try:
                 if not request_id:
                     raise ValueError("request_id 가 비었다")
-                req = UseRequest(
-                    user_id=account.user_id, request_id=request_id,
-                    target=TargetSpec.parse(target_spec), action=_action(action),
-                    host_kind=None, received_at=clock(), arguments=_arguments(arguments))
+                if requests is not None:  # 묶음 요청. 단일 요청 인자를 함께 보내면 안 된다
+                    if target_spec is not None or action is not None or arguments is not None:
+                        raise ValueError("requests 와 단일 요청 인자를 함께 보냈다")
+                    req = UseRequest(
+                        user_id=account.user_id, request_id=request_id,
+                        target=TargetSpec(TargetKind.BATCH, None), action=BATCH_ACTION,
+                        host_kind=None, received_at=clock(), items=_batch_items(requests))
+                else:
+                    if target_spec is None or action is None:
+                        raise ValueError("target_spec 이나 action 이 없다")
+                    req = UseRequest(
+                        user_id=account.user_id, request_id=request_id,
+                        target=TargetSpec.parse(target_spec), action=_action(action),
+                        host_kind=None, received_at=clock(), arguments=_arguments(arguments))
             except ValueError:
                 return deny(ReasonCode.INVALID_INPUT)
             # 판정과 실행 인계는 동기 함수다. 이벤트 루프를 막지 않는다.
@@ -151,7 +214,11 @@ def build_app(
             return deny(ReasonCode.INTERNAL_ERROR)
 
     # 스키마는 주석 문자열로 쓸 수 없다. 평가한 주석 객체로 바꾼 뒤 도구로 등록한다.
-    request_use.__annotations__.update(arguments=Annotated[Any, arguments_schema, Field(default=None)])
+    request_use.__annotations__.update(
+        target_spec=Annotated[Any, target_spec_schema, Field(default=None)],
+        action=Annotated[Any, action_schema, Field(default=None)],
+        arguments=Annotated[Any, arguments_schema, Field(default=None)],
+        requests=Annotated[Any, requests_schema, Field(default=None)])
     mcp.tool(name="request_use", description=_TOOL_DESCRIPTION)(request_use)
 
     @mcp.tool(name="request_access", description=_ACCESS_DESCRIPTION)

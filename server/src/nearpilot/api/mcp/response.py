@@ -11,15 +11,26 @@ from datetime import datetime
 from typing import Any
 
 from nearpilot.shared.enums import ReasonCode, Verdict
-from nearpilot.shared.models import Decision
+from nearpilot.shared.models import Decision, DeviceOutcome
 
 _GENERIC_MESSAGE = "요청을 처리하지 못했습니다."
 
 
-def host_response(decision: Decision) -> dict[str, Any]:
-    """기존 여섯 키. 거리 선택자 판정(`selected_count` 가 None 이 아님)에는 `devices`, `selected_count`, `similar` 를 더한다.
+def _device_entry(device: DeviceOutcome) -> dict[str, Any]:
+    """`devices` 의 기기 하나. 네 키를 담고, 묶음 요청의 기기(`item` 이 None 이 아님)에는 `item` 을 더한다 (FR-09)."""
+    entry: dict[str, Any] = {
+        "node_id": device.node_id, "verdict": device.verdict.value, "reason": device.reason.value,
+        "use_id": device.use_id}
+    if device.item is not None:
+        entry["item"] = device.item
+    return entry
 
-    `devices` 는 판정이 정한 거리 순서 그대로이고 항목마다 네 키만 담는다. 하위 요청의 내부 ID 는 `DeviceOutcome` 에 없다 (FR-09, FR-11).
+
+def host_response(decision: Decision) -> dict[str, Any]:
+    """기존 여섯 키. 거리 선택자·묶음 판정(`selected_count` 가 None 이 아님)에는 `devices`, `selected_count`, `similar` 를 더한다.
+
+    `devices` 는 판정이 정한 순서 그대로이고 기기마다 네 키를 담는다. 묶음 요청의 기기에는 1부터 센 항목 순서 `item` 을 더한다.
+    하위 요청의 내부 ID 는 `DeviceOutcome` 에 없다 (FR-09, FR-11).
     """
     out: dict[str, Any] = {
         "verdict": decision.verdict.value,
@@ -30,11 +41,7 @@ def host_response(decision: Decision) -> dict[str, Any]:
         "message": decision.message,
     }
     if decision.selected_count is not None:
-        out["devices"] = [
-            {"node_id": device.node_id, "verdict": device.verdict.value, "reason": device.reason.value,
-             "use_id": device.use_id}
-            for device in decision.devices
-        ]
+        out["devices"] = [_device_entry(device) for device in decision.devices]
         out["selected_count"] = decision.selected_count
         out["similar"] = decision.similar
     return out
@@ -43,7 +50,7 @@ def host_response(decision: Decision) -> dict[str, Any]:
 def denied_response(reason: ReasonCode, request_id: str = "", *, selector: bool = False) -> dict[str, Any]:
     """판정까지 가지 못한 거부. 예외 내용 대신 일반 안내만 넣는다.
 
-    `selector` 이면(형식이 맞는 거리 선택자) 고르기 전에 끝난 판정과 같은 거리 선택자 키를 더한다 (FR-09).
+    `selector` 이면(형식이 맞는 거리 선택자이거나 묶음 형식) 고르기 전에 끝난 판정과 같은 `devices`, `selected_count`, `similar` 를 더한다 (FR-09).
     """
     message = _GENERIC_MESSAGE if reason is ReasonCode.INTERNAL_ERROR else None
     picked: dict[str, Any] = {"devices": (), "selected_count": 0, "similar": False} if selector else {}
