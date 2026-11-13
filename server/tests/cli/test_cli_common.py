@@ -85,7 +85,7 @@ def test_FR16_cli_default_dirs_follow_config_location(tmp_path):
     assert dirs.config_dir == server / "config"
     assert (dirs.seed, dirs.plans, dirs.fit) == tuple(
         server / "config" / name for name in ("seed", "plans", "fit"))
-    assert not hasattr(dirs, "layouts")  # 공통 모델은 배치 파일을 받지 않는다
+    assert dirs.layouts == server / "config" / "layouts"  # 좌표표 폴더. `evaluate-order`만 읽는다
     # var/ 는 설정 파일 폴더의 부모 기준이다
     assert (dirs.splits, dirs.records, dirs.reports) == tuple(
         server / "var" / name for name in ("splits", "records", "reports"))

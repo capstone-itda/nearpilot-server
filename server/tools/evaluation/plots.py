@@ -5,6 +5,7 @@
 matplotlib은 선택 의존성 `eval`이라 모듈을 가져올 때가 아니라 그릴 때 함수 안에서 가져온다. 없으면 경고만 하고 그래프를 건너뛴다.
 `pyplot` 없이 `Figure`에 Agg 캔버스를 달아 그린다. 화면이 없어도 되고, 프로세스 전체의 백엔드 설정을 바꾸지 않는다.
 한글 글꼴이 없는 PC가 있어서 제목과 축 이름은 영어로 쓴다.
+`write_order_plot`은 지표 10의 기준 확률 후보별 곡선을 `{name}-order.png` 한 장으로 따로 쓴다 (specs/db-evaluation-distance-order/spec.md 6절 결정 16).
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ from tools.evaluation.reask import CurvePoint
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
+
+    from tools.evaluation.order import BoundaryStat
 
 logger = logging.getLogger(__name__)
 
@@ -105,3 +108,55 @@ def _draw_pass(figure: Figure, rows: Sequence[Mapping[str, Any]]) -> None:
     axes.set_xlim(0, 1)
     axes.set_title("Pass status by metric")
     axes.legend(loc="upper center", bbox_to_anchor=(0.5, -0.02), ncol=len(_STATUSES))
+
+
+def write_order_plot(
+    out_dir: Path, name: str, *, validation: Sequence[BoundaryStat], test: Sequence[BoundaryStat],
+    max_error: float, chosen: float | None,
+) -> Path | None:
+    """`out_dir`에 `{name}-order.png`를 쓰고 경로를 돌려준다. 지표 10의 기준 확률 후보별 곡선이다.
+
+    x는 기준 확률 후보, y는 비율(0~1)이다. 검증 표와 시험 표(`order.boundary_table`의 결과)마다 통과 비율과 오류 비율의 선을 긋는다.
+    비율이 None인 후보(경계가 없거나 통과한 경계가 없다)는 건너뛴다. 수평선은 목표 오류 비율 `max_error`이고,
+    `chosen`(검증 회차에서 고른 기준 확률)이 있으면 그 값에 수직선을 긋는다.
+    두 표가 모두 비면 그릴 것이 없어 None이다. 그때는 matplotlib이 없어도 경고하지 않는다.
+    matplotlib이 없으면 경고하고 None이다. `out_dir`은 이미 있어야 하고, 같은 이름의 파일은 덮어쓴다.
+    """
+    if not validation and not test:
+        return None
+    if importlib.util.find_spec("matplotlib") is None:  # `write_plots`와 같이 최상위 패키지를 본다
+        logger.warning('matplotlib이 없어 그래프 1장을 만들지 않았다. pip install -e ".[eval]"로 설치한다')
+        return None
+
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    figure = Figure(figsize=(7.0, 4.5), layout="constrained")
+    FigureCanvasAgg(figure)
+    _draw_order(figure, validation, test, max_error, chosen)
+    path = out_dir / f"{name}-order.png"
+    figure.savefig(path)
+    return path
+
+
+def _draw_order(
+    figure: Figure, validation: Sequence[BoundaryStat], test: Sequence[BoundaryStat],
+    max_error: float, chosen: float | None,
+) -> None:
+    axes = figure.add_subplot()
+    # 검증과 시험은 색으로, 통과 비율과 오류 비율은 선 모양으로 구분한다 (Okabe-Ito 팔레트)
+    for split, color, stats in (("validation", "#0072B2", validation), ("test", "#D55E00", test)):
+        for attribute, label, style in (("pass_rate", "pass rate", "-"), ("error_rate", "error rate", "--")):
+            points = [(stat.min_prob, getattr(stat, attribute)) for stat in stats if getattr(stat, attribute) is not None]
+            if points:
+                axes.plot(
+                    [x for x, _ in points], [y for _, y in points], color=color, linestyle=style, label=f"{split} {label}",
+                )
+    axes.axhline(max_error, color="#999999", linestyle=":", label=f"target error rate = {max_error:g}")
+    if chosen is not None:
+        axes.axvline(chosen, color="#009E73", linestyle="-.", label=f"chosen min prob = {chosen:g}")
+    axes.set_ylim(-0.02, 1.02)  # 0과 1의 선이 가장자리에 걸려 잘리지 않게 여백을 둔다
+    axes.set_title("Metric 10: boundary pass rate and error rate")
+    axes.set_xlabel("Minimum boundary probability (candidate)")
+    axes.set_ylabel("Rate")
+    axes.legend(fontsize=8)

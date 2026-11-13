@@ -20,3 +20,4 @@ auto_zero_min_bins = 120    # 자동 영점을 찾는 데 필요한 시간 칸 �
 [acceptance]
 max_misselection = 0.05     # 정면 오선택률 상한 (0 이상 1 이하)
 max_ece = 0.05              # ECE 상한 (0 이상 1 이하)
+max_boundary_error = 0.05   # 거리 순서(evaluate-order): 통과한 경계 중 순서가 틀린 비율 상한 (0 이상 1 이하). 수치는 미결이다 (#279)

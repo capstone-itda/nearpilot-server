@@ -437,7 +437,10 @@ def test_FR12A_점검_mqtt는_연결_준비_상태를_따른다(tmp_path, monkey
 def test_FR12A_신뢰도는_설정한_평가_리포트_폴더를_읽는다(tmp_path):
     reports = tmp_path / "reports"  # Server 가 DashboardConfig.reports_dir 로 넘기는 폴더다
     reports.mkdir()
-    rows = metric_rows(Metrics(0.04, 100, 4, 0.049, 250), AcceptanceSettings(max_misselection=0.05, max_ece=0.05))
+    rows = metric_rows(
+        Metrics(0.04, 100, 4, 0.049, 250),
+        AcceptanceSettings(max_misselection=0.05, max_ece=0.05, max_boundary_error=0.05),
+    )
     write_report(
         rows, db_path="np.db", schema_version=1, sample_count=250,
         generated_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
