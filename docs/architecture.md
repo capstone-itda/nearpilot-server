@@ -643,6 +643,21 @@ DB는 대상 연결, 현재 상태, 복구 건이 입력과 같은지 트랜잭�
 - 호스트 응답 변환은 판정이 맡는다. 응답은 하위 요청마다 기기 정보, 실행 결과, `use_id`를 담는다.
 - `rental` 기기는 고른 기기마다 근접 임계값을 넘어야 한다. 후보의 사후확률 합은 1 이하이므로, 임계값이 0.5보다 크면 `rental` 기기를 둘 이상 고른 요청은 실행되지 않는다.
 
+### 묶음 요청의 판정
+
+[#284](https://github.com/capstone-itda/nearpilot-server/issues/284)의 A안을 따른다.
+요구는 `requirements.md` FR-09 "묶음 요청"에 있다.
+
+- API는 `requests`와 단일 요청 인자 중 하나만 왔는지, 항목이 객체 배열인지만 검사한다. 항목 수와 항목 안쪽은 판정이 검사한다.
+- 판정은 묶음 요청을 상위 요청 하나와 고른 기기마다의 하위 요청으로 나눈다. 구조는 위 "거리 선택자의 판정"과 같다.
+- ⓪은 상위 요청의 외부 `(계정, request_id)`로 중복을 검사한다. 입력 요약은 요청 목록 전체와 항목 순서로 만든다.
+- 판정은 항목 순서대로 대상을 고른다. 근접 지정, 전역 할당, 명시 지정 항목은 단일 요청과 같은 ①~③으로 기기 하나를 고른다. 거리 선택자 항목은 위 "거리 선택자의 판정"으로 기기를 고른다. 경계 확률 검사도 항목마다 한다.
+- 앞 항목이 고른 기기를 뒤 항목이 다시 고르면 판정은 하위 요청을 인계하지 않고 `DENY`와 `INVALID_INPUT`을 반환한다.
+- 고른 기기마다의 하위 요청은 단일 요청과 같은 ④~⑥, 동작·인자 검사, 판정 기록, `ExecutionContext`를 쓴다.
+- 하위 요청 하나라도 걸리면 판정은 이미 만든 예약과 승인 사용분을 미전송으로 취소하고 어느 하위 요청도 인계하지 않는다.
+- 모두 통과하면 판정은 하위 요청들의 실행을 동시에 인계한다. 한 하위 요청의 재검사 거부나 실행 실패는 다른 하위 요청의 실행을 되돌리지 않는다.
+- 상위 요청의 판정 기록은 요청 목록, 항목마다 고른 기기, 거리 선택자 항목의 거리 순서 기록을 담는다. 상위 요청의 `node_id`는 비어 있다.
+
 ### SmartThings 실행 어댑터
 
 [#259](https://github.com/capstone-itda/nearpilot-server/issues/259)의 B안을 따른다. 담당자는 시연 일정과 JM-220의 의견을 근거로 A안(외부 브리지) 대신 B안을 골랐다.
@@ -1599,7 +1614,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `collection_run` | PK `collection_id`, FK `beacon_id`, `label` (기기 1~7 앞 또는 none), `started_at`, nullable `ended_at`. 같은 비콘의 수집 구간은 겹치지 않는다. |
 | `auto_zero` | PK `revision`(개정 번호), FK `node_id`, 자동 영점 `zero_db`(dB. 버림이면 NULL), 기기 선언의 `vendor_model`, `vendor_firmware`, `recorded_at`. 행을 고치거나 지우지 않는다. 판정 기록의 보정 버전이 개정 번호를 참조한다 (#252). |
 | `rssi_observation` | PK `obs_id`, FK `node_id`, `beacon_id`, `rssi` (dBm), `frame_ts` (약 1초 프레임), 서버 수신 시각 `received_at`, 발행 시각 `sent_at`, 기기 연결 ID `session_id`, 순번 `seq`, `(node_id, session_id, seq, beacon_id)` UNIQUE, nullable FK `collection_id`. 등록된 활성 비콘의 관측만 저장한다. 라벨은 연결한 수집 회차에서 읽는다. |
-| `request` | TEXT PK `internal_request_id`, FK `user_id`, 외부 `request_id`, UNIQUE `(user_id, request_id)`, 정규화 입력 요약 `input_digest`, nullable FK `parent_internal_request_id`, 거리 선택자 하위 요청의 nullable 상위 요청 연결, nullable FK `node_id`, `target_spec`, `action`, `verdict`, `reason_code`, `p_max`, 버전 `model`, `calib`, `policy_ver`, `config_ver`, 실제 설정을 포함한 JSON `decision_context`, `host_kind` |
+| `request` | TEXT PK `internal_request_id`, FK `user_id`, 외부 `request_id`, UNIQUE `(user_id, request_id)`, 정규화 입력 요약 `input_digest`, nullable FK `parent_internal_request_id`, 거리 선택자·묶음 요청 하위 요청의 nullable 상위 요청 연결, nullable FK `node_id`, `target_spec`, `action`, `verdict`, `reason_code`, `p_max`, 버전 `model`, `calib`, `policy_ver`, `config_ver`, 실제 설정을 포함한 JSON `decision_context`, `host_kind` |
 | `node_command` | TEXT PK `command_id`, FK `internal_request_id`, `node_id`, 대상 동작과 입력 요약, 서버가 정한 동작 인자 JSON `arguments`(없을 수 있다. 기존 `light`, `speaker`를 대체한다), 전송 시도, 실행 상태, 결과, 시각. 승인 사용분과 연결한다. 결과 불명은 실패, 미전송과 구분한다. 접수·실행 전 거부는 미전송, 실패와 구분한다. 기록은 재시작 뒤에도 보존한다. |
 | `use_session` | TEXT PK `use_id`, FK `internal_request_id`, `user_id`, `node_id`, `state` (`RESERVED`, `ACTIVE`, `CLOSING`, `CLOSED`), `end_reason` (`release`, `leave`, `timeout`, `fault`, `cancelled`), nullable `rental_due_at` (실행 성공 때 정한다), nullable `closed_at`, 생성 당시 종료 정책. 대여형 요청과 살아 있는(취소되지 않은) 점유 세션은 1:0..1 관계다. 오류 뒤 취소한 요청을 재판정하면(#76, #80) 취소된 세션 옆에 새 세션이 생긴다. |
 | 복구 건 | TEXT PK `recovery_id`, FK `node_id`, 관련 요청·명령·점유 세션 연결, 명령 결과·현재 연결의 명령 처리 상태의 참조와 시각, 복구 승인 계정과 승인 시각, 정산 내용의 요약값, 완료 결과. 같은 복구 건의 대상 연결은 바꾸지 않는다. 엔터티의 코드 이름은 `recovery`다. |
@@ -1607,6 +1622,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 
 - 계정은 여러 비콘, 장소, 요청을 가진다. 장소는 여러 기기를 가진다.
 - 거리 선택자 요청은 상위 요청 행 하나와 고른 기기마다 하위 요청 행을 둔다. 하위 요청 행에는 외부 `request_id`가 없다. 하위 요청의 명령, 점유 세션, 승인 사용분은 하위 요청에 연결한다 (§4 "거리 선택자의 판정").
+- 묶음 요청도 상위 요청 행 하나와 고른 기기마다 하위 요청 행을 둔다. 상위 요청 행은 요청 목록을 `decision_context`에 담는다. 상위 요청 행의 `target_spec`과 `action` 값은 구현 spec이 정한다 (§4 "묶음 요청의 판정", #284).
 - 계정의 활성 비콘은 하나 이하다. 비활성 비콘의 식별자와 계정 연결은 보존한다.
 - 기기별, 비콘별 관측은 요청의 `decision_context`에서 재현할 수 있는 관측 구간으로 연결한다.
 - 공통 근접 파라미터는 공통 모델 파일이 보존한다. DB는 판정에 적용한 모델 버전과 자동 영점 개정 번호를 기록한다 (#252).
