@@ -36,6 +36,7 @@ auto_zero_min_bins = 120
 [acceptance]
 max_misselection = 0.05
 max_ece = 0.05
+max_boundary_error = 0.05
 """
 
 TABLE = (

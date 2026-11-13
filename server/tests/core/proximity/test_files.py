@@ -34,6 +34,7 @@ auto_zero_min_bins = 120
 [acceptance]
 max_misselection = 0.05
 max_ece = 0.05
+max_boundary_error = 0.05
 """
 
 
@@ -53,7 +54,7 @@ def test_FR16_fit_file_reads_settings(tmp_path):
         split=SplitSettings(ratios=(0.6, 0.2, 0.2), min_runs_per_label=5),
         fit=FitSettings(taus=(1.0, 1.5, 2.0), stays=(0.8, 0.9, 0.95), window_secs=(2.0, 3.0),
                         auto_zero_min_bins=120),
-        acceptance=AcceptanceSettings(max_misselection=0.05, max_ece=0.05),
+        acceptance=AcceptanceSettings(max_misselection=0.05, max_ece=0.05, max_boundary_error=0.05),
     )
     # 목록은 tuple이다. 파일을 읽은 뒤 바꿀 수 없다.
     assert all(type(v) is tuple for v in (
@@ -75,6 +76,33 @@ def test_FR16_fit_file_accepts_integers_and_boundaries(tmp_path):
     assert fit_file.fit.taus == (1.0, 2.0) and all(type(v) is float for v in fit_file.fit.taus)
     assert fit_file.fit.window_secs == (2.0,)
     assert (fit_file.acceptance.max_misselection, fit_file.acceptance.max_ece) == (0.0, 1.0)
+
+
+def test_FR09_fit_file_reads_max_boundary_error(tmp_path):
+    # 지표 10(거리 순서)의 목표 오류 비율이다 (#279). 적합 설정 로더는 선택 키를 두지 않으므로 필수 키다.
+    assert load_fit_file(write_toml(tmp_path, FIT_FILE)).acceptance.max_boundary_error == 0.05
+
+    # 값을 읽는다. 경계 값 0과 1은 받고, 정수도 float로 읽는다
+    for written, expected in (("0.2", 0.2), ("0", 0.0), ("1", 1.0)):
+        text = FIT_FILE.replace("max_boundary_error = 0.05", f"max_boundary_error = {written}")
+        value = load_fit_file(write_toml(tmp_path, text)).acceptance.max_boundary_error
+        assert (value, type(value)) == (expected, float)
+
+    # (고칠 부분, 바꾼 값, 기대하는 문제). 문제 하나만 나와야 한다
+    bad = (
+        ("max_boundary_error = 0.05\n", "", "acceptance.max_boundary_error: 필드가 없다"),
+        ("max_boundary_error = 0.05", "max_boundary_error = -0.1",
+         "acceptance.max_boundary_error: 0 이상 1 이하여야 한다 (-0.1)"),
+        ("max_boundary_error = 0.05", "max_boundary_error = 1.1",
+         "acceptance.max_boundary_error: 0 이상 1 이하여야 한다 (1.1)"),
+        ("max_boundary_error = 0.05", "max_boundary_error = true",
+         "acceptance.max_boundary_error: 숫자여야 한다 (True)"),
+    )
+    for old, new, problem in bad:
+        assert old in FIT_FILE  # 고칠 부분이 없으면 이 사례는 아무것도 검사하지 못한다
+        with pytest.raises(FitFileError) as error:
+            load_fit_file(write_toml(tmp_path, FIT_FILE.replace(old, new)))
+        assert str(error.value) == problem
 
 
 def test_FR16_fit_file_min_runs_boundary(tmp_path):
@@ -221,6 +249,7 @@ window_secs = [true]
 
 [acceptance]
 max_misselection = 2
+max_boundary_error = 0.05
 """
     with pytest.raises(FitFileError) as error:
         load_fit_file(write_toml(tmp_path, text))

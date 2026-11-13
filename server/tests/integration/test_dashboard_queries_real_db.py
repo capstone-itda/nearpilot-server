@@ -41,7 +41,10 @@ def world(tmp_path_factory):
 def write_evaluation(world, reports):
     """평가 도구가 쓰는 그대로의 리포트 (CSV 와 Markdown) 를 `reports` 에 쓴다."""
     reports.mkdir()
-    rows = metric_rows(Metrics(0.04, 100, 4, 0.049, 250), AcceptanceSettings(max_misselection=0.05, max_ece=0.05))
+    rows = metric_rows(
+        Metrics(0.04, 100, 4, 0.049, 250),
+        AcceptanceSettings(max_misselection=0.05, max_ece=0.05, max_boundary_error=0.05),
+    )
     write_report(
         rows, db_path="np.db", schema_version=1, sample_count=250, generated_at=world.finished_at,
         csv_path=str(reports / "lab.csv"), md_path=str(reports / "lab.md"), git_commit="0123abc",
