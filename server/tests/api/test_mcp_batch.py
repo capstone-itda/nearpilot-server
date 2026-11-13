@@ -119,6 +119,23 @@ def test_FR09_batch_tool_schema_and_description():
     assert [req.items for req in c.core.requests] == [(), ()]
 
 
+def test_FR09_request_use_keeps_json_like_strings():
+    # SDK 는 주석이 str 이 아닌 인자의 문자열을 JSON 으로 먼저 읽는다. 단일 요청의 target_spec 과 action 은
+    # 문자열 그대로 코어에 가야 한다: "null" 은 기기 ID 가 null 인 명시 지정이고 "[1]" 은 기기 ID 가 [1] 인 명시 지정이다.
+    c = Client()
+    tools = run(c.post("tools/list")).json()["result"]["tools"]
+    schema = next(t for t in tools if t["name"] == "request_use")["inputSchema"]
+    assert schema["required"] == ["request_id"]  # 문자열 주석이어도 target_spec 과 action 은 선택 인자다
+    sent = [("null", "on"), ("[1]", "on"), ("light-1", "null")]
+    for index, (target_spec, action) in enumerate(sent):
+        resp = c.call({"target_spec": target_spec, "action": action, "request_id": f"r{index}"})
+        assert (resp["verdict"], resp["reason"]) == ("OK", "OK")  # INVALID_INPUT 으로 거부하지 않는다
+    assert [(req.target, req.action, req.items) for req in c.core.requests] == [
+        (TargetSpec(TargetKind.EXPLICIT, None, "null"), "on", ()),
+        (TargetSpec(TargetKind.EXPLICIT, None, "[1]"), "on", ()),
+        (TargetSpec(TargetKind.EXPLICIT, None, "light-1"), "null", ())]
+
+
 def test_FR09_batch_response_devices_have_item():
     c = Client()
     c.core.decision = Decision(

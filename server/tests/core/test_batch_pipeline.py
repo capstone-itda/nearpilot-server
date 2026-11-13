@@ -24,7 +24,7 @@ from nearpilot.core.decision.digest import input_digest
 from nearpilot.core.decision.pipeline import boundary_probability
 from nearpilot.shared.enums import ExecutionKind, ExecutionStatus, ReasonCode, Step, Verdict
 from nearpilot.shared.frozen import thaw
-from nearpilot.shared.models import Decision, DeviceOutcome, PolicyCheckResult
+from nearpilot.shared.models import BatchRecord, Decision, DeviceOutcome, PolicyCheckResult, SelectorRecord
 
 PARENT = "i1"  # FakeRepo 가 처음 연결한 요청의 내부 ID
 BATCH_SIBLING = "batch_sibling"
@@ -169,6 +169,26 @@ def test_FR09_batch_any_item_duplicate_denied_after_assignment():
     assert repo.decisions["c2"].p_max == 0.45
 
 
+def test_FR09_batch_any_item_policy_stop_reports_device():
+    """전역 할당 항목이 ④ 에서 걸리면 걸린 기기의 하위 요청을 만들어 `devices` 에 낸다 (spec 결정 32)."""
+    policy = FakePolicy({nid: PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, 2)
+                         for nid in ("locker-1", "locker-2")})
+    pipe, repo, prox, store, audit = build_batch(
+        [*dimmable_lights(), locker("locker-1"), locker("locker-2")], {}, {"locker-1": 0.5, "locker-2": 0.45},
+        policy=policy, settings=batch_settings(threshold_locker=0.4), window=FakeWindow("locker-1"))
+    sd = pipe.decide_batch(batch_request(("light-1", "on"), ("any:locker", "open")))
+    d = sd.decision
+    assert (d.verdict, d.reason) == (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED)
+    assert d.devices == (device("locker-1", 2, Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED),)
+    assert d.selected_count == 2
+    assert child_ids(repo) == ["c1", "c2"]
+    saved = repo.decisions["c2"]
+    assert (saved.internal_request_id, saved.node_id, saved.verdict) == ("c2", "locker-1", Verdict.NEED_APPROVAL)
+    assert [r.internal_request_id for r in repo.reserved] == ["c1"]  # 걸린 하위 요청은 예약하지 않는다
+    assert store.cancels == [sibling_cancel("c1", ReasonCode.APPROVAL_REQUIRED, "locker-1")]
+    assert [item.nodes for item in repo.records[PARENT].batch.items] == [("light-1",), ("locker-1",)]
+
+
 # ── 거리 선택자 항목이 하위 요청 전에 멈춘다 (FR-09) ────────────────────
 
 
@@ -263,12 +283,12 @@ def test_FR18_batch_children_follow_single_path():
     expected = [("c1", "light-2", lights_item), ("c2", "light-1", lights_item), ("c3", "light-3", lights_item),
                 ("c4", "speaker-1", speaker_item)]
     assert child_ids(repo) == [child for child, _, _ in expected]
-    # 하위 요청 행은 항목의 요청으로 만든다. 거리 선택자 항목은 고른 기기를, 근접 지정 항목은 None 을 넘긴다
+    # 하위 요청 행은 항목의 요청과 고른 기기로 만든다. 근접 지정 항목도 고른 기기를 넘긴다
     digest = input_digest(req)
     assert [(link.parent, link.req.target, link.req.action, link.node_id, link.digest)
             for link in repo.child_links] == [
         (PARENT, lights_item.target, "on", "light-2", digest), (PARENT, lights_item.target, "on", "light-1", digest),
-        (PARENT, lights_item.target, "on", "light-3", digest), (PARENT, speaker_item.target, "off", None, digest)]
+        (PARENT, lights_item.target, "on", "light-3", digest), (PARENT, speaker_item.target, "off", "speaker-1", digest)]
     assert all(link.req.request_id == "r1" and link.req.items == () for link in repo.child_links)
     # 예약과 정책 검사는 하위 요청마다 한다
     assert [(r.internal_request_id, r.node_id, r.action, r.reoperate_only) for r in repo.reserved] == [
@@ -289,15 +309,16 @@ def test_FR18_batch_children_follow_single_path():
     assert repo.decisions[PARENT].node_id is None
     assert [saved.internal_request_id for saved in repo.saved] == [*child_ids(repo), PARENT]  # 상위 판정은 마지막에 저장한다
     assert set(repo.records) == {PARENT, *child_ids(repo)}
-    # 근접 지정 항목은 단일 요청처럼 하위 요청 ID 로 ①②③을 남긴다. 사후확률도 그 하위 요청이 부른다
-    assert [e.step for e in events(audit, "c4")][:3] == [Step.BEACON, Step.CANDIDATE, Step.PROXIMITY]
-    assert thaw(events(audit, "c4", Step.PROXIMITY)[0].payload)["posteriors"] == {"speaker-1": 0.9}
+    # 근접 지정 항목은 단일 요청처럼 사후확률을 한 번 부르고, ④~⑥ 감사를 하위 요청 ID 로 남긴다. ①②③ 은 아래의 상위 요청 ID 다
+    assert [e.step for e in events(audit, "c4")] == [Step.POLICY, Step.DEVICE_OCCUPANCY, Step.POLICY]
     assert events(audit, "c4")[-1].payload == {"verdict": "OK", "reason": "OK", "settings_version": "t",
                                                "batch_parent": PARENT}
     assert prox.posterior_calls == [(["speaker-1"], ["light-1", "light-2", "light-3", "speaker-1"])]
-    # 거리 선택자 항목의 고르기는 상위 요청 ID 로 남는다
+    # 항목의 고르기는 상위 요청 ID 로 남는다: 거리 선택자 항목의 ①②와 거리 순서, 근접 지정 항목의 ①②③
     assert [e.step for e in events(audit, PARENT)] == [
-        Step.BEACON, Step.CANDIDATE, Step.PROXIMITY, Step.DEVICE_OCCUPANCY]
+        Step.BEACON, Step.CANDIDATE, Step.PROXIMITY, Step.BEACON, Step.CANDIDATE, Step.PROXIMITY,
+        Step.DEVICE_OCCUPANCY]
+    assert thaw(events(audit, PARENT, Step.PROXIMITY)[1].payload)["posteriors"] == {"speaker-1": 0.9}
     assert events(audit, PARENT)[-1].payload == {"verdict": "OK", "reason": "OK", "settings_version": "t",
                                                  "children": 4}
 
@@ -320,32 +341,96 @@ def test_FR18_batch_posterior_called_once_per_selector_item():
                                     (["locker-1", "locker-2", "locker-3"], everyone), (["speaker-1"], everyone)]
 
 
+@pytest.mark.parametrize("target,action,chosen,stop", [
+    pytest.param("nearest:speaker", "off", "speaker-1", None, id="근접 지정"),
+    pytest.param("any:locker", "open", "locker-2", None, id="전역 할당"),
+    pytest.param("speaker-1", "off", "speaker-1", None, id="명시 지정"),
+    pytest.param("speaker-9", "off", None, ReasonCode.TARGET_UNAVAILABLE, id="② 에서 멈춤"),
+    pytest.param("nearest:speaker", "off", None, ReasonCode.LOW_CONFIDENCE, id="③ 에서 멈춤"),
+])
+def test_FR18_batch_item_child_created_after_choosing(target, action, chosen, stop):
+    """근접 지정·전역 할당·명시 지정 항목은 ①②③ 으로 기기를 먼저 고르고, 고른 기기로 하위 요청 행을 만든다 (#284)."""
+    window = FakeWindow("locker-2")
+    policy = FakePolicy({"locker-2": PolicyCheckResult(Verdict.OK, ReasonCode.OK, 1, "ap-2")})
+    pipe, repo, prox, store, audit = build_batch(
+        [*world(), locker("locker-1"), locker("locker-2")], {},
+        {"speaker-1": 0.1 if stop is ReasonCode.LOW_CONFIDENCE else 0.9, "locker-1": 0.5, "locker-2": 0.45},
+        policy=policy, settings=batch_settings(threshold_speaker=0.5, threshold_locker=0.4), window=window)
+    linked = []
+    link = repo.link_selector_child
+
+    def spy(parent, item_req, node_id, digest):  # 하위 요청 행을 만드는 때에 이미 남은 감사와 예약을 적는다
+        linked.append((node_id, [(e.internal_request_id, e.step) for e in audit.events], len(repo.reserved)))
+        return link(parent, item_req, node_id, digest)
+
+    repo.link_selector_child = spy
+    sd = pipe.decide_batch(batch_request(("light-1", "on"), (target, action)))
+    second_item = repo.records[PARENT].batch.items[1]
+    checks = list(zip(policy.calls, policy.request_ids))  # ④ 정책 검사의 (기기, 감사 ID)
+    if stop is not None:  # 기기를 고르기 전에 멈췄다. 그 항목의 하위 요청 행을 만들지 않는다
+        d = sd.decision
+        assert d.reason is stop and d.devices == () and d.selected_count == 1
+        assert [node_id for node_id, *_ in linked] == ["light-1"] and child_ids(repo) == ["c1"]
+        assert second_item.children == () and second_item.nodes == ()
+        assert store.cancels == [sibling_cancel("c1", stop, None)]  # 앞 항목의 예약만 취소한다
+        assert checks == [("light-1", "c1")]
+        return
+    assert sd.decision.verdict is Verdict.OK
+    assert [node_id for node_id, *_ in linked] == ["light-1", chosen]  # 하위 요청은 늘 고른 기기로 만든다
+    _, audited, reserved = linked[1]
+    # 이 항목의 하위 요청 행을 만들기 전에 ①②③ 이 상위 요청 ID 로 끝났다. 그 하위 요청의 감사와 예약은 아직 없다
+    assert [step for iid, step in audited if iid == PARENT][3:6] == [Step.BEACON, Step.CANDIDATE, Step.PROXIMITY]
+    assert "c2" not in {iid for iid, _ in audited} and reserved == 1  # 예약은 앞 항목의 하나다
+    assert len(window.requests) == (1 if target.startswith("any:") else 0)  # 전역 할당의 배정은 고르기 안이다
+    # 나머지는 하위 요청 ID 로 감사한다. ①②③ 감사는 하위 요청에 없다
+    steps = {e.step for e in events(audit, "c2")}
+    assert Step.DEVICE_OCCUPANCY in steps and not steps & {Step.BEACON, Step.CANDIDATE, Step.PROXIMITY}
+    assert (repo.child_links[1].node_id, repo.decisions["c2"].node_id) == (chosen, chosen)
+    assert (second_item.children, second_item.nodes) == (("c2",), (chosen,))
+    if target.startswith("any:"):  # 전역 할당은 ④ 를 고르기 안에서 후보마다 하고(상위 요청 ID), 그 검사 결과를 예약에 그대로 넘긴다
+        assert checks == [("light-1", "c1"), ("locker-1", PARENT), ("locker-2", PARENT)]
+        assert [r.approval_id for r in repo.reserved] == [None, "ap-2"]
+    else:  # 다른 항목은 ④ 를 하위 요청 ID 로 한 번 한다
+        assert checks == [("light-1", "c1"), (chosen, "c2")]
+    # 하위 요청의 판정 기록이 고르기에서 정한 근접 추정 값을 담는다. 명시 지정은 확률을 계산하지 않았다
+    posteriors = {"nearest:speaker": {"speaker-1": 0.9}, "any:locker": {"locker-1": 0.5, "locker-2": 0.45}}.get(target, {})
+    record = repo.records["c2"]
+    assert (dict(record.posteriors), record.model_version) == (posteriors, "m" if posteriors else None)
+
+
 @pytest.mark.parametrize("case", ["need_approval", "low_confidence"])
 def test_FR18_batch_one_fails_none_executes(case):
-    if case == "need_approval":  # 둘째 항목의 기기가 승인이 필요하다
+    if case == "need_approval":  # 둘째 항목의 기기가 승인이 필요하다. 기기를 고른 뒤라 그 하위 요청이 걸린다
         policy = FakePolicy({"speaker-1": PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, 2)})
         pipe, repo, prox, store, audit = build_batch(policy=policy)
         second = ("speaker-1", "off")
-        reason, verdict, node_id, p_max = ReasonCode.APPROVAL_REQUIRED, Verdict.NEED_APPROVAL, "speaker-1", None
-    else:  # 근접 지정 항목의 사후확률이 임계값(0.5) 미만이다
+        reason, verdict, node_id = ReasonCode.APPROVAL_REQUIRED, Verdict.NEED_APPROVAL, "speaker-1"
+        children = ["c1", "c2", "c3"]
+    else:  # 근접 지정 항목의 사후확률이 임계값(0.5) 미만이다. 기기를 고르지 못해 그 항목의 하위 요청을 만들지 않는다
         pipe, repo, prox, store, audit = build_batch(
             posteriors={"speaker-1": 0.1}, settings=batch_settings(threshold_speaker=0.5))
         second = ("nearest:speaker", "off")
-        reason, verdict, node_id, p_max = ReasonCode.LOW_CONFIDENCE, Verdict.ASK, None, 0.1
+        reason, verdict, node_id = ReasonCode.LOW_CONFIDENCE, Verdict.ASK, None
+        children = ["c1", "c2"]
     sd = pipe.decide_batch(batch_request(("near:light:1:2", "on"), second))
     d = sd.decision
     assert (d.verdict, d.reason) == (verdict, reason)
-    # 걸린 기기를 정했으면 그 기기가 devices 의 하나이고, 정하지 못했으면 빈 목록이다
+    # 걸린 하위 요청이 있으면 그 기기가 devices 의 하나이고, 고르기에서 걸렸으면 빈 목록이다
     assert d.devices == (() if node_id is None else (device(node_id, 2, verdict, reason),))
-    assert d.selected_count == 3 and d.node_id is None and d.use_id is None
+    # selected_count 는 만든 하위 요청 수다. 고르기에서 걸리면 앞 항목의 기기 수다
+    assert d.selected_count == len(children) and (d.node_id, d.use_id, d.p_max) == (None, None, None)
     assert sd.contexts == () and sd.children == ()  # 아무것도 인계하지 않는다
-    assert child_ids(repo) == ["c1", "c2", "c3"]
+    assert child_ids(repo) == children
     assert [r.internal_request_id for r in repo.reserved] == ["c1", "c2"]  # 걸린 하위 요청은 예약하지 않는다
     assert store.cancels == [sibling_cancel(c, reason, node_id) for c in ("c1", "c2")]
     assert [repo.decisions[c].verdict for c in ("c1", "c2")] == [Verdict.OK, Verdict.OK]
-    failed = repo.decisions["c3"]
-    assert (failed.verdict, failed.reason, failed.node_id, failed.p_max) == (verdict, reason, node_id, p_max)
-    assert repo.records[PARENT].batch.items[1].children == ("c3",)
+    second_item = repo.records[PARENT].batch.items[1]
+    assert second_item.children == tuple(children[2:])
+    if node_id is None:  # 고르기에서 걸렸다. 그 항목의 하위 요청도 기록도 없다
+        assert "c3" not in repo.decisions and second_item.nodes == ()
+    else:
+        failed = repo.decisions["c3"]
+        assert (failed.verdict, failed.reason, failed.node_id, failed.p_max) == (verdict, reason, node_id, None)
 
 
 @pytest.mark.parametrize("case", ["child_fails", "selector_stops"])
@@ -369,7 +454,7 @@ def test_FR18_batch_sibling_cancel_precedes_saving_parent(case):
     assert saved_at_cancel == [False]  # 상위 판정을 저장하기 전에 취소한다
 
 
-@pytest.mark.parametrize("case", ["reserve_of_single_item", "policy_of_selector_child"])
+@pytest.mark.parametrize("case", ["reserve_of_single_item", "choose_of_single_item", "policy_of_selector_child"])
 def test_FR18_batch_internal_error_cancels_children(case):
     if case == "reserve_of_single_item":  # 둘째 항목(명시 지정)의 reserve_if_free 가 예외를 던진다. 예약을 부른 뒤라 취소한다
         pipe, repo, prox, store, audit = build_batch()
@@ -382,7 +467,21 @@ def test_FR18_batch_internal_error_cancels_children(case):
 
         repo.reserve_if_free = reserve
         req = batch_request(("near:light:1:1", "on"), ("speaker-1", "off"))
-        cancelled, unsaved, unsaved_node = ["c1", "c2"], "c2", None  # 대상을 정하기 전의 하위 요청은 기기가 없다
+        cancelled, unsaved, unsaved_node = ["c1", "c2"], "c2", "speaker-1"  # 기기를 고른 뒤에 만든 하위 요청이라 기기가 있다
+    elif case == "choose_of_single_item":  # 둘째 항목(근접 지정)의 고르기 ① 에서 예외가 난다. 그 항목은 하위 요청을 만들기 전이다
+        pipe, repo, prox, store, audit = build_batch(
+            posteriors={"speaker-1": 0.9}, settings=batch_settings(threshold_speaker=0.5))
+        real, seen = repo.beacons_of, []
+
+        def beacons_of(user_id):
+            seen.append(user_id)
+            if len(seen) == 2:  # 첫 항목의 ① 은 지나고 둘째 항목의 ① 에서 던진다
+                raise RuntimeError("secret internal detail")
+            return real(user_id)
+
+        repo.beacons_of = beacons_of
+        req = batch_request(("near:light:1:1", "on"), ("nearest:speaker", "off"))
+        cancelled, unsaved, unsaved_node = ["c1"], None, None
     else:  # 둘째 항목(거리 선택자)의 둘째 하위 요청의 정책 검사가 예외를 던진다. 예약 전이라 취소하지 않는다
         pipe, repo, prox, store, audit = build_batch(policy=ExplodingPolicy("light-1"))
         req = batch_request(("speaker-1", "off"), ("near:light:1:2", "on"))
@@ -399,9 +498,12 @@ def test_FR18_batch_internal_error_cancels_children(case):
     # 판정을 저장한 하위 요청은 그대로고, 저장하지 못한 하위 요청에는 INTERNAL_ERROR 를 저장한다
     assert all(repo.decisions[c].verdict is Verdict.OK for c in cancelled if c != unsaved)
     assert [repo.save_attempts.count(c) for c in (*cancelled, PARENT)] == [1] * (len(cancelled) + 1)  # 다시 저장하려 하지 않는다
-    rejected = repo.decisions[unsaved]
-    assert (rejected.verdict, rejected.reason, rejected.node_id) == (
-        Verdict.DENY, ReasonCode.INTERNAL_ERROR, unsaved_node)
+    if unsaved is None:  # 기기를 고르기 전에 멈춘 항목은 하위 요청 행을 만들지 않았다
+        assert child_ids(repo) == cancelled
+    else:
+        rejected = repo.decisions[unsaved]
+        assert (rejected.verdict, rejected.reason, rejected.node_id) == (
+            Verdict.DENY, ReasonCode.INTERNAL_ERROR, unsaved_node)
     assert (repo.decisions[PARENT].verdict, repo.decisions[PARENT].reason) == (
         Verdict.DENY, ReasonCode.INTERNAL_ERROR)
     assert repo.records[PARENT].batch is None  # 오류 판정은 묶음 기록을 담지 않는다
@@ -444,6 +546,32 @@ def test_FR22_batch_parent_record_has_items():
     assert (record.window_start, record.window_end, dict(record.posteriors)) == (None, None, {})
     assert record.settings.version == "t"
     assert (repo.records["c3"].model_version, dict(repo.records["c3"].posteriors)) == ("m", {"speaker-1": 0.9})
+
+
+@pytest.mark.parametrize("case", ["all_ok", "selector_child_fails"])
+def test_FR22_batch_record_has_item_nodes(case):
+    """항목 기록은 만든 하위 요청마다 고른 기기를 같은 순서로 담는다. 거리 선택자 항목은 고른 기기의 앞쪽이다 (#284)."""
+    if case == "all_ok":
+        pipe, repo, prox, store, audit = build_batch(
+            [*world(), locker("locker-1"), locker("locker-2")],
+            posteriors={"speaker-1": 0.9, "locker-1": 0.5, "locker-2": 0.45},
+            settings=batch_settings(threshold_speaker=0.5, threshold_locker=0.4), window=FakeWindow("locker-2"))
+        req = batch_request(("near:light:1:2", "on"), ("nearest:speaker", "off"), ("locker-1", "open"),
+                            ("any:locker", "open"))
+        nodes = [("light-2", "light-1"), ("speaker-1",), ("locker-1",), ("locker-2",)]
+    else:  # 거리 선택자 항목의 둘째 하위 요청이 걸려 멈췄다. 셋째 기기의 하위 요청은 만들지 않았다
+        policy = FakePolicy({"light-1": PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, 2)})
+        pipe, repo, prox, store, audit = build_batch(policy=policy)
+        req = batch_request(("near:light:1:all", "on"), ("speaker-1", "off"))
+        nodes = [("light-2", "light-1")]
+    pipe.decide_batch(req)
+    items = repo.records[PARENT].batch.items
+    assert [item.nodes for item in items] == nodes
+    for item in items:  # 하위 요청과 같은 순서·같은 수고, 하위 요청 판정이 가진 기기와 같다
+        assert tuple(repo.decisions[child].node_id for child in item.children) == item.nodes
+        assert item.selector is None or item.nodes == item.selector.selected[:len(item.nodes)]
+    if case == "selector_child_fails":
+        assert items[0].selector.selected == ("light-2", "light-1", "light-3")
 
 
 # ── ⓪ 중복과 재전송 (FR-22) ───────────────────────────────────────────
@@ -512,11 +640,11 @@ def test_FR22_batch_resend_after_check_failure(case):
         req = batch_request(("near:light:1:1", "on"), ("speaker-1", "off"))
         devices, selected_count, similar = (
             device("speaker-1", 2, Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED),), 2, False
-    elif case == "low_confidence":  # 걸린 하위 요청이 기기를 정하지 못했다. 재전송도 기기를 내지 않는다
+    elif case == "low_confidence":  # 둘째 항목이 기기를 고르지 못해 하위 요청 없이 멈췄다. 재전송도 기기를 내지 않는다
         pipe, repo, prox, store, audit = build_batch(
             posteriors={"speaker-1": 0.1}, settings=batch_settings(threshold_speaker=0.5))
         req = batch_request(("near:light:1:1", "on"), ("nearest:speaker", "off"))
-        devices, selected_count, similar = (), 2, False
+        devices, selected_count, similar = (), 1, False
     else:  # 하위 요청 전에 멈췄다. 비슷함은 멈춘 항목의 값이다
         pipe, repo, prox, store, audit = build_batch(
             values={"light-1": -60.0, "light-2": -61.0, "light-3": -62.0},
@@ -534,18 +662,50 @@ def test_FR22_batch_resend_after_check_failure(case):
     assert snapshot(repo, store, audit) == before  # 새 하위 요청도 예약도 취소도 없다
 
 
-@pytest.mark.parametrize("damage", ["missing_child_decision", "child_not_ok", "missing_batch_record"])
+@pytest.mark.parametrize("damage", [
+    "missing_child_decision", "child_not_ok", "missing_batch_record",
+    "empty_items", "second_item_missing", "second_item_child_missing", "selector_fewer_children",
+    "selector_record_missing", "single_item_has_selector",
+    "item_target_differs", "item_action_differs", "item_arguments_differ",
+])
 def test_FR22_batch_resend_inconsistent_ok_is_internal_error(damage):
     pipe, repo, prox, store, audit = build_batch()
     req = batch_request(("near:light:1:2", "on"), ("speaker-1", "off"))
     pipe.decide_batch(req)
     last = child_ids(repo)[-1]
+    selector_item, single_item = repo.records[PARENT].batch.items
+
+    def rewrite(*items):  # 저장된 OK 상위 판정의 묶음 기록을 바꾼다
+        repo.records[PARENT] = replace(repo.records[PARENT], batch=BatchRecord(items))
+
     if damage == "missing_child_decision":  # 하위 판정이 저장되지 않았다
         del repo.decisions[last]
     elif damage == "missing_batch_record":  # OK 상위 판정에 묶음 기록이 없다
         repo.records[PARENT] = replace(repo.records[PARENT], batch=None)
-    else:  # 하위 판정이 OK 가 아니다
+    elif damage == "child_not_ok":  # 하위 판정이 OK 가 아니다
         repo.decisions[last] = Decision(last, "r1", Verdict.BUSY, ReasonCode.DEVICE_BUSY, node_id="speaker-1")
+    elif damage == "empty_items":  # 항목이 하나도 없다
+        rewrite()
+    elif damage == "second_item_missing":  # 둘째 항목의 기록이 없다
+        rewrite(selector_item)
+    elif damage == "second_item_child_missing":  # 둘째 항목에 하위 요청이 없다
+        rewrite(selector_item, replace(single_item, children=(), nodes=()))
+    elif damage == "selector_fewer_children":  # 거리 선택자 항목의 하위 요청이 고른 기기(둘)보다 적다
+        one = selector_item.children[:1]
+        rewrite(replace(selector_item, children=one, nodes=selector_item.nodes[:1],
+                        selector=replace(selector_item.selector, children=one)), single_item)
+    elif damage == "selector_record_missing":  # 거리 선택자 항목에 거리 선택자 기록이 없다
+        rewrite(replace(selector_item, selector=None), single_item)
+    elif damage == "single_item_has_selector":  # 거리 선택자가 아닌 항목에 거리 선택자 기록이 있다
+        lone = SelectorRecord("speaker-1", ("speaker-1",), {"speaker-1": -50.0}, ("speaker-1",), False,
+                              single_item.children)
+        rewrite(selector_item, replace(single_item, selector=lone))
+    elif damage == "item_target_differs":  # 기록한 항목의 대상이 요청과 다르다
+        rewrite(replace(selector_item, target_spec="near:light:1:3"), single_item)
+    elif damage == "item_action_differs":  # 기록한 항목의 동작이 요청과 다르다
+        rewrite(selector_item, replace(single_item, action="on"))
+    else:  # item_arguments_differ: 기록한 항목의 인자가 요청과 다르다
+        rewrite(replace(selector_item, arguments={"brightness": 10}), single_item)
     saved, attempts = list(repo.saved), list(repo.save_attempts)
     again = pipe.decide_batch(req)
     d = again.decision
@@ -554,3 +714,4 @@ def test_FR22_batch_resend_inconsistent_ok_is_internal_error(damage):
     assert again.children == () and again.contexts == ()
     assert repo.saved == saved and repo.save_attempts == attempts  # 저장하지 않는다. 시도도 하지 않는다
     assert events(audit, PARENT)[-1].payload["result"] == "INTERNAL_ERROR"
+    assert events(audit, PARENT)[-1].payload["error"].startswith("ValueError(")  # 일관성 검사가 ValueError 로 거부했다

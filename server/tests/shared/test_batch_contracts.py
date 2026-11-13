@@ -250,6 +250,36 @@ def test_FR22_batch_item_record_children_match_selector_children():
             BatchItemRecord("near:light:1:2", "on", None, children, selector)
 
 
+def test_FR22_batch_item_record_nodes_validated():
+    """항목 기록의 기기는 하위 요청과 같은 순서·같은 수다. 거리 선택자 항목은 고른 기기의 앞쪽이다 (#284)."""
+    assert [f.name for f in fields(BatchItemRecord)][-1] == "nodes"  # 기존 위치 인자 호출은 그대로다
+    selector = _selector(("c1", "c2"))
+    full = BatchItemRecord("near:light:1:2", "on", None, ("c1", "c2"), selector, ("light-2", "light-1"))
+    assert full.nodes == ("light-2", "light-1")
+    assert BatchItemRecord("light-1", "off", None, ("c3",), None, ["light-1"]).nodes == ("light-1",)  # 목록은 튜플로 고정한다
+    # 키가 없던 옛 기록과 하위 요청을 만들기 전에 멈춘 항목은 비어 있다
+    assert BatchItemRecord("light-1", "off", None, ("c3",)).nodes == ()
+    assert BatchItemRecord("near:light:1:2", "on", None, (), _selector()).nodes == ()
+    # 하위 요청을 일부만 만든 거리 선택자 항목은 고른 기기의 앞쪽이다
+    partial = BatchItemRecord("near:light:1:2", "on", None, ("c1",), _selector(("c1",)), ("light-2",))
+    assert partial.nodes == ("light-2",)
+
+    # 기기 수가 하위 요청 수와 다르면 거부한다
+    for nodes in (("light-2",), ("light-2", "light-1", "light-3")):
+        with pytest.raises(ValueError):
+            BatchItemRecord("near:light:1:2", "on", None, ("c1", "c2"), selector, nodes)
+    with pytest.raises(ValueError):
+        BatchItemRecord("light-1", "off", None, ("c3",), None, ("light-1", "light-2"))
+    with pytest.raises(ValueError):
+        BatchItemRecord("light-1", "off", None, (), None, ("light-1",))  # 하위 요청이 없는데 기기가 있다
+    # 거리 선택자 항목의 기기가 고른 기기의 앞쪽과 다르면 거부한다
+    for nodes in (("light-1", "light-2"), ("light-2", "light-3"), ("light-3", "light-1")):
+        with pytest.raises(ValueError):
+            BatchItemRecord("near:light:1:2", "on", None, ("c1", "c2"), selector, nodes)
+    with pytest.raises(ValueError):
+        BatchItemRecord("near:light:1:2", "on", None, ("c1",), _selector(("c1",)), ("light-1",))  # 둘째 기기다
+
+
 def test_FR22_batch_record_holds_items_and_decision_record_defaults_to_none():
     first = BatchItemRecord("light-1", "on", None, ("c1",))
     second = BatchItemRecord("speaker-1", "off", None, ("c2",))

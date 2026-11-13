@@ -1151,11 +1151,20 @@ class BatchItemRecord:
     children: tuple[str, ...] = ()
     # 거리 선택자 항목의 거리 선택자 기록. 그 안의 children 은 위 children 과 같다
     selector: SelectorRecord | None = None
+    # 이 항목이 고른 기기. children 과 같은 순서·같은 수다. 거리 선택자 항목은 selector.selected 의 앞쪽이다.
+    # 키가 없던 옛 기록은 비어 있다 (FR-22)
+    nodes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "arguments", _freeze(self.arguments))
+        object.__setattr__(self, "nodes", tuple(self.nodes))
         if self.selector is not None and self.selector.children != self.children:
             raise ValueError("거리 선택자 기록의 하위 요청은 항목의 하위 요청과 같아야 한다")
+        if self.nodes:
+            if len(self.nodes) != len(self.children):
+                raise ValueError("항목의 기기 수는 하위 요청 수와 같아야 한다")
+            if self.selector is not None and self.nodes != tuple(self.selector.selected[:len(self.nodes)]):
+                raise ValueError("거리 선택자 항목의 기기는 고른 기기의 앞쪽과 같아야 한다")
 
 
 @dataclass(frozen=True, slots=True)

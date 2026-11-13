@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -81,34 +82,34 @@ def test_FR22_batch_record_round_trip(conn, repo):
     assert (parent_row["request_id"], parent_row["target_spec"], parent_row["action"]) == ("r-batch", "batch:", "batch")
     assert (parent_row["node_id"], parent_row["selector_parent_id"]) == (None, None)
 
-    # 거리 선택자 항목의 하위 행은 고른 기기를 갖고, 명시 지정 항목의 하위 행은 기기를 모른다.
+    # 하위 행은 판정이 고른 기기를 갖는다. 거리 선택자 항목도 명시 지정 항목도 기기를 고른 뒤에 행을 만든다.
     first = _child(repo, parent, LIGHTS, "light-2")
     second = _child(repo, parent, LIGHTS, "light-1")
-    third = _child(repo, parent, play, None)
+    third = _child(repo, parent, play, "speaker-1")
     assert len({parent, first, second, third}) == 4
     rows = [_row(conn, iid) for iid in (first, second, third)]
     assert [(row["node_id"], row["target_spec"], row["action"]) for row in rows] == [
-        ("light-2", SELECTOR, "on"), ("light-1", SELECTOR, "on"), (None, "speaker-1", "play"),
+        ("light-2", SELECTOR, "on"), ("light-1", SELECTOR, "on"), ("speaker-1", "speaker-1", "play"),
     ]
     for row in rows:
         assert (row["request_id"], row["selector_parent_id"], row["verdict"]) == (None, parent, None)
         assert (row["user_id"], row["input_digest"]) == ("u1", "digest-r-batch")
 
-    # 판정을 저장하면 행의 기기는 판정의 node_id 가 된다.
+    # 판정을 저장해도 행의 기기는 판정의 node_id 와 같다.
     _save(repo, Decision(first, "r-batch", Verdict.OK, ReasonCode.OK, "light-2"))
     _save(repo, Decision(second, "r-batch", Verdict.OK, ReasonCode.OK, "light-1"))
-    assert _row(conn, third)["node_id"] is None
     _save(repo, Decision(
         third, "r-batch", Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, "speaker-1", p_max=0.93))
-    assert _row(conn, third)["node_id"] == "speaker-1"
+    assert [_row(conn, iid)["node_id"] for iid in (first, second, third)] == ["light-2", "light-1", "speaker-1"]
 
     selector = SelectorRecord(
         SELECTOR, ("light-2", "light-1", "light-3"), {"light-1": -61.5, "light-2": -55.0, "light-3": None},
         ("light-2", "light-1"), False, (first, second),
     )
     record = BatchRecord((
-        BatchItemRecord(SELECTOR, "on", None, (first, second), selector),
-        BatchItemRecord("speaker-1", "play", {"volume": 3, "tracks": ["morning", "news"]}, (third,)),
+        BatchItemRecord(SELECTOR, "on", None, (first, second), selector, ("light-2", "light-1")),
+        BatchItemRecord(
+            "speaker-1", "play", {"volume": 3, "tracks": ["morning", "news"]}, (third,), None, ("speaker-1",)),
     ))
     _save(repo, Decision(parent, "r-batch", Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED), batch=record)
 
@@ -124,12 +125,14 @@ def test_FR22_batch_record_round_trip(conn, repo):
                 third, "r-batch", Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, "speaker-1", p_max=0.93)),
         )),
     ))
-    # 저장 형식: 묶음 부분은 "batch" 키 하나다. 거리 선택자 항목만 "selector" 를 갖고 다른 항목은 null 이다.
+    # 저장 형식: 묶음 부분은 "batch" 키 하나다. 항목마다 고른 기기 "nodes" 가 있고,
+    # 거리 선택자 항목만 "selector" 를 갖고 다른 항목은 null 이다.
     context = json.loads(_row(conn, parent)["decision_context"])
     assert set(context) == {"posteriors", "window_start", "window_end", "message", "batch"}
     assert context["batch"] == {"items": [
         {
             "target_spec": SELECTOR, "action": "on", "arguments": None, "children": [first, second],
+            "nodes": ["light-2", "light-1"],
             "selector": {
                 "target_spec": SELECTOR, "order": ["light-2", "light-1", "light-3"],
                 "values": {"light-1": -61.5, "light-2": -55.0, "light-3": None},
@@ -139,7 +142,7 @@ def test_FR22_batch_record_round_trip(conn, repo):
         },
         {
             "target_spec": "speaker-1", "action": "play", "arguments": {"volume": 3, "tracks": ["morning", "news"]},
-            "children": [third], "selector": None,
+            "children": [third], "nodes": ["speaker-1"], "selector": None,
         },
     ]}
 
@@ -149,7 +152,7 @@ def test_FR22_batch_record_round_trip(conn, repo):
     assert {child.decision.request_id for item in shown.items for child in item.children} == {""}
 
     # 판정 전의 하위 요청은 decision 이 None 이다. node_id 는 행이 알면 그 값이고, 모르거나 판정이 기기 없이
-    # 끝났으면 "" 다.
+    # 끝났으면 "" 다. 판정은 늘 기기를 넘기지만 저장소는 기기를 모르는 행(`None`)도 그대로 받는다.
     parent_b = _parent(repo, LIGHTS, play, request_id="r-batch-b")
     waiting = _child(repo, parent_b, LIGHTS, "light-3", "r-batch-b")
     errored = _child(repo, parent_b, LIGHTS, "light-2", "r-batch-b")
@@ -211,6 +214,55 @@ def test_FR22_batch_record_round_trip(conn, repo):
     # 판정이 없는 행은 판정 기록 열에 묶음 기록이 남아 있어도 None 이다.
     conn.execute("UPDATE request SET verdict = NULL WHERE internal_request_id = ?", (parent,))
     assert repo.batch_children(parent) is None
+
+
+def test_FR22_batch_record_nodes_round_trip(conn, repo):
+    _seed(conn)
+    parent = _parent(repo, LIGHTS, SPEAKER)
+    first = _child(repo, parent, LIGHTS, "light-2")
+    second = _child(repo, parent, LIGHTS, "light-1")
+    third = _child(repo, parent, SPEAKER, "speaker-1")
+    for child, node_id in ((first, "light-2"), (second, "light-1"), (third, "speaker-1")):
+        _save(repo, Decision(child, "r-batch", Verdict.OK, ReasonCode.OK, node_id))
+    selector = SelectorRecord(
+        SELECTOR, ("light-2", "light-1", "light-3"), {"light-1": -61.5, "light-2": -55.0, "light-3": None},
+        ("light-2", "light-1"), False, (first, second),
+    )
+    record = BatchRecord((
+        BatchItemRecord(SELECTOR, "on", None, (first, second), selector, ("light-2", "light-1")),
+        BatchItemRecord("speaker-1", "off", None, (third,), None, ("speaker-1",)),
+    ))
+    _save(repo, Decision(parent, "r-batch", Verdict.OK, ReasonCode.OK), batch=record)
+
+    # 항목마다 고른 기기는 저장하고 읽어도 같다. 하위 요청 행의 기기와도 같다.
+    stored = repo.batch_children(parent)
+    assert stored.record == record
+    assert [item.record.nodes for item in stored.items] == [("light-2", "light-1"), ("speaker-1",)]
+    assert [tuple(child.node_id for child in item.children) for item in stored.items] == [
+        item.record.nodes for item in stored.items]
+    context = json.loads(_row(conn, parent)["decision_context"])
+    assert [item["nodes"] for item in context["batch"]["items"]] == [["light-2", "light-1"], ["speaker-1"]]
+
+    # 거리 선택자 항목이 하위 요청을 일부만 만들고 멈췄으면 기기는 고른 기기의 앞쪽이다.
+    stopped = _parent(repo, LIGHTS, request_id="r-stopped")
+    waiting = _child(repo, stopped, LIGHTS, "light-2", "r-stopped")
+    stopped_selector = SelectorRecord(
+        SELECTOR, ("light-2", "light-1", "light-3"), {"light-1": -61.5, "light-2": -55.0, "light-3": None},
+        ("light-2", "light-1"), False, (waiting,),
+    )
+    partial = BatchRecord((BatchItemRecord(SELECTOR, "on", None, (waiting,), stopped_selector, ("light-2",)),))
+    _save(repo, Decision(stopped, "r-stopped", Verdict.DENY, ReasonCode.INTERNAL_ERROR), batch=partial)
+    assert repo.batch_children(stopped).record == partial
+
+    # "nodes" 키가 없는 옛 기록은 기기를 () 로 읽고 나머지는 그대로 읽는다.
+    for item in context["batch"]["items"]:
+        del item["nodes"]
+    conn.execute(
+        "UPDATE request SET decision_context = ? WHERE internal_request_id = ?", (json.dumps(context), parent))
+    old = repo.batch_children(parent)
+    assert [item.record.nodes for item in old.items] == [(), ()]
+    assert [replace(item.record, nodes=()) for item in stored.items] == [item.record for item in old.items]
+    assert [child.node_id for item in old.items for child in item.children] == ["light-2", "light-1", "speaker-1"]
 
 
 def test_FR22_batch_child_restore_uses_item_target(conn, repo, store):

@@ -527,8 +527,8 @@ class SqliteRepository:
         외부 `request_id`는 비운다. 그래서 `(user_id, request_id)` 고유 색인과 중복 방지 항목 수에
         들지 않고, 같은 키의 재전송 `link_request`는 상위 행만 찾는다. 상위 행이 없으면 `LookupError`다.
 
-        묶음 요청의 거리 선택자가 아닌 항목은 대상을 ③에서 정하므로 기기를 모른다. 그때는 `node_id`에
-        `None`을 넘겨 행의 `node_id`를 비운다. `save_decision`이 판정의 `node_id`로 채운다 (#284).
+        판정은 기기를 고른 뒤에 하위 요청 행을 만들므로 늘 고른 기기를 넘긴다 (#284). `node_id`에 `None`을
+        넘기면 행의 `node_id`를 비우고 `save_decision`이 판정의 `node_id`로 채운다.
         """
         with immediate_transaction(self._conn):
             parent = self._conn.execute(
@@ -682,8 +682,8 @@ class SqliteRepository:
     def _batch_to_data(self, batch: BatchRecord) -> dict[str, Any]:
         """판정 기록(`decision_context`)의 `"batch"` 값. 항목마다 받은 요청과 그 항목이 만든 하위 요청이다.
 
-        `arguments`는 받은 인자이고 없으면 `null`이다. `selector`는 거리 선택자 항목의 `"selector"` 값이고
-        다른 항목은 `null`이다.
+        `arguments`는 받은 인자이고 없으면 `null`이다. `nodes`는 항목이 고른 기기이고 `children`과 같은 순서다.
+        `selector`는 거리 선택자 항목의 `"selector"` 값이고 다른 항목은 `null`이다.
         """
         return {
             "items": [
@@ -692,6 +692,7 @@ class SqliteRepository:
                     "action": item.action,
                     "arguments": None if item.arguments is None else dict(item.arguments),
                     "children": list(item.children),
+                    "nodes": list(item.nodes),
                     "selector": None if item.selector is None else self._selector_to_data(item.selector),
                 }
                 for item in batch.items
@@ -699,9 +700,10 @@ class SqliteRepository:
         }
 
     def _batch_from_data(self, data: Mapping[str, Any]) -> BatchRecord:
-        """`BatchItemRecord`는 `arguments`만 고정한다. `children`은 튜플로 만들어 넘긴다.
+        """`BatchItemRecord`는 `arguments`만 고정한다. `children`과 `nodes`는 튜플로 만들어 넘긴다.
 
-        목록을 넘기면 거리 선택자 기록의 `children`(튜플)과 달라서 `ValueError`다.
+        `children`은 목록을 넘기면 거리 선택자 기록의 `children`(튜플)과 달라서 `ValueError`다.
+        `nodes`가 없는 옛 기록은 `()`로 읽는다.
         """
         return BatchRecord(tuple(
             BatchItemRecord(
@@ -710,6 +712,7 @@ class SqliteRepository:
                 arguments=item["arguments"],
                 children=tuple(item["children"]),
                 selector=None if item["selector"] is None else self._selector_from_data(item["selector"]),
+                nodes=tuple(item.get("nodes", ())),
             )
             for item in data["items"]
         ))

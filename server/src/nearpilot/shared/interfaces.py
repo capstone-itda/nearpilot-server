@@ -154,7 +154,7 @@ class Repository(Protocol):
         """거리 선택자와 묶음 요청의 하위 요청 행을 만들고 새 internal_request_id 를 반환한다 (FR-09, #253, #284).
 
         외부 request_id 는 비운다. target_spec·action·host_kind·received_at·parent_internal_request_id 는
-        req 의 값이고 node_id 는 고른 기기다. 거리 선택자가 아닌 묶음 항목은 None 을 넘기고
+        req 의 값이고 node_id 는 고른 기기다. 판정은 늘 기기를 넘긴다. None 이면 기기를 비운 행을 만들고
         save_decision 이 판정의 node_id 로 채운다. input_digest 는 상위 요청의 값이다. 상위 요청 행이 없으면 LookupError.
         """
         ...

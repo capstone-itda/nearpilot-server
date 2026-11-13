@@ -148,8 +148,9 @@ def build_app(
     *, public_hosts: Sequence[str] = (),
 ) -> Starlette:
     mcp = MCPServer("nearpilot")
-    # 도구 입력 스키마는 기기 종류와 관계없이 같다 (FR-09). 값은 Any 로 받아서 SDK 가 자료형을 바꾸지 않게 하고
-    # 직접 검사한다. 동작별 인자 스키마는 조회 응답의 actions[].input_schema 가 알린다.
+    # 도구 입력 스키마는 기기 종류와 관계없이 같다 (FR-09). arguments 와 requests 는 Any 로 받아서 SDK 가 자료형을
+    # 바꾸지 않게 하고 직접 검사한다. target_spec 과 action 은 문자열로 받는다 (아래 주석).
+    # 동작별 인자 스키마는 조회 응답의 actions[].input_schema 가 알린다.
     arguments_schema = WithJsonSchema({
         "type": "object",
         "description": "동작 인자. 대상 기기 actions[].input_schema 를 따른다. 인자가 없으면 생략한다."})
@@ -214,9 +215,11 @@ def build_app(
             return deny(ReasonCode.INTERNAL_ERROR)
 
     # 스키마는 주석 문자열로 쓸 수 없다. 평가한 주석 객체로 바꾼 뒤 도구로 등록한다.
+    # target_spec 과 action 은 str 로 둔다. SDK 는 주석이 정확히 str 이 아닌 인자의 문자열을 JSON 으로 먼저 읽어서
+    # "null"·"[1]" 같은 값이 문자열로 오지 않는다. 기본값이 None 이라 선택 인자고 입력 스키마의 required 는 request_id 뿐이다.
     request_use.__annotations__.update(
-        target_spec=Annotated[Any, target_spec_schema, Field(default=None)],
-        action=Annotated[Any, action_schema, Field(default=None)],
+        target_spec=Annotated[str, target_spec_schema, Field(default=None)],
+        action=Annotated[str, action_schema, Field(default=None)],
         arguments=Annotated[Any, arguments_schema, Field(default=None)],
         requests=Annotated[Any, requests_schema, Field(default=None)])
     mcp.tool(name="request_use", description=_TOOL_DESCRIPTION)(request_use)

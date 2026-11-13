@@ -127,7 +127,7 @@ def test_FR09_batch_lights_and_speaker_real_db(world, monkeypatch, caplog):  # n
     assert not any(internal_id in sent for internal_id in internal_ids)
 
     # 세 기기에 명령이 있다. 상위 요청 행은 묶음 표기이고 기기가 없다. 하위 요청 행은 외부 request_id 가 비어 있고
-    # 그 항목의 대상과 동작을 담는다. 대상을 ③에서 정하는 speaker-1 행도 판정이 기기를 채웠다.
+    # 그 항목의 대상과 동작을 담는다. 명시 지정 항목인 speaker-1 행도 고른 기기를 담는다.
     expected = {
         "parent": ("batch:", "batch", None),
         "commands": [("light-1", "on"), ("light-2", "on"), ("speaker-1", "on")],

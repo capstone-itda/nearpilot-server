@@ -40,12 +40,12 @@ from nearpilot.shared.models import (
 class BatchRepo(FakeRepo):
     """묶음 요청의 저장소 접점. 거리 선택자의 fake 에 묶음 기록의 하위 요청 조회를 더한다.
 
-    `link_selector_child` 는 묶음의 거리 선택자가 아닌 항목이 기기를 모를 때 `node_id=None` 을 받는다.
-    `FakeRepo` 가 그대로 기록한다. 하위 판정은 `save_decision` 이 저장한 판정의 `node_id` 를 돌려준다 (DB 의 행 채움과 같다).
+    `link_selector_child` 는 판정이 고른 기기를 받고 `FakeRepo` 가 그대로 기록한다 (판정은 기기를 고른 뒤에 하위 요청을 만든다).
+    하위 요청의 기기는 DB 행처럼 판정을 저장하기 전에는 행을 만들 때 받은 기기고, 저장한 뒤에는 저장된 판정의 `node_id` 다.
     """
 
     def batch_children(self, parent_internal_request_id: str) -> BatchChildren | None:
-        """저장한 상위 기록의 `batch` 가 가리키는 하위 요청들. 기기는 저장된 판정의 `node_id` 고, 없으면 `""` 다 (DB 와 같다)."""
+        """저장한 상위 기록의 `batch` 가 가리키는 하위 요청들. 기기가 없으면 `""` 다 (DB 와 같다)."""
         self._hit("batch_children")
         record = self.records.get(parent_internal_request_id)
         if record is None or record.batch is None:
@@ -56,8 +56,9 @@ class BatchRepo(FakeRepo):
 
     def _child(self, child_id: str) -> SelectorChild:
         decision = self._stored(child_id)
-        node_id = "" if decision is None or decision.node_id is None else decision.node_id
-        return SelectorChild(child_id, node_id, decision)
+        linked = next((link.node_id for link in self.child_links if link.child == child_id), None)
+        node_id = linked if decision is None else decision.node_id
+        return SelectorChild(child_id, node_id or "", decision)
 
 
 class FakeWindow:
