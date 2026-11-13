@@ -16,9 +16,9 @@ def test_FR09_request_use_schema_is_kind_neutral():
     tools = run(Client().post("tools/list")).json()["result"]["tools"]
     tool = next(t for t in tools if t["name"] == "request_use")
     schema = tool["inputSchema"]
-    assert set(schema["properties"]) == {"target_spec", "action", "request_id", "arguments"}
+    assert set(schema["properties"]) == {"target_spec", "action", "request_id", "arguments", "requests"}
     assert schema["properties"]["arguments"]["type"] == "object"
-    assert set(schema["required"]) == {"target_spec", "action", "request_id"}  # 인자는 선택이다
+    assert set(schema["required"]) == {"request_id"}  # 인자는 선택이다
     assert "input_schema" in tool["description"]
     for word in ("brightness", "volume", "controls"):  # 종류별 인자를 도구 계약에 두지 않는다
         assert word not in repr(tool)

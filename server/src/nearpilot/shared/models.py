@@ -182,6 +182,9 @@ class PolicyCheckResult:
 # 거리 선택자의 `{start}`·정수 `{count}` 규칙. 0, 앞 0, 부호, 공백, 전각 숫자를 받지 않는다 (FR-09).
 _POSITIVE_INT = re.compile(r"[1-9][0-9]*")
 
+# 묶음 요청의 `UseRequest.action`. 항목마다 자기 동작이 있어 상위 요청의 동작은 이 표지 하나다 (FR-09, #284).
+BATCH_ACTION = "batch"
+
 
 def _positive_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 1
@@ -192,6 +195,7 @@ class TargetSpec:
     """대상 지정. `device_kind` 는 근접 지정·전역 할당·거리 선택자의 종류 이름이고 명시 지정이면 None 이다 (#245).
 
     `start`·`count` 는 거리 선택자(NEAR·FAR)만 담는다. `count` 가 None 이면 `all`(시작부터 끝까지)이다 (FR-09, #253).
+    묶음 표기(BATCH)는 묶음 요청의 상위 요청 하나만 쓴다. 종류 이름, 기기 ID, 시작, 개수를 모두 담지 않는다 (FR-09, #284).
     """
 
     kind: TargetKind
@@ -201,6 +205,10 @@ class TargetSpec:
     count: int | None = None  # NEAR·FAR 일 때 1 이상의 정수. None 은 `all`(시작부터 끝까지)이다. 다른 지정은 None
 
     def __post_init__(self) -> None:
+        if self.is_batch:
+            if any(value is not None for value in (self.device_kind, self.node_id, self.start, self.count)):
+                raise ValueError("묶음 표기는 종류 이름, 기기 ID, 시작, 개수를 담지 않는다")
+            return
         explicit = self.kind is TargetKind.EXPLICIT
         if explicit != (self.device_kind is None) or explicit != (self.node_id is not None):
             raise ValueError("명시 지정만 기기 ID 를 담고 종류 이름을 담지 않는다")
@@ -221,12 +229,18 @@ class TargetSpec:
         """거리 선택자(NEAR·FAR)인가."""
         return self.kind is TargetKind.NEAR or self.kind is TargetKind.FAR
 
+    @property
+    def is_batch(self) -> bool:
+        """묶음 요청의 상위 요청(BATCH)인가 (FR-09, #284)."""
+        return self.kind is TargetKind.BATCH
+
     @classmethod
     def parse(cls, raw: str) -> TargetSpec:
-        """`nearest:{kind}` · `any:{kind}` · `near|far:{kind}:{start}:{count}` · 기기 ID 를 해석한다. 형식이 틀리면 ValueError.
+        """`nearest:{kind}` · `any:{kind}` · `near|far:{kind}:{start}:{count}` · `batch:` · 기기 ID 를 해석한다. 형식이 틀리면 ValueError.
 
         콜론이 없으면 기기 ID 그대로인 명시 지정이다. 종류는 저장한 기기에서 읽는다 (spec core-device-actions 결정 2).
         거리 선택자의 `{start}` 는 1 이상의 정수, `{count}` 는 1 이상의 정수 또는 `all` 이다 (FR-09, #253).
+        묶음 표기는 `batch:` 뿐이다. 콜론 뒤에 글자가 있으면 형식 오류다 (FR-09, #284).
         """
         if not isinstance(raw, str):
             raise ValueError("target_spec 은 문자열이어야 한다")
@@ -235,6 +249,10 @@ class TargetSpec:
             target_kind = TargetKind(prefix)
             if target_kind is TargetKind.EXPLICIT:
                 raise ValueError(f"target_spec 형식 오류: {raw!r}")
+            if target_kind is TargetKind.BATCH:
+                if kind:
+                    raise ValueError(f"묶음 표기 형식 오류: {raw!r}")
+                return cls(target_kind, None)
             if target_kind is TargetKind.NEAR or target_kind is TargetKind.FAR:
                 parts = kind.split(":")
                 if len(parts) != 3:
@@ -250,6 +268,8 @@ class TargetSpec:
         """저장하는 `target_spec` 문자열. `parse` 와 짝이다."""
         if self.kind is TargetKind.EXPLICIT:
             return self.node_id
+        if self.is_batch:
+            return f"{self.kind.value}:"
         if self.is_selector:
             count = "all" if self.count is None else self.count
             return f"{self.kind.value}:{self.device_kind}:{self.start}:{count}"
@@ -257,8 +277,27 @@ class TargetSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class UseItem:
+    """묶음 요청의 항목 하나 (FR-09, #284). 대상은 묶음 표기가 아니다."""
+
+    target: TargetSpec
+    action: str  # 대상 기기가 선언한 동작 이름
+    arguments: Mapping[str, Any] | None = None  # `UseRequest.arguments` 와 같은 규칙이다
+
+    def __post_init__(self) -> None:
+        if self.target.is_batch:
+            raise ValueError("묶음 요청의 항목은 묶음 표기를 대상으로 삼지 않는다")
+        _action_name(self.action)
+        object.__setattr__(self, "arguments", _arguments(self.arguments, "arguments"))
+
+
+@dataclass(frozen=True, slots=True)
 class UseRequest:
-    """`request_use` 입력. API 가 토큰으로 user_id 를 채워 CORE 에 넘긴다."""
+    """`request_use` 입력. API 가 토큰으로 user_id 를 채워 CORE 에 넘긴다.
+
+    묶음 요청은 `target` 이 묶음 표기(BATCH)이고 `action` 이 `BATCH_ACTION`, `arguments` 가 None, `items` 가 항목들이다.
+    그 밖의 요청은 `items` 가 비어 있다. 항목 수의 상한은 판정이 설정으로 검사한다 (FR-09, #284).
+    """
 
     user_id: str
     request_id: str  # 외부 멱등 키, (user_id, request_id) 로 고유
@@ -269,10 +308,25 @@ class UseRequest:
     parent_internal_request_id: str | None = None  # 재질문·승인 후 재요청 연결
     # 방문자가 준 동작 인자. 판정이 기기 선언으로 검사한다. 인자가 없으면 None (FR-09)
     arguments: Mapping[str, Any] | None = None
+    # 묶음 요청의 항목들. 묶음 요청만 담는다 (FR-09, #284)
+    items: tuple[UseItem, ...] = ()
 
     def __post_init__(self) -> None:
         _action_name(self.action)
         object.__setattr__(self, "arguments", _arguments(self.arguments, "arguments"))
+        items = _freeze(self.items)
+        if not isinstance(items, tuple) or not all(isinstance(item, UseItem) for item in items):
+            raise ValueError("items 는 UseItem 의 목록이어야 한다")
+        object.__setattr__(self, "items", items)
+        if self.target.is_batch:
+            if not items:
+                raise ValueError("묶음 요청은 항목이 하나 이상이어야 한다")
+            if self.action != BATCH_ACTION:
+                raise ValueError(f"묶음 요청의 action 은 {BATCH_ACTION!r} 이어야 한다: {self.action!r}")
+            if self.arguments is not None:
+                raise ValueError("묶음 요청은 arguments 를 담지 않는다. 항목마다 담는다")
+        elif items:
+            raise ValueError("묶음 요청만 items 를 담는다")
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,12 +344,13 @@ class RequestLink:
 
 @dataclass(frozen=True, slots=True)
 class DeviceOutcome:
-    """거리 선택자 응답의 기기 하나 (FR-09, #253). 하위 요청 ID 와 사용자 ID 를 담지 않는다 (FR-11)."""
+    """거리 선택자·묶음 요청 응답의 기기 하나 (FR-09, #253, #284). 하위 요청 ID 와 사용자 ID 를 담지 않는다 (FR-11)."""
 
     node_id: str
     verdict: Verdict
     reason: ReasonCode
     use_id: str | None = None
+    item: int | None = None  # 묶음 요청의 1부터 센 항목 순서. 다른 요청은 None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1086,6 +1141,62 @@ class SelectorChildren:
 
 
 @dataclass(frozen=True, slots=True)
+class BatchItemRecord:
+    """묶음 요청 항목 하나의 판정 기록 (FR-22, #284). 호스트에 내보내지 않는다."""
+
+    target_spec: str  # 받은 항목 대상 지정의 직렬화
+    action: str
+    arguments: Mapping[str, Any] | None  # 받은 인자. 없으면 None
+    # 이 항목이 만든 하위 요청의 internal_request_id. 만든 순서
+    children: tuple[str, ...] = ()
+    # 거리 선택자 항목의 거리 선택자 기록. 그 안의 children 은 위 children 과 같다
+    selector: SelectorRecord | None = None
+    # 이 항목이 고른 기기. children 과 같은 순서·같은 수다. 거리 선택자 항목은 selector.selected 의 앞쪽이다.
+    # 키가 없던 옛 기록은 비어 있다 (FR-22)
+    nodes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "arguments", _freeze(self.arguments))
+        object.__setattr__(self, "nodes", tuple(self.nodes))
+        if self.selector is not None and self.selector.children != self.children:
+            raise ValueError("거리 선택자 기록의 하위 요청은 항목의 하위 요청과 같아야 한다")
+        if self.nodes:
+            if len(self.nodes) != len(self.children):
+                raise ValueError("항목의 기기 수는 하위 요청 수와 같아야 한다")
+            if self.selector is not None and self.nodes != tuple(self.selector.selected[:len(self.nodes)]):
+                raise ValueError("거리 선택자 항목의 기기는 고른 기기의 앞쪽과 같아야 한다")
+
+
+@dataclass(frozen=True, slots=True)
+class BatchRecord:
+    """묶음 요청 상위 요청의 판정 기록 (FR-22, #284). `DecisionRecord.batch` 로 저장한다.
+
+    요청의 항목을 모두 항목 순서대로 담는다. 판정하지 않은 항목은 하위 요청·기기·거리 선택자 기록이 없다. 항목 순서는 받은 요청 목록의 순서다.
+    """
+
+    items: tuple[BatchItemRecord, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "items", tuple(self.items))
+
+
+@dataclass(frozen=True, slots=True)
+class BatchItemChildren:
+    """묶음 기록의 항목 하나와 그 항목이 만든 하위 요청들 (FR-22, #284)."""
+
+    record: BatchItemRecord
+    children: tuple[SelectorChild, ...]  # record.children 순서
+
+
+@dataclass(frozen=True, slots=True)
+class BatchChildren:
+    """상위 요청의 저장된 묶음 기록과 그 기록이 가리키는 하위 요청들 (FR-22, #284)."""
+
+    record: BatchRecord
+    items: tuple[BatchItemChildren, ...]  # record.items 순서
+
+
+@dataclass(frozen=True, slots=True)
 class DecisionRecord:
     """판정에 적용한 값의 불변 스냅샷 (FR-22). 근접 전에 끝났으면 버전·구간은 None 이다."""
 
@@ -1097,6 +1208,7 @@ class DecisionRecord:
     window_start: datetime | None = None
     window_end: datetime | None = None
     selector: SelectorRecord | None = None  # 거리 선택자 상위 요청에만 있다 (FR-22, #253)
+    batch: BatchRecord | None = None  # 묶음 요청 상위 요청에만 있다 (FR-22, #284)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "posteriors", _freeze(self.posteriors))

@@ -154,6 +154,7 @@ class Settings:
     order_frame_sigma_db: float = 4.0  # 경계 확률의 프레임 잡음: 정렬 값에 쓰는 프레임 하나의 RSSI 표준편차 dB. 0 초과 (FR-09, #278)
     order_static_sigma_db: float = 3.5  # 경계 확률의 고정 오차: 평균으로 줄지 않는 기기별 RSSI 오차의 표준편차 dB. 0 이상 (FR-09, #278)
     order_boundary_min_prob: float = 0.9  # near: 경계 확률의 기준: 이 값보다 작으면 ASK. 0.5 이상 1 미만 (FR-09, #278)
+    batch_max_items: int = 8  # 묶음 요청 항목 수의 상한: 넘으면 DENY. 1 이상의 정수 (FR-09, #284)
     online_ttl_sec: float = 15.0  # 온라인 유지 시간: 유효한 기기 메시지의 마지막 수신부터 (FR-13)
     status_report_sec: float = 1.0  # 기기 상태 보고 주기
     smartthings_poll_sec: float = 5.0  # SmartThings 하트비트 주기: online_ttl_sec 이하 (FR-13, #259)
@@ -212,6 +213,7 @@ class Settings:
             "leave_absent_sec", "leave_grace_sec", "allocation_window_ms",
             "beacon_recent_sec", "anchor_recent_sec", "order_similar_db",
             "order_frame_sigma_db", "order_static_sigma_db", "order_boundary_min_prob",
+            "batch_max_items",
             "online_ttl_sec", "status_report_sec", "smartthings_poll_sec",
             "reservation_wait_sec", "exec_timeout_sec",
             "rental_duration_sec", "approval_ttl_sec", "approval_pending_ttl_sec",
@@ -224,7 +226,7 @@ class Settings:
             if isinstance(v, float) and not isfinite(v):
                 raise ValueError(f"{name} 는 유한한 숫자여야 한다: {v}")
             if name in (
-                "allocation_window_ms", "approval_ttl_sec", "approval_pending_ttl_sec",
+                "allocation_window_ms", "batch_max_items", "approval_ttl_sec", "approval_pending_ttl_sec",
                 "use_history_retention_days", "audit_retention_days",
                 "request_dedup_ttl_sec", "dedup_entry_limit", "retention_cleanup_interval_sec",
             ) and not isinstance(v, int):
@@ -305,6 +307,8 @@ class Settings:
             raise ValueError(f"order_static_sigma_db 는 0 이상이어야 한다: {self.order_static_sigma_db}")
         if not 0.5 <= self.order_boundary_min_prob < 1.0:
             raise ValueError(f"order_boundary_min_prob 는 [0.5, 1) 범위여야 한다: {self.order_boundary_min_prob}")
+        if self.batch_max_items < 1:
+            raise ValueError(f"batch_max_items 는 1 이상이어야 한다: {self.batch_max_items}")
         # 관련 시간값 일관성: 관측 주기보다 짧은 미수신 판단은 의미가 없다
         if self.leave_absent_sec < self.rssi_frame_sec:
             raise ValueError("leave_absent_sec 는 rssi_frame_sec 이상이어야 한다")

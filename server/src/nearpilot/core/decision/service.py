@@ -4,6 +4,7 @@
 실행 결과를 확인한 뒤의 판정을 호스트에 돌려준다. OK 와 use_id 는 실행 성공일 때만 나간다 (#16).
 재전송에는 저장된 실행 상태로 다시 만든 판정을 돌려준다. 기본값은 거부다.
 거리 선택자는 하위 요청마다 같은 규칙을 적용하고 기기별 결과를 상위 판정 하나로 묶는다 (#253).
+묶음 요청도 항목마다 고른 기기의 하위 요청에 같은 규칙을 적용하고, 기기별 결과를 항목 순서와 함께 묶는다 (#284).
 """
 
 from __future__ import annotations
@@ -72,6 +73,22 @@ def aggregate_selector(parent: Decision, outcomes: Sequence[Decision]) -> Decisi
                          devices=devices, selected_count=parent.selected_count, similar=parent.similar)
 
 
+def aggregate_batch(parent: Decision, outcomes: Sequence[Decision], items: Sequence[int]) -> Decision:
+    """묶음 요청의 하위 요청들의 결과를 상위 판정 하나로 묶는다 (FR-09, #284).
+
+    `aggregate_selector` 와 같고 devices 의 기기마다 `item` 을 담는다. items[i] 는 outcomes[i] 의 1부터 센 항목 순서다.
+    outcomes 는 항목 순서의 하위 결과다. 모두 OK 면 OK 고, 아니면 항목 순서에서 처음 OK 가 아닌 결과의 판정과 사유다.
+    outcomes 와 items 의 길이가 다르면 ValueError 다.
+    """
+    devices = tuple(
+        DeviceOutcome(o.node_id, o.verdict, o.reason, o.use_id if o.verdict is Verdict.OK else None, item=item)
+        for o, item in zip(outcomes, items, strict=True))
+    failed = next((o for o in outcomes if o.verdict is not Verdict.OK), None)
+    verdict, reason = (Verdict.OK, ReasonCode.OK) if failed is None else (failed.verdict, failed.reason)
+    return make_decision(parent.request_id, parent.internal_request_id, verdict, reason,
+                         devices=devices, selected_count=parent.selected_count, similar=parent.similar)
+
+
 class RequestUseService:
     def __init__(
         self, pipeline: DecisionPipeline, execution: ExecutionService, store: ExecutionStore
@@ -81,6 +98,8 @@ class RequestUseService:
         self._store = store
 
     def request_use(self, req: UseRequest) -> Decision:
+        if req.target.is_batch:
+            return self._request_batch(req)
         if req.target.is_selector:
             return self._request_selector(req)
         decision, ctx = self._pipeline.decide_for_execution(req)
@@ -113,6 +132,31 @@ class RequestUseService:
             return aggregate_selector(sd.decision, outcomes)
         except Exception:  # noqa: BLE001 - 알 수 없는 오류는 거부한다
             log.exception("거리 선택자 request_use 조립 중 예외")
+            d = sd.decision
+            return make_decision(d.request_id, d.internal_request_id, Verdict.DENY, ReasonCode.INTERNAL_ERROR,
+                                 devices=(), selected_count=d.selected_count, similar=d.similar)
+
+    # ── 묶음 요청 (FR-09, #284) ─────────────────────────────────────
+
+    def _request_batch(self, req: UseRequest) -> Decision:
+        """`_request_selector` 와 같다. 항목마다 고른 기기의 하위 요청을 동시에 실행하고 기기별 결과를 항목 순서와 묶는다.
+
+        재전송에는 하위 요청마다 저장된 실행 상태를 묶어 돌려준다. 새 명령을 만들지 않는다 (FR-22).
+        한 하위 요청의 재검사 거부나 실행 실패로 다른 하위 요청의 실행을 취소하거나 되돌리지 않는다.
+        """
+        sd = self._pipeline.decide_batch(req)
+        if sd.decision.verdict is not Verdict.OK or not sd.children:
+            return sd.decision
+        try:
+            if sd.contexts:  # 이번에 새로 OK 가 난 요청
+                outcomes = self._execute_children(sd.children, sd.contexts)
+            else:  # 재전송: 이미 인계한 하위 요청들의 현재 실행 상태
+                outcomes = [self._replay(child) for child in sd.children]
+            # OK 면 상위 판정의 devices 가 하위 요청마다 하나이고 항목 순서를 담는다
+            items = [device.item for device in sd.decision.devices if device.item is not None]
+            return aggregate_batch(sd.decision, outcomes, items)
+        except Exception:  # noqa: BLE001 - 알 수 없는 오류는 거부한다
+            log.exception("묶음 request_use 조립 중 예외")
             d = sd.decision
             return make_decision(d.request_id, d.internal_request_id, Verdict.DENY, ReasonCode.INTERNAL_ERROR,
                                  devices=(), selected_count=d.selected_count, similar=d.similar)

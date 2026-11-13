@@ -32,6 +32,7 @@ def target_of(target_spec: str) -> dict[str, Any]:
     """저장된 대상 표기 → {"kind", "deviceKind"?, "nodeId"?}. 형식이 틀리면 ValueError (TargetSpec.parse).
 
     `deviceKind` 는 근접 지정·전역 할당의 종류 이름이다. 명시 지정에는 없다 (architecture.md §5 WebSocket).
+    묶음 요청의 상위 요청(`batch:`)은 종류 이름도 기기 ID 도 없어 `{"kind": "batch"}` 만 돌려준다 (FR-09, #284).
     """
     target = TargetSpec.parse(target_spec)
     out: dict[str, Any] = {"kind": target.kind}

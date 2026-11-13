@@ -43,6 +43,9 @@ from nearpilot.shared.interfaces import (
 )
 from nearpilot.shared.models import (
     AuditEvent,
+    BatchChildren,
+    BatchItemRecord,
+    BatchRecord,
     BeaconKey,
     Decision,
     DecisionRecord,
@@ -259,6 +262,18 @@ class _SelectorRun:
     children: list[_Child] = field(default_factory=list)
     posterior: ProximityResult | None = None  # 첫 rental 하위 요청이 한 번 부른 결과
     parent_conflict: bool = False  # 상위 판정 기록의 저장이 CONFLICT 였다
+    # 묶음 요청이 판정을 시작한 항목들. 요청의 항목 순서에서 앞쪽부터다. 오류 판정의 묶음 기록에 쓴다. 거리 선택자 요청은 비어 있다
+    batch_items: list[_BatchItem] = field(default_factory=list)
+
+
+@dataclass
+class _BatchItem:
+    """묶음 요청의 항목 하나가 판정한 것. 상위 판정 기록과 하위 요청의 인계 context 의 재료다 (FR-09, #284)."""
+
+    index: int  # 1부터 센 항목 순서
+    req: UseRequest  # 항목의 대상·동작·인자를 가진 요청. 하위 요청의 판정과 인계 context 가 쓴다
+    children: list[_Child] = field(default_factory=list)  # 이 항목이 만든 하위 요청. 만든 순서
+    pick: _Pick | None = None  # 거리 선택자 항목이 고른 결과. 다른 항목은 None 이다
 
 
 class DecisionPipeline:
@@ -293,9 +308,9 @@ class DecisionPipeline:
     def decide_for_execution(self, req: UseRequest) -> tuple[Decision, ExecutionContext | None]:
         """판정과 실행 인계 context 를 반환한다. context 는 이번에 새로 OK 가 난 요청에만 있다 (#16, #35).
 
-        거리 선택자(`near`·`far`)는 받지 않는다. `decide_selector` 만 처리한다 (FR-09, #253).
+        거리 선택자(`near`·`far`)와 묶음 요청은 받지 않는다. 각각 `decide_selector`, `decide_batch` 만 처리한다 (FR-09, #253, #284).
         """
-        if req.target.is_selector:
+        if req.target.is_selector or req.target.is_batch:
             return self._decision(req, "", Verdict.DENY, ReasonCode.INVALID_INPUT), None
         internal_id = ""
         try:
@@ -552,14 +567,17 @@ class DecisionPipeline:
         applied.posteriors = dict(result.posteriors)
         applied.window_start, applied.window_end = result.window_start, result.window_end
 
-    def _cancel_siblings(self, children: Sequence[_Child], failed: Decision) -> None:
+    def _cancel_siblings(
+        self, children: Sequence[_Child], failed: Decision, source: str = "selector_sibling"
+    ) -> None:
         """처음 걸린 기기 때문에 앞 하위 요청의 예약과 승인 사용분을 미전송으로 취소한다.
 
         취소가 실패해도 응답은 바뀌지 않는다. 남은 예약은 재시작 복원이 만료한다 (`_cancel_reservation` 과 같다).
+        `source` 는 취소 근거의 출처다. 묶음 요청은 `batch_sibling` 이다 (#284).
         """
         if self._store is None:
             return
-        evidence = {"source": "selector_sibling", "reason": failed.reason.value, "node_id": failed.node_id}
+        evidence = {"source": source, "reason": failed.reason.value, "node_id": failed.node_id}
         for child in children:
             if child.decision.verdict is not Verdict.OK:
                 continue
@@ -576,7 +594,10 @@ class DecisionPipeline:
     def _selector_failed(
         self, req: UseRequest, iid: str, exc: Exception, run: _SelectorRun
     ) -> SelectorDecision:
-        """판정 중 예외. 만든 하위 요청의 예약을 취소하고 INTERNAL_ERROR 로 거부한다."""
+        """판정 중 예외. 만든 하위 요청의 예약을 취소하고 INTERNAL_ERROR 로 거부한다.
+
+        묶음 요청의 상위 판정 기록은 묶음 기록(요청의 항목 전체와 예외 전까지 판정한 항목)도 담는다 (spec 결정 15, 27).
+        """
         # 오류 판정을 저장하기 전에 취소한다 (#80). 옆 기기 때문에 이미 취소한 하위 요청은 다시 취소하지 않는다
         for child in run.children:
             if child.applied.reserve_called and not child.cancelled:
@@ -586,16 +607,21 @@ class DecisionPipeline:
                 continue
             try:
                 result = self._repo.save_decision(
-                    self._decision(req, child.iid, Verdict.DENY, ReasonCode.INTERNAL_ERROR,
-                                   node_id=child.node_id),
+                    self._decision(req, child.iid, Verdict.DENY, ReasonCode.INTERNAL_ERROR, node_id=child.node_id),
                     DecisionRecord(settings=self._settings))
             except Exception:  # noqa: BLE001
                 log.exception("하위 요청의 거부 판정 저장 실패")
                 continue
             if result.outcome is StoreOutcome.CONFLICT:
                 log.warning("하위 요청의 거부 판정 저장 충돌: %s", child.iid)
+        batch = None
+        if req.target.is_batch:  # 거리 선택자 요청의 오류 판정은 묶음 기록이 없다
+            try:
+                batch = self._batch_record(req, run.batch_items)
+            except Exception:  # noqa: BLE001 - 기록을 만들지 못해도 오류 판정은 묶음 기록 없이 저장한다
+                log.exception("오류 판정의 묶음 기록 만들기 실패")
         return SelectorDecision(self._selector_view(
-            self._internal_error(req, iid, Step.EXEC, exc, save=not run.parent_conflict)))
+            self._internal_error(req, iid, Step.EXEC, exc, save=not run.parent_conflict, batch=batch)))
 
     def _resend(self, iid: str, previous: Decision) -> SelectorDecision:
         """재전송에는 저장된 상위·하위 판정을 돌려준다. 새 하위 요청도 예약도 인계도 만들지 않는다 (FR-22)."""
@@ -626,11 +652,326 @@ class DecisionPipeline:
         """거리 선택자 요청의 판정 모양으로 채운다. 상위 판정의 node_id·use_id·p_max 는 None 이다 (FR-09)."""
         return replace(d, devices=tuple(devices), selected_count=selected_count, similar=similar)
 
+    # ── 묶음 요청 (FR-09, #284) ─────────────────────────────────────
+
+    def decide_batch(self, req: UseRequest) -> SelectorDecision:
+        """묶음 요청을 상위 요청 하나와 항목마다 고른 기기의 하위 요청으로 판정한다.
+
+        항목 순서대로 대상을 고른다. 거리 선택자 항목은 `decide_selector` 처럼 상위 요청에서 고르고 고른 기기마다,
+        그 밖의 항목(근접 지정, 전역 할당, 명시 지정)은 단일 요청의 ①②③ 으로 기기 하나를 고른 뒤 그 기기의
+        하위 요청 하나에서 나머지를 한다. 하위 요청은 늘 고른 기기를 가진다.
+        앞 항목이 고른 기기를 뒤 항목이 다시 고르면 거부한다. 처음 걸린 곳에서 멈추고 앞 하위 요청의 예약을
+        취소하며 아무것도 인계하지 않는다. 실행 인계 context 만 돌려준다. 하위 요청의 실행과 결과 묶음은 부른 쪽이 한다.
+        재전송에는 저장된 상위·하위 판정을 돌려준다. 현재 시각을 읽지 않고 `req.received_at` 만 쓴다.
+        """
+        if not req.target.is_batch:
+            raise ValueError(f"묶음 요청이 아니다: {req.target.serialize()!r}")
+        iid = ""
+        try:
+            digest = input_digest(req)
+            link = self._repo.link_request(req, digest)
+            iid = link.internal_request_id
+            if link.conflict:
+                d = self._decision(req, iid, Verdict.DENY, ReasonCode.REQUEST_ID_CONFLICT)
+                self._audit_step(Step.DEDUP, iid, {"result": d.reason.value})
+                return SelectorDecision(self._selector_view(d))  # 기존 판정을 덮어쓰지 않는다
+            if not link.is_new:
+                if link.previous is not None:
+                    return self._resend_batch(req, iid, link.previous)
+                # 아직 판정 중이다. 오류가 아니므로 다시 판정하지도, 저장하지도 않는다
+                d = self._decision(req, iid, Verdict.BUSY, ReasonCode.REQUEST_IN_PROGRESS)
+                self._audit_step(Step.DEDUP, iid, {"result": "IN_PROGRESS"})
+                return SelectorDecision(self._selector_view(d))
+        except Exception as exc:  # noqa: BLE001 - 알 수 없는 오류는 거부한다
+            return SelectorDecision(self._selector_view(
+                self._internal_error(req, iid, Step.DEDUP, exc, save=False)))
+
+        run = _SelectorRun()
+        try:
+            return self._judge_batch(req, iid, digest, link.capacity_exceeded, run)
+        except Exception as exc:  # noqa: BLE001 - 알 수 없는 오류는 거부한다
+            return self._selector_failed(req, iid, exc, run)
+
+    def _judge_batch(
+        self, req: UseRequest, iid: str, digest: str, capacity_exceeded: bool, run: _SelectorRun
+    ) -> SelectorDecision:
+        """새 묶음 요청의 판정과 저장. 예외는 `_selector_failed` 가 정리한다."""
+        judged = run.batch_items  # 판정을 시작한 항목들. 예외가 나면 `_selector_failed` 가 같은 목록으로 묶음 기록을 만든다
+        detail: dict[str, Any] = {}
+        devices: tuple[DeviceOutcome, ...] = ()
+        outcomes: tuple[Decision, ...] = ()
+        contexts: tuple[ExecutionContext, ...] = ()
+        try:
+            if capacity_exceeded:
+                parent = self._decision(req, iid, Verdict.DENY, ReasonCode.CAPACITY_EXCEEDED)
+                step, detail = Step.DEDUP, {"capacity_exceeded": True}
+            elif len(req.items) > self._settings.batch_max_items:  # 하위 요청을 만들기 전이다 (spec 결정 21)
+                parent = self._decision(req, iid, Verdict.DENY, ReasonCode.INVALID_INPUT)
+                step = Step.CANDIDATE
+                detail = {"items": len(req.items), "batch_max_items": self._settings.batch_max_items}
+            else:
+                failed = self._judge_items(req, iid, digest, run)
+                if failed is None:
+                    parent = self._decision(req, iid, Verdict.OK, ReasonCode.OK)
+                    step = Step.DEVICE_OCCUPANCY
+                    made = [(entry, child) for entry in judged for child in entry.children]
+                    outcomes = tuple(child.decision for _, child in made)
+                    devices = tuple(DeviceOutcome(child.node_id, child.decision.verdict, child.decision.reason,
+                                                  child.decision.use_id, item=entry.index)
+                                    for entry, child in made)
+                    contexts = tuple(self._context(entry.req, child.iid, child.decision, child.applied)
+                                     for entry, child in made)
+                    if None in contexts:  # OK 인 하위 요청은 인계 context 가 있어야 한다
+                        raise ValueError("OK 인 하위 요청의 실행 인계를 만들지 못했다")
+                else:
+                    f = failed.decision
+                    self._cancel_siblings(run.children, f, "batch_sibling")
+                    parent = self._decision(req, iid, f.verdict, f.reason)
+                    step = failed.step
+                    # 걸린 하위 요청은 마지막 항목의 것이고, 하위 요청은 늘 고른 기기를 가진다 (spec 결정 13)
+                    devices = (DeviceOutcome(failed.node_id, f.verdict, f.reason, None, item=judged[-1].index),)
+        except _Stop as stop:  # 하위 요청을 만들기 전에 멈췄다(항목의 고르기). 앞 항목의 예약을 취소한다
+            self._cancel_siblings(run.children, stop.decision, "batch_sibling")
+            # 상위 판정은 그 판정과 사유만 가진다. 고르다 멈춘 기기와 확률은 담지 않는다
+            parent = self._decision(req, iid, stop.decision.verdict, stop.decision.reason)
+            step = stop.step
+
+        # 묶음 기록은 요청의 항목을 모두 담는다. 판정하지 않은 항목은 받은 요청뿐이다 (spec 결정 15, 27)
+        batch = self._batch_record(req, judged)
+        # selected_count 는 항목마다 실제로 고른 기기 수의 합이다. 만든 하위 요청 수가 아니다 (spec 결정 11).
+        # similar 는 거리 선택자 항목 하나라도 비슷하면 참이다 (spec 결정 12)
+        selected_count = sum(self._item_selected_count(item) for item in batch.items)
+        similar = any(entry.pick is not None and entry.pick.similar for entry in judged)
+        parent = self._selector_view(parent, devices, selected_count, similar)
+        self._audit_step(step, iid, {
+            "verdict": parent.verdict.value, "reason": parent.reason.value,
+            "settings_version": self._settings.version, "children": len(run.children), **detail})
+        # 상위 판정 기록은 근접 추정 값을 담지 않는다. 하위 요청의 기록이 담는다 (spec 결정 19)
+        record = DecisionRecord(settings=self._settings, batch=batch)
+        saved = self._repo.save_decision(parent, record)
+        if saved.outcome is StoreOutcome.CONFLICT:
+            run.parent_conflict = True
+            raise _SaveConflict("같은 내부 요청에 다른 판정 기록이 있다")
+        return SelectorDecision(parent, outcomes, contexts)
+
+    def _judge_items(self, req: UseRequest, iid: str, digest: str, run: _SelectorRun) -> _Child | None:
+        """항목 순서대로 대상을 고르고 하위 요청을 판정한다. 처음 걸린 하위 요청을 반환하고 모두 통과하면 None 이다.
+
+        판정을 시작한 항목은 `run.batch_items` 에 붙인다.
+        하위 요청을 만들기 전에 멈추면(항목의 고르기: ①②③, 거리 선택자 항목의 고를 기기 없음, 경계 확률) `_Stop` 이 그대로 올라간다.
+        `taken` 은 지금까지 통과한 하위 요청의 기기다. 뒤 항목이 다시 고르면 그 하위 요청을 거부한다 (spec 결정 8).
+        """
+        taken: set[str] = set()
+        for index, item in enumerate(req.items, start=1):
+            entry = _BatchItem(index, replace(
+                req, target=item.target, action=item.action, arguments=item.arguments, items=()))
+            run.batch_items.append(entry)
+            failed = (self._judge_selector_item(entry, iid, digest, run, taken) if item.target.is_selector
+                      else self._judge_item_child(entry, iid, digest, run, taken))
+            if failed is not None:
+                return failed
+            taken.update(child.node_id for child in entry.children)
+        return None
+
+    def _judge_selector_item(
+        self, entry: _BatchItem, iid: str, digest: str, run: _SelectorRun, taken: set[str]
+    ) -> _Child | None:
+        """거리 선택자 항목. 고르기는 상위 요청 ID 로 감사하고, 고른 기기마다 하위 요청을 만들어 판정한다 (spec 결정 7).
+
+        사후확률은 항목마다 한 번 부른다. 하위 요청 목록은 묶음 전체가 나눠 쓴다 (spec 결정 18).
+        처음 걸린 하위 요청을 반환한다. 하위 요청을 만들기 전에 멈추면 `_Stop` 이다.
+        """
+        req = entry.req
+        item_run = _SelectorRun(children=run.children)
+        pick = self._pick(req, iid)
+        entry.pick = pick  # 멈춰도 거리 순서는 기록에 남긴다
+        if not pick.selected:
+            raise _Stop(Step.PROXIMITY, self._decision(req, iid, Verdict.DENY, ReasonCode.NO_CANDIDATE))
+        lowest = pick.boundary_probability
+        if lowest is not None and lowest < self._settings.order_boundary_min_prob:
+            raise _Stop(Step.PROXIMITY, self._decision(req, iid, Verdict.ASK, ReasonCode.ORDER_UNCERTAIN))
+        by_id = {n.node_id: n for n in pick.candidates}
+        for node_id in pick.selected:
+            child = self._link_batch_child(iid, entry, node_id, digest, run)
+            try:
+                if node_id in taken:
+                    raise self._duplicate_stop(req, child.iid, node_id)
+                decision, step = self._judge_child(req, child, by_id[node_id], pick, item_run)
+            except _Stop as stop:
+                decision, step = stop.decision, stop.step
+            if not self._settle_child(child, decision, step, iid):
+                return child
+        return None
+
+    def _judge_item_child(
+        self, entry: _BatchItem, iid: str, digest: str, run: _SelectorRun, taken: set[str]
+    ) -> _Child | None:
+        """근접 지정·전역 할당·명시 지정 항목. 단일 요청의 ①②③ 으로 기기를 고른 뒤 그 기기의 하위 요청에서 나머지를 한다 (spec 결정 7).
+
+        고르기(`_choose`)는 상위 요청 ID 로 감사한다. 멈추면 하위 요청 없이 `_Stop` 이 그대로 올라가 묶음이 멈춘다.
+        예외는 전역 할당 항목이 ③ 안의 ④ 에서 걸린 경우다. 그 판정은 기기를 가지므로 그 기기로 하위 요청을 만들어 판정을 저장한다 —
+        호스트가 `devices` 의 기기로 `request_access` 를 부를 수 있다 (spec 결정 32).
+        걸린 기기가 앞 항목이 고른 기기면 ④ 의 판정 대신 같은 기기의 거부(`DENY`·`INVALID_INPUT`)를 저장한다 (spec 결정 8).
+        고른 기기로 하위 요청 행을 만들고, 나머지(`_finish`: 같은 기기 검사, 동작·인자 검사, ④, ⑤⑥)는 하위 요청 ID 로 감사한다.
+        하위 요청의 판정 기록이 고르기에서 정한 근접 추정 값을 담는다. 걸린 하위 요청을 반환하고 통과하면 None 이다.
+        """
+        applied = _Applied()
+        try:
+            node, p, check = self._choose(entry.req, iid, applied)
+        except _Stop as stop:
+            node_id = stop.decision.node_id
+            if node_id is None:
+                raise
+            child = self._link_batch_child(iid, entry, node_id, digest, run, applied)
+            if node_id in taken:  # 앞 항목이 이미 고른 기기다. 배정이 없어도 ④ 의 판정 대신 같은 기기로 거부한다
+                stop = self._duplicate_stop(entry.req, child.iid, node_id, stop.decision.p_max)
+            self._settle_child(child, replace(stop.decision, internal_request_id=child.iid), stop.step, iid)
+            return child
+        child = self._link_batch_child(iid, entry, node.node_id, digest, run, applied)
+        try:
+            decision, step = self._finish(entry.req, child.iid, child.applied, node, p, check, taken)
+        except _Stop as stop:
+            decision, step = stop.decision, stop.step
+        return None if self._settle_child(child, decision, step, iid) else child
+
+    def _link_batch_child(
+        self, iid: str, entry: _BatchItem, node_id: str, digest: str, run: _SelectorRun,
+        applied: _Applied | None = None,
+    ) -> _Child:
+        """고른 기기의 하위 요청 행을 만들고 항목과 묶음 전체의 하위 요청 목록에 붙인다. `applied` 는 고르기에서 정한 값이다."""
+        child = _Child(self._repo.link_selector_child(iid, entry.req, node_id, digest), node_id,
+                       _Applied() if applied is None else applied)
+        run.children.append(child)
+        entry.children.append(child)
+        return child
+
+    def _settle_child(self, child: _Child, decision: Decision, step: Step, iid: str) -> bool:
+        """하위 요청의 판정을 감사하고 저장한다. 통과했으면 True 다. 저장이 충돌하면 `_SaveConflict` 다."""
+        child.decision, child.step = decision, step
+        self._audit_step(step, child.iid, {
+            "verdict": decision.verdict.value, "reason": decision.reason.value,
+            "settings_version": self._settings.version, "batch_parent": iid})
+        saved = self._repo.save_decision(decision, self._record(child.applied))
+        if saved.outcome is StoreOutcome.CONFLICT:
+            raise _SaveConflict("같은 내부 요청에 다른 판정 기록이 있다")
+        child.saved = True
+        return decision.verdict is Verdict.OK
+
+    def _duplicate_stop(self, req: UseRequest, iid: str, node_id: str, p: float | None = None) -> _Stop:
+        """앞 항목이 이미 고른 기기를 다시 골랐다. ② 후보 감사를 남기고 그 하위 요청의 멈춤을 반환한다 (spec 결정 8)."""
+        self._audit_step(Step.CANDIDATE, iid, {"duplicate": node_id})
+        return _Stop(Step.CANDIDATE, self._decision(
+            req, iid, Verdict.DENY, ReasonCode.INVALID_INPUT, node_id=node_id, p_max=p))
+
+    @staticmethod
+    def _item_record(entry: _BatchItem) -> BatchItemRecord:
+        """항목의 판정 기록. 하위 요청과 고른 기기는 만든 만큼이고, 거리 선택자 항목은 고르기 기록도 담는다 (spec 결정 15)."""
+        target = entry.req.target.serialize()
+        children = tuple(child.iid for child in entry.children)
+        nodes = tuple(child.node_id for child in entry.children)
+        pick = entry.pick
+        selector = None if pick is None else SelectorRecord(
+            target, pick.order, pick.values, pick.selected, pick.similar, children,
+            counts=pick.counts, boundary_probability=pick.boundary_probability)
+        return BatchItemRecord(target, entry.req.action, entry.req.arguments, children, selector, nodes)
+
+    def _batch_record(self, req: UseRequest, judged: Sequence[_BatchItem]) -> BatchRecord:
+        """상위 판정 기록의 묶음 기록. 요청의 항목을 모두 항목 순서대로 담는다 (spec 결정 15, 27).
+
+        판정을 시작한 항목(`judged`. 요청의 항목 순서에서 앞쪽부터)은 판정한 값을 담고, 판정하지 않은 뒤 항목은
+        받은 대상·동작·인자만 담는다. 하위 요청·기기·거리 선택자 기록이 없다.
+        """
+        rest = (BatchItemRecord(item.target.serialize(), item.action, item.arguments)
+                for item in req.items[len(judged):])
+        return BatchRecord((*(self._item_record(entry) for entry in judged), *rest))
+
+    @staticmethod
+    def _item_selected_count(item: BatchItemRecord) -> int:
+        """항목이 실제로 고른 기기 수 (FR-09, spec 결정 11). 첫 판정과 재전송이 같은 기록으로 센다.
+
+        거리 선택자 항목은 하위 요청을 하나라도 만들었으면 고른 기기 전체다. 중간 기기에서 걸려 뒤 기기의 하위 요청이
+        없어도 같다 — 거리 선택자 요청 하나와 같다. 하위 요청 전에 멈춘 항목(`NO_CANDIDATE`, `ORDER_UNCERTAIN`)은 0이다.
+        다른 항목은 만든 하위 요청 수(0 또는 1)다. 판정하지 않은 항목은 0이다.
+        """
+        if item.selector is not None and item.children:
+            return len(item.selector.selected)
+        return len(item.children)
+
+    @staticmethod
+    def _check_resent_batch(req: UseRequest, found: BatchChildren) -> None:
+        """`OK` 로 저장된 묶음 기록이 요청과 맞는지 본다. 하나라도 어긋나면 ValueError 다 (spec 결정 17).
+
+        항목 수와 항목마다 대상·동작·인자가 요청과 같아야 한다. 거리 선택자 항목은 거리 선택자 기록이 있고 하위 요청이
+        고른 기기마다 하나다. 다른 항목은 거리 선택자 기록이 없고 하위 요청이 하나다. 하위 판정이 하위 요청마다 있고 모두 OK 다.
+        """
+        if len(found.items) != len(req.items):
+            raise ValueError("OK 판정의 묶음 기록의 항목 수가 요청과 맞지 않는다")
+        for index, (entry, item) in enumerate(zip(found.items, req.items, strict=True), start=1):
+            record = entry.record
+            if (record.target_spec, record.action, record.arguments) != (
+                    item.target.serialize(), item.action, item.arguments):
+                raise ValueError(f"OK 판정의 묶음 기록의 {index}번째 항목이 요청과 맞지 않는다")
+            if item.target.is_selector:
+                made = record.selector is not None and len(record.children) == len(record.selector.selected)
+            else:
+                made = record.selector is None and len(record.children) == 1
+            if not made:
+                raise ValueError(f"OK 판정의 {index}번째 항목의 하위 요청이 고른 기기와 맞지 않는다")
+            if any(c.decision is None or c.decision.verdict is not Verdict.OK for c in entry.children):
+                raise ValueError(f"OK 판정의 {index}번째 항목의 하위 판정이 없거나 OK 가 아니다")
+
+    def _resend_batch(self, req: UseRequest, iid: str, previous: Decision) -> SelectorDecision:
+        """재전송에는 저장된 상위·하위 판정을 항목 순서로 돌려준다. 새 하위 요청도 예약도 인계도 만들지 않는다 (FR-22).
+
+        `OK` 로 저장된 상위 판정은 묶음 기록이 요청과 맞아야 한다. 맞지 않으면 ValueError 다 (spec 결정 17).
+        """
+        found = self._repo.batch_children(iid)
+        if found is None:  # 항목을 판정하기 전에 끝난 판정이다
+            if previous.verdict is Verdict.OK:  # OK 상위 판정은 묶음 기록과 하위 요청을 가진다
+                raise ValueError("OK 판정에 묶음 기록이 없다")
+            return SelectorDecision(self._selector_view(previous))
+        # 판정이 없는 하위 요청은 뺀다. OK 판정이면 `_check_resent_batch` 가 하위 판정이 모두 있음을 확인한다
+        stored = [(index, c, c.decision) for index, entry in enumerate(found.items, start=1)
+                  for c in entry.children if c.decision is not None]
+        # 첫 판정과 같은 규칙으로 센다. 판정하지 않은 항목은 하위 요청이 없어 0이다
+        selected_count = sum(self._item_selected_count(entry.record) for entry in found.items)
+        similar = any(entry.record.selector is not None and entry.record.selector.similar for entry in found.items)
+        if previous.verdict is Verdict.OK:
+            self._check_resent_batch(req, found)
+            devices = tuple(DeviceOutcome(c.node_id, d.verdict, d.reason, d.use_id, item=index)
+                            for index, c, d in stored)
+            return SelectorDecision(
+                self._selector_view(previous, devices, selected_count, similar),
+                children=tuple(d for _, _, d in stored))
+        first = next(((index, c, d) for index, c, d in stored if d.verdict is not Verdict.OK), None)
+        devices = ()
+        if first is not None:  # 걸린 하위 요청은 늘 기기를 가진다
+            index, c, d = first
+            devices = (DeviceOutcome(c.node_id, d.verdict, d.reason, None, item=index),)
+        return SelectorDecision(self._selector_view(previous, devices, selected_count, similar))
+
     # ── ①~⑥ ───────────────────────────────────────────────────────
 
     def _run(
-        self, req: UseRequest, iid: str, applied: _Applied
+        self, req: UseRequest, iid: str, applied: _Applied, taken: frozenset[str] | set[str] = frozenset()
     ) -> tuple[Decision, Step, dict[str, Any]]:
+        """단일 요청의 ①~⑥. 기기를 고르는 `_choose` 와 나머지를 마치는 `_finish` 를 같은 `iid`·`applied` 로 이어 부른다 (FR-18).
+
+        `taken` 은 묶음 요청에서 앞 항목이 이미 고른 기기다. 단일 요청은 비어 있다 (FR-09, #284).
+        """
+        node, p, check = self._choose(req, iid, applied)
+        decision, step = self._finish(req, iid, applied, node, p, check, taken)
+        return decision, step, {}
+
+    def _choose(
+        self, req: UseRequest, iid: str, applied: _Applied
+    ) -> tuple[NodeInfo, float | None, PolicyCheckResult | None]:
+        """단일 요청의 ①②③. 기기 하나를 골라 (기기, 근접 확률, 정책 검사 결과)를 반환한다 (FR-18).
+
+        전역 할당은 ③ 안에서 ④ 정책 검사와 대기 구간 배정을 하므로 정책 검사 결과를 함께 돌려준다. 다른 요청은 None 이다.
+        걸리면 `_Stop` 이다. 감사는 받은 `iid` 로 남기고, 근접 추정 값은 `applied` 에 담는다.
+        묶음 요청의 근접 지정·전역 할당·명시 지정 항목은 상위 요청 ID 로 부르고, 고른 기기의 하위 요청이 `_finish` 를 한다 (#284).
+        """
         s = self._settings
         now = req.received_at
 
@@ -692,17 +1033,30 @@ class DecisionPipeline:
                     raise _Stop(Step.PROXIMITY, self._decision(
                         req, iid, Verdict.ASK, ReasonCode.LOW_CONFIDENCE, p_max=p_top))
                 node_id, p = best[0], p_top
-        node = by_id[node_id]
+        return by_id[node_id], p, check
+
+    def _finish(
+        self, req: UseRequest, iid: str, applied: _Applied, node: NodeInfo, p: float | None,
+        check: PolicyCheckResult | None, taken: frozenset[str] | set[str] = frozenset(),
+    ) -> tuple[Decision, Step]:
+        """고른 기기에 대한 단일 요청의 나머지: 같은 기기 검사, 동작·인자 검사, ④ 정책, ⑤⑥ (FR-18).
+
+        `check` 가 있으면(전역 할당이 ③ 안에서 ④ 를 마쳤다) ④ 를 다시 하지 않고 그 결과를 예약에 넘긴다.
+        `taken` 은 묶음 요청에서 앞 항목이 이미 고른 기기다. 같은 기기면 동작·인자 검사 전에 거부한다.
+        통과하면 (OK 판정, 마지막 단계)를 반환하고 걸리면 `_Stop` 이다. 감사는 받은 `iid` 로 남긴다.
+        """
+        node_id = node.node_id
+        if node_id in taken:  # 앞 항목이 이미 고른 기기다. 동작·인자 검사 전에 거부한다. 전역 할당은 배정 뒤다 (spec 결정 8)
+            raise self._duplicate_stop(req, iid, node_id, p)
         applied.arguments = self._resolve_action(req, iid, node, p)
         applied.reoperate = is_reoperate(node, req.action)
 
         # ④ 정책 — 확정한 대상만 검사한다. `any:` 요청은 배정 전에 후보마다 검사했다
         if check is None:
-            check = self._check_policy(req, iid, applied, node_id, p, now)
+            check = self._check_policy(req, iid, applied, node_id, p, req.received_at)
 
         # ⑤⑥
-        decision, step = self._reserve(req, iid, applied, node, p, check)
-        return decision, step, {}
+        return self._reserve(req, iid, applied, node, p, check)
 
     # ── 보조 ────────────────────────────────────────────────────────
 
@@ -941,8 +1295,13 @@ class DecisionPipeline:
     def _decision(req: UseRequest, iid: str, verdict: Verdict, reason: ReasonCode, **kw: Any) -> Decision:
         return make_decision(req.request_id, iid, verdict, reason, **kw)
 
-    def _internal_error(self, req: UseRequest, iid: str, step: Step, exc: Exception, save: bool) -> Decision:
-        """예외 내용은 감사 기록에만 남기고 호스트에는 일반 안내만 준다 (#25)."""
+    def _internal_error(
+        self, req: UseRequest, iid: str, step: Step, exc: Exception, save: bool, batch: BatchRecord | None = None
+    ) -> Decision:
+        """예외 내용은 감사 기록에만 남기고 호스트에는 일반 안내만 준다 (#25).
+
+        `batch` 는 판정 중 예외로 끝난 묶음 요청의 상위 판정 기록에 담는 묶음 기록이다 (FR-22, #284).
+        """
         log.exception("판정 중 예외")
         d = self._decision(req, iid, Verdict.DENY, ReasonCode.INTERNAL_ERROR)
         if iid:
@@ -952,7 +1311,7 @@ class DecisionPipeline:
                 log.exception("거부 감사 기록 실패")
             if save:
                 try:
-                    self._repo.save_decision(d, DecisionRecord(settings=self._settings))
+                    self._repo.save_decision(d, DecisionRecord(settings=self._settings, batch=batch))
                 except Exception:  # noqa: BLE001
                     log.exception("거부 판정 저장 실패")
         return d
