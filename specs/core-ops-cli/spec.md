@@ -248,7 +248,7 @@
 - 시험 회차만 읽는다. 평가 시각은 `validation_log_loss`와 같다(`started_at + window_sec`부터 `bin_sec` 간격, `ended_at` 이하). 시각마다 `compute_posteriors`에 모델 파일의 모든 기기를 후보로 넘긴다 — 명령이 배치 파일을 받지 않는다.
 - 정면 오선택률: 기기 라벨 회차의 평가 시각 중, 기기 상태 중 사후확률이 가장 큰 기기가 라벨과 다른 시각의 비율. 확률이 같으면 상태 이름이 사전순으로 앞선 쪽을 고른다(ECE의 최대 확률 상태도 같다).
 - ECE: 모든 시험 회차의 평가 시각에서 전체 상태(기기들과 none = max(0, 1 − 합)) 중 최대 확률을 신뢰도로, 그 상태가 라벨과 같은지를 정답으로 둔다. 신뢰도 [0, 1]을 같은 폭 10구간으로 나눠 `Σ (구간 표본 수 / 전체) × |구간 정확도 − 구간 평균 신뢰도|`.
-- 통과 기준은 적합 설정 TOML `[acceptance]`(`max_misselection`, `max_ece`)에서 받는다. 같은 절의 `max_boundary_error`는 거리 순서 평가(`evaluate-order`, specs/db-evaluation-distance-order)가 쓰고, 이 평가는 읽지 않는다.
+- 통과 기준은 적합 설정 TOML `[acceptance]`(`max_misselection`, `max_ece`)에서 받는다. 같은 절의 `max_boundary_error`는 거리 순서 평가(`evaluate-order`, specs/db-evaluation-distance-order)가 쓰고, 이 평가는 읽지 않는다. 다만 `[acceptance]`의 세 키는 모두 필수라서, `max_boundary_error`가 없는 적합 설정 파일은 이 파일을 읽는 `split`, `fit`, `eval`, `collect list --summary`에서도 `적합 설정 파일 오류`(종료 코드 2)다.
 - 보고서 행: `metric`, `value`, `limit`, `passed`, `trials`, `failures`(오선택률만), `note`. 전환 시간과 깜빡임 행은 `value`를 비우고 `note = "미측정"`이다. 기기 라벨 시험 회차가 없으면 오선택률 행의 `value`, `passed`, `failures`를 비우고 `note = "기기 라벨 시험 회차 없음"`이다 — `write_report`가 `trials = 0`에서 신뢰구간을 계산하지 않게 한다.
 - 보고서의 모든 행에 `place_id`, `model_version`, `calib_version`, `split_file`, `fit_file`을 남긴다 (requirements.md §4 "입력, 시나리오, 버전, 표본 수를 보존한다").
 - `PLACE/VERSION`의 빈 조각, `.`, `..`, `\`는 입력 오류다. 기준에 못 미쳐도 종료 코드 0이다. `write_report`로 `var/reports/<이름>.csv`, `.md`를 쓴다. 기본 이름은 `<장소>-<버전>-<UTC YYYYMMDD>`다.

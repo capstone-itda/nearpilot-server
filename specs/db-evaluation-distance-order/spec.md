@@ -89,15 +89,15 @@
 | 기록 파일의 줄이 JSON 객체가 아니거나 `collection_id`·`spot`이 없거나 빈 문자열이다 | `기록 파일 오류: 파일:줄: …`와 종료 코드 2 | `test_FR09_records_reject_bad_lines` |
 | `--records`로 준 파일이 없다 | `기록 파일이 없다: …`와 종료 코드 2 | `test_FR09_evaluate_order_input_errors` |
 | 회차의 spot이나 회차에 나온 기기가 좌표표에 없다 | 종료 코드 2. 없는 이름을 모두 쓴다 | `test_FR09_layout_missing_names_rejected` |
-| 학습 회차에 1 m 이상 차이 나는 기기 쌍이 없어 σs를 추정할 수 없다 | `평가 실패: …`와 종료 코드 1 | `test_FR09_estimate_static_sigma_needs_pairs` |
+| 학습 회차에 1 m 이상 차이 나는 기기 쌍이 없어 σs를 추정할 수 없다 | `평가 실패: …`와 종료 코드 1 | `test_FR09_estimate_static_sigma_needs_pairs` (함수의 실패), `test_FR09_evaluate_order_fails_when_sigma_cannot_be_estimated` (같은 처리 경로의 메시지와 종료 코드) |
 | σs 추정값이 탐색 범위의 끝이다 (모든 쌍을 맞혔거나 거의 다 틀렸다) | 계산은 하고, 보고서 note에 "탐색 범위 끝"을 쓴다 | `test_FR09_estimate_static_sigma_edge_noted` |
 | 시험 회차에 평가 시점이 없다 | `평가 실패: …`와 종료 코드 1 | `test_FR09_evaluate_order_without_test_samples_fails` |
 | 학습 회차로 σf를 구할 수 없거나(구간·기기마다 프레임이 2개 이상인 곳이 없다) σf가 0이다 | `평가 실패: …`와 종료 코드 1 | `test_FR09_evaluate_order_fails_when_frame_sigma_is_zero` |
-| DB 파일이 없거나 스키마 버전이 다르다 | 종료 코드 2 (`evaluate-reask`와 같다) | `test_FR09_evaluate_order_input_errors` |
+| DB 파일이 없거나 스키마 버전이 다르다 | 종료 코드 2 (`evaluate-reask`와 같은 `open_read_db`) | `test_FR09_evaluate_order_input_errors` (DB 없음). 스키마 버전은 `open_read_db`의 공용 시험이 본다 |
 | 분할의 회차를 DB에서 읽을 수 없다 (DB에 없는 회차) | 종료 코드 1 (`evaluate-reask`와 같다) | `test_FR09_evaluate_order_unreadable_runs_fail` |
 | `--records`를 생략했는데 `var/records/`에 `*.jsonl`이 없다 | `기록 파일이 없다: …`와 종료 코드 2 | `test_FR09_evaluate_order_input_errors` |
 | 적합 설정에 `max_boundary_error`가 없거나 0~1 밖이다 | `적합 설정 파일 오류: …`와 종료 코드 2 | `test_FR09_fit_file_reads_max_boundary_error` |
-| 검증 회차에서 목표 오류 비율 이하인 후보가 없다 | 기준 확률은 "고르지 못함", 시험 행은 비우고 note에 이유를 쓴다. 종료 코드 0 | `test_FR09_choose_threshold_none_satisfies` |
+| 검증 회차에서 목표 오류 비율 이하인 후보가 없다 | 기준 확률은 "고르지 못함", 시험 행은 비우고 note에 이유를 쓴다. 종료 코드 0 | `test_FR09_choose_threshold_none_satisfies`, `test_FR09_order_rows_chosen_none_and_edge_notes`, `test_FR09_evaluate_order_without_chosen_threshold_still_exits_0` |
 | matplotlib이 없다 | 기존 그래프처럼 경고만 하고 그래프를 건너뛴다. 보고서와 원자료는 쓴다 | `test_FR09_order_plot_skipped_without_matplotlib` |
 | 그래프를 그리다 예외가 난다 | stderr에 경고하고 종료 코드 0. 보고서는 이미 썼다 | `test_FR09_evaluate_order_plot_failure_is_only_a_warning` |
 | 보고서가 이미 있다 | `--force` 없이는 종료 코드 2 | `test_FR09_evaluate_order_refuses_existing_report` |
@@ -106,7 +106,7 @@
 
 ## 6. 결정
 
-1. σs는 학습 회차의 기기 쌍으로, 경계 확률 식이 "앞선 기기가 실제로 더 가까웠나"를 가장 잘 맞히는 값(가능도 최대)으로 정한다 — "확률 0.9"가 실제로 열에 아홉 맞게 하려는 것이다. 거리-신호 곡선을 가정하지 않는다. 담당자가 2026-11-13에 정했다.
+1. σs는 학습 회차 시점마다 거리 차이가 1 m 이상인 모든 기기 쌍(이웃한 쌍만이 아니다)으로, 경계 확률 식이 "앞선 기기가 실제로 더 가까웠나"를 가장 잘 맞히는 값(가능도 최대)으로 정한다 — "확률 0.9"가 실제로 열에 아홉 맞게 하려는 것이다. 거리-신호 곡선을 가정하지 않는다. 담당자가 2026-11-13에 정했다.
 2. σf는 학습 회차에서, 겹치지 않는 `anchor_recent_sec` 구간마다 기기별 프레임이 구간 평균에서 벗어난 정도를 모은 표준편차다 (자유도 보정). 판정이 쓰는 "프레임 하나의 RSSI 표준편차"와 같은 뜻이다.
 3. σ는 학습 회차, 기준 확률은 검증 회차, 지표 10은 시험 회차로 정한다 — 정하는 데 쓴 데이터로 채점하지 않는다. 담당자가 2026-11-13에 정했다.
 4. 도구가 기준 확률을 고른다. 후보는 0.50부터 0.99까지 0.01 간격이다 — 후보 목록은 고르는 방법의 일부라 설정으로 두지 않는다. 판정이 쓰는 값 `order_boundary_min_prob`는 서버 설정에 둔다. 검증 회차에서 "통과 중 오류 비율 ≤ `max_boundary_error`"를 만족하는 후보 중 가장 낮은 값(대답을 가장 많이 하는 값)을 고른다. 통과한 경계가 하나도 없는 후보는 만족하지 않는 것으로 본다. 담당자가 2026-11-13에 정했다.
@@ -130,6 +130,7 @@
 ## 7. 가정
 
 - 목표 오류 비율의 수치는 미결이다. 예시 설정의 초기값은 0.05다 (지표 8의 정면 오선택 상한과 같은 값) — #279
+- 지표 10의 통과 조건은 미결이다 (requirements.md §4). 이 작업은 "시험 회차의 통과한 경계 중 순서가 틀린 비율 ≤ `max_boundary_error`"를 통과로 가정하고 `m10_boundary_error_rate` 행에만 통과 칸을 쓴다. 팀이 다른 조건으로 정하면 `order_rows`의 통과 칸만 바꾼다 — #279
 - 순서 일치율의 통과 조건은 미결이다. 보고서는 값만 쓴다 — #279
 - 수집 회차 기록 파일의 형식(`collection_id`, `spot` 키)은 `specs/core-proximity-data-collection`이 정한 대로다.
 
@@ -145,6 +146,7 @@
 | FR-09 | `test_FR09_records_missing_run_rejected` | 분할의 회차가 기록에 없으면 거부 |
 | FR-09 | `test_FR09_records_conflicting_spot_rejected` | 같은 회차의 spot이 다르면 거부 |
 | FR-09 | `test_FR09_layout_missing_names_rejected` | 좌표표에 없는 spot·기기를 모두 알린다 |
+| FR-16 | `test_FR16_order_points_tie_uses_node_id` | 정렬 값이 같으면 받은 순서와 상관없이 기기 ID 순서다 |
 | FR-16 | `test_FR16_order_at_matches_server_rule` | 평가의 거리 순서가 서버 `distance_order`와 같은 결과다 (구간, 비콘, 유한값, 같은 값은 기기 ID, 못 본 기기는 끝, 프레임 수) |
 | FR-09 | `test_FR09_order_pairs_skip_both_unheard` | 둘 다 못 본 쌍은 뺀다 |
 | FR-09 | `test_FR09_order_pairs_one_unheard` | 한쪽만 못 본 쌍은 지표에 세고 σs 추정에서 뺀다 |

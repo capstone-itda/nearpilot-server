@@ -218,6 +218,21 @@ def test_FR16_order_at_matches_server_rule():
     assert [by_second[t].values["n5"] for t in (3, 4, 5, 6)] == [None] * 4  # 프레임이 창에 들기 전에는 못 본 기기다
 
 
+def test_FR16_order_points_tie_uses_node_id():
+    # 정렬 값이 같으면 기기 ID 순서다 (spec 3절). ID가 큰 n2가 매초 먼저(0.5초) 받고 n1이 나중에(0.7초) 받아서,
+    # 받은 순서나 처음 본 순서를 따르면 n2가 앞선다. 실측 RSSI는 정수라 평균이 같아질 수 있다.
+    frames = []
+    for t in range(6):
+        frames.append(raw_frame("n2", -60.0, after(t + 0.5), seq=t + 1))
+        frames.append(raw_frame("n1", -60.0, after(t + 0.7), seq=t + 1))
+    run = LabeledRun("run-tie", "a", BEACON, T0, after(6), frames)
+
+    points = order_points(run, "P", {"n1", "n2"}, window_sec=WINDOW_SEC, step_sec=STEP_SEC)
+
+    assert points and all(point.order == ("n1", "n2") for point in points)
+    assert all(point.values["n1"] == point.values["n2"] == -60.0 for point in points)
+
+
 def test_FR16_order_points_time_grid():
     run = make_run("run-1", {"a": -50.0, "b": -60.0}, seconds=20)
 
