@@ -82,6 +82,11 @@ _RESULT_TEXT: dict[str, str] = {
     CommandOutcome.REJECTED.value: "기기가 실행을 거절",
     CommandOutcome.UNKNOWN.value: "결과 불명 → 고장 격리",
 }
+# 외부 API 기기의 실패·불명은 격리하지 않는다 (#276). 근거·감사의 `isolated: false` 로 구분한다
+_UNISOLATED_TEXT: dict[str, str] = {
+    CommandOutcome.FAILED.value: "실행 실패 · 격리 안 함",
+    CommandOutcome.UNKNOWN.value: "결과 불명 · 격리 안 함",
+}
 _EVENT_TEXT: dict[str, str] = {"finish_close": "반납 완료 · 점유 해제", "settle_recovery": "고장 복구 정산"}
 _ISOLATE_TEXT: dict[ReasonCode, str] = {
     ReasonCode.EXEC_UNKNOWN: "결과 불명으로 격리",
@@ -194,7 +199,11 @@ def _event_text(event: str, payload: Mapping[str, Any]) -> str | None:
     """실행·종료·고장 기록의 문구. 모르는 event 는 None."""
     if event == "record_result":
         result = payload.get("outcome")
-        return _RESULT_TEXT.get(result) if isinstance(result, str) else None
+        if not isinstance(result, str):
+            return None
+        if payload.get("isolated") is False and result in _UNISOLATED_TEXT:
+            return _UNISOLATED_TEXT[result]
+        return _RESULT_TEXT.get(result)
     if event == "cancel_not_sent":
         reason = _reason(payload.get("reason"))
         return "보내지 않고 취소" if reason is None else f"보내지 않고 취소 · {_reason_text(reason)}"
@@ -345,6 +354,8 @@ def outcome(req: DashboardRequest, commands: Sequence[DashboardCommand]) -> tupl
         return OUTPUT_COMPLETE, None
     if last.outcome == CommandOutcome.NOT_SENT.value:  # 보내지 않고 취소했다. 취소 사유가 code 다
         return "실행 안 함", _reason(last.evidence.get("reason")) or ReasonCode.COMMAND_NOT_SENT
+    if last.evidence.get("isolated") is False and last.outcome in _UNISOLATED_TEXT:
+        return _UNISOLATED_TEXT[last.outcome], _HISTORY_OUTCOME[last.outcome][1]
     return _HISTORY_OUTCOME.get(last.outcome, ("실행 중", None))
 
 
@@ -379,6 +390,8 @@ def timeline_command(cmd: DashboardCommand) -> str | None:
     """대여 타임라인에 쓰는 명령 결과 문구. 결과가 없거나 보내지 않고 취소한 명령은 `None`."""
     if cmd.outcome == CommandOutcome.SUCCEEDED.value:
         return f"{OUTPUT_COMPLETE} · {SessionState.ACTIVE.value}"
+    if cmd.evidence.get("isolated") is False and cmd.outcome in _UNISOLATED_TEXT:
+        return _UNISOLATED_TEXT[cmd.outcome]
     return _TIMELINE_FAILED.get(cmd.outcome)
 
 

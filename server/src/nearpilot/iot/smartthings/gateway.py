@@ -158,6 +158,11 @@ class SmartThingsCommandGateway:
                 return self._result(command, CommandOutcome.SUCCEEDED, confirmation)
             remaining = deadline - self._monotonic()
             if remaining <= 0:
+                # 이상값 진단용으로 마지막 관측 값과 기대값을 남긴다. deviceId 는 남기지 않는다 (NFR-08).
+                log.warning("SmartThings 상태를 확인하지 못했다: node=%s command=%s %s.%s 관측=%r 기대=%s",
+                            command.node_id, command.command_id, plan.confirm.capability,
+                            plan.confirm.attribute, actual,
+                            "변화" if plan.confirm.method == CHANGED else repr(plan.confirm.expected))
                 return self._result(command, CommandOutcome.UNKNOWN)
             self._sleep(min(self._poll_interval_sec, remaining))
 
@@ -180,7 +185,7 @@ class SmartThingsCommandGateway:
             return False
         if confirm.method == CHANGED:
             return actual != before
-        return any(type(actual) is type(value) and actual == value for value in confirm.expected)
+        return any(_same_value(actual, value) for value in confirm.expected)
 
     def _refresh(self) -> None:
         # refresh 의 완료 응답은 성공 근거가 아니다. 실패해도 조회를 계속한다 (spec 결정 4).
@@ -202,6 +207,17 @@ class SmartThingsCommandGateway:
                 confirmation: Mapping[str, Any] | None = None) -> CommandResult:
         return CommandResult(command.command_id, outcome, report=None, reported_at=self._clock(),
                              confirmation=confirmation)
+
+
+def _is_number(value: Any) -> bool:
+    return type(value) in (int, float)  # bool 은 숫자로 보지 않는다
+
+
+def _same_value(actual: Any, expected: Any) -> bool:
+    """FR-07 "요청한 값과 같다". 숫자는 표현(15·15.0)이 달라도 값이 같으면 같다. 나머지는 타입까지 같아야 한다."""
+    if _is_number(actual) and _is_number(expected):
+        return actual == expected
+    return type(actual) is type(expected) and actual == expected
 
 
 def _mode_name(table: Any, mode_id: str) -> str | None:

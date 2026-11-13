@@ -735,7 +735,7 @@ def test_FR20_internal_off_through_real_execution(env):
             record = replace(self.commands["internal-1"], status=ExecutionStatus.IN_PROGRESS)
             self.commands["internal-1"] = record
             return StoreResult(StoreOutcome.APPLIED, command=record)
-        def record_result(self, command_id, outcome, occurred_at, rental_due_at, evidence):
+        def record_result(self, command_id, outcome, occurred_at, rental_due_at, evidence, *, isolate=True):
             record = replace(self.commands["internal-1"], status=ExecutionStatus(outcome.value),
                              outcome=outcome, occurred_at=occurred_at, evidence=evidence)
             self.commands["internal-1"] = record

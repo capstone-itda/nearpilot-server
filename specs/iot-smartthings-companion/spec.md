@@ -54,12 +54,14 @@
 - `server/src/nearpilot/core/lifecycle/execution.py`
 - `server/src/nearpilot/shared/models.py`: `CommandResult.confirmation` 필드만 더한다 (#271).
 - `server/src/nearpilot/shared/config.py`: `exec_timeout_sec.{kind}` 재정의만 더한다 (#271).
+- `server/src/nearpilot/shared/interfaces.py`: `ExecutionStore.record_result`의 `isolate` 인자만 더한다 (결정 23, #276).
+- `server/src/nearpilot/db/repositories/execution_store.py`, `dashboard_reads.py`, `server/src/nearpilot/core/dashboard/text.py`: 격리하지 않은 결과의 저장과 문구만 고친다 (결정 23, #276).
 - `server/src/nearpilot/runtime/config.py`, `runtime/assembly.py`: `[smartthings]` 절과 라우팅 조립
 - `server/config/server.example.toml`, `server/config/README.md`: `[smartthings]` 절 설명
 - `firmware/lib/np_descriptor/np_descriptors.h`, `firmware/platformio.ini`: 동반 기기 선언과 빌드 env
 - `server/tools/node_sim/device.py`: 발행 인코딩만 고친다 (결정 20, 담당자 지시)
 - `specs/iot-smartthings-descriptor/spec.md`, `specs/iot-smartthings-adapter/spec.md`: 동작 표가 바뀐 부분만 고친다.
-- `server/tests/iot/`, `server/tests/core/lifecycle/`, `server/tests/shared/`, `server/tests/tools/`, `server/tests/integration/` (설정 시험은 `test_runtime_config.py`)
+- `server/tests/iot/`, `server/tests/core/lifecycle/`, `server/tests/core/dashboard/`, `server/tests/db/`, `server/tests/shared/`, `server/tests/tools/`, `server/tests/integration/` (설정 시험은 `test_runtime_config.py`)
 
 ### 고치지 않는 곳
 
@@ -101,12 +103,21 @@
 | 절대 명령을 같은 `command_id`로 다시 보냄 | 다시 보내고 확인한다(기존 규칙) | `test_FR06_same_command_id_same_content_resends` (기존) |
 | `launch_app` 뒤 `tvChannelName`이 앱 식별자와 같음 | `SUCCEEDED` | `test_FR07_launch_app_confirmed_by_other_attribute` |
 | 응답 제한 안에 확인하지 못함 | `UNKNOWN` | `test_FR07_timeout_without_confirmation_is_unknown` (기존) |
+| 상태 조회가 요청한 숫자를 다른 표현(15 → 15.0)으로 돌려줌 | `SUCCEEDED` | `test_FR07_volume_reported_as_float_succeeds` |
+| 상태 조회가 문자열 `"15"`, bool, 다른 숫자를 돌려줌 | `UNKNOWN` | `test_FR07_volume_other_value_is_unknown` |
+| 확인하지 못하고 `UNKNOWN`을 돌려줌 | 마지막 관측 값과 기대값을 `node_id`·`command_id`와 함께 warning 로그에 남긴다. `deviceId`는 남기지 않는다 | `test_FR07_unconfirmed_logs_observed_value_without_device_id` |
 | 한글 인자와 한글 응답 | UTF-8 바이트로 보내고 UTF-8로 읽는다 | `test_FR07_http_utf8_round_trip` |
 | 토큰 파일이 없거나 형식이 틀림 | 보내지 않고 `NOT_SENT`. 오류 메시지에 토큰과 경로 밖 값을 담지 않는다 | `test_NFR08_missing_token_not_sent_without_secret` |
 | 401 응답 | `NOT_SENT` | `test_FR06_http_unauthorized_not_sent` |
 | core가 `confirmation`이 있는 `SUCCEEDED`를 받음 | `succeeded`로 저장하고 기기를 격리하지 않는다 | `test_FR07_server_confirmed_success_recorded` |
 | core가 보고도 `confirmation`도 없는 `SUCCEEDED`를 받음 | 지금처럼 `unknown`과 `FAULT` | `test_FR07_unconfirmed_success_still_unknown` |
 | core가 `confirmation`이 있는 `FAILED`를 받음 | `unknown` | `test_FR07_confirmation_ignored_for_failed` |
+| core가 바인딩한 동반 기기의 공용형 실행에서 `unknown`·`failed`를 받음 | 결과는 `unknown`·`failed`로 저장하고 응답한다. 기기를 `FAULT`로 두지 않고 복구 건을 만들지 않는다. 사용분은 `consumed`, 근거에 `isolated: false` | `test_FR07_external_api_device_unconfirmed_not_fault` |
+| 격리하지 않은 결과 뒤 같은 동반 기기에 새 명령 | 그대로 실행한다 | `test_FR07_external_api_device_next_command_runs_after_unknown` |
+| 바인딩 밖 기기(MQTT)의 `unknown` | 지금처럼 `FAULT` | `test_FR07_unlisted_device_still_fault` |
+| 동반 기기의 대여형 실행 | 지금처럼 격리 대상 | `test_FR07_external_api_rental_still_fault` |
+| db가 `isolate=False`로 결과를 받음 | 결과·감사만 저장, 기기 상태 그대로, 사용분 `consumed` | `test_FR07_record_result_unisolated_keeps_device_state` |
+| 대시보드가 `isolated: false` 결과를 그림 | `결과 불명 · 격리 안 함`, `실행 실패 · 격리 안 함`. 고장 근거로 고르지 않는다 | `test_FR07_격리하지_않은_결과는_격리_안_함으로_쓴다` |
 | `display` 기기의 명령 | `expires_at`과 `send`의 제한 시간이 `exec_timeout_sec.display` | `test_FR07_exec_timeout_per_kind` |
 | 재정의 없는 종류의 명령 | 전역 `exec_timeout_sec` | `test_FR07_exec_timeout_falls_back_to_global` |
 | `exec_timeout_sec.{kind}`가 0 이하이거나 숫자가 아님 | `Settings` 생성 시 `ValueError` | `test_FR07_exec_timeout_override_validated` |
@@ -140,6 +151,11 @@
 19. 명령을 보내기 전의 조회(대응표, `changed`의 전송 전 값)가 실행 응답 제한을 다 쓰면 보내지 않고 `NOT_SENT`다 — 보내지 않았으므로 확정할 수 있다.
 20. 시뮬레이터(`tools/node_sim/device.py`)와 시험의 fake Paho(`tests/integration/_runtime.py`)는 펌웨어처럼 공백 없는 UTF-8 JSON으로 보고를 보낸다. 서버는 발표 상한을 이 바이트 수로 잰다. 기본 `json.dumps`(ASCII 이스케이프, 공백)로는 동반 기기 선언의 발표가 2228바이트라 서버가 거부했다.
 21. `display`의 근접 임계값(`threshold_display`)은 `Settings` 기본값으로 두지 않는다. 운영 설정 `[settings]`에 적어야 근접 지정(`near:display:…`)이 실행된다. 없으면 명시 지정(`display-1`)만 된다 (FR-17, #245). 결정 12와 같은 이유로 예시 설정에는 주석으로만 둔다. 키가 없으면 판정 ② 후보 단계에서 `INVALID_INPUT`이다.
+22. `equals`·`equals_other`의 "요청한 값과 같다"는 숫자(bool 제외)끼리는 값으로 비교한다. 15와 15.0은 같다. 그 밖에는 타입까지 같아야 한다 — 문자열 `"15"`는 15가 아니다. 상태를 확인하지 못해 `UNKNOWN`을 돌려주기 직전에 마지막 관측 값과 기대값을 warning 로그에 남긴다. 실기의 이상값을 진단하기 위해서다. 결과 근거(`evidence`)에는 넣지 않는다 — 근거는 core가 만든다 (#276).
+23. 외부 API 기기(`[smartthings]` 바인딩의 `node_id`)의 공용형·서버 내부 실행에서 결과가 `unknown`·`failed`면 core는 기기를 `FAULT`로 격리하지 않는다 (#276 담당자 결정). 외부 기기는 점유가 없고 명령이 멱등이라 다시 보내도 위험이 작고, SmartThings 클라우드가 정상 동작에도 기대와 다른 값을 돌려주는 일이 있어서다. 결과는 성공으로 꾸미지 않고 `unknown`·`failed` 그대로 저장·응답한다.
+    - 판정은 core가 한다: 조립(`runtime/assembly.py`)이 바인딩 목록을 `ExecutionService(non_isolating_nodes=...)`로 넘기고, core가 `ExecutionStore.record_result(..., isolate=False)`와 근거의 `"isolated": false`를 함께 정한다. iot는 결과를 바꾸지 않는다.
+    - db는 `isolate=False`면 결과와 감사(`isolated: false`)만 남기고 사용분을 `consumed`로 둔다(전송을 시도했다). 기기 상태와 점유 세션은 건드리지 않는다.
+    - 대여형 실행은 지금 규칙(격리)을 따른다. 재시작 복원(`restore.py`)과 통신·저장 장애의 `isolate_device`도 바꾸지 않는다.
 
 ## 7. 가정
 
@@ -147,6 +163,7 @@
 - 화면 모드의 현재 값(`pictureMode`)은 ID나 이름 중 하나라고 가정한다. 그래서 둘 다 성공으로 본다 — #270.
 - 명령 응답 시간 초과는 SmartThings가 명령을 받았을 수 있는 상황으로 본다. 그래서 `NOT_SENT`로 확정하지 않는다 — FR-07.
 - 화면·소리 모드 ID는 32자 이하 문자열이라고 가정한다(`maxLength: 32`). #270은 ID 형식을 남기지 않았다. 다르면 실기 점검에서 fix로 고친다 — #270.
+- 결정 23은 `requirements.md` FR-07 "실행 실패나 결과 불명이면 서버는 기기를 `FAULT`로 격리한다"와 NFR-04의 예외다. docs 반영은 decision PR로 한다 (#276). 그 전까지 이 spec이 예외의 근거다.
 
 ## 8. 테스트
 

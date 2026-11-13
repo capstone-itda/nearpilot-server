@@ -446,7 +446,8 @@ class Runtime:
             repository=repo, store=store, rechecker=rechecker, gateway=command_gateway, clock=clock,
             lock_for=locks, can_execute=restore.can_execute,
             record_isolated=recovery.record_isolated,
-            confirm_internal=lambda ctx: shared_light.can_request_off(ctx.node_id))
+            confirm_internal=lambda ctx: shared_light.can_request_off(ctx.node_id),
+            non_isolating_nodes=self._smartthings_nodes())
         execute_off.bind(execution.execute)
 
         # 판정. 할당 대기창은 프로세스에서 하나다 (FR-23).
@@ -479,6 +480,11 @@ class Runtime:
                                            self.dashboard.tail.tick, scope=db.scope))
         return Services(connection, delivery, gateway, proximity, window, execution, release,
                         restore, recovery, shared_light, node_events, retention, core, command_gateway)
+
+    def _smartthings_nodes(self) -> frozenset[str]:
+        """외부 API(SmartThings)로 실행하는 기기. CORE 가 실패·불명에도 격리하지 않는다 (#276)."""
+        smartthings = self.config.smartthings
+        return frozenset() if smartthings is None else frozenset(b.node_id for b in smartthings.bindings)
 
     def _command_gateway(self, mqtt_gateway: MqttCommandGateway,
                          clock: Callable[[], datetime]) -> NodeCommandGateway:

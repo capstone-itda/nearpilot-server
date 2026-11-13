@@ -110,7 +110,7 @@ def test_fr19_fake_store_satisfies_protocol():
         def cancel_not_sent(self, internal_request_id, expected, reason, evidence):
             return StoreResult(StoreOutcome.APPLIED, record)
 
-        def record_result(self, command_id, outcome, occurred_at, rental_due_at, evidence):
+        def record_result(self, command_id, outcome, occurred_at, rental_due_at, evidence, *, isolate=True):
             return StoreResult(StoreOutcome.APPLIED, record)
 
         def isolate_device(self, node_id, evidence):

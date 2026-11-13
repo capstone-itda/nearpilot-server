@@ -379,6 +379,8 @@ class ExecutionStore(Protocol):
         occurred_at: datetime,
         rental_due_at: datetime | None,
         evidence: Mapping[str, Any],
+        *,
+        isolate: bool = True,
     ) -> StoreResult:
         """실행 결과를 명령 하나에 한 번만 확정한다. outcome 은 SUCCEEDED·FAILED·UNKNOWN·REJECTED 다. NOT_SENT 는 cancel_not_sent 로 반영한다.
 
@@ -388,6 +390,8 @@ class ExecutionStore(Protocol):
         이번 요청의 사용분만 released 로 둔다. 최초 대여는 이번 예약을 cancelled 로 종료한다.
         재조작은 기존 점유·rental_due_at 을 보존한다. 기기를 FAULT 로 두지 않는다.
         FAILED·UNKNOWN: 명령 결과, 기기 FAULT, 사용분 held, 세션 보존, 감사.
+        isolate=False(CORE 가 외부 API 기기의 공용형 실행으로 판정, #276): 명령 결과와 감사만 남긴다.
+        기기 상태를 바꾸지 않고 사용분은 consumed 다(전송을 시도했다).
         이미 다른 결과가 있으면 CONFLICT 다. 늦은 성공으로 FAULT 를 해제하지 않는다.
         """
         ...

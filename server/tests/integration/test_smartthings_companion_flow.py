@@ -46,13 +46,14 @@ class FakeSmartThings:
     def __init__(self) -> None:
         self.state = {("switch", "switch"): "off"}
         self.posted: list[tuple[str, str, list]] = []
+        self.frozen = False  # True 면 2xx 로 받고도 상태가 바뀌지 않는다 (#276 실기의 이상값)
         self._lock = threading.Lock()
 
     def post_command(self, device_id, capability, command, arguments):
         assert device_id == DEVICE_ID
         with self._lock:
             self.posted.append((capability, command, list(arguments)))
-            if capability == "switch":
+            if capability == "switch" and not self.frozen:
                 self.state[("switch", "switch")] = command
 
     def get_attribute(self, device_id, capability, attribute):
@@ -227,3 +228,40 @@ def test_FR20_companion_display_off_on_leave(tmp_path):
     assert w.smartthings.state[("switch", "switch")] == "off"
     assert [c for c in w.broker.commands() if c["node_id"] == DISPLAY] == []
     assert state != "FAULT"
+
+
+def test_FR07_companion_unconfirmed_result_not_fault_and_next_command_runs(tmp_path):
+    # SmartThings 가 명령을 받고도 상태 값이 바뀌지 않으면 결과는 unknown 이지만 기기를 격리하지 않는다 (#276).
+    w = Companion(tmp_path)
+    app = create_app(w.runtime)
+    mcp = McpCaller(app)
+    token = TOKENS[VISITOR_A]
+    w.smartthings.frozen = True
+
+    async def scenario():
+        async with app.router.lifespan_context(app):
+            await asyncio.to_thread(w.ready)
+            first = (await mcp.call("request_use", {"target_spec": DISPLAY, "action": "on",
+                                                    "request_id": "d-3"}, token=token))[1]
+            await asyncio.to_thread(wait_until, lambda: w.commands() == [("on", "unknown")])
+            between = w.device_state()
+            w.smartthings.frozen = False
+            await asyncio.to_thread(w.ready)  # 확인을 기다리는 동안 지난 비콘 관측을 다시 보낸다
+            second = (await mcp.call("request_use", {"target_spec": DISPLAY, "action": "on",
+                                                     "request_id": "d-4"}, token=token))[1]
+            await asyncio.to_thread(wait_until, lambda: w.commands() == [("on", "unknown"), ("on", "succeeded")])
+            return first, between, second
+
+    try:
+        first, between, second = asyncio.run(scenario())
+        state = w.device_state()
+        recoveries = query(w.db, "SELECT recovery_id FROM recovery WHERE node_id = ?", DISPLAY)
+    finally:
+        w.close()
+
+    assert (first["verdict"], first["reason"]) == ("DENY", "EXEC_UNKNOWN")  # 성공으로 꾸미지 않는다
+    assert between == "AVAILABLE"
+    assert second["verdict"] == "OK"
+    assert state == "AVAILABLE"
+    assert recoveries == []
+    assert w.smartthings.commands() == [("switch", "on", []), ("switch", "on", [])]

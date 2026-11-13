@@ -637,7 +637,7 @@ class SqliteExecutionStore:
 
     def record_result(
         self, command_id: str, outcome: CommandOutcome, occurred_at: datetime,
-        rental_due_at: datetime | None, evidence: Mapping[str, Any],
+        rental_due_at: datetime | None, evidence: Mapping[str, Any], *, isolate: bool = True,
     ) -> StoreResult:
         if outcome == CommandOutcome.NOT_SENT:
             raise ValueError("NOT_SENT 는 cancel_not_sent 로 반영한다")
@@ -653,6 +653,8 @@ class SqliteExecutionStore:
                 return self._apply_succeeded(row, occurred_at, rental_due_at, evidence)
             if outcome == CommandOutcome.REJECTED:
                 return self._apply_rejected(row, occurred_at, evidence)
+            if not isolate:
+                return self._apply_unisolated(row, outcome, occurred_at, evidence)
             return self._apply_failed_or_unknown(row, outcome, occurred_at, evidence)
 
     def _record_result_not_in_progress(
@@ -744,6 +746,24 @@ class SqliteExecutionStore:
         self._append_audit(
             row["internal_request_id"], row["command_id"],
             {"event": "record_result", "outcome": outcome.value, "evidence": dict(evidence)},
+        )
+        return StoreResult(
+            outcome=StoreOutcome.APPLIED,
+            command=replace(self._reload_command(row["command_id"]), evidence=dict(evidence)),
+        )
+
+    def _apply_unisolated(
+        self, row: sqlite3.Row, outcome: CommandOutcome, occurred_at: datetime, evidence: Mapping[str, Any],
+    ) -> StoreResult:
+        """외부 API 기기의 실패·불명 결과다. 기기를 격리하지 않고 결과와 감사만 남긴다 (#276).
+
+        전송을 시도했으므로 사용분은 consumed 다. 점유 세션은 건드리지 않는다.
+        """
+        self._set_result(row, outcome, occurred_at, evidence)
+        self._consume_usage(row["usage_id"])
+        self._append_audit(
+            row["internal_request_id"], row["command_id"],
+            {"event": "record_result", "outcome": outcome.value, "evidence": dict(evidence), "isolated": False},
         )
         return StoreResult(
             outcome=StoreOutcome.APPLIED,
