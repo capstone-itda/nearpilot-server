@@ -20,7 +20,7 @@ from _selector_fakes import (
 )
 
 from nearpilot.core.decision.digest import input_digest
-from nearpilot.core.decision.pipeline import SelectorDecision, selector_cut
+from nearpilot.core.decision.pipeline import SelectorDecision, boundary_probability, selector_cut, selector_edges
 from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import (
     ExecutionKind,
@@ -192,8 +192,256 @@ def test_FR09_selector_similar_flag_in_decision_and_record():
 
 def test_FR09_selector_similar_threshold_comes_from_settings():
     values = {"light-1": -60.0, "light-2": -50.0, "light-3": -62.0}
-    pipe, *_ = build(lights(), values, settings=Settings(version="t", order_similar_db=1.5))
+    # 끝 경계의 D 가 2 dB 라 경계 확률은 약 0.65 다. 이 시험의 대상이 아니므로 기준을 0.5 로 두어 실행되게 한다
+    pipe, *_ = build(lights(), values, settings=Settings(version="t", order_similar_db=1.5, order_boundary_min_prob=0.5))
     assert pipe.decide_selector(request("near:light:1:2")).decision.similar is False
+
+
+# ── 경계 확률 (FR-09, #278) ────────────────────────────────────────────
+
+# 경계 확률 기준을 0.9 로 켠 설정. `build` 의 기본 설정(0.5)은 경계 검사에 걸리지 않는다
+BOUNDARY = Settings(version="t", order_boundary_min_prob=0.9)
+
+
+def two_lights(first, second):
+    """조명 두 대와 정렬 값. 프레임 수는 둘 다 30 이다. light-1 이 거리 순서에서 앞선다."""
+    return lights()[:2], {"light-1": first, "light-2": second}
+
+
+def test_FR09_selector_edges_pairs():
+    order = ("a", "b", "c", "d")
+    # 각 쌍은 (거리 순서에서 앞선 기기, 뒤 기기)이고 앞쪽 경계가 먼저다
+    assert selector_edges(order, 1, 2) == (("b", "c"),)  # 바깥 기기가 뒤에만 있다
+    assert selector_edges(order, 2, 2) == (("a", "b"), ("c", "d"))
+    assert selector_edges(order, 2, None) == (("a", "b"),)  # 앞쪽 경계는 바깥 기기(a)가 앞선 기기다
+    assert selector_edges(order, 4, 1) == (("c", "d"),)
+    assert selector_edges(order, 3, 5) == (("b", "c"),)  # 모자라면 끝까지 고른다
+    # 바깥 기기가 없으면 경계가 없다. 고를 기기가 없어도 없다
+    assert selector_edges(order, 1, None) == () and selector_edges(order, 1, 9) == ()
+    assert selector_edges(order, 5, 1) == () and selector_edges(order, 5, None) == ()
+
+
+def test_FR09_boundary_probability_formula():
+    p = boundary_probability
+    # Φ(D/s), s² = σf²(1/Na + 1/Nb) + 2σs². 기대값은 구현과 다른 식(erfc)으로 따로 계산했고 Φ(1) = 0.8413 은 분포표 값이다
+    # D=6, N=30/30, σf=4, σs=3.5: s² = 16·(2/30) + 24.5 = 25.567, s = 5.056, D/s = 1.187 → 0.8823
+    assert p(-50.0, 30, -56.0, 30, 4.0, 3.5) == pytest.approx(0.8823126, abs=1e-6)
+    # 고정 오차가 없으면 프레임 수에만 달린다. D=2, N=8/8: s² = 16·(2/8) = 4, D/s = 1 → Φ(1)
+    assert p(-50.0, 8, -52.0, 8, 4.0, 0.0) == pytest.approx(0.8413447, abs=1e-6)
+    # 두 기기의 프레임 수를 서로 바꿔도 같다. D=1, N=10/40: s² = 16·(1/10 + 1/40) = 2, D/s = 0.7071 → 0.7602
+    assert p(-50.0, 10, -51.0, 40, 4.0, 0.0) == pytest.approx(0.7602499, abs=1e-6)
+    assert p(-50.0, 40, -51.0, 10, 4.0, 0.0) == pytest.approx(0.7602499, abs=1e-6)
+    # D=0 이면 0.5 다
+    assert p(-60.0, 30, -60.0, 30, 4.0, 3.5) == 0.5
+
+    # 프레임이 많을수록 확률이 오른다. 고정 오차는 평균으로 줄지 않아서 Φ(D / (σs·√2)) = Φ(1.2122) = 0.88728 을 넘지 못한다
+    few, some, many, huge = (p(-50.0, n, -56.0, n, 4.0, 3.5) for n in (3, 30, 300, 10 ** 9))
+    assert few < some < many < huge < 0.887279
+    assert huge == pytest.approx(0.887279, abs=1e-6)
+    # 고정 오차가 없으면 프레임이 많을수록 1 에 가깝다. D=2, N=800/800: s = 0.2, D/s = 10
+    assert p(-50.0, 800, -52.0, 800, 4.0, 0.0) == pytest.approx(1.0)
+
+    # 뒤 기기만 비콘을 보지 못했으면 1, 둘 다 보지 못했으면 0.5 다. 보지 못한 기기의 프레임 수는 0 이다
+    assert p(-70.0, 30, None, 0, 4.0, 3.5) == 1.0
+    assert p(None, 0, None, 0, 4.0, 3.5) == 0.5
+    # 앞선 기기만 보지 못한 순서는 정렬된 거리 순서에서 생기지 않는다
+    with pytest.raises(ValueError):
+        p(None, 0, -70.0, 30, 4.0, 3.5)
+    # 비콘을 본 기기의 프레임 수가 1 미만이면 계산하지 않는다
+    for a_count, b_value, b_count in ((0, -56.0, 30), (30, -56.0, 0), (0, None, 0)):
+        with pytest.raises(ValueError):
+            p(-50.0, a_count, b_value, b_count, 4.0, 3.5)
+
+
+def test_FR09_selector_boundary_low_probability_asks():
+    pipe, repo, prox, store, audit = build(*two_lights(-60.0, -61.0), settings=BOUNDARY)
+    sd = pipe.decide_selector(request("near:light:1:1"))  # 끝 경계(light-1, light-2)의 D 가 1 dB 다
+    d = sd.decision
+    assert (d.verdict, d.reason) == (Verdict.ASK, ReasonCode.ORDER_UNCERTAIN)
+    assert d.devices == () and d.selected_count == 0 and d.similar is True
+    assert (d.node_id, d.use_id, d.p_max) == (None, None, None)
+    assert sd.children == () and sd.contexts == ()
+    # 하위 요청을 만들지 않았고 예약도 취소도 없다
+    assert repo.child_links == [] and "link_selector_child" not in repo.calls
+    assert repo.reserved == [] and store.cancels == []
+    assert repo.decisions[PARENT] == d and set(repo.records) == {PARENT}
+    # 기록은 고른 기기와 프레임 수, 경계 확률(Φ(1 / 5.056) = 0.5784)을 담는다. 하위 요청은 없다
+    selector = repo.records[PARENT].selector
+    assert selector.selected == ("light-1",) and selector.children == () and selector.similar is True
+    assert selector.boundary_probability == pytest.approx(0.5783879, abs=1e-6)
+    assert selector.boundary_probability < BOUNDARY.order_boundary_min_prob
+    assert dict(selector.counts) == {"light-1": 30, "light-2": 30}
+    # 감사는 경계 확률과 적용한 설정을 남기고 PROXIMITY 에서 끝난다
+    order_event = thaw(events(audit, PARENT, Step.PROXIMITY)[0].payload)
+    assert order_event["boundary_probability"] == selector.boundary_probability
+    assert order_event["counts"] == {"light-1": 30, "light-2": 30}
+    assert order_event["order_boundary_min_prob"] == 0.9
+    last = events(audit, PARENT)[-1]
+    assert last.step is Step.PROXIMITY
+    assert thaw(last.payload) == {"verdict": "ASK", "reason": "ORDER_UNCERTAIN", "settings_version": "t", "children": 0}
+
+
+def test_FR09_selector_boundary_high_probability_runs():
+    pipe, repo, prox, store, audit = build(*two_lights(-50.0, -70.0), settings=BOUNDARY)
+    sd = pipe.decide_selector(request("near:light:1:1"))  # D 가 20 dB 라 경계 확률은 0.99996 이다
+    d = sd.decision
+    assert (d.verdict, d.reason) == (Verdict.OK, ReasonCode.OK)
+    assert d.devices == (device("light-1"),) and d.selected_count == 1 and d.similar is False
+    assert [link.node_id for link in repo.child_links] == ["light-1"]  # 하위 요청과 실행 인계가 있다
+    assert [c.node_id for c in sd.contexts] == ["light-1"] and len(repo.reserved) == 1
+    selector = repo.records[PARENT].selector
+    assert selector.boundary_probability >= BOUNDARY.order_boundary_min_prob
+    assert selector.boundary_probability == pytest.approx(0.9999618, abs=1e-6)
+    assert dict(selector.counts) == {"light-1": 30, "light-2": 30}
+    assert selector.children == tuple(child_ids(repo))
+
+
+def test_FR09_selector_boundary_front_edge_checked():
+    # near:light:2:all 은 light-2 와 light-3 을 고른다. 뒤쪽 경계는 없고 앞쪽 경계(light-1, light-2)만 있다
+    pipe, repo, prox, store, audit = build(
+        lights(), {"light-1": -60.0, "light-2": -61.0, "light-3": -80.0}, settings=BOUNDARY)
+    sd = pipe.decide_selector(request("near:light:2:all"))
+    d = sd.decision
+    assert (d.verdict, d.reason) == (Verdict.ASK, ReasonCode.ORDER_UNCERTAIN)
+    assert d.devices == () and d.selected_count == 0
+    assert repo.child_links == [] and repo.reserved == []
+    selector = repo.records[PARENT].selector
+    assert selector.selected == ("light-2", "light-3") and selector.children == ()
+    # 앞쪽 경계는 바깥 기기(light-1)가 앞선 기기라 D = -60 − (-61) = 1 dB 다
+    assert selector.boundary_probability == pytest.approx(boundary_probability(-60.0, 30, -61.0, 30, 4.0, 3.5))
+
+    # 대조: 앞쪽 경계가 뚜렷하면(D = 20 dB) 같은 요청이 실행된다. 방향을 거꾸로 세면 확률이 0 에 가까워 이 요청도 막힌다
+    pipe, repo, *_ = build(lights(), {"light-1": -50.0, "light-2": -70.0, "light-3": -80.0}, settings=BOUNDARY)
+    sd = pipe.decide_selector(request("near:light:2:all"))
+    assert (sd.decision.verdict, sd.decision.reason) == (Verdict.OK, ReasonCode.OK)
+    assert [link.node_id for link in repo.child_links] == ["light-2", "light-3"]
+    assert repo.records[PARENT].selector.boundary_probability >= 0.9
+
+
+def test_FR09_selector_boundary_uses_lowest_of_two_edges():
+    def run(values):  # near:light:2:1 은 앞쪽 경계(light-1, light-2)와 뒤쪽 경계(light-2, light-3)가 모두 있다
+        pipe, repo, *_ = build(lights(), values, settings=BOUNDARY)
+        return pipe.decide_selector(request("near:light:2:1")).decision, repo.records[PARENT].selector.boundary_probability
+
+    # 뒤쪽만 애매하다 (앞쪽 D = 20 dB, 뒤쪽 D = 1 dB)
+    d, lowest = run({"light-1": -50.0, "light-2": -70.0, "light-3": -71.0})
+    assert d.reason is ReasonCode.ORDER_UNCERTAIN
+    assert lowest == pytest.approx(boundary_probability(-70.0, 30, -71.0, 30, 4.0, 3.5))
+    # 앞쪽만 애매하다 (앞쪽 D = 1 dB, 뒤쪽 D = 20 dB)
+    d, lowest = run({"light-1": -50.0, "light-2": -51.0, "light-3": -71.0})
+    assert d.reason is ReasonCode.ORDER_UNCERTAIN
+    assert lowest == pytest.approx(boundary_probability(-50.0, 30, -51.0, 30, 4.0, 3.5))
+    # 둘 다 기준을 넘으면 실행한다. 기록은 둘 중 낮은 값이다 (앞쪽 D = 20 dB, 뒤쪽 D = 10 dB → 0.9760)
+    d, lowest = run({"light-1": -50.0, "light-2": -70.0, "light-3": -80.0})
+    assert d.reason is ReasonCode.OK
+    assert lowest == pytest.approx(0.9760194, abs=1e-6)
+
+
+def test_FR09_selector_boundary_equal_to_minimum_runs():
+    # 경계 확률이 기준과 같으면 막지 않는다. 기준보다 작을 때만 묻는다. D = 0 이면 확률은 정확히 0.5 다
+    pipe, repo, *_ = build(*two_lights(-60.0, -60.0), settings=Settings(version="t", order_boundary_min_prob=0.5))
+    d = pipe.decide_selector(request("near:light:1:1")).decision
+    assert (d.verdict, d.reason) == (Verdict.OK, ReasonCode.OK)
+    assert repo.records[PARENT].selector.boundary_probability == 0.5
+
+
+def test_FR09_selector_boundary_depends_on_frame_counts():
+    settings = Settings(version="t", order_boundary_min_prob=0.85)
+    values = {"light-1": -50.0, "light-2": -56.0}  # D = 6 dB. 프레임이 3/3 이면 0.8442, 30/30 이면 0.8823 이다
+
+    def run(counts):
+        pipe, repo, *_ = build(lights()[:2], values, settings=settings, counts=counts)
+        return pipe.decide_selector(request("near:light:1:1")).decision, repo.records[PARENT].selector
+
+    d, selector = run({"light-1": 3, "light-2": 3})  # 프레임이 적으면 같은 D 도 순서가 애매하다
+    assert (d.verdict, d.reason) == (Verdict.ASK, ReasonCode.ORDER_UNCERTAIN)
+    assert selector.boundary_probability == pytest.approx(0.8441781, abs=1e-6)
+    d, selector = run({"light-1": 30, "light-2": 30})
+    assert (d.verdict, d.reason) == (Verdict.OK, ReasonCode.OK)
+    assert selector.boundary_probability == pytest.approx(0.8823126, abs=1e-6)
+    # 두 기기의 프레임 수가 다르면 각자의 값을 쓰고, 기록에도 남는다
+    d, selector = run({"light-1": 3, "light-2": 300})
+    assert selector.boundary_probability == pytest.approx(boundary_probability(-50.0, 3, -56.0, 300, 4.0, 3.5))
+    assert dict(selector.counts) == {"light-1": 3, "light-2": 300}
+
+
+def test_FR09_selector_boundary_unheard_rules():
+    # 뒤 기기(light-2)만 비콘을 보지 못했다: 경계 확률 1. 하나만 못 봤으니 비슷하지 않다
+    pipe, repo, *_ = build(*two_lights(-70.0, None), settings=BOUNDARY)
+    sd = pipe.decide_selector(request("near:light:1:1"))
+    assert (sd.decision.verdict, sd.decision.reason) == (Verdict.OK, ReasonCode.OK)
+    assert sd.decision.similar is False
+    selector = repo.records[PARENT].selector
+    assert selector.boundary_probability == 1.0
+    assert dict(selector.counts) == {"light-1": 30, "light-2": 0}  # 못 들은 기기의 프레임 수는 0 이다
+
+    # 두 기기 모두 보지 못했다: 경계 확률 0.5 < 0.9. 둘 다 못 봤으니 비슷하다
+    pipe, repo, *_ = build(*two_lights(None, None), settings=BOUNDARY)
+    sd = pipe.decide_selector(request("near:light:1:1"))
+    d = sd.decision
+    assert (d.verdict, d.reason) == (Verdict.ASK, ReasonCode.ORDER_UNCERTAIN)
+    assert d.devices == () and d.selected_count == 0 and d.similar is True
+    assert repo.child_links == []
+    selector = repo.records[PARENT].selector
+    assert selector.boundary_probability == 0.5
+    assert dict(selector.counts) == {"light-1": 0, "light-2": 0}
+
+
+def test_FR09_selector_far_skips_boundary_probability():
+    pipe, repo, prox, store, audit = build(*two_lights(-60.0, -61.0), settings=BOUNDARY)
+    sd = pipe.decide_selector(request("far:light:1:1"))  # light-2 를 고른다. 경계(light-2, light-1)는 1 dB 차이다
+    d = sd.decision
+    assert (d.verdict, d.reason) == (Verdict.OK, ReasonCode.OK)  # 같은 거리 순서의 near 는 ORDER_UNCERTAIN 이다
+    assert [link.node_id for link in repo.child_links] == ["light-2"]
+    assert d.similar is True  # "비슷함"은 far 도 계산한다
+    selector = repo.records[PARENT].selector
+    assert selector.boundary_probability is None and dict(selector.counts) == {}
+    # 감사도 경계 확률의 재료를 남기지 않는다
+    order_event = thaw(events(audit, PARENT, Step.PROXIMITY)[0].payload)
+    assert not {"counts", "boundary_probability", "order_frame_sigma_db", "order_static_sigma_db",
+                "order_boundary_min_prob"} & order_event.keys()
+
+    pipe, *_ = build(*two_lights(-60.0, -61.0), settings=BOUNDARY)  # 대조: near 는 같은 거리 순서에서 묻는다
+    assert pipe.decide_selector(request("near:light:1:1")).decision.reason is ReasonCode.ORDER_UNCERTAIN
+
+
+@pytest.mark.parametrize("target,denied,expected", [
+    pytest.param("near:light:1:2", False, (True, True), id="near OK"),
+    pytest.param("near:light:1:2", True, (True, True), id="near 정책에서 걸림"),
+    pytest.param("near:light:4:1", False, (True, False), id="near 고를 기기 없음"),
+    pytest.param("far:light:1:2", False, (False, False), id="far"),
+])
+def test_FR22_selector_record_keeps_boundary_values_for_every_outcome(target, denied, expected):
+    values = {"light-1": -50.0, "light-2": -70.0, "light-3": -90.0}
+    policy = FakePolicy(
+        {"light-2": PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, 2)}) if denied else None
+    pipe, repo, *_ = build(lights(), values, policy=policy, settings=BOUNDARY)
+    pipe.decide_selector(request(target))
+    selector = repo.records[PARENT].selector
+    has_counts, has_probability = expected
+    assert dict(selector.counts) == ({"light-1": 30, "light-2": 30, "light-3": 30} if has_counts else {})
+    assert (selector.boundary_probability is not None) == has_probability
+    if has_probability:  # 끝 경계는 (light-2, light-3) 다
+        assert selector.boundary_probability == pytest.approx(boundary_probability(-70.0, 30, -90.0, 30, 4.0, 3.5))
+
+
+def test_FR09_selector_boundary_missing_counts_internal_error():
+    values = {"light-1": -60.0, "light-2": -61.0}
+    pipe, repo, prox, store, audit = build(lights()[:2], values, settings=BOUNDARY, counts={})
+    sd = pipe.decide_selector(request("near:light:1:1"))  # 경계의 비콘을 본 기기에 프레임 수가 없다
+    d = sd.decision
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    assert (d.devices, d.selected_count, d.similar) == ((), 0, False)
+    assert repo.child_links == [] and repo.reserved == [] and sd.contexts == ()
+    assert (repo.decisions[PARENT].verdict, repo.decisions[PARENT].reason) == (
+        Verdict.DENY, ReasonCode.INTERNAL_ERROR)
+    assert repo.records[PARENT].selector is None
+    assert any("프레임 수" in str(e.payload) for e in events(audit, PARENT))  # 원인은 감사에만 남는다
+
+    # 경계가 없거나 far 면 프레임 수를 쓰지 않는다. 같은 거리 순서도 실행한다
+    for target in ("near:light:1:all", "far:light:1:1"):
+        pipe, repo, *_ = build(lights()[:2], values, settings=BOUNDARY, counts={})
+        assert pipe.decide_selector(request(target)).decision.verdict is Verdict.OK
 
 
 # ── 근접 검사: 점유 방식별 (FR-17) ────────────────────────────────────
@@ -233,6 +481,34 @@ def test_FR17_selector_rental_threshold_ask():
     assert d.devices == (device("locker-2", Verdict.ASK, ReasonCode.LOW_CONFIDENCE),)
     assert d.selected_count == 1
     assert store.cancels == [] and len(prox.posterior_calls) == 1
+
+
+def test_FR17_selector_rental_checks_boundary_and_posterior():
+    # (a) 경계는 통과한다(D = 20 dB). locker-1 의 사후확률이 임계값(0.95) 미만이라 LOW_CONFIDENCE 다
+    pipe, repo, prox, store, audit = build(
+        lockers(), LOCKER_VALUES, {"locker-1": 0.02, "locker-2": 0.97}, settings=BOUNDARY)
+    d = pipe.decide_selector(request("near:locker:1:1", action="open")).decision
+    assert (d.verdict, d.reason) == (Verdict.ASK, ReasonCode.LOW_CONFIDENCE)
+    assert d.devices == (device("locker-1", Verdict.ASK, ReasonCode.LOW_CONFIDENCE),) and d.selected_count == 1
+    assert len(prox.posterior_calls) == 1
+    assert repo.records[PARENT].selector.boundary_probability >= BOUNDARY.order_boundary_min_prob
+
+    # (b) 경계가 애매하다(D = 1 dB). 사후확률이 충분해도 ORDER_UNCERTAIN 이고 사후확률을 부르지 않는다
+    pipe, repo, prox, store, audit = build(
+        lockers(), {"locker-1": -60.0, "locker-2": -61.0}, {"locker-1": 0.97, "locker-2": 0.02}, settings=BOUNDARY)
+    d = pipe.decide_selector(request("near:locker:1:1", action="open")).decision
+    assert (d.verdict, d.reason) == (Verdict.ASK, ReasonCode.ORDER_UNCERTAIN)
+    assert d.devices == () and d.selected_count == 0
+    assert prox.posterior_calls == [] and repo.child_links == [] and repo.reserved == []
+    assert repo.records[PARENT].selector.boundary_probability < BOUNDARY.order_boundary_min_prob
+    assert repo.records[PARENT].model_version is None  # 사후확률을 계산하지 않았다
+
+    # (c) 둘 다 통과하면 실행한다. (b)의 ORDER_UNCERTAIN 은 경계 때문이다
+    pipe, repo, prox, store, audit = build(
+        lockers(), LOCKER_VALUES, {"locker-1": 0.97, "locker-2": 0.02}, settings=BOUNDARY)
+    sd = pipe.decide_selector(request("near:locker:1:1", action="open"))
+    assert (sd.decision.verdict, sd.decision.reason) == (Verdict.OK, ReasonCode.OK)
+    assert sd.decision.devices == (device("locker-1", use_id="use-locker-1"),)
 
 
 def test_FR17_selector_rental_without_posterior_entry_is_low_confidence():
@@ -550,6 +826,22 @@ def test_FR22_selector_resend_no_candidate_keeps_empty_selection():
     assert (again.decision.devices, again.decision.selected_count, again.decision.similar) == ((), 0, False)
 
 
+def test_FR22_selector_resend_after_order_uncertain():
+    pipe, repo, prox, store, audit = build(*two_lights(-60.0, -61.0), settings=BOUNDARY)
+    first = pipe.decide_selector(request("near:light:1:1"))
+    before = (list(repo.child_links), list(repo.reserved), list(repo.saved), len(store.cancels), len(audit.events))
+    again = pipe.decide_selector(request("near:light:1:1"))
+    for sd in (first, again):
+        d = sd.decision
+        assert (d.verdict, d.reason) == (Verdict.ASK, ReasonCode.ORDER_UNCERTAIN)
+        assert (d.devices, d.selected_count, d.similar) == ((), 0, True)  # 재전송도 고른 개수가 0이다
+        assert sd.children == () and sd.contexts == ()
+    assert again.decision == first.decision
+    # 두 번째에 하위 요청도 예약도 저장도 취소도 없다
+    assert (list(repo.child_links), list(repo.reserved), list(repo.saved), len(store.cancels), len(audit.events)) == before
+    assert "link_selector_child" not in repo.calls
+
+
 @pytest.mark.parametrize("damage", ["missing_child_decision", "child_not_ok", "missing_selector_record"])
 def test_FR22_selector_resend_inconsistent_ok_is_internal_error(damage):
     pipe, repo, prox, store, audit = build(lights(), LIGHT_VALUES)
@@ -626,7 +918,11 @@ def test_FR22_selector_audit_records_order_and_children():
     assert order == {
         "selector": "near:light:1:2", "order": ["light-2", "light-1", "light-3"],
         "values": LIGHT_VALUES, "selected": ["light-2", "light-1"], "similar": False,
-        "anchor_recent_sec": 3.0, "order_similar_db": 3.0}
+        "anchor_recent_sec": 3.0, "order_similar_db": 3.0,
+        # near 는 경계 확률의 재료도 남긴다. 끝 경계는 (light-1 -60, light-3 -75) 다 (#278)
+        "counts": {"light-2": 30, "light-1": 30, "light-3": 30},
+        "boundary_probability": boundary_probability(-60.0, 30, -75.0, 30, 4.0, 3.5),
+        "order_frame_sigma_db": 4.0, "order_static_sigma_db": 3.5, "order_boundary_min_prob": 0.5}
     assert final == {"verdict": "OK", "reason": "OK", "settings_version": "t", "children": 2}
     for child, node_id in ((first, "light-2"), (second, "light-1")):
         steps = [e.step for e in events(audit, child)]
