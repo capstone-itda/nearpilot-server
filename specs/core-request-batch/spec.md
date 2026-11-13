@@ -105,9 +105,9 @@
 | 같은 `request_id`로 재전송한다 | 하위 요청들의 진행 상태와 결과를 항목 순서로 묶어 반환한다. 새 명령을 만들지 않는다 | `test_FR22_batch_resend_returns_children_results` |
 | 검사에서 걸린 묶음 요청을 재전송한다 | 같은 판정과 걸린 기기를 반환한다 | `test_FR22_batch_resend_after_check_failure` |
 | 같은 `request_id`에 항목 순서나 내용이 다른 요청이 온다 | `DENY`·`REQUEST_ID_CONFLICT` | `test_FR22_batch_same_request_id_other_input_conflicts` |
-| 같은 `request_id`로 단일 요청을 보냈던 키에 묶음 요청이 온다 | `DENY`·`REQUEST_ID_CONFLICT` (요약이 다르다) | `test_FR22_batch_digest_differs_from_single_request_with_same_content` |
+| 같은 `request_id`로 단일 요청을 보냈던 키에 묶음 요청이 온다 | `DENY`·`REQUEST_ID_CONFLICT` (요약이 다르다) | `test_FR22_batch_same_request_id_other_input_conflicts`, `test_FR22_batch_digest_differs_from_single_request_with_same_content` |
 | `OK`로 저장된 상위 요청의 묶음 기록이나 하위 판정이 맞지 않는데 재전송한다 (기록 없음, 항목 수나 항목 내용이 요청과 다름, 항목의 하위 요청 수가 맞지 않음, 하위 판정 없음, `OK`가 아닌 하위 판정) | 저장하지 않고 `DENY`·`INTERNAL_ERROR` | `test_FR22_batch_resend_inconsistent_ok_is_internal_error` |
-| 하위 요청을 판정하던 중 오류가 난다 | 만든 하위 요청의 예약을 취소하고 `INTERNAL_ERROR` | `test_FR18_batch_internal_error_cancels_children` |
+| 하위 요청을 판정하던 중 오류가 난다 | 만든 하위 요청의 예약을 취소하고 `INTERNAL_ERROR`. 상위 판정 기록은 요청 목록 전체를 담는다 | `test_FR18_batch_internal_error_cancels_children`, `test_FR22_batch_internal_error_record_has_items` |
 | 하위 요청을 실행하던 중 서버가 재시작한다 | 복원이 하위 요청의 `UseRequest`를 항목의 대상·동작과 상위 요청의 외부 ID로 다시 만든다 | `test_FR22_batch_child_restore_uses_item_target` |
 | 하위 요청이 진행 중인데 중복 보장기간이 지난다 | 상위 요청의 외부 `request_id`를 비우지 않는다 | `test_FR22_batch_parent_request_id_kept_while_child_in_progress` |
 | 단일 요청의 `target_spec`이나 `action`이 JSON으로 읽히는 문자열(`"null"`, `"[1]"`)이다 | 문자열 그대로 판정에 넘긴다 (이전과 같다) | `test_FR09_request_use_keeps_json_like_strings` |
@@ -141,12 +141,12 @@
 24. 재검사(`recheck.py`)는 바꾸지 않는다. 하위 요청의 `ExecutionContext.request`는 항목의 대상·동작을 가진 `UseRequest`이고 `request_id`는 상위 요청의 외부 ID다. 그래서 단일 요청과 거리 선택자 하위 요청의 재검사를 그대로 받는다.
 25. MCP 도구 함수는 `requests`를 `Any`로 받고 직접 검사한다 — `arguments`와 같은 방식이다. `target_spec`과 `action`은 기본값 `None`인 `str`로 받는다 — SDK는 주석이 `str`인 인자를 JSON으로 선파싱하지 않으므로 `"null"`, `"[1]"` 같은 값도 이전처럼 문자열로 넘어간다. JSON `null` 값은 입력 스키마(`string`)를 어기므로 SDK가 도구 오류로 거부한다 — main의 단일 요청과 같다. 생략할 인자는 보내지 않는다.
 26. 판정 전 거부의 응답 모양: 묶음 형식(단일 요청 인자가 하나도 없음)이면 묶음 키를 담는다. 두 형식을 섞었거나 둘 다 없으면 기존 여섯 키만 담는다.
-27. 묶음 기록은 요청의 항목을 모두 담는다 (결정 15). ①②에서 멈춘 거리 선택자 항목은 `selector`가 없고 `children`이 비어 있다. 항목 수 초과·용량 초과도 항목을 모두 담고 하위 요청은 없다.
+27. 묶음 기록은 요청의 항목을 모두 담는다 (결정 15). ①②에서 멈춘 거리 선택자 항목은 `selector`가 없고 `children`이 비어 있다. 항목 수 초과·용량 초과도 항목을 모두 담고 하위 요청은 없다. 판정 중 예외로 끝난 `INTERNAL_ERROR` 상위 판정도 그때까지 판정한 항목과 나머지 항목을 담는다.
 28. 같은 기기 검사는 거리 선택자 항목의 하위 요청에도 대상을 정한 직후에 한다. 앞 항목의 기기 집합은 항목이 모두 통과한 뒤에 갱신한다 — 한 항목 안의 고른 기기는 서로 다르다.
 29. 걸린 하위 요청 때문에 하는 취소(`_cancel_siblings`)는 근거의 `source`를 인자로 받는다. 거리 선택자는 `selector_sibling`, 묶음 요청은 `batch_sibling`이다.
 30. 판정 중 예외 정리에서 하위 요청에 `INTERNAL_ERROR`를 저장할 때 `node_id`는 그 하위 요청의 기기다 — 하위 요청은 늘 기기를 가진다. `link_selector_child`의 `node_id`는 main과 같은 `str`이다.
 31. API는 항목의 형식(키, `target_spec`, `action`, `arguments`)을 단일 요청 인자와 같은 규칙으로 검사한다 — `UseItem`이 해석한 `TargetSpec`을 담기 때문이다. 항목 수 상한과 같은 기기 여부만 판정이 검사한다. 빈 배열은 API가 거부한다. architecture §4의 "항목 수와 항목 안쪽은 판정이 검사한다"를 이 구현에 맞춘다.
-32. 전역 할당 항목이 ③ 안의 ④ 정책 검사에서 걸리면(`NEED_APPROVAL`, `DENY`) 그 판정은 기기를 가진다. 판정은 그 기기로 하위 요청을 만들어 판정을 저장하고 `devices`에 낸다 — 호스트가 결정 23대로 `devices`의 `node_id`로 `request_access`를 부를 수 있다. 결정 9의 다른 고르기 멈춤은 기기가 없으므로 하위 요청을 만들지 않는다.
+32. 전역 할당 항목이 ③ 안의 ④ 정책 검사에서 걸리면(`NEED_APPROVAL`, `DENY`) 그 판정은 기기를 가진다. 판정은 그 기기로 하위 요청을 만들어 판정을 저장하고 `devices`에 낸다. 그 기기를 앞 항목이 이미 골랐으면 ④ 판정 대신 결정 8의 `DENY`·`INVALID_INPUT`을 저장한다 — 호스트가 결정 23대로 `devices`의 `node_id`로 `request_access`를 부를 수 있다. 결정 9의 다른 고르기 멈춤은 기기가 없으므로 하위 요청을 만들지 않는다.
 
 ## 7. 가정
 
@@ -169,6 +169,7 @@
 | FR-09 | `test_FR09_batch_duplicate_device_denied` | 같은 기기를 두 번 고르면 거부하고 앞 예약을 취소한다 |
 | FR-09 | `test_FR09_batch_any_item_policy_stop_reports_device` | 전역 할당 항목이 ④에서 걸리면 걸린 기기가 `devices`에 나온다 |
 | FR-09 | `test_FR09_batch_selected_count_counts_selector_item_fully` | 거리 선택자 항목이 중간 기기에서 걸려도 고른 수 전체를 센다 |
+| FR-09 | `test_FR09_batch_any_item_policy_stop_on_taken_device_denied` | 전역 할당 항목이 ④에서 걸린 기기가 앞 항목의 기기면 `INVALID_INPUT`이다 |
 | FR-09 | `test_FR09_batch_selector_item_stops_batch` | 거리 선택자 항목이 하위 요청 전에 멈추면 상위 판정이 그 판정이고 앞 예약을 취소한다 |
 | FR-09 | `test_FR09_batch_similar_from_any_selector_item` | 거리 선택자 항목 하나라도 비슷하면 `similar` |
 | FR-09 | `test_FR09_batch_old_entries_reject_batch` | 기존 판정 입구는 묶음 요청을 받지 않는다 |
@@ -185,6 +186,8 @@
 | FR-22 | `test_FR22_batch_record_round_trip` | 묶음 기록과 하위 요청을 저장하고 다시 읽는다 |
 | FR-22 | `test_FR22_batch_record_nodes_round_trip` | 항목의 `nodes`가 왕복하고 옛 기록은 빈 값으로 읽는다 |
 | FR-22 | `test_FR22_batch_item_record_nodes_validated` | 항목의 `nodes`가 하위 요청 수와 거리 선택자 `selected`와 맞아야 한다 |
+| FR-22 | `test_FR22_batch_internal_error_record_has_items` | 판정 오류로 끝난 상위 판정 기록도 요청 목록 전체를 담는다 |
+| FR-22 | `test_FR22_batch_internal_error_saved_without_record_when_record_fails` | 묶음 기록을 만들지 못해도 오류 판정은 묶음 기록 없이 저장한다 |
 | FR-22 | `test_FR22_batch_record_has_all_requested_items` | 걸려도, 항목 수 초과·용량 초과여도 기록이 요청의 항목을 모두 담는다 |
 | FR-22 | `test_FR22_batch_record_has_item_nodes` | 상위 판정 기록의 항목마다 고른 기기가 있다 |
 | FR-22 | `test_FR22_batch_same_request_id_other_input_conflicts` | 같은 `request_id`에 다른 입력이 오면 `REQUEST_ID_CONFLICT` |
