@@ -1,6 +1,6 @@
 # 묶음 요청
 
-- 상태: 진행 중
+- 상태: 완료
 - 담당: 작업 지시자 (shared, 판정, DB, API 연결 구현)
 - 요구사항: FR-09, FR-18, FR-22
 - 따르는 결정: #284 (decision PR #285)
@@ -134,8 +134,14 @@
 20. 묶음 요청이 아닌 요청이 `decide_batch`에 오면 `ValueError`다. `decide_for_execution`은 묶음 요청을 `INVALID_INPUT`으로 거부한다. `decide_selector`는 묶음 요청에 `ValueError`다 (지금처럼 거리 선택자가 아니므로).
 21. 항목 수 검사는 ⓪ 뒤, 첫 항목 전에 한다. 넘으면 하위 요청 없이 `DENY`·`INVALID_INPUT`이고 감사 단계는 ② 후보, 상세는 `{"items": n, "batch_max_items": m}`이다.
 22. MCP 입력 스키마에서 `target_spec`과 `action`은 선택 인자가 된다. 기존 호출은 그대로 받는다. `requests`의 항목 스키마는 `target_spec`(문자열, 필수), `action`(문자열, 필수), `arguments`(객체, 선택)다.
-23. 도구 설명에 묶음 요청의 문법과 예("조명 다 켜고 스피커 꺼 줘")와 "조명 다 켜 줘"는 `near:light:1:all`이라는 예를 더한다.
+23. 도구 설명에 묶음 요청의 문법과 예("조명 다 켜고 스피커 꺼 줘"), "조명 다 켜 줘"는 `near:light:1:all`이라는 예, 묶음 요청이 `NEED_APPROVAL`이면 `devices`의 `node_id`로 `request_access`를 부른다는 안내를 더한다.
 24. 재검사(`recheck.py`)는 바꾸지 않는다. 하위 요청의 `ExecutionContext.request`는 항목의 대상·동작을 가진 `UseRequest`이고 `request_id`는 상위 요청의 외부 ID다. 그래서 단일 요청과 거리 선택자 하위 요청의 재검사를 그대로 받는다.
+25. MCP 도구 함수는 `target_spec`, `action`, `requests`를 `Any`로 받고 직접 검사한다 — `arguments`와 같은 방식이다. 그래서 SDK의 JSON 선파싱이 두 인자에도 닿고, JSON `null`·배열·객체로 읽히는 문자열(`"null"`, `"[1]"`)은 `INVALID_INPUT`이다. 보통의 기기 ID와 동작 이름은 이전과 같다.
+26. 판정 전 거부의 응답 모양: 묶음 형식(단일 요청 인자가 하나도 없음)이면 묶음 키를 담는다. 두 형식을 섞었거나 둘 다 없으면 기존 여섯 키만 담는다.
+27. 묶음 기록은 판정을 시작한 항목까지 담는다. ①②에서 멈춘 거리 선택자 항목은 `selector`가 없고 `children`이 비어 있다. 항목 수 초과·용량 초과는 빈 묶음 기록(`items` 빈 목록)을 저장한다.
+28. 같은 기기 검사는 거리 선택자 항목의 하위 요청에도 대상을 정한 직후에 한다. 앞 항목의 기기 집합은 항목이 모두 통과한 뒤에 갱신한다 — 한 항목 안의 고른 기기는 서로 다르다.
+29. 걸린 하위 요청 때문에 하는 취소(`_cancel_siblings`)는 근거의 `source`를 인자로 받는다. 거리 선택자는 `selector_sibling`, 묶음 요청은 `batch_sibling`이다.
+30. 판정 중 예외 정리에서 기기를 정하기 전의 하위 요청에 `INTERNAL_ERROR`를 저장할 때 `node_id`는 `None`이다 — 빈 문자열은 `node` 외래키를 어긴다.
 
 ## 7. 가정
 
