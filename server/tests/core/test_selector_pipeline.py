@@ -860,6 +860,18 @@ def test_FR22_selector_resend_after_order_uncertain():
     assert "link_selector_child" not in repo.calls
 
 
+def test_FR22_selector_resend_after_low_confidence():
+    """ASK·LOW_CONFIDENCE 로 끝난 요청의 재전송은 걸린 기기와 고른 개수를 그대로 돌려준다. ORDER_UNCERTAIN 분기로 가지 않는다."""
+    pipe, repo, prox, store, audit = build(
+        lockers(), LOCKER_VALUES, {"locker-1": 0.02, "locker-2": 0.97}, settings=BOUNDARY)
+    first = pipe.decide_selector(request("near:locker:1:1", action="open")).decision
+    again = pipe.decide_selector(request("near:locker:1:1", action="open")).decision
+    assert (first.verdict, first.reason) == (Verdict.ASK, ReasonCode.LOW_CONFIDENCE)
+    assert again.devices == first.devices == (device("locker-1", Verdict.ASK, ReasonCode.LOW_CONFIDENCE),)
+    assert again.selected_count == first.selected_count == 1
+    assert again == first
+
+
 def test_FR22_selector_resend_order_uncertain_without_record():
     """결정 33: 기록이 손상된 ORDER_UNCERTAIN 재전송은 내부 오류로 바꾸지 않는다. 실행한 기기가 없다."""
     pipe, repo, prox, store, audit = build(*two_lights(-60.0, -61.0), settings=BOUNDARY)

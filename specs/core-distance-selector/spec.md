@@ -126,7 +126,7 @@
 | 최근 구간 안에 보고가 없는 후보 | 거리 순서에 서지 않는다. 같은 기기를 기기 ID로는 쓸 수 있다 | `test_FR09_selector_non_participant_excluded`, `test_FR09_selector_non_participant_usable_by_node_id` |
 | 빈 보고만 보낸 기기 | 가장 먼 쪽에 선다 | `test_FR09_selector_empty_report_keeps_participant_last` |
 | 개수보다 기기가 적다 | 있는 만큼 실행한다. `selected_count`가 실제 개수다 | `test_FR09_selector_count_shortage_runs_available` |
-| 경계의 두 기기가 비슷하게 들린다 (`far:`, 또는 경계 확률을 통과한 `near:`) | 실행하고 `similar`를 `true`로 담는다 | `test_FR09_selector_similar_boundary_flag` |
+| 경계의 두 기기가 비슷하게 들린다 (`far:`, 또는 경계 확률을 통과한 `near:`) | 실행하고 `similar`를 `true`로 담는다 | `test_FR09_selector_far_skips_boundary_probability`, `test_FR09_selector_similar_flag_in_decision_and_record` |
 | `near:` 요청의 가장 낮은 경계 확률이 기준 확률보다 작다 | `ASK`·`ORDER_UNCERTAIN`. 하위 요청을 만들지 않는다. `devices`는 빈 목록, `selected_count`는 0, `similar`는 계산한 값이다 | `test_FR09_selector_boundary_low_probability_asks` |
 | `near:` 요청의 경계 확률이 모두 기준 확률 이상이다 | 지금처럼 하위 요청을 만들어 실행한다 | `test_FR09_selector_boundary_high_probability_runs` |
 | 시작이 2 이상인 `near:` 요청의 앞쪽 경계가 애매하다 (`near:light:2:all`) | `ASK`·`ORDER_UNCERTAIN` | `test_FR09_selector_boundary_front_edge_checked` |
@@ -227,6 +227,7 @@
 | FR-09 | `test_FR09_selector_boundary_uses_lowest_of_two_edges` | 경계가 둘이면 더 낮은 경계 확률로 정한다 |
 | FR-09 | `test_FR09_selector_boundary_equal_to_minimum_runs` | 경계 확률이 기준과 같으면 실행한다 |
 | FR-09 | `test_FR09_selector_boundary_depends_on_frame_counts` | 프레임 수가 적으면 같은 차이도 막힌다. 기기마다 자기 프레임 수를 쓴다 |
+| FR-09 | `test_FR09_selector_similar_flag_in_decision_and_record` | 경계 확률을 통과한 `near:` 요청은 실행하고 판정과 기록에 `similar`를 담는다 |
 | FR-09 | `test_FR09_selector_boundary_sigmas_come_from_settings` | 판정이 두 표준편차를 설정에서 읽는다 |
 | FR-09 | `test_FR09_selector_boundary_missing_counts_internal_error` | 경계의 비콘을 본 기기에 프레임 수가 없으면 내부 오류 (결정 32) |
 | FR-09 | `test_FR09_boundary_probability_formula` | 경계 확률 식, 프레임 수와 두 설정의 영향, 못 들은 기기의 규칙 |
@@ -264,6 +265,7 @@
 | FR-22 | `test_FR22_selector_record_keeps_boundary_values_for_every_outcome` | `near:`는 OK·다른 거부에도 프레임 수와 경계 확률을 기록하고 `far:`는 비운다 (결정 31) |
 | FR-22 | `test_FR22_selector_record_validates_counts_and_boundary_probability` | 판정 기록의 프레임 수 기기와 경계 확률 범위를 검사한다 |
 | FR-22 | `test_FR22_selector_record_has_boundary_probability` | 판정 기록이 프레임 수와 경계 확률을 담고 다시 읽는다 |
+| FR-22 | `test_FR22_selector_resend_after_low_confidence` | `LOW_CONFIDENCE`로 끝난 요청의 재전송은 걸린 기기와 고른 개수를 그대로 돌려준다 |
 | FR-22 | `test_FR22_selector_resend_order_uncertain_without_record` | 기록이 손상된 `ORDER_UNCERTAIN` 재전송은 내부 오류로 바꾸지 않는다 (결정 33) |
 | FR-22 | `test_FR22_selector_resend_after_order_uncertain` | `ORDER_UNCERTAIN` 재전송이 같은 판정을 반환한다 |
 | FR-22 | `test_FR22_selector_record_round_trip` | 거리 선택자 기록과 하위 요청을 저장하고 다시 읽는다 |
