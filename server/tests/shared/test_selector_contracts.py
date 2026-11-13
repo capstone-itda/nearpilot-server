@@ -1,6 +1,7 @@
 """거리 선택자의 shared 계약 검사 (FR-09, FR-16, FR-22, #253)."""
 
 import inspect
+import json
 import typing
 from dataclasses import fields
 from datetime import datetime, timezone
@@ -178,6 +179,57 @@ def test_FR09_settings_selector_values_validated():
     assert (old.anchor_recent_sec, old.order_similar_db) == (3.0, 3.0)
 
 
+BOUNDARY_SETTINGS = ("order_frame_sigma_db", "order_static_sigma_db", "order_boundary_min_prob")
+BOUNDARY_DEFAULTS = (4.0, 3.5, 0.9)
+
+
+def _boundary_cases():
+    """(바꾼 설정, 허용 여부). 허용·거부 경계 값과, 세 설정 모두에서 숫자가 아니거나 유한하지 않은 값."""
+    allowed = [
+        {"order_static_sigma_db": 0},  # 고정 오차는 0 이상이다
+        {"order_boundary_min_prob": 0.5},  # 기준 확률은 0.5 이상 1 미만이다
+        {"order_boundary_min_prob": 0.99},
+    ]
+    rejected = [
+        {"order_frame_sigma_db": 0},  # 프레임 잡음은 0 초과다
+        {"order_frame_sigma_db": -1},
+        {"order_static_sigma_db": -0.1},
+        {"order_boundary_min_prob": 0.49},
+        {"order_boundary_min_prob": 1.0},
+        {"order_boundary_min_prob": 1},  # TOML 의 정수 1
+    ]
+    rejected += [
+        {name: value}
+        for name in BOUNDARY_SETTINGS
+        for value in (float("nan"), float("inf"), True, "1")
+    ]
+    cases = [(overrides, True) for overrides in allowed] + [(overrides, False) for overrides in rejected]
+    return [
+        pytest.param(overrides, ok, id=f"{'허용' if ok else '거부'} {overrides}") for overrides, ok in cases
+    ]
+
+
+@pytest.mark.parametrize(("overrides", "allowed"), _boundary_cases())
+def test_FR09_settings_boundary_values_validated(overrides, allowed):
+    default = Settings()
+    assert tuple(getattr(default, name) for name in BOUNDARY_SETTINGS) == BOUNDARY_DEFAULTS
+
+    if not allowed:
+        with pytest.raises(ValueError):
+            Settings(**overrides)
+        return
+
+    changed = Settings(**overrides)
+    assert all(getattr(changed, name) == value for name, value in overrides.items())
+    snapshot = json.loads(json.dumps(settings_to_data(changed)))  # 저장한 JSON 스냅샷
+    assert settings_from_data(snapshot) == changed
+    # 새 키가 없는 옛 스냅샷은 바꾼 값이 아니라 기본값으로 읽는다
+    for name in BOUNDARY_SETTINGS:
+        del snapshot[name]
+    old = settings_from_data(snapshot)
+    assert tuple(getattr(old, name) for name in BOUNDARY_SETTINGS) == BOUNDARY_DEFAULTS
+
+
 # ── 거리 순서와 판정 기록 ──────────────────────────────────────────
 
 
@@ -198,6 +250,39 @@ def test_FR09_distance_order_validates_nodes_and_values():
     for bad in (True, float("nan"), float("inf"), float("-inf"), "-60"):
         with pytest.raises(ValueError):
             DistanceOrder(("light-1",), {"light-1": bad})
+
+
+def test_FR16_distance_order_counts_validated():
+    nodes = ("light-2", "light-1", "light-3")
+    values = {"light-2": -58.0, "light-1": -61.0, "light-3": None}
+    order = DistanceOrder(nodes, values, {"light-2": 3, "light-1": 1, "light-3": 0})
+    assert order.counts == {"light-2": 3, "light-1": 1, "light-3": 0}
+    with pytest.raises(TypeError):
+        order.counts["light-2"] = 0  # 값은 읽기 전용이다
+
+    # 기본값은 빈 사전이고, 비어 있으면 기기와 맞추지 않는다 (프레임 수를 계산하지 않은 순서)
+    assert DistanceOrder(nodes, values).counts == {}
+    assert DistanceOrder(nodes, values, {}).counts == {}
+    assert DistanceOrder((), {}, {}).counts == {}
+
+
+@pytest.mark.parametrize(
+    "counts",
+    [
+        pytest.param({"light-2": 3, "light-1": 1}, id="기기가 모자라다"),
+        pytest.param({"light-2": 3, "light-1": 1, "light-3": 0, "light-9": 1}, id="순서에 없는 기기"),
+        pytest.param({"light-2": -1, "light-1": 1, "light-3": 0}, id="음수"),
+        pytest.param({"light-2": 3.0, "light-1": 1, "light-3": 0}, id="정수가 아닌 수"),
+        pytest.param({"light-2": True, "light-1": 1, "light-3": 0}, id="불리언"),
+        pytest.param({"light-2": "3", "light-1": 1, "light-3": 0}, id="문자열"),
+        pytest.param({"light-2": 3, "light-1": 0, "light-3": 0}, id="정렬 값이 있는데 프레임 수 0"),
+        pytest.param({"light-2": 3, "light-1": 1, "light-3": 2}, id="정렬 값이 없는데 프레임 수 1 이상"),
+    ],
+)
+def test_FR16_distance_order_counts_rejects_invalid(counts):
+    values = {"light-2": -58.0, "light-1": -61.0, "light-3": None}
+    with pytest.raises(ValueError):
+        DistanceOrder(("light-2", "light-1", "light-3"), values, counts)
 
 
 def test_FR22_selector_record_validates_selected_and_children():
@@ -221,6 +306,33 @@ def test_FR22_selector_record_validates_selected_and_children():
         SelectorRecord(*base, ("light-2", "light-2"), False)  # 같은 기기를 두 번 골랐다
     with pytest.raises(ValueError):
         SelectorRecord(*base, ("light-2",), False, ("child-1", "child-2"))  # 하위 요청이 더 많다
+
+
+def test_FR22_selector_record_validates_counts_and_boundary_probability():
+    values = {"light-2": -58.0, "light-1": -61.0, "light-3": None}
+    base = ("near:light:1:2", ("light-2", "light-1", "light-3"), values)
+    selected = ("light-2", "light-1")
+
+    # 기본값은 far: 요청과 옛 기록의 모양이다
+    plain = SelectorRecord(*base, selected, False)
+    assert (plain.counts, plain.boundary_probability) == ({}, None)
+
+    counts = {"light-2": 4, "light-1": 3, "light-3": 0}
+    record = SelectorRecord(*base, selected, False, (), counts, 0.87)
+    assert (record.counts, record.boundary_probability) == (counts, 0.87)
+    with pytest.raises(TypeError):
+        record.counts["light-2"] = 0  # 값은 읽기 전용이다
+    for edge in (0, 0.0, 1, 1.0):  # [0, 1] 의 양 끝도 확률이다
+        assert SelectorRecord(*base, selected, False, (), counts, edge).boundary_probability == edge
+
+    # 프레임 수의 기기는 거리 순서의 기기와 같아야 한다
+    with pytest.raises(ValueError):
+        SelectorRecord(*base, selected, False, (), {"light-2": 4, "light-1": 3})  # 모자라다
+    with pytest.raises(ValueError):
+        SelectorRecord(*base, selected, False, (), {**counts, "light-9": 1})  # 순서에 없는 기기
+    for bad in (-0.01, 1.01, float("nan"), float("inf"), float("-inf"), True, "0.9"):
+        with pytest.raises(ValueError):
+            SelectorRecord(*base, selected, False, (), counts, bad)
 
 
 def test_FR22_decision_record_selector_defaults_to_none():

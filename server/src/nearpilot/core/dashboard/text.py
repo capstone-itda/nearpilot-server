@@ -36,6 +36,7 @@ _REASON_TEXT: dict[ReasonCode, str] = {
     ReasonCode.NO_CANDIDATE: "쓸 수 있는 기기 없음",
     ReasonCode.TARGET_UNAVAILABLE: "지금 쓸 수 없는 기기",
     ReasonCode.LOW_CONFIDENCE: "어느 기기 앞인지 확신 부족",
+    ReasonCode.ORDER_UNCERTAIN: "어느 기기인지 순서가 애매함",
     ReasonCode.UNSUPPORTED_ACTION: "기기가 선언하지 않은 동작",
     ReasonCode.UNSUPPORTED_PARAMETER: "기기가 받은 인자를 지원하지 않음",
     ReasonCode.PARAMETER_OUT_OF_RANGE: "인자가 기기의 상한을 넘음",

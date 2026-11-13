@@ -56,6 +56,7 @@ class ReasonCode(StrEnum):
     TARGET_UNAVAILABLE = "TARGET_UNAVAILABLE"  # 미신뢰·오프라인·FAULT
     # ③
     LOW_CONFIDENCE = "LOW_CONFIDENCE"  # ASK: 사후확률이 임계값 미만
+    ORDER_UNCERTAIN = "ORDER_UNCERTAIN"  # ASK: near 거리 선택자의 경계 확률이 기준 확률 미만이라 순서가 애매하다 (FR-09, #278)
     MOVE_CLOSER = "MOVE_CLOSER"  # ASK: 근접 지정·전역 할당의 실행 직전 대상 확률 부족
     # ③ 대상 확정 뒤 기기 선언으로 하는 동작·인자 검사 (FR-09). 판정은 DENY 와 함께 반환한다.
     UNSUPPORTED_ACTION = "UNSUPPORTED_ACTION"  # 대상 기기가 선언하지 않은 동작

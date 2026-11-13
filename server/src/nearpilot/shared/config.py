@@ -151,6 +151,9 @@ class Settings:
     beacon_recent_sec: float = 3.0  # ① 최근 비콘 기준 T: 서버가 받은 유효 관측의 최근 구간 (FR-15)
     anchor_recent_sec: float = 3.0  # 근접 참여 기기의 최근 구간: 서버가 받은 마지막 rssi 보고부터 (FR-09, #252)
     order_similar_db: float = 3.0  # 거리 선택자 경계의 "비슷함" 기준: 정렬 값 차이 dB (FR-09, #255)
+    order_frame_sigma_db: float = 4.0  # 경계 확률의 프레임 잡음: 정렬 값에 쓰는 프레임 하나의 RSSI 표준편차 dB. 0 초과 (FR-09, #278)
+    order_static_sigma_db: float = 3.5  # 경계 확률의 고정 오차: 평균으로 줄지 않는 기기별 RSSI 오차의 표준편차 dB. 0 이상 (FR-09, #278)
+    order_boundary_min_prob: float = 0.9  # near: 경계 확률의 기준: 이 값보다 작으면 ASK. 0.5 이상 1 미만 (FR-09, #278)
     online_ttl_sec: float = 15.0  # 온라인 유지 시간: 유효한 기기 메시지의 마지막 수신부터 (FR-13)
     status_report_sec: float = 1.0  # 기기 상태 보고 주기
     smartthings_poll_sec: float = 5.0  # SmartThings 하트비트 주기: online_ttl_sec 이하 (FR-13, #259)
@@ -208,6 +211,7 @@ class Settings:
             "threshold_locker", "threshold_light", "rssi_frame_sec",
             "leave_absent_sec", "leave_grace_sec", "allocation_window_ms",
             "beacon_recent_sec", "anchor_recent_sec", "order_similar_db",
+            "order_frame_sigma_db", "order_static_sigma_db", "order_boundary_min_prob",
             "online_ttl_sec", "status_report_sec", "smartthings_poll_sec",
             "reservation_wait_sec", "exec_timeout_sec",
             "rental_duration_sec", "approval_ttl_sec", "approval_pending_ttl_sec",
@@ -275,6 +279,7 @@ class Settings:
             "beacon_recent_sec",
             "anchor_recent_sec",
             "order_similar_db",
+            "order_frame_sigma_db",
             "online_ttl_sec",
             "status_report_sec",
             "smartthings_poll_sec",
@@ -296,6 +301,10 @@ class Settings:
             raise ValueError(f"leave_grace_sec 는 0 이상이어야 한다: {self.leave_grace_sec}")
         if self.allocation_window_ms < 0:
             raise ValueError(f"allocation_window_ms 는 0 이상이어야 한다: {self.allocation_window_ms}")
+        if self.order_static_sigma_db < 0:
+            raise ValueError(f"order_static_sigma_db 는 0 이상이어야 한다: {self.order_static_sigma_db}")
+        if not 0.5 <= self.order_boundary_min_prob < 1.0:
+            raise ValueError(f"order_boundary_min_prob 는 [0.5, 1) 범위여야 한다: {self.order_boundary_min_prob}")
         # 관련 시간값 일관성: 관측 주기보다 짧은 미수신 판단은 의미가 없다
         if self.leave_absent_sec < self.rssi_frame_sec:
             raise ValueError("leave_absent_sec 는 rssi_frame_sec 이상이어야 한다")

@@ -583,7 +583,11 @@ class SqliteRepository:
 
     @staticmethod
     def _selector_to_data(selector: SelectorRecord) -> dict[str, Any]:
-        """판정 기록(`decision_context`)의 `"selector"` 값. 정렬 값이 없는 기기는 `null`이다."""
+        """판정 기록(`decision_context`)의 `"selector"` 값. 정렬 값이 없는 기기는 `null`이다.
+
+        `counts`는 거리 순서의 기기별 프레임 수, `boundary_probability`는 가장 낮은 경계 확률이다 (#278).
+        비어 있으면 `{}`와 `null`이다.
+        """
         return {
             "target_spec": selector.target_spec,
             "order": list(selector.order),
@@ -591,11 +595,16 @@ class SqliteRepository:
             "selected": list(selector.selected),
             "similar": selector.similar,
             "children": list(selector.children),
+            "counts": dict(selector.counts),
+            "boundary_probability": selector.boundary_probability,
         }
 
     @staticmethod
     def _selector_from_data(data: Mapping[str, Any]) -> SelectorRecord:
-        """`SelectorRecord`는 `values`만 고정한다. 목록 세 개는 튜플로 만들어 넘긴다."""
+        """`SelectorRecord`는 `values`와 `counts`만 고정한다. 목록 세 개는 튜플로 만들어 넘긴다.
+
+        `counts`와 `boundary_probability`가 없는 옛 기록은 `{}`와 `None`으로 읽는다.
+        """
         return SelectorRecord(
             target_spec=data["target_spec"],
             order=tuple(data["order"]),
@@ -603,6 +612,8 @@ class SqliteRepository:
             selected=tuple(data["selected"]),
             similar=data["similar"],
             children=tuple(data["children"]),
+            counts=data.get("counts", {}),
+            boundary_probability=data.get("boundary_probability"),
         )
 
     # ── ① 비콘 저장 (FR-05) ──────────────────────────────────────────

@@ -39,6 +39,7 @@ export const REASON_TEXT: Partial<Record<ReasonCode, string>> = {
   NO_CANDIDATE: '쓸 수 있는 기기 없음',
   TARGET_UNAVAILABLE: '지금 쓸 수 없는 기기',
   LOW_CONFIDENCE: '어느 기기 앞인지 확신 부족',
+  ORDER_UNCERTAIN: '어느 기기인지 순서가 애매함',
   MOVE_CLOSER: '기기에 더 가까이 가야 함',
   UNSUPPORTED_ACTION: '기기가 선언하지 않은 동작',
   UNSUPPORTED_PARAMETER: '기기가 받은 인자를 지원하지 않음',
