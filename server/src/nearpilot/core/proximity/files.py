@@ -47,6 +47,7 @@ class AcceptanceSettings:
 
     max_misselection: float
     max_ece: float
+    max_boundary_error: float  # 지표 10: 통과한 경계 중 순서가 틀린 비율의 상한 (0 이상 1 이하, #279)
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,7 @@ class FitFile:
 
 _SPLIT_KEYS = ("ratios", "min_runs_per_label")
 _FIT_KEYS = ("taus", "stays", "window_secs", "auto_zero_min_bins")
-_ACCEPTANCE_KEYS = ("max_misselection", "max_ece")
+_ACCEPTANCE_KEYS = ("max_misselection", "max_ece", "max_boundary_error")  # `AcceptanceSettings` 필드 순서와 같다
 _FIT_FILE_SECTIONS = ("split", "fit", "acceptance")
 
 

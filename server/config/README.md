@@ -158,12 +158,13 @@ nearpilot --dir var/final-demo provision --node locker-1 --port COM6   # USB 주
 |---|---|---|---|
 | `config/seed/` | 시드: 계정, 비콘, 장소, 기기 신뢰와 종료 정책, 접근 정책 | 사람 | `seed` |
 | `config/plans/` | 수집 계획: 회차 순서와 길이, 수집하는 사람의 비콘 | 사람 | `collect run` |
-| `config/fit/` | 적합 설정: 분할 비율, 후보 값과 자동 영점 표본 수, 통과 기준 | 사람 | `collect list --summary`, `split`, `fit`, `eval` |
+| `config/fit/` | 적합 설정: 분할 비율, 후보 값과 자동 영점 표본 수, 통과 기준 | 사람 | `collect list --summary`, `split`, `fit`, `eval`, `evaluate-order` |
+| `config/layouts/` | 좌표표: 기기와 서는 위치의 좌표 (m). 거리 순서의 정답을 정한다. 서버는 읽지 않는다 | 사람 | `evaluate-order` |
 | `config/eval/` | 서버 지표 평가 설정: 사용자, 기기, 지표별 횟수와 통과 기준, 시뮬레이터 RSSI | 사람 | `evaluate-server` |
-| `var/records/` | 수집 회차 기록 | `collect run` | |
-| `var/splits/` | 분할 결과 | `split` | `fit`, `eval`, `evaluate-reask` |
+| `var/records/` | 수집 회차 기록 | `collect run` | `evaluate-order` |
+| `var/splits/` | 분할 결과 | `split` | `fit`, `eval`, `evaluate-reask`, `evaluate-order` |
 | `var/models/` | 모델 파일 (`[proximity].model_root`) | `fit` | `eval`, `evaluate-reask`, `serve` |
-| `var/reports/` | 평가 보고서 (CSV, Markdown). `evaluate-*`는 원자료(JSON)와 그래프(PNG)도 쓴다 | `eval`, `evaluate-server`, `evaluate-reask` | |
+| `var/reports/` | 평가 보고서 (CSV, Markdown). `evaluate-*`는 원자료(JSON)와 그래프(PNG)도 쓴다 | `eval`, `evaluate-server`, `evaluate-reask`, `evaluate-order` | |
 
 `config/`의 `example.*`는 예시다. 회차 길이, 후보 값, 통과 기준을 실제 환경에 맞춰 바꾼다.
 `var/`는 설정 파일 폴더의 부모(`server/var/`)이고 명령이 만든다.
@@ -196,6 +197,60 @@ nearpilot serve
 - `server.example.toml`의 `model_version` 값(`replace-with-model-version`)은 자리값이다. 첫 모델을 만들기 전에는 `serve --collect-only`만 쓴다.
 - `fit` 출력의 `model_version = "v1"` 줄을 `config/server.toml`의 `[proximity]`에 쓴다.
   수집 전용 서버를 끈 뒤 `nearpilot serve`를 실행한다. `model_version`이 없으면 일반 `serve`는 시작하지 않는다 (종료 코드 2).
+
+# 거리 순서 평가
+
+`nearpilot evaluate-order`는 지표 10(거리 순서)을 잰다. 시험 회차에서 서버와 같은 방법(최근 구간의 RSSI 평균)으로 기기 순서를 세워 좌표표의 정답 순서와 비교한다.
+경계 확률 설정 `order_frame_sigma_db`, `order_static_sigma_db`, `order_boundary_min_prob`(서버 설정 `[settings]`)을 실측 회차에서 구하는 도구이기도 하다.
+서버 설정의 DB는 읽기 전용으로만 열고, 결과를 `var/reports/`에 쓴다.
+
+```
+nearpilot evaluate-order --split place-a-seed42.json --layout place-a.toml
+nearpilot evaluate-order --split place-a-seed42.json --layout place-a.toml --records plan-a-20261113.jsonl --out place-a-order --force
+```
+
+| 옵션 | 뜻 |
+|---|---|
+| `--split FILE` | 분할 결과 (필수). 이름이면 `var/splits/`에서 찾는다. |
+| `--layout NAME` | 좌표표 (필수). 확장자까지 쓴 이름이면 `config/layouts/`에서 찾고, 경로면 실행 폴더 기준이다. |
+| `--fit FILE` | 적합 설정. 이름이면 `config/fit/`에서 찾는다. 생략하면 분할 결과의 장소로 `<장소>.toml`이다. |
+| `--records PATH ...` | 회차 기록 파일. 이름이면 `var/records/`에서 찾는다. 생략하면 `var/records/*.jsonl`을 이름 순으로 모두 읽는다. |
+| `--out NAME`, `--force` | 아래 "서버 지표 평가"의 옵션과 같다. 기본 보고서 이름은 `<장소>-order-<UTC 날짜>`다. |
+
+**좌표표** (`config/layouts/<이름>.toml`. 예시는 `config/layouts/example.toml`)
+
+- 최상위 `place_id`는 분할 결과의 장소와 같아야 한다. 다르면 종료 코드 2다.
+- `[nodes]`는 기기 ID → `[x, y]`, `[spots]`는 서는 위치 → `[x, y]`다. 단위는 m이고, 두 표가 같은 좌표계이면 원점과 축은 어디든 괜찮다. 모르는 키는 오류다.
+- `[spots]`의 이름은 수집 계획(`config/plans/`)의 `spot`과 글자까지 같아야 한다. 회차에 나온 기기나 회차의 spot이 표에 없으면 없는 이름을 모두 알리고 종료 코드 2다.
+- 회차의 서는 위치는 DB가 아니라 회차 기록 파일(`collect run`이 쓰는 `var/records/*.jsonl`)에서 읽는다. 분할 결과의 회차가 기록 파일에 없으면 종료 코드 2다.
+- 서버, 공통 모델 파일, 수집 도구는 좌표표를 읽지 않는다. 이 명령만 읽는다.
+- 서는 위치에서 두 기기까지의 거리가 1 m 미만으로 차이 나는 쌍은 세지 않는다.
+
+**학습·검증·시험의 쓰임** (분할 결과의 회차를 그대로 쓴다)
+
+- 학습 회차: σf(정렬 값 프레임 하나의 RSSI 표준편차)와 σs(평균으로 줄지 않는 기기별 오차의 표준편차)를 추정한다.
+- 검증 회차: 기준 확률을 고른다. 경계는 시점마다 관측 순서에서 이웃한 두 기기 사이이고, 앞선 기기가 서는 위치에서 더 멀면 틀린 경계다. 후보는 0.50부터 0.99까지 0.01 간격이다.
+  경계 확률이 후보 이상이어서 통과한 경계 중 틀린 비율이 목표 오류 비율 이하인 후보 가운데 가장 낮은 값을 고른다. 그런 후보가 없으면 "고르지 못함"이고 종료 코드는 0이다.
+- 시험 회차: 고른 기준 확률로 지표만 잰다. 값을 정하는 데 쓰지 않는다.
+- 평가 시점은 회차 시작 `anchor_recent_sec` 뒤부터 `rssi_frame_sec`마다다. 두 값은 서버 설정(`--config`)의 `[settings]`에서 읽는다.
+
+**목표 오류 비율**은 적합 설정의 `[acceptance] max_boundary_error`(0 이상 1 이하)다. 기준 확률을 고를 때와 시험 회차의 통과 여부를 가릴 때 같은 값을 쓴다.
+예시 `config/fit/example.toml`의 초기값은 0.05이고, 수치는 미결이다 (#279). 필수 키라서 없는 적합 설정 파일은 거부된다 (`split`, `fit`, `eval`, `collect list --summary`도 같다). 쓰던 파일에는 이 키를 더한다.
+
+**보고서** (`var/reports/<이름>.csv`, `.md`, `-raw.json`, `-order.png`)
+
+| 행 | 값 |
+|---|---|
+| `m10_frame_sigma_db` | 학습 회차의 σf (dB). `order_frame_sigma_db`의 실측값이다. |
+| `m10_static_sigma_db` | 학습 회차의 σs (dB). `order_static_sigma_db`의 실측값이다. `trials`는 쓴 쌍 수이고, 탐색 범위(0~15 dB)의 끝이면 note에 쓴다. |
+| `m10_pair_order_agreement` | 시험 회차에서 거리 순서가 정답 순서와 맞은 쌍의 비율. 통과 기준은 미결이라 통과 칸이 빈다 (#279). |
+| `m10_boundary_min_prob` | 검증 회차에서 고른 기준 확률. `order_boundary_min_prob`의 실측값이다. 고르지 못하면 빈 값이고 note에 이유를 쓴다. |
+| `m10_boundary_pass_rate` | 시험 회차의 경계 중 기준 확률 이상으로 통과한 비율 |
+| `m10_boundary_error_rate` | 통과한 경계 중 순서가 틀린 비율. 목표 오류 비율과 비교해 통과 칸을 쓴다. |
+
+- 행마다 `place_id`, `split_file`, `layout_file` 열이 붙는다. `sample_count`는 시험 회차의 평가 시점 수다.
+- 원자료 JSON에는 σ 추정 결과, 일치율, 고른 기준 확률과 후보마다 검증·시험의 경계 수, 통과 비율, 오류 비율이 있다. 그래프는 후보에 따른 통과 비율과 오류 비율 곡선이고, 그리려면 matplotlib이 필요하다 (아래 "서버 지표 평가"의 준비 참고).
+- 종료 코드는 `evaluate-reask`와 같다. 입력 오류(파일, 좌표표의 이름, 이미 있는 보고서)는 2, 계산 실패(학습 회차로 σ를 추정할 수 없음, 시험 회차에 평가 시점이 없음, 수집 회차를 읽을 수 없음)는 1이다.
 
 # 앱 BLE 기기 설정과 mDNS
 
@@ -295,7 +350,7 @@ nearpilot recover approve locker-1 <복구 ID> --token-file config/.env.owner-to
 
 `nearpilot evaluate-server`는 임시 폴더에 Mosquitto, 서버, 시뮬레이터 기기를 띄워 서버 지표 1·3·4·5·6·7·9를 잰다.
 `nearpilot evaluate-reask`는 시험 회차로 지표 2의 재질문 곡선을 만든다. 둘 다 결과를 `var/reports/`에 쓴다.
-운영 DB와 실제 기기에는 접속하지 않는다 (`evaluate-reask`는 서버 설정의 DB를 읽기 전용으로만 연다). 지표 8은 `eval`이 잰다.
+운영 DB와 실제 기기에는 접속하지 않는다 (`evaluate-reask`는 서버 설정의 DB를 읽기 전용으로만 연다). 지표 8은 `eval`이, 지표 10은 `evaluate-order`가 잰다 (위 "거리 순서 평가").
 
 ```
 nearpilot evaluate-server server-metrics.example.toml

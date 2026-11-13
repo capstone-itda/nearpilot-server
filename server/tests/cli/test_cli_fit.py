@@ -79,6 +79,7 @@ auto_zero_min_bins = {auto_zero_min_bins}
 [acceptance]
 max_misselection = 0.05
 max_ece = 0.05
+max_boundary_error = 0.05
 """
 
 

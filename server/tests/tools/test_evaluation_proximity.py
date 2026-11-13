@@ -43,7 +43,7 @@ from tools.evaluation.report import write_report
 T0 = datetime(2026, 10, 17, 9, 0, 0, tzinfo=timezone.utc)
 BEACON = BeaconKey("11111111-2222-3333-4444-555555555555", 1, 1)
 OTHER_BEACON = BeaconKey(BEACON.uuid, 1, 2)
-ACCEPTANCE = AcceptanceSettings(max_misselection=0.05, max_ece=0.05)
+ACCEPTANCE = AcceptanceSettings(max_misselection=0.05, max_ece=0.05, max_boundary_error=0.05)
 
 # 기기 앞은 −50 dBm, 다른 기기 앞은 −70 dBm, 어느 기기 앞도 아님은 −90 dBm이고 모두 흔들림이 2 dB다.
 # 자동 영점은 40개 이상의 표본이 있어야 찾는다 (기기가 셋인 시험이 40개를 만든다).
@@ -219,7 +219,7 @@ def test_NFR06_eval_metric_rows_limit_is_inclusive():
     rows = metric_rows(Metrics(0.05, 20, 1, 0.05, 20), ACCEPTANCE)
 
     assert (rows[0]["passed"], rows[1]["passed"]) == (True, True)  # 기준과 같으면 통과다 (value <= limit)
-    rows = metric_rows(Metrics(0.0, 20, 0, 0.0, 20), AcceptanceSettings(0.0, 0.0))
+    rows = metric_rows(Metrics(0.0, 20, 0, 0.0, 20), AcceptanceSettings(0.0, 0.0, 0.0))
     assert (rows[0]["passed"], rows[1]["passed"]) == (True, True)
 
 

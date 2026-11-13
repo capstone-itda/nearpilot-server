@@ -84,6 +84,7 @@ auto_zero_min_bins = 120
 [acceptance]
 max_misselection = {max_misselection}
 max_ece = {max_ece}
+max_boundary_error = 0.05
 """
 
 
@@ -710,7 +711,8 @@ def test_NFR06_eval_rejects_invalid_files(server_dir, run_cli, hand):
     assert err.startswith(f"분할 결과 파일 오류: {split_file.resolve()}: UTF-8 JSON으로 읽을 수 없다 (")
 
     write_split(server_dir, (), (), hand.test)
-    write_fit(server_dir, text=fit_file().replace("[acceptance]\nmax_misselection = 0.05\nmax_ece = 0.05\n", ""))
+    write_fit(server_dir, text=fit_file().replace(
+        "[acceptance]\nmax_misselection = 0.05\nmax_ece = 0.05\nmax_boundary_error = 0.05\n", ""))
     code, out, err = run_cli(eval_argv(), cwd=server_dir)
     assert (code, out) == (EXIT_INVALID, "")
     assert err == "적합 설정 파일 오류: acceptance: 필드가 없다\n"

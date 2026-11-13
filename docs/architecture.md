@@ -69,10 +69,11 @@ nearpilot-server/
 │   │   ├── seed/               시드 파일 예시 (계정, 비콘, 장소, 정책)
 │   │   ├── plans/              수집 계획 예시
 │   │   ├── fit/                적합 설정 예시 (분할, 후보 값, 통과 기준)
+│   │   ├── layouts/            좌표표 예시 (지표 10의 정답 순서, 평가 도구만 읽는다)
 │   │   └── eval/               서버 지표 평가 설정 예시 (횟수, 통과 기준, 시뮬레이터 장면)
 │   ├── src/nearpilot/
 │   │   ├── shared/             계층 간 계약: 도메인 모델, 열거형, 인터페이스, 설정
-│   │   ├── cli/                운영 명령 `nearpilot`: serve, seed, recover, restart, collect, split, fit, eval, evaluate-server, evaluate-reask, broker, sim, dashboard, provision (FR-12A, FR-12B, FR-16, NFR-10, NFR-12, NFR-13)
+│   │   ├── cli/                운영 명령 `nearpilot`: serve, seed, recover, restart, collect, split, fit, eval, evaluate-server, evaluate-reask, evaluate-order, broker, sim, dashboard, provision (FR-12A, FR-12B, FR-16, NFR-10, NFR-12, NFR-13)
 │   │   ├── api/
 │   │   │   ├── mcp/            MCP 엔드포인트와 도구 6개 (FR-08~FR-11)
 │   │   │   ├── auth/           토큰으로 계정 식별, 무효 토큰 거부
@@ -98,7 +99,7 @@ nearpilot-server/
 │   └── tools/
 │       ├── node_sim/           가상 ESP32 기기 (하드웨어 없이 개발과 부하 시험)
 │       ├── data_collection/    RSSI 라벨 수집 (지표 8)
-│       └── evaluation/         지표 1~9 평가 표와 그래프 생성 (NFR-13)
+│       └── evaluation/         지표 1~10 평가 표와 그래프 생성 (NFR-13)
 ├── app/                        Android 앱 (비콘 송출, 알림, 기기 BLE 설정)
 ├── dashboard/                  운영 대시보드 (웹)
 └── firmware/                   ESP32 기기 펌웨어

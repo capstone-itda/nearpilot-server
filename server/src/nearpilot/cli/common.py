@@ -35,6 +35,7 @@ class Dirs:
     seed: Path
     plans: Path
     fit: Path
+    layouts: Path  # 좌표표. `evaluate-order`만 읽는다
     splits: Path
     records: Path
     reports: Path
@@ -49,6 +50,7 @@ def dirs_for(config_path: Path) -> Dirs:
         seed=config_dir / "seed",
         plans=config_dir / "plans",
         fit=config_dir / "fit",
+        layouts=config_dir / "layouts",
         splits=var / "splits",
         records=var / "records",
         reports=var / "reports",

@@ -1,5 +1,5 @@
-"""`nearpilot evaluate-server`, `nearpilot evaluate-reask`: 서버 지표를 재서 보고서(CSV, Markdown), 원자료(JSON), 그래프(PNG)에 쓴다
-(specs/db-evaluation-server-metrics/spec.md 6절 "결정", NFR-13).
+"""`nearpilot evaluate-server`, `nearpilot evaluate-reask`, `nearpilot evaluate-order`: 서버 지표를 재서 보고서(CSV, Markdown), 원자료(JSON), 그래프(PNG)에 쓴다
+(specs/db-evaluation-server-metrics/spec.md 6절 "결정", specs/db-evaluation-distance-order/spec.md, NFR-13).
 
 지표를 재는 일은 `tools/evaluation/`의 `metric_*.py`와 `reask.py`가, 보고서 형식은 `report.py`가, 그래프는 `plots.py`가 한다.
 이 모듈은 설정을 읽어 검사하고, 출력 경로를 확인하고, 지표를 돌리고, 결과를 쓴다. 기준에 못 미쳐도 종료 코드는 0이다.
@@ -11,6 +11,9 @@
 시드와 도는 순서는 원자료와 보고서의 열에 남긴다. 측정이 도중에 실패하면 하네스는 모두 끄고 (하네스가 한다), 그때까지 끝난
 지표의 원자료만 `<NAME>-raw.json`에 남긴다. 보고서와 그래프는 쓰지 않는다.
 `evaluate-reask`는 `nearpilot eval`처럼 분할 결과의 시험 회차만 읽기 전용 연결로 읽어 비용 비율별 재질문 곡선(지표 2)을 만든다.
+`evaluate-order`는 분할 결과의 학습·검증·시험 회차를 읽기 전용 연결로 읽어 거리 순서(지표 10)를 잰다. 학습 회차로 경계 확률 설정
+σf, σs를 추정하고, 검증 회차로 기준 확률을 고르고, 시험 회차로 지표를 잰다 (정하는 데 시험 회차를 쓰지 않는다).
+정답 순서는 좌표표의 거리이고, 회차가 선 위치(spot)는 수집 회차 기록 파일에서 읽는다. 계산은 `tools/evaluation/order.py`가 한다.
 이미 있는 출력 파일은 `--force` 없이는 덮어쓰지 않고, 그 확인은 하네스를 띄우거나 DB를 읽기 전에 한다.
 """
 
@@ -23,7 +26,7 @@ import math
 import random
 import sys
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -33,13 +36,22 @@ from nearpilot.cli.common import (
     CliError, dirs_for, is_path_argument, load_cli_config, open_read_db, require_name, resolve_input,
 )
 from nearpilot.cli.eval import _print_table
+from nearpilot.core.proximity.common_fit import LabeledRun, PlaceRuns, place_anchors
 from nearpilot.core.proximity.common_model import ModelFileError, ModelMismatchError, load_model_version
+from nearpilot.core.proximity.files import FitFileError, load_fit_file
 from tools.evaluation.db import EXPECTED_SCHEMA_VERSION
 from tools.evaluation.harness import Harness, HarnessError, find_mosquitto
+from tools.evaluation.layout import (
+    Layout, LayoutError, check_layout_covers, load_layout, load_run_spots, require_run_spots,
+)
 from tools.evaluation.metric_load import run_metric3, run_metric7
 from tools.evaluation.metric_safety import run_metric5, run_metric6
 from tools.evaluation.metric_select import run_metric1, run_metric4, run_metric9
-from tools.evaluation.plots import write_plots
+from tools.evaluation.order import (
+    BoundaryStat, OrderPoint, ScoredPair, StaticSigmaFit, boundary_table, choose_threshold, estimate_frame_sigma,
+    estimate_static_sigma, order_points, order_rows, pair_agreement, scored_pairs,
+)
+from tools.evaluation.plots import write_order_plot, write_plots
 from tools.evaluation.proximity import AUTO_ZERO_CALIB, EvaluationError, collect_samples
 from tools.evaluation.reask import CurvePoint, reask_curve, reask_rows
 from tools.evaluation.report import write_report
@@ -109,6 +121,25 @@ def register(subparsers: argparse._SubParsersAction, parent: argparse.ArgumentPa
                        help="비용 비율 r을 쉼표로 이어 쓴다 (기본 %(default)s). r마다 확률 임계값 r/(1+r) 아래면 재질문으로 센다")
     _add_output_options(reask, "<분할의 장소>-<VERSION>-reask-<UTC 날짜 YYYYMMDD>")
     reask.set_defaults(handler=_evaluate_reask)
+
+    order = subparsers.add_parser(
+        "evaluate-order", parents=[parent], help="좌표표로 거리 순서(지표 10)를 재고 경계 확률 설정과 기준 확률을 고른다",
+        description="분할 결과의 학습 회차로 경계 확률 설정 σf, σs를 추정하고, 검증 회차로 기준 확률을 고르고, 시험 회차로 "
+                    "거리 순서(지표 10)를 재서 보고서(CSV, Markdown), 원자료(JSON), 그래프(PNG)에 쓴다. 정하는 데 시험 회차를 쓰지 않는다. "
+                    "정답 순서는 좌표표의 거리이고, 회차가 선 위치(spot)는 수집 회차 기록 파일에서 읽는다. "
+                    "기준에 못 미쳐도 종료 코드는 0이다. 이미 있는 보고서는 --force 없이는 덮어쓰지 않는다.")
+    order.add_argument("--split", metavar="FILE", required=True,
+                       help="분할 결과 파일(JSON). 이름이면 var/splits/에서 찾고, 경로(/ 나 \\ 포함)면 실행 폴더 기준이다")
+    order.add_argument("--layout", metavar="NAME", required=True,
+                       help="좌표표 파일(TOML). 이름이면 설정 파일 옆 layouts/ 폴더에서 찾고, 경로(/ 나 \\ 포함)면 실행 폴더 기준이다")
+    order.add_argument("--fit", metavar="FILE",
+                       help="적합 설정 파일의 [acceptance] max_boundary_error(목표 오류 비율)를 읽는다. 이름이면 설정 파일 옆 fit/ 폴더에서 "
+                            "찾고, 경로(/ 나 \\ 포함)면 실행 폴더 기준이다. 기본은 <분할의 장소>.toml")
+    order.add_argument("--records", metavar="PATH", nargs="+",
+                       help="수집 회차 기록 파일(JSONL)들. 회차의 spot을 여기서 읽는다. 이름이면 var/records/에서 찾고, 경로(/ 나 \\ 포함)면 "
+                            "실행 폴더 기준이다. 기본은 var/records/*.jsonl 전부(이름 순)")
+    _add_output_options(order, "<분할의 장소>-order-<UTC 날짜 YYYYMMDD>")
+    order.set_defaults(handler=_evaluate_order)
 
 
 def _add_output_options(parser: argparse.ArgumentParser, default_name: str) -> None:
@@ -336,6 +367,172 @@ def _parse_ratios(text: str) -> list[float]:
     if len({f"{ratio:g}" for ratio in ratios}) != len(ratios):  # 행 이름 m2_reask_r{r:g}가 겹치지 않아야 한다
         raise CliError(f"--ratios에 같은 비율이 두 번 있다: {text}", EXIT_INVALID)
     return ratios
+
+
+# ── evaluate-order ───────────────────────────────────────────────────
+
+
+@dataclasses.dataclass(frozen=True)
+class _OrderMeasured:
+    """`_measure_order`의 결과. 보고서 행, 원자료, 그래프가 모두 이 값에서 나온다."""
+
+    frame_sigma_db: float  # 학습 회차로 추정한 σf
+    static_fit: StaticSigmaFit  # 학습 회차로 추정한 σs
+    agreement: tuple[int, int]  # 시험 회차의 (맞은 쌍 수, 전체 쌍 수). 모든 쌍을 센다
+    validation: list[BoundaryStat]  # 후보 기준 확률마다 검증 회차의 경계 통계
+    test: list[BoundaryStat]  # 후보 기준 확률마다 시험 회차의 경계 통계 (고르는 데 쓰지 않는다)
+    chosen: float | None  # 검증 회차에서 고른 기준 확률. 고르지 못하면 None
+    test_points: int  # 시험 회차의 평가 시점 수
+
+    @property
+    def test_stat(self) -> BoundaryStat | None:
+        """고른 기준 확률의 시험 회차 통계. 고르지 못했으면 None이다."""
+        return next((stat for stat in self.test if stat.min_prob == self.chosen), None)
+
+
+def _evaluate_order(args: argparse.Namespace) -> int:
+    config = load_cli_config(args.config)
+    dirs = dirs_for(config.source)
+
+    split_path = resolve_input(args.split, dirs.splits, kind="분할 결과")
+    try:
+        split = load_split(split_path)
+    except SplitError as error:
+        raise CliError(f"분할 결과 파일 오류: {error}", EXIT_INVALID) from None
+    place = split.place_id
+    fit_path = resolve_input(args.fit or f"{place}.toml", dirs.fit, kind="적합 설정")
+    try:
+        max_error = load_fit_file(fit_path).acceptance.max_boundary_error
+    except FitFileError as error:
+        raise CliError(f"적합 설정 파일 오류: {error}", EXIT_INVALID) from None
+    layout_path = resolve_input(args.layout, dirs.layouts, kind="좌표표")
+    try:
+        layout = load_layout(layout_path)
+    except LayoutError as error:
+        raise CliError(f"좌표표 오류: {error}", EXIT_INVALID) from None
+    if layout.place_id != place:
+        raise CliError(
+            f"좌표표 오류: place_id가 분할 결과의 장소와 다르다 (좌표표 {layout.place_id!r}, 분할 결과 {place!r})",
+            EXIT_INVALID)
+
+    name = _report_name(args.out, f"{place}-order-{now_utc():%Y%m%d}")
+    csv_path, md_path, raw_path = _report_paths(dirs.reports, name)
+    _refuse_existing([csv_path, md_path, raw_path, *_plot_paths(dirs.reports, name, ("order",))], force=args.force)
+
+    record_paths = _record_paths(args.records, dirs.records)
+    run_ids = [*split.train, *split.validation, *split.test]
+    try:
+        spots = require_run_spots(load_run_spots(record_paths), run_ids)
+    except LayoutError as error:
+        raise CliError(f"기록 파일 오류: {error}", EXIT_INVALID) from None
+
+    conn = open_read_db(config)
+    try:
+        schema_version = conn.execute("PRAGMA user_version").fetchone()[0]
+        runs = load_labeled_runs(conn, run_ids)  # 학습·검증·시험 회차를 한 번에 읽고 나눈다
+    except RunLoadError as error:
+        raise CliError(str(error), EXIT_FAILED) from None
+    finally:
+        conn.close()
+    train = runs[:len(split.train)]
+    validation = runs[len(split.train):len(split.train) + len(split.validation)]
+    test = runs[len(split.train) + len(split.validation):]
+    # 참여 기기는 정하는 데 쓰는 학습+검증 회차와 시험 회차에서 따로 모은다 (`fit`, `eval`과 같다). 시험 회차에만 나온 기기가
+    # 학습·검증 시점에 "못 본 기기"로 끼면 고르는 값이 시험 회차에 따라 바뀐다
+    fit_anchors = place_anchors(PlaceRuns(place, tuple(train)), PlaceRuns(place, tuple(validation)))
+    test_anchors = place_anchors(PlaceRuns(place, tuple(test)))
+    try:
+        check_layout_covers(layout, spots.values(), fit_anchors | test_anchors)
+    except LayoutError as error:
+        raise CliError(f"좌표표 오류: {error}", EXIT_INVALID) from None
+    try:
+        measured = _measure_order(
+            train, validation, test, spots, layout, fit_anchors, test_anchors, max_error,
+            window_sec=config.settings.anchor_recent_sec, step_sec=config.settings.rssi_frame_sec)
+    except EvaluationError as error:
+        raise CliError(f"평가 실패: {error}", EXIT_FAILED) from None
+
+    provenance = {"place_id": place, "split_file": str(split_path), "layout_file": str(layout_path)}
+    rows = [{**row, **provenance} for row in order_rows(
+        frame_sigma_db=measured.frame_sigma_db, static_fit=measured.static_fit, agreement=measured.agreement,
+        chosen=measured.chosen, test_stat=measured.test_stat, max_error=max_error)]
+    agreed, total = measured.agreement
+    raw = {
+        "command": "evaluate-order", "place_id": place, "split_file": str(split_path), "layout_file": str(layout_path),
+        "fit_file": str(fit_path), "record_files": [str(path) for path in record_paths],
+        "window_sec": config.settings.anchor_recent_sec, "step_sec": config.settings.rssi_frame_sec,
+        "max_boundary_error": max_error, "frame_sigma_db": measured.frame_sigma_db,
+        "static_sigma": dataclasses.asdict(measured.static_fit), "test_points": measured.test_points,
+        "pair_agreement": {"agreed": agreed, "total": total}, "chosen_min_prob": measured.chosen,
+        "candidates": [
+            {"min_prob": stat.min_prob, "validation": _boundary_raw(stat), "test": _boundary_raw(tested)}
+            for stat, tested in zip(measured.validation, measured.test)
+        ],
+    }
+    _write_results(
+        dirs.reports, name, force=args.force, rows=rows, raw=raw, db_path=str(config.database.path),
+        schema_version=schema_version, sample_count=measured.test_points, generated_at=now_utc(), latencies=None,
+        curve=None, graph_rows=[])
+    # 후보별 곡선은 `write_plots`의 그래프가 아니라서 따로 그린다. 못 그려도 보고서는 이미 썼다
+    try:
+        plot = write_order_plot(
+            dirs.reports, name, validation=measured.validation, test=measured.test, max_error=max_error,
+            chosen=measured.chosen)
+    except Exception as error:  # noqa: BLE001 - 그래프는 보고서의 덤이다
+        print(f"경고: 그래프를 만들지 못했다 ({error})", file=sys.stderr)
+        plot = None
+    if plot is not None:
+        print(f"작성: {plot}")
+    return EXIT_OK
+
+
+def _record_paths(arguments: Sequence[str] | None, default_dir: Path) -> list[Path]:
+    """회차 기록 파일들. `--records`를 주지 않으면 `default_dir`의 `*.jsonl` 전부(이름 순)다. 하나도 없으면 `CliError`(종료 코드 2)다."""
+    if arguments:
+        return [resolve_input(argument, default_dir, kind="기록") for argument in arguments]
+    paths = sorted(path for path in default_dir.glob("*.jsonl") if path.is_file())
+    if not paths:
+        raise CliError(f"기록 파일이 없다: {default_dir}에 *.jsonl이 없다. --records로 기록 파일을 준다", EXIT_INVALID)
+    return paths
+
+
+def _measure_order(
+    train: Sequence[LabeledRun], validation: Sequence[LabeledRun], test: Sequence[LabeledRun],
+    spots: Mapping[str, str], layout: Layout, fit_anchors: Collection[str], test_anchors: Collection[str],
+    max_error: float, *,
+    window_sec: float, step_sec: float,
+) -> _OrderMeasured:
+    """학습 회차로 σf와 σs를 추정하고, 검증 회차로 기준 확률을 고르고, 시험 회차로 잰다. 계산이 안 되면 `EvaluationError`다.
+
+    σs는 모든 쌍(`adjacent_only=False`)으로 추정하고, 경계 표는 이웃한 쌍으로 센다. 순서 일치율은 시험 회차의 모든 쌍으로 잰다.
+    시험 회차는 값을 고르는 데 쓰지 않는다. 시험 회차의 경계 표는 고른 값의 행과 그래프를 위해 모든 후보로 센다.
+    참여 기기는 학습·검증 회차에 `fit_anchors`(학습+검증 회차의 기기), 시험 회차에 `test_anchors`(시험 회차의 기기)를 쓴다.
+    """
+
+    def points(runs: Sequence[LabeledRun], anchors: Collection[str]) -> list[OrderPoint]:
+        return [point for run in runs
+                for point in order_points(run, spots[run.run_id], anchors, window_sec=window_sec, step_sec=step_sec)]
+
+    def pairs(at: Sequence[OrderPoint], *, adjacent_only: bool) -> list[ScoredPair]:
+        return [pair for point in at for pair in scored_pairs(point, layout, adjacent_only=adjacent_only)]
+
+    frame_sigma = estimate_frame_sigma(train, fit_anchors, window_sec=window_sec)
+    static_fit = estimate_static_sigma(pairs(points(train, fit_anchors), adjacent_only=False), frame_sigma)
+    validation_table = boundary_table(pairs(points(validation, fit_anchors), adjacent_only=True), frame_sigma, static_fit.sigma_db)
+    chosen = choose_threshold(validation_table, max_error)
+
+    test_points = points(test, test_anchors)
+    if not test_points:
+        raise EvaluationError(
+            f"시험 회차에 평가 시점이 없다: 시험 회차가 없거나 회차 구간이 {window_sec:g}초(anchor_recent_sec)보다 짧다")
+    test_table = boundary_table(pairs(test_points, adjacent_only=True), frame_sigma, static_fit.sigma_db)
+    agreement = pair_agreement(pairs(test_points, adjacent_only=False))
+    return _OrderMeasured(frame_sigma, static_fit, agreement, validation_table, test_table, chosen, len(test_points))
+
+
+def _boundary_raw(stat: BoundaryStat) -> dict[str, Any]:
+    """원자료에 쓸 경계 통계. 후보 값(`min_prob`)은 후보 항목에 이미 있어서 뺀다."""
+    return {key: value for key, value in dataclasses.asdict(stat).items() if key != "min_prob"}
 
 
 # ── 출력 ─────────────────────────────────────────────────────────────
