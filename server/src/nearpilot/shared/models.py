@@ -1171,7 +1171,7 @@ class BatchItemRecord:
 class BatchRecord:
     """묶음 요청 상위 요청의 판정 기록 (FR-22, #284). `DecisionRecord.batch` 로 저장한다.
 
-    판정한 항목까지만 담는다. 항목 순서는 받은 요청 목록의 순서다.
+    요청의 항목을 모두 항목 순서대로 담는다. 판정하지 않은 항목은 하위 요청·기기·거리 선택자 기록이 없다. 항목 순서는 받은 요청 목록의 순서다.
     """
 
     items: tuple[BatchItemRecord, ...]

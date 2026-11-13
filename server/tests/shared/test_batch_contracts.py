@@ -330,10 +330,11 @@ def test_FR11_batch_device_outcome_has_no_user_or_child_ids():
 
 
 def test_FR09_batch_interfaces_change_repository_methods():
+    # link_selector_child 는 main 과 같다. 하위 요청은 늘 판정이 고른 기기를 가진다
     assert list(inspect.signature(Repository.link_selector_child).parameters) == [
         "self", "parent_internal_request_id", "req", "node_id", "input_digest",
     ]
-    assert typing.get_type_hints(Repository.link_selector_child)["node_id"] == (str | None)
+    assert typing.get_type_hints(Repository.link_selector_child)["node_id"] is str
     assert list(inspect.signature(Repository.batch_children).parameters) == ["self", "parent_internal_request_id"]
     assert typing.get_type_hints(Repository.batch_children)["return"] == (BatchChildren | None)
     # 거리 선택자의 조회는 그대로다

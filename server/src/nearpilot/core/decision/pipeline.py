@@ -685,7 +685,7 @@ class DecisionPipeline:
         self, req: UseRequest, iid: str, digest: str, capacity_exceeded: bool, run: _SelectorRun
     ) -> SelectorDecision:
         """새 묶음 요청의 판정과 저장. 예외는 `_selector_failed` 가 정리한다."""
-        judged: list[_BatchItem] = []  # 판정을 시작한 항목들. 상위 판정 기록에 담는다
+        judged: list[_BatchItem] = []  # 판정을 시작한 항목들. 요청의 항목 순서에서 앞쪽부터다
         detail: dict[str, Any] = {}
         devices: tuple[DeviceOutcome, ...] = ()
         outcomes: tuple[Decision, ...] = ()
@@ -725,15 +725,18 @@ class DecisionPipeline:
             parent = self._decision(req, iid, stop.decision.verdict, stop.decision.reason)
             step = stop.step
 
-        # selected_count 는 만든 하위 요청 수(고른 기기 수의 합)다. similar 는 거리 선택자 항목 하나라도 비슷하면 참이다 (spec 결정 11, 12)
+        # 묶음 기록은 요청의 항목을 모두 담는다. 판정하지 않은 항목은 받은 요청뿐이다 (spec 결정 15, 27)
+        batch = self._batch_record(req, judged)
+        # selected_count 는 항목마다 실제로 고른 기기 수의 합이다. 만든 하위 요청 수가 아니다 (spec 결정 11).
+        # similar 는 거리 선택자 항목 하나라도 비슷하면 참이다 (spec 결정 12)
+        selected_count = sum(self._item_selected_count(item) for item in batch.items)
         similar = any(entry.pick is not None and entry.pick.similar for entry in judged)
-        parent = self._selector_view(parent, devices, len(run.children), similar)
+        parent = self._selector_view(parent, devices, selected_count, similar)
         self._audit_step(step, iid, {
             "verdict": parent.verdict.value, "reason": parent.reason.value,
             "settings_version": self._settings.version, "children": len(run.children), **detail})
         # 상위 판정 기록은 근접 추정 값을 담지 않는다. 하위 요청의 기록이 담는다 (spec 결정 19)
-        record = DecisionRecord(
-            settings=self._settings, batch=BatchRecord(tuple(self._item_record(entry) for entry in judged)))
+        record = DecisionRecord(settings=self._settings, batch=batch)
         saved = self._repo.save_decision(parent, record)
         if saved.outcome is StoreOutcome.CONFLICT:
             run.parent_conflict = True
@@ -858,6 +861,28 @@ class DecisionPipeline:
             counts=pick.counts, boundary_probability=pick.boundary_probability)
         return BatchItemRecord(target, entry.req.action, entry.req.arguments, children, selector, nodes)
 
+    def _batch_record(self, req: UseRequest, judged: Sequence[_BatchItem]) -> BatchRecord:
+        """상위 판정 기록의 묶음 기록. 요청의 항목을 모두 항목 순서대로 담는다 (spec 결정 15, 27).
+
+        판정을 시작한 항목(`judged`. 요청의 항목 순서에서 앞쪽부터)은 판정한 값을 담고, 판정하지 않은 뒤 항목은
+        받은 대상·동작·인자만 담는다. 하위 요청·기기·거리 선택자 기록이 없다.
+        """
+        rest = (BatchItemRecord(item.target.serialize(), item.action, item.arguments)
+                for item in req.items[len(judged):])
+        return BatchRecord((*(self._item_record(entry) for entry in judged), *rest))
+
+    @staticmethod
+    def _item_selected_count(item: BatchItemRecord) -> int:
+        """항목이 실제로 고른 기기 수 (FR-09, spec 결정 11). 첫 판정과 재전송이 같은 기록으로 센다.
+
+        거리 선택자 항목은 하위 요청을 하나라도 만들었으면 고른 기기 전체다. 중간 기기에서 걸려 뒤 기기의 하위 요청이
+        없어도 같다 — 거리 선택자 요청 하나와 같다. 하위 요청 전에 멈춘 항목(`NO_CANDIDATE`, `ORDER_UNCERTAIN`)은 0이다.
+        다른 항목은 만든 하위 요청 수(0 또는 1)다. 판정하지 않은 항목은 0이다.
+        """
+        if item.selector is not None and item.children:
+            return len(item.selector.selected)
+        return len(item.children)
+
     @staticmethod
     def _check_resent_batch(req: UseRequest, found: BatchChildren) -> None:
         """`OK` 로 저장된 묶음 기록이 요청과 맞는지 본다. 하나라도 어긋나면 ValueError 다 (spec 결정 17).
@@ -894,20 +919,22 @@ class DecisionPipeline:
         # 판정이 없는 하위 요청은 뺀다. OK 판정이면 `_check_resent_batch` 가 하위 판정이 모두 있음을 확인한다
         stored = [(index, c, c.decision) for index, entry in enumerate(found.items, start=1)
                   for c in entry.children if c.decision is not None]
-        created = sum(len(entry.record.children) for entry in found.items)
+        # 첫 판정과 같은 규칙으로 센다. 판정하지 않은 항목은 하위 요청이 없어 0이다
+        selected_count = sum(self._item_selected_count(entry.record) for entry in found.items)
         similar = any(entry.record.selector is not None and entry.record.selector.similar for entry in found.items)
         if previous.verdict is Verdict.OK:
             self._check_resent_batch(req, found)
             devices = tuple(DeviceOutcome(c.node_id, d.verdict, d.reason, d.use_id, item=index)
                             for index, c, d in stored)
             return SelectorDecision(
-                self._selector_view(previous, devices, created, similar), children=tuple(d for _, _, d in stored))
+                self._selector_view(previous, devices, selected_count, similar),
+                children=tuple(d for _, _, d in stored))
         first = next(((index, c, d) for index, c, d in stored if d.verdict is not Verdict.OK), None)
         devices = ()
         if first is not None:  # 걸린 하위 요청은 늘 기기를 가진다
             index, c, d = first
             devices = (DeviceOutcome(c.node_id, d.verdict, d.reason, None, item=index),)
-        return SelectorDecision(self._selector_view(previous, devices, created, similar))
+        return SelectorDecision(self._selector_view(previous, devices, selected_count, similar))
 
     # ── ①~⑥ ───────────────────────────────────────────────────────
 

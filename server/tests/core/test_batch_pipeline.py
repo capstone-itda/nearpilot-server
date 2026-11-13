@@ -24,7 +24,14 @@ from nearpilot.core.decision.digest import input_digest
 from nearpilot.core.decision.pipeline import boundary_probability
 from nearpilot.shared.enums import ExecutionKind, ExecutionStatus, ReasonCode, Step, Verdict
 from nearpilot.shared.frozen import thaw
-from nearpilot.shared.models import BatchRecord, Decision, DeviceOutcome, PolicyCheckResult, SelectorRecord
+from nearpilot.shared.models import (
+    BatchItemRecord,
+    BatchRecord,
+    Decision,
+    DeviceOutcome,
+    PolicyCheckResult,
+    SelectorRecord,
+)
 
 PARENT = "i1"  # FakeRepo 가 처음 연결한 요청의 내부 ID
 BATCH_SIBLING = "batch_sibling"
@@ -86,7 +93,10 @@ def test_FR09_batch_over_max_items_denied():
     # 하위 요청을 만들기 전에 거부한다. 비콘도 후보도 보지 않는다
     assert repo.child_links == [] and "link_selector_child" not in repo.calls
     assert "beacons_of" not in repo.calls and repo.reserved == [] and store.cancels == []
-    assert repo.decisions[PARENT] == d and repo.records[PARENT].batch.items == ()
+    # 기록은 요청의 항목을 모두 담는다. 하위 요청이 없어 항목마다 받은 요청뿐이다
+    assert repo.decisions[PARENT] == d
+    assert [(i.target_spec, i.action, i.children) for i in repo.records[PARENT].batch.items] == [
+        ("light-1", "on", ()), ("light-2", "on", ()), ("speaker-1", "off", ())]
     last = events(audit, PARENT)[-1]
     assert last.step is Step.CANDIDATE
     assert thaw(last.payload) == {"verdict": "DENY", "reason": "INVALID_INPUT", "settings_version": "t",
@@ -107,7 +117,9 @@ def test_FR22_batch_capacity_exceeded_denied_and_saved():
     assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.CAPACITY_EXCEEDED)
     assert (d.devices, d.selected_count, d.similar) == ((), 0, False)
     assert sd.children == () and sd.contexts == ()
-    assert repo.decisions[PARENT] == d and repo.records[PARENT].batch.items == ()
+    assert repo.decisions[PARENT] == d
+    assert [(i.target_spec, i.action, i.children) for i in repo.records[PARENT].batch.items] == [
+        ("light-1", "on", ()), ("speaker-1", "off", ())]  # 기록은 요청의 항목을 모두 담는다
     assert "beacons_of" not in repo.calls and repo.child_links == []
     last = events(audit, PARENT)[-1]
     assert last.step is Step.DEDUP and last.payload["capacity_exceeded"] is True
@@ -212,7 +224,7 @@ def test_FR09_batch_selector_item_stops_batch(case):
     d = sd.decision
     assert (d.verdict, d.reason) == (verdict, reason)
     assert d.devices == () and d.node_id is None
-    assert d.selected_count == 1 and d.similar is similar  # 만든 하위 요청은 첫 항목의 하나다. 비슷함은 멈춘 항목의 값도 더한다
+    assert d.selected_count == 1 and d.similar is similar  # 고른 기기는 첫 항목의 하나다. 멈춘 항목은 0을 더하고, 비슷함은 그 항목의 값도 더한다
     assert sd.children == () and sd.contexts == ()
     assert child_ids(repo) == ["c1"]
     assert store.cancels == [sibling_cancel("c1", reason, None)]  # 첫 항목의 예약을 취소한다
@@ -248,6 +260,63 @@ def test_FR09_batch_similar_from_any_selector_item(light_close, speaker_close, e
     # 항목마다 거리 선택자 기록이 자기 비슷함을 담는다
     lights_item, speakers_item = repo.records[PARENT].batch.items
     assert (lights_item.selector.similar, speakers_item.selector.similar) == (light_close, speaker_close)
+
+
+def test_FR09_batch_selected_count_counts_selector_item_fully():
+    """`selected_count` 는 항목마다 실제로 고른 기기 수의 합이다 (docs/requirements.md FR-09, spec 결정 11).
+
+    거리 선택자 항목은 중간 기기에서 걸려도 고른 수 전체를 센다. 같은 대상을 거리 선택자 요청 하나로 보낸 값과 같고,
+    만든 하위 요청 수가 아니다. 하위 요청 전에 멈춘 항목은 0을 더하고 판정하지 않은 뒤 항목은 세지 않는다. 재전송도 같다.
+    """
+
+    def alone(target, **kw):  # 같은 정책의 거리 선택자 요청 하나가 낸 고른 수
+        pipe, *_ = build_batch(**kw)
+        return pipe.decide_selector(request(target)).decision.selected_count
+
+    # ④ 에서 거리 순서의 둘째 기기(light-1)가 걸린다. 하위 요청은 light-2, light-1 둘뿐이지만 고른 기기는 셋이다
+    policy = FakePolicy({"light-1": PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, 2)})
+    assert alone("near:light:1:3", policy=policy) == 3
+    pipe, repo, *_ = build_batch(policy=policy)
+    req = batch_request(("near:light:1:3", "on"))
+    d = pipe.decide_batch(req).decision
+    assert (d.verdict, d.reason) == (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED)
+    assert d.devices == (device("light-1", 1, Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED),)
+    assert child_ids(repo) == ["c1", "c2"]
+    assert d.selected_count == 3
+    assert repo.records[PARENT].batch.items[0].selector.selected == ("light-2", "light-1", "light-3")  # 기록한 고른 기기와 같다
+    again = pipe.decide_batch(req)
+    assert again.decision == d and again.decision.selected_count == 3  # 재전송도 같다
+
+    # 항목마다 더한다. 앞 항목은 고른 수만큼, 걸린 항목은 고른 수 전체, 판정하지 않은 뒤 항목은 0이다
+    pipe, repo, *_ = build_batch([*world(), locker("locker-1")], policy=policy)
+    req = batch_request(("speaker-1", "off"), ("near:light:1:3", "on"), ("locker-1", "open"))
+    d = pipe.decide_batch(req).decision
+    assert d.devices == (device("light-1", 2, Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED),)
+    assert child_ids(repo) == ["c1", "c2", "c3"]  # speaker-1, light-2, light-1
+    assert d.selected_count == 1 + 3 + 0
+    assert pipe.decide_batch(req).decision.selected_count == 4
+
+    # 같은 기기 검사에서 거리 선택자 항목의 첫 기기가 걸려도 그 항목이 고른 수 전체를 센다
+    pipe, repo, *_ = build_batch()
+    req = batch_request(("light-2", "on"), ("near:light:1:2", "off"))
+    d = pipe.decide_batch(req).decision
+    assert (d.verdict, d.reason) == (Verdict.DENY, ReasonCode.INVALID_INPUT)
+    assert child_ids(repo) == ["c1", "c2"]  # 둘째 항목은 하위 요청을 하나만 만들었다
+    assert (d.selected_count, alone("near:light:1:2")) == (1 + 2, 2)
+    assert pipe.decide_batch(req).decision.selected_count == 3
+
+    # 경계 순서가 애매해 하위 요청 없이 멈춘 항목은 0을 더한다. 거리 선택자 요청 하나도 0이다
+    uncertain = {"values": {"light-1": -60.0, "light-2": -61.0, "light-3": -62.0},
+                 "settings": batch_settings(order_boundary_min_prob=0.9)}  # 끝 경계의 값 차이가 1 dB 라 경계 확률이 기준보다 낮다
+    assert alone("near:light:1:2", **uncertain) == 0
+    pipe, repo, *_ = build_batch(**uncertain)
+    req = batch_request(("speaker-1", "off"), ("near:light:1:2", "on"))
+    d = pipe.decide_batch(req).decision
+    assert (d.verdict, d.reason) == (Verdict.ASK, ReasonCode.ORDER_UNCERTAIN)
+    assert child_ids(repo) == ["c1"] and d.selected_count == 1
+    stopped = repo.records[PARENT].batch.items[1]
+    assert stopped.selector.selected == ("light-1", "light-2") and stopped.children == ()  # 고르기만 했고 하위 요청은 없다
+    assert pipe.decide_batch(req).decision.selected_count == 1
 
 
 def test_FR09_batch_old_entries_reject_batch():
@@ -417,7 +486,7 @@ def test_FR18_batch_one_fails_none_executes(case):
     assert (d.verdict, d.reason) == (verdict, reason)
     # 걸린 하위 요청이 있으면 그 기기가 devices 의 하나이고, 고르기에서 걸렸으면 빈 목록이다
     assert d.devices == (() if node_id is None else (device(node_id, 2, verdict, reason),))
-    # selected_count 는 만든 하위 요청 수다. 고르기에서 걸리면 앞 항목의 기기 수다
+    # selected_count 는 항목마다 고른 기기 수의 합이다. 하위 요청을 모두 만든 항목뿐이라 만든 수와 같고, 고르기에서 걸린 항목은 0이다
     assert d.selected_count == len(children) and (d.node_id, d.use_id, d.p_max) == (None, None, None)
     assert sd.contexts == () and sd.children == ()  # 아무것도 인계하지 않는다
     assert child_ids(repo) == children
@@ -548,6 +617,43 @@ def test_FR22_batch_parent_record_has_items():
     assert (repo.records["c3"].model_version, dict(repo.records["c3"].posteriors)) == ("m", {"speaker-1": 0.9})
 
 
+def test_FR22_batch_record_has_all_requested_items():
+    """상위 판정 기록은 걸려도, 항목 수나 용량을 넘어도 요청의 항목을 모두 항목 순서대로 담는다 (FR-22, spec 결정 15·27).
+
+    판정하지 않은 항목은 받은 대상·동작·인자만 있고 하위 요청·기기·거리 선택자 기록이 없다.
+    """
+    # 첫 항목이 걸린다. 뒤 둘은 판정하지 않았다
+    policy = FakePolicy({"speaker-1": PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, 2)})
+    pipe, repo, *_ = build_batch([*dimmable_lights(), speaker()], policy=policy)
+    req = batch_request(("speaker-1", "off"), ("near:light:1:2", "on", {"brightness": 10}), ("light-3", "on"))
+    first = pipe.decide_batch(req)
+    assert (first.decision.verdict, first.decision.reason) == (Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED)
+    assert child_ids(repo) == ["c1"]  # 첫 항목의 하위 요청뿐이다
+    judged, second, third = repo.records[PARENT].batch.items
+    assert (judged.target_spec, judged.children, judged.nodes) == ("speaker-1", ("c1",), ("speaker-1",))
+    assert second == BatchItemRecord("near:light:1:2", "on", {"brightness": 10})
+    assert (second.children, second.nodes, second.selector) == ((), (), None)
+    assert third == BatchItemRecord("light-3", "on", None)
+    # 재전송은 같은 판정과 걸린 기기를 낸다. 판정하지 않은 항목은 하위 요청이 없어 응답에 나오지 않는다
+    again = pipe.decide_batch(req)
+    assert again.decision == first.decision
+    assert again.decision.devices == (device("speaker-1", 1, Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED),)
+    assert again.decision.selected_count == 1
+
+    # 항목 수 초과와 용량 초과는 하위 요청 없이 거부하지만 기록은 요청의 항목을 모두 담는다
+    items = (("light-1", "on"), ("near:light:1:2", "on"), ("speaker-1", "off"))
+    requested = [BatchItemRecord(target, action, None) for target, action in items]
+    pipe, repo, *_ = build_batch(settings=batch_settings(batch_max_items=2))
+    assert pipe.decide_batch(batch_request(*items)).decision.reason is ReasonCode.INVALID_INPUT
+    assert list(repo.records[PARENT].batch.items) == requested
+    assert repo.child_links == []
+    pipe, repo, *_ = build_batch()
+    repo.capacity_exceeded = True
+    assert pipe.decide_batch(batch_request(*items)).decision.reason is ReasonCode.CAPACITY_EXCEEDED
+    assert list(repo.records[PARENT].batch.items) == requested
+    assert repo.child_links == []
+
+
 @pytest.mark.parametrize("case", ["all_ok", "selector_child_fails"])
 def test_FR22_batch_record_has_item_nodes(case):
     """항목 기록은 만든 하위 요청마다 고른 기기를 같은 순서로 담는다. 거리 선택자 항목은 고른 기기의 앞쪽이다 (#284)."""
@@ -559,11 +665,11 @@ def test_FR22_batch_record_has_item_nodes(case):
         req = batch_request(("near:light:1:2", "on"), ("nearest:speaker", "off"), ("locker-1", "open"),
                             ("any:locker", "open"))
         nodes = [("light-2", "light-1"), ("speaker-1",), ("locker-1",), ("locker-2",)]
-    else:  # 거리 선택자 항목의 둘째 하위 요청이 걸려 멈췄다. 셋째 기기의 하위 요청은 만들지 않았다
+    else:  # 거리 선택자 항목의 둘째 하위 요청이 걸려 멈췄다. 셋째 기기의 하위 요청은 만들지 않았고, 둘째 항목은 판정하지 않았다
         policy = FakePolicy({"light-1": PolicyCheckResult(Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, 2)})
         pipe, repo, prox, store, audit = build_batch(policy=policy)
         req = batch_request(("near:light:1:all", "on"), ("speaker-1", "off"))
-        nodes = [("light-2", "light-1")]
+        nodes = [("light-2", "light-1"), ()]
     pipe.decide_batch(req)
     items = repo.records[PARENT].batch.items
     assert [item.nodes for item in items] == nodes

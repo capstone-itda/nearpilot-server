@@ -44,7 +44,7 @@ def _parent(repo, *items, request_id="r-batch"):
 
 
 def _child(repo, parent, item, node_id, request_id="r-batch"):
-    """항목의 하위 요청 행을 만든다. 기기를 모르면 `node_id`는 `None`이다."""
+    """항목의 하위 요청 행을 만든다. `node_id`는 판정이 고른 기기다."""
     return repo.link_selector_child(parent, _item_request(item, request_id), node_id, f"digest-{request_id}")
 
 
@@ -151,12 +151,12 @@ def test_FR22_batch_record_round_trip(conn, repo):
     shown = repo.batch_children(parent)
     assert {child.decision.request_id for item in shown.items for child in item.children} == {""}
 
-    # 판정 전의 하위 요청은 decision 이 None 이다. node_id 는 행이 알면 그 값이고, 모르거나 판정이 기기 없이
-    # 끝났으면 "" 다. 판정은 늘 기기를 넘기지만 저장소는 기기를 모르는 행(`None`)도 그대로 받는다.
+    # 판정 전의 하위 요청은 decision 이 None 이고 node_id 는 행을 만들 때 받은 기기다. 판정을 저장한 뒤에는 저장된 판정의
+    # node_id 이고, 판정이 기기 없이 끝났으면 "" 다.
     parent_b = _parent(repo, LIGHTS, play, request_id="r-batch-b")
     waiting = _child(repo, parent_b, LIGHTS, "light-3", "r-batch-b")
     errored = _child(repo, parent_b, LIGHTS, "light-2", "r-batch-b")
-    unknown = _child(repo, parent_b, play, None, "r-batch-b")
+    undecided = _child(repo, parent_b, play, "speaker-1", "r-batch-b")
     _save(repo, Decision(errored, "r-batch-b", Verdict.DENY, ReasonCode.INTERNAL_ERROR))
     selector_b = SelectorRecord(
         SELECTOR, ("light-3", "light-2"), {"light-3": None, "light-2": None}, ("light-3", "light-2"), True,
@@ -164,7 +164,7 @@ def test_FR22_batch_record_round_trip(conn, repo):
     )
     record_b = BatchRecord((
         BatchItemRecord(SELECTOR, "on", None, (waiting, errored), selector_b),
-        BatchItemRecord("speaker-1", "play", {"volume": 3, "tracks": ["morning", "news"]}, (unknown,)),
+        BatchItemRecord("speaker-1", "play", {"volume": 3, "tracks": ["morning", "news"]}, (undecided,)),
     ))
     _save(repo, Decision(parent_b, "r-batch-b", Verdict.DENY, ReasonCode.INTERNAL_ERROR), batch=record_b)
     assert [item.children for item in repo.batch_children(parent_b).items] == [
@@ -172,12 +172,12 @@ def test_FR22_batch_record_round_trip(conn, repo):
             SelectorChild(waiting, "light-3", None),
             SelectorChild(errored, "", Decision(errored, "r-batch-b", Verdict.DENY, ReasonCode.INTERNAL_ERROR)),
         ),
-        (SelectorChild(unknown, "", None),),
+        (SelectorChild(undecided, "speaker-1", None),),
     ]
 
     # OK 하위 판정의 use_id 는 그 하위 요청의 점유 세션이다.
     parent_c = _parent(repo, LOCKER_1, request_id="r-batch-c")
-    rental = _child(repo, parent_c, LOCKER_1, None, "r-batch-c")
+    rental = _child(repo, parent_c, LOCKER_1, "locker-1", "r-batch-c")
     _save(repo, Decision(rental, "r-batch-c", Verdict.OK, ReasonCode.OK, "locker-1"))
     use_id = repo.reserve_if_free(ReserveRequest(rental, "u1", "locker-1", "open", None)).use_id
     record_c = BatchRecord((BatchItemRecord("locker-1", "open", None, (rental,)),))
@@ -194,9 +194,30 @@ def test_FR22_batch_record_round_trip(conn, repo):
     assert repo.selector_children(both).record == selector_both
     assert repo.batch_children(both).record == record_both
 
+    # 판정하지 않은 항목은 받은 요청뿐이다. 하위 요청·기기·거리 선택자 기록 없이 저장하고 그대로 읽는다.
+    dim = UseItem(TargetSpec.parse("light-3"), "on", {"brightness": 10})
+    halted = _parent(repo, SPEAKER, LIGHTS, dim, request_id="r-halted")
+    held = _child(repo, halted, SPEAKER, "speaker-1", "r-halted")
+    held_decision = Decision(held, "r-halted", Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED, "speaker-1")
+    _save(repo, held_decision)
+    record_halted = BatchRecord((
+        BatchItemRecord("speaker-1", "off", None, (held,), None, ("speaker-1",)),
+        BatchItemRecord(SELECTOR, "on", None),
+        BatchItemRecord("light-3", "on", {"brightness": 10}),
+    ))
+    _save(repo, Decision(halted, "r-halted", Verdict.NEED_APPROVAL, ReasonCode.APPROVAL_REQUIRED), batch=record_halted)
+    stored = repo.batch_children(halted)
+    assert stored.record == record_halted
+    assert [item.children for item in stored.items] == [(SelectorChild(held, "speaker-1", held_decision),), (), ()]
+    assert json.loads(_row(conn, halted)["decision_context"])["batch"]["items"][1:] == [
+        {"target_spec": SELECTOR, "action": "on", "arguments": None, "children": [], "nodes": [], "selector": None},
+        {"target_spec": "light-3", "action": "on", "arguments": {"brightness": 10}, "children": [], "nodes": [],
+         "selector": None},
+    ]
+
     # 기록이 가리키는 하위 행이 없거나 다른 상위 요청의 것이면 LookupError 다.
     other = _parent(repo, SPEAKER, request_id="r-other")
-    foreign = _child(repo, other, SPEAKER, None, "r-other")
+    foreign = _child(repo, other, SPEAKER, "speaker-1", "r-other")
     for index, missing in enumerate(("no-such-child", foreign)):
         broken = _parent(repo, SPEAKER, request_id=f"r-broken-{index}")
         _save(repo, Decision(broken, f"r-broken-{index}", Verdict.OK, ReasonCode.OK),
@@ -270,13 +291,13 @@ def test_FR22_batch_child_restore_uses_item_target(conn, repo, store):
     parent = _parent(repo, SPEAKER, LOCKER_1, LOCKER_2)
 
     # 명령을 연결한 하위 요청: 실행 문맥의 요청이 항목의 대상·동작과 상위 요청의 외부 ID 를 갖는다.
-    linked = _child(repo, parent, SPEAKER, None)
+    linked = _child(repo, parent, SPEAKER, "speaker-1")
     _save(repo, Decision(linked, "r-batch", Verdict.OK, ReasonCode.OK, "speaker-1"))
     command = store.link_command(linked, "speaker-1", "off").command
     assert store.execution_context(command.command_id).request == _item_request(SPEAKER)
 
     # 예약만 남은 하위 요청: 복원이 요청과 판정을 항목의 대상·동작과 상위 요청의 외부 ID 로 다시 만든다.
-    reserved = _child(repo, parent, LOCKER_1, None)
+    reserved = _child(repo, parent, LOCKER_1, "locker-1")
     _save(repo, Decision(reserved, "r-batch", Verdict.OK, ReasonCode.OK, "locker-1"))
     use_id = repo.reserve_if_free(ReserveRequest(reserved, "u1", "locker-1", "open", None)).use_id
 
@@ -289,10 +310,9 @@ def test_FR22_batch_child_restore_uses_item_target(conn, repo, store):
     assert pending("locker-1", reserved).decision == Decision(
         reserved, "r-batch", Verdict.OK, ReasonCode.OK, "locker-1", use_id)
 
-    # 판정을 저장하기 전에 멈춘 하위 요청: 행의 기기와 판정이 비어 있어도 남은 예약 세션이 기기를 알려 준다.
-    unsaved = _child(repo, parent, LOCKER_2, None)
+    # 판정을 저장하기 전에 멈춘 하위 요청: 판정이 비어 있어도 복원이 요청을 항목의 대상·동작과 상위 요청의 외부 ID 로 다시 만든다.
+    unsaved = _child(repo, parent, LOCKER_2, "locker-2")
     repo.reserve_if_free(ReserveRequest(unsaved, "u1", "locker-2", "open", None))
-    assert _row(conn, unsaved)["node_id"] is None
     assert pending("locker-2", unsaved).request == _item_request(LOCKER_2)
     assert pending("locker-2", unsaved).decision is None
 
@@ -307,12 +327,12 @@ def test_FR22_batch_child_restore_uses_item_target(conn, repo, store):
 def _settled_batch(conn, repo):
     """판정을 마친 묶음 상위 요청 하나와 하위 요청 둘. 감사 행은 모두 NOW 다.
 
-    첫 항목은 거리 선택자이고 둘째 항목은 명시 지정이라, 둘째 하위 행은 판정이 채우기 전까지 기기를 모른다.
+    첫 항목은 거리 선택자이고 둘째 항목은 명시 지정이다.
     """
     _seed(conn)
     parent = _parent(repo, NEAREST_LOCKER, LOCKER_2)
     first = _child(repo, parent, NEAREST_LOCKER, "locker-1")
-    second = _child(repo, parent, LOCKER_2, None)
+    second = _child(repo, parent, LOCKER_2, "locker-2")
     _save(repo, Decision(first, "r-batch", Verdict.OK, ReasonCode.OK, "locker-1"))
     _save(repo, Decision(second, "r-batch", Verdict.OK, ReasonCode.OK, "locker-2"))
     _save(repo, Decision(parent, "r-batch", Verdict.OK, ReasonCode.OK))

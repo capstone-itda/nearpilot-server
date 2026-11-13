@@ -520,15 +520,12 @@ class SqliteRepository:
     # ── 거리 선택자 하위 요청 (FR-09, FR-22, #253) ────────────────────
 
     def link_selector_child(
-        self, parent_internal_request_id: str, req: UseRequest, node_id: str | None, input_digest: str,
+        self, parent_internal_request_id: str, req: UseRequest, node_id: str, input_digest: str,
     ) -> str:
         """고른 기기 하나의 하위 요청 행을 만들고 새 `internal_request_id`를 반환한다.
 
         외부 `request_id`는 비운다. 그래서 `(user_id, request_id)` 고유 색인과 중복 방지 항목 수에
         들지 않고, 같은 키의 재전송 `link_request`는 상위 행만 찾는다. 상위 행이 없으면 `LookupError`다.
-
-        판정은 기기를 고른 뒤에 하위 요청 행을 만들므로 늘 고른 기기를 넘긴다 (#284). `node_id`에 `None`을
-        넘기면 행의 `node_id`를 비우고 `save_decision`이 판정의 `node_id`로 채운다.
         """
         with immediate_transaction(self._conn):
             parent = self._conn.execute(
@@ -656,8 +653,8 @@ class SqliteRepository:
     def _batch_child(self, parent_internal_request_id: str, request_id: str, child_id: str) -> SelectorChild:
         """하위 행 하나와 그 판정이다. 하위 요청의 기기는 행의 `node_id`다.
 
-        판정을 저장하면 `save_decision`이 판정의 `node_id`로 행을 채운다. 판정 전에 행이 기기를 모르거나
-        판정이 기기 없이 끝났으면 `SelectorChild.node_id`는 `""`다.
+        판정을 저장하면 `save_decision`이 판정의 `node_id`로 행을 채운다. 판정이 기기 없이 끝났으면
+        `SelectorChild.node_id`는 `""`다.
         """
         row = self._conn.execute(
             "SELECT verdict, reason_code, node_id, p_max FROM request "
