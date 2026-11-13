@@ -53,6 +53,7 @@
 - 하위 요청은 단일 기기 요청과 같은 경로를 쓴다. 하위 요청에는 외부 `request_id`가 없다 (`architecture.md` §4, §6).
 - 상위 요청의 판정 기록은 거리 선택자, 거리 순서, 기기별 정렬 값, 고른 기기, `similar`를 담는다. 상위 요청의 `node_id`는 비어 있다 (FR-22).
 - 경계 확률을 계산한 상위 요청의 판정 기록은 기기별 프레임 수와 가장 낮은 경계 확률도 담는다. 적용한 설정은 기존 설정 스냅샷이 담는다 (FR-22, #278).
+- `near:` 요청의 ③ 감사 상세는 프레임 수, 가장 낮은 경계 확률, 경계 확률 설정 세 개도 담는다 (FR-22, #278).
 - ⓪은 상위 요청의 외부 `(계정, request_id)`로 중복을 검사한다. 재전송에는 하위 요청들의 진행 상태와 결과를 묶어 반환한다 (`architecture.md` §4).
 - 하위 요청의 실행 직전 재검사는 대상을 다시 고르지 않는다. `shared` 기기는 비콘 수신만 확인한다. `rental` 기기는 근접 임계값을 다시 확인한다 (FR-18).
 - 한 하위 요청의 재검사 거부나 실행 실패는 다른 하위 요청의 실행을 되돌리지 않는다 (FR-09).
@@ -185,6 +186,7 @@
 30. 재전송 응답도 `ORDER_UNCERTAIN`이면 `selected_count`가 0이다. 하위 요청이 없는 기록을 다시 읽어도 처음 응답과 같아야 한다.
 31. `near:` 요청의 판정 기록은 거리 순서의 기기별 프레임 수(`counts`)와 가장 낮은 경계 확률(`boundary_probability`)을 담는다. 경계가 없으면 경계 확률은 비어 있다. `far:` 요청은 둘 다 비어 있다. 옛 기록을 읽으면 둘 다 비어 있다.
 32. `DistanceOrder.counts`의 기본값은 빈 사전이다. 비어 있지 않으면 거리 순서의 기기와 같아야 하고, 정렬 값이 없는 기기만 0이다. 경계의 비콘을 본 기기에 프레임 수가 없으면 판정은 내부 오류로 거부한다.
+33. 재전송에서 `ORDER_UNCERTAIN`으로 저장된 상위 요청에 거리 선택자 기록이 없으면(손상), `OK`와 달리 내부 오류로 바꾸지 않고 저장된 판정을 `selected_count` 0으로 돌려준다 — 실행한 기기가 없으므로 결정 21의 위험(실행 결과를 잃음)이 없다.
 
 ## 7. 가정
 
@@ -221,6 +223,11 @@
 | FR-09 | `test_FR09_selector_internal_error_rejection_keeps_selector_keys` | 도구 처리 중 예외의 거부도 거리 선택자 키를 담는다 |
 | FR-09 | `test_FR09_existing_rejection_keys_unchanged` | 다른 대상 지정의 판정 전 거부는 기존 여섯 키만 담는다 |
 | FR-09 | `test_FR09_selector_non_participant_usable_by_node_id` | 거리 순서에 없는 기기를 기기 ID로는 실행할 수 있다 |
+| FR-09 | `test_FR09_selector_edges_pairs` | 경계 쌍의 순서와 방향 (앞선 기기, 뒤 기기) |
+| FR-09 | `test_FR09_selector_boundary_uses_lowest_of_two_edges` | 경계가 둘이면 더 낮은 경계 확률로 정한다 |
+| FR-09 | `test_FR09_selector_boundary_equal_to_minimum_runs` | 경계 확률이 기준과 같으면 실행한다 |
+| FR-09 | `test_FR09_selector_boundary_depends_on_frame_counts` | 프레임 수가 적으면 같은 차이도 막힌다. 기기마다 자기 프레임 수를 쓴다 |
+| FR-09 | `test_FR09_selector_boundary_missing_counts_internal_error` | 경계의 비콘을 본 기기에 프레임 수가 없으면 내부 오류 (결정 32) |
 | FR-09 | `test_FR09_boundary_probability_formula` | 경계 확률 식, 프레임 수와 두 설정의 영향, 못 들은 기기의 규칙 |
 | FR-09 | `test_FR09_selector_boundary_low_probability_asks` | 경계 확률이 기준보다 작으면 `ORDER_UNCERTAIN`, 하위 요청 없음, 응답 모양 |
 | FR-09 | `test_FR09_selector_boundary_high_probability_runs` | 경계 확률이 기준 이상이면 실행한다 |
@@ -229,6 +236,8 @@
 | FR-09 | `test_FR09_selector_far_skips_boundary_probability` | `far:`는 경계 확률을 계산하지 않는다 |
 | FR-09 | `test_FR09_settings_boundary_values_validated` | 경계 확률 설정의 기본값, 허용 범위, 옛 설정 스냅샷 |
 | FR-09 | `test_FR09_tool_description_mentions_order_uncertain` | 도구 설명이 거리 선택자의 `ORDER_UNCERTAIN`을 안내한다 |
+| FR-16 | `test_FR16_distance_order_counts_validated` | 프레임 수는 거리 순서의 기기와 같고, 정렬 값이 없는 기기만 0이다 (결정 32) |
+| FR-16 | `test_FR16_distance_order_counts_rejects_invalid` | 음수, 정수가 아닌 값, 정렬 값과 맞지 않는 프레임 수를 거부한다 |
 | FR-16 | `test_FR16_distance_order_counts_frames` | 거리 순서가 기기별 프레임 수를 함께 준다 |
 | FR-16 | `test_FR16_distance_order_mean_of_recent_window` | 정렬 값은 최근 구간의 평균이다. 구간 밖 프레임은 쓰지 않는다 |
 | FR-16 | `test_FR16_report_time_only_trusted` | 신뢰한 기기의 보고만 기록한다 |
@@ -251,6 +260,8 @@
 | FR-22 | `test_FR22_selector_parent_request_id_cleared_after_latest_child` | 하위 요청이 모두 끝나면 가장 늦은 완료 시각부터 보장기간을 센다 |
 | FR-22 | `test_FR22_selector_parent_audit_kept_while_child_in_progress` | 하위 요청이 진행 중이면 상위 요청의 감사 행을 지우지 않는다 |
 | FR-22 | `test_FR22_selector_child_command_counted_while_parent_id_kept` | 상위 요청이 외부 ID를 유지하는 동안 하위 요청의 끝난 명령을 중복 방지 항목으로 센다 |
+| FR-22 | `test_FR22_selector_record_keeps_boundary_values_for_every_outcome` | `near:`는 OK·다른 거부에도 프레임 수와 경계 확률을 기록하고 `far:`는 비운다 (결정 31) |
+| FR-22 | `test_FR22_selector_record_validates_counts_and_boundary_probability` | 판정 기록의 프레임 수 기기와 경계 확률 범위를 검사한다 |
 | FR-22 | `test_FR22_selector_record_has_boundary_probability` | 판정 기록이 프레임 수와 경계 확률을 담고 다시 읽는다 |
 | FR-22 | `test_FR22_selector_resend_after_order_uncertain` | `ORDER_UNCERTAIN` 재전송이 같은 판정을 반환한다 |
 | FR-22 | `test_FR22_selector_record_round_trip` | 거리 선택자 기록과 하위 요청을 저장하고 다시 읽는다 |
