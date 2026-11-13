@@ -50,6 +50,10 @@ from nearpilot.shared.models import (
     ApprovalRequestResult,
     AutoZero,
     AutoZeroState,
+    BatchChildren,
+    BatchItemChildren,
+    BatchItemRecord,
+    BatchRecord,
     BeaconKey,
     Decision,
     DecisionRecord,
@@ -483,6 +487,8 @@ class SqliteRepository:
         }
         if record.selector is not None:
             context["selector"] = self._selector_to_data(record.selector)
+        if record.batch is not None:
+            context["batch"] = self._batch_to_data(record.batch)
         decision_context = to_json(context)
         updated = self._conn.execute(
             "UPDATE request SET verdict = ?, reason_code = ?, node_id = ?, p_max = ?, model = ?, "
@@ -514,12 +520,15 @@ class SqliteRepository:
     # ── 거리 선택자 하위 요청 (FR-09, FR-22, #253) ────────────────────
 
     def link_selector_child(
-        self, parent_internal_request_id: str, req: UseRequest, node_id: str, input_digest: str,
+        self, parent_internal_request_id: str, req: UseRequest, node_id: str | None, input_digest: str,
     ) -> str:
         """고른 기기 하나의 하위 요청 행을 만들고 새 `internal_request_id`를 반환한다.
 
         외부 `request_id`는 비운다. 그래서 `(user_id, request_id)` 고유 색인과 중복 방지 항목 수에
         들지 않고, 같은 키의 재전송 `link_request`는 상위 행만 찾는다. 상위 행이 없으면 `LookupError`다.
+
+        묶음 요청의 거리 선택자가 아닌 항목은 대상을 ③에서 정하므로 기기를 모른다. 그때는 `node_id`에
+        `None`을 넘겨 행의 `node_id`를 비운다. `save_decision`이 판정의 `node_id`로 채운다 (#284).
         """
         with immediate_transaction(self._conn):
             parent = self._conn.execute(
@@ -615,6 +624,95 @@ class SqliteRepository:
             counts=data.get("counts", {}),
             boundary_probability=data.get("boundary_probability"),
         )
+
+    # ── 묶음 요청의 판정 기록 (FR-09, FR-22, #284) ────────────────────
+
+    def batch_children(self, parent_internal_request_id: str) -> BatchChildren | None:
+        """상위 요청의 묶음 기록과 항목마다 그 항목의 하위 요청들을 기록의 순서대로 읽는다.
+
+        상위 행이 없거나 판정이 없거나 판정 기록에 묶음 기록이 없으면 `None`이다. 기록이 가리키는
+        하위 행이 없거나 다른 상위 요청의 것이면 `LookupError`다. 하위 판정의 `request_id`는 상위 행의
+        외부 ID이고, 상위 행의 값이 비었으면 `""`다.
+        """
+        parent = self._conn.execute(
+            "SELECT request_id, verdict, decision_context FROM request WHERE internal_request_id = ?",
+            (parent_internal_request_id,),
+        ).fetchone()
+        if parent is None or parent["verdict"] is None:
+            return None
+        data = from_json(parent["decision_context"]).get("batch")
+        if data is None:
+            return None
+        record = self._batch_from_data(data)
+        request_id = parent["request_id"] or ""
+        items = tuple(
+            BatchItemChildren(item, tuple(
+                self._batch_child(parent_internal_request_id, request_id, child_id) for child_id in item.children
+            ))
+            for item in record.items
+        )
+        return BatchChildren(record, items)
+
+    def _batch_child(self, parent_internal_request_id: str, request_id: str, child_id: str) -> SelectorChild:
+        """하위 행 하나와 그 판정이다. 하위 요청의 기기는 행의 `node_id`다.
+
+        판정을 저장하면 `save_decision`이 판정의 `node_id`로 행을 채운다. 판정 전에 행이 기기를 모르거나
+        판정이 기기 없이 끝났으면 `SelectorChild.node_id`는 `""`다.
+        """
+        row = self._conn.execute(
+            "SELECT verdict, reason_code, node_id, p_max FROM request "
+            "WHERE internal_request_id = ? AND selector_parent_id = ?",
+            (child_id, parent_internal_request_id),
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"요청 {parent_internal_request_id} 의 하위 요청 {child_id} 가 없다")
+        decision = None
+        if row["verdict"] is not None:
+            decision = Decision(
+                internal_request_id=child_id,
+                request_id=request_id,
+                verdict=Verdict(row["verdict"]),
+                reason=ReasonCode(row["reason_code"]),
+                node_id=row["node_id"],
+                use_id=self._decision_use_id(child_id, row["verdict"]),
+                p_max=row["p_max"],
+            )
+        return SelectorChild(child_id, row["node_id"] or "", decision)
+
+    def _batch_to_data(self, batch: BatchRecord) -> dict[str, Any]:
+        """판정 기록(`decision_context`)의 `"batch"` 값. 항목마다 받은 요청과 그 항목이 만든 하위 요청이다.
+
+        `arguments`는 받은 인자이고 없으면 `null`이다. `selector`는 거리 선택자 항목의 `"selector"` 값이고
+        다른 항목은 `null`이다.
+        """
+        return {
+            "items": [
+                {
+                    "target_spec": item.target_spec,
+                    "action": item.action,
+                    "arguments": None if item.arguments is None else dict(item.arguments),
+                    "children": list(item.children),
+                    "selector": None if item.selector is None else self._selector_to_data(item.selector),
+                }
+                for item in batch.items
+            ]
+        }
+
+    def _batch_from_data(self, data: Mapping[str, Any]) -> BatchRecord:
+        """`BatchItemRecord`는 `arguments`만 고정한다. `children`은 튜플로 만들어 넘긴다.
+
+        목록을 넘기면 거리 선택자 기록의 `children`(튜플)과 달라서 `ValueError`다.
+        """
+        return BatchRecord(tuple(
+            BatchItemRecord(
+                target_spec=item["target_spec"],
+                action=item["action"],
+                arguments=item["arguments"],
+                children=tuple(item["children"]),
+                selector=None if item["selector"] is None else self._selector_from_data(item["selector"]),
+            )
+            for item in data["items"]
+        ))
 
     # ── ① 비콘 저장 (FR-05) ──────────────────────────────────────────
 
