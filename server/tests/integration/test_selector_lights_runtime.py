@@ -21,6 +21,7 @@ from nearpilot.runtime import create_app
 from nearpilot.shared.models import BeaconKey, DistanceOrder, NodeInfo, RssiReport
 
 LIGHTS = ("light-1", "light-2", "light-3")
+HEARD_FRAMES = 30  # 정렬 값이 있는 기기의 프레임 수 (경계 확률의 N, #278). 값이 없는 기기는 0이다.
 
 
 class OrderedProximity(FakeProximity):
@@ -29,7 +30,7 @@ class OrderedProximity(FakeProximity):
     `observe_report` 로 보고를 받은 기기만 거리 순서에 선다. 그래서 이 시험은 IOT → `_ScopedSink.on_rssi_report` →
     `NodeEventService.on_rssi_report` → 근접 추정의 보고 경로도 덮는다.
     정렬 규칙은 `HmmProximityEstimator.distance_order` 와 같다: 값이 큰(가까운) 기기부터, 같으면 기기 ID 순서이고
-    값이 없는 기기는 끝에 기기 ID 순서다.
+    값이 없는 기기는 끝에 기기 ID 순서다. 프레임 수는 정렬 값이 있으면 `HEARD_FRAMES`, 없으면 0이다.
     """
 
     def __init__(self, values: Mapping[str, float | None]) -> None:
@@ -52,7 +53,9 @@ class OrderedProximity(FakeProximity):
                        key=lambda n: (-self.values[n], n))
         unheard = sorted(participants - set(heard))
         order = (*heard, *unheard)
-        return DistanceOrder(nodes=order, values={n: self.values.get(n) for n in order})
+        return DistanceOrder(
+            nodes=order, values={n: self.values.get(n) for n in order},
+            counts={n: 0 if self.values.get(n) is None else HEARD_FRAMES for n in order})
 
 
 def snapshot(w):
