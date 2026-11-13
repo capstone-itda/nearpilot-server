@@ -1,7 +1,7 @@
 # 거리 선택자
 
 - 상태: 완료
-- 담당: 작업 지시자 (shared, IOT, 근접 추정, 판정, 상태 관리, DB, API 연결 구현)
+- 담당: 작업 지시자 (shared, IOT, 근접 추정, 판정, 상태 관리, DB, API 연결 구현, 대시보드의 사유 문구)
 - 요구사항: FR-09, FR-16, FR-17, FR-18, FR-22
 - 따르는 결정: #253 (decision PR #254). 근접 참여 기기의 정의는 #252의 담당자 결정을 따른다. 경계 확률은 #278 (decision PR #280)과 2026-11-13 보완 댓글을 따른다.
 
@@ -29,7 +29,7 @@
   - 서버가 요청 순간의 거리 순서로 기기를 고른다. AI 호스트는 RSSI와 사후확률을 보지 않는다.
   - `shared` 기기는 순서만 쓴다. `rental` 기기는 고른 기기마다 `threshold_{kind}`와 비교한다.
   - 고른 기기 중 하나라도 검사에 걸리면 어느 기기도 실행하지 않는다.
-  - `near:` 요청은 경계 확률이 기준 확률 이상일 때만 하위 요청을 만든다. `far:` 요청은 경계 확률을 검사하지 않는다 (#278).
+  - `near:` 요청은 경계가 있으면 가장 낮은 경계 확률이 기준 확률 이상일 때만 하위 요청을 만든다. `far:` 요청은 경계 확률을 검사하지 않는다 (#278).
   - `nearest:`, `any:`, 명시 지정의 판정, 중복 판단 요약, 응답은 이전과 같다.
 
 ## 3. 제약
@@ -40,7 +40,7 @@
 - 순서는 ①의 활성 비콘에 대한 기기별 정렬 값으로 정한다. 정렬 값은 근접 추정이 계산한다 (FR-09, FR-16).
 - 비콘을 보지 못한 기기는 가장 먼 쪽에 둔다. 정렬 값이 같은 기기끼리는 기기 ID 순서다 (FR-09).
 - 서버는 시작부터 개수만큼 고른다. 모자라면 있는 만큼 고른다. 하나도 없으면 `DENY`와 `NO_CANDIDATE`다 (FR-09).
-- 고른 범위의 경계에서 안쪽 기기와 바깥 기기의 정렬 값 차이가 기준 값보다 작으면 그대로 실행하고 `similar`를 표시한다 (FR-09).
+- 고른 범위의 경계에서 안쪽 기기와 바깥 기기의 정렬 값 차이가 기준 값보다 작으면 그대로 실행하고 `similar`를 표시한다. `near:` 요청은 경계 확률 검사를 먼저 통과해야 한다 — 가정 설정에서 차이가 3 dB 미만인 경계는 경계 확률이 0.9에 못 미친다 (FR-09).
 - 경계는 고른 범위와 그 바로 바깥 기기 사이다. 고른 범위의 앞뒤에 바깥 기기가 있는 만큼 경계가 있다 (FR-09, #278 보완).
 - 경계 확률은 `Φ(D / s)`다. `D`는 경계의 두 기기 중 가까운 순서에서 앞선 기기의 정렬 값에서 뒤 기기의 정렬 값을 뺀 값이다. `s² = σf²(1/N안 + 1/N밖) + 2σs²`다. `σf`는 `order_frame_sigma_db`, `σs`는 `order_static_sigma_db`다. `N`은 최근 구간 안의 그 기기의 프레임 수다 (FR-09).
 - 뒤 기기만 비콘을 보지 못했으면 경계 확률은 1이다 (비콘을 보지 못한 기기는 순서의 끝에 있다). 두 기기 모두 보지 못했으면 0.5다 (#278 보완).
@@ -126,7 +126,7 @@
 | 최근 구간 안에 보고가 없는 후보 | 거리 순서에 서지 않는다. 같은 기기를 기기 ID로는 쓸 수 있다 | `test_FR09_selector_non_participant_excluded`, `test_FR09_selector_non_participant_usable_by_node_id` |
 | 빈 보고만 보낸 기기 | 가장 먼 쪽에 선다 | `test_FR09_selector_empty_report_keeps_participant_last` |
 | 개수보다 기기가 적다 | 있는 만큼 실행한다. `selected_count`가 실제 개수다 | `test_FR09_selector_count_shortage_runs_available` |
-| 경계의 두 기기가 비슷하게 들린다 | 실행하고 `similar`를 `true`로 담는다 | `test_FR09_selector_similar_boundary_flag` |
+| 경계의 두 기기가 비슷하게 들린다 (`far:`, 또는 경계 확률을 통과한 `near:`) | 실행하고 `similar`를 `true`로 담는다 | `test_FR09_selector_similar_boundary_flag` |
 | `near:` 요청의 가장 낮은 경계 확률이 기준 확률보다 작다 | `ASK`·`ORDER_UNCERTAIN`. 하위 요청을 만들지 않는다. `devices`는 빈 목록, `selected_count`는 0, `similar`는 계산한 값이다 | `test_FR09_selector_boundary_low_probability_asks` |
 | `near:` 요청의 경계 확률이 모두 기준 확률 이상이다 | 지금처럼 하위 요청을 만들어 실행한다 | `test_FR09_selector_boundary_high_probability_runs` |
 | 시작이 2 이상인 `near:` 요청의 앞쪽 경계가 애매하다 (`near:light:2:all`) | `ASK`·`ORDER_UNCERTAIN` | `test_FR09_selector_boundary_front_edge_checked` |
@@ -185,7 +185,7 @@
 29. 실행 직전 재검사는 경계 확률을 다시 계산하지 않는다 — 재검사는 대상을 다시 고르지 않는다 (FR-18). 담당자가 2026-11-13에 정했다.
 30. 재전송 응답도 `ORDER_UNCERTAIN`이면 `selected_count`가 0이다. 하위 요청이 없는 기록을 다시 읽어도 처음 응답과 같아야 한다.
 31. `near:` 요청의 판정 기록은 거리 순서의 기기별 프레임 수(`counts`)와 가장 낮은 경계 확률(`boundary_probability`)을 담는다. 경계가 없으면 경계 확률은 비어 있다. `far:` 요청은 둘 다 비어 있다. 옛 기록을 읽으면 둘 다 비어 있다.
-32. `DistanceOrder.counts`의 기본값은 빈 사전이다. 비어 있지 않으면 거리 순서의 기기와 같아야 하고, 정렬 값이 없는 기기만 0이다. 경계의 비콘을 본 기기에 프레임 수가 없으면 판정은 내부 오류로 거부한다.
+32. `DistanceOrder.counts`의 기본값은 빈 사전이다. 비어 있지 않으면 거리 순서의 기기와 같아야 하고, 정렬 값이 없는 기기만 0이다. 경계의 비콘을 본 기기에 프레임 수가 없으면 판정은 내부 오류로 거부한다. 앞선 기기만 비콘을 보지 못한 경계(정렬 규칙을 어긴 거리 순서)도 내부 오류로 거부한다.
 33. 재전송에서 `ORDER_UNCERTAIN`으로 저장된 상위 요청에 거리 선택자 기록이 없으면(손상), `OK`와 달리 내부 오류로 바꾸지 않고 저장된 판정을 `selected_count` 0으로 돌려준다 — 실행한 기기가 없으므로 결정 21의 위험(실행 결과를 잃음)이 없다.
 
 ## 7. 가정
@@ -227,6 +227,7 @@
 | FR-09 | `test_FR09_selector_boundary_uses_lowest_of_two_edges` | 경계가 둘이면 더 낮은 경계 확률로 정한다 |
 | FR-09 | `test_FR09_selector_boundary_equal_to_minimum_runs` | 경계 확률이 기준과 같으면 실행한다 |
 | FR-09 | `test_FR09_selector_boundary_depends_on_frame_counts` | 프레임 수가 적으면 같은 차이도 막힌다. 기기마다 자기 프레임 수를 쓴다 |
+| FR-09 | `test_FR09_selector_boundary_sigmas_come_from_settings` | 판정이 두 표준편차를 설정에서 읽는다 |
 | FR-09 | `test_FR09_selector_boundary_missing_counts_internal_error` | 경계의 비콘을 본 기기에 프레임 수가 없으면 내부 오류 (결정 32) |
 | FR-09 | `test_FR09_boundary_probability_formula` | 경계 확률 식, 프레임 수와 두 설정의 영향, 못 들은 기기의 규칙 |
 | FR-09 | `test_FR09_selector_boundary_low_probability_asks` | 경계 확률이 기준보다 작으면 `ORDER_UNCERTAIN`, 하위 요청 없음, 응답 모양 |
@@ -263,6 +264,7 @@
 | FR-22 | `test_FR22_selector_record_keeps_boundary_values_for_every_outcome` | `near:`는 OK·다른 거부에도 프레임 수와 경계 확률을 기록하고 `far:`는 비운다 (결정 31) |
 | FR-22 | `test_FR22_selector_record_validates_counts_and_boundary_probability` | 판정 기록의 프레임 수 기기와 경계 확률 범위를 검사한다 |
 | FR-22 | `test_FR22_selector_record_has_boundary_probability` | 판정 기록이 프레임 수와 경계 확률을 담고 다시 읽는다 |
+| FR-22 | `test_FR22_selector_resend_order_uncertain_without_record` | 기록이 손상된 `ORDER_UNCERTAIN` 재전송은 내부 오류로 바꾸지 않는다 (결정 33) |
 | FR-22 | `test_FR22_selector_resend_after_order_uncertain` | `ORDER_UNCERTAIN` 재전송이 같은 판정을 반환한다 |
 | FR-22 | `test_FR22_selector_record_round_trip` | 거리 선택자 기록과 하위 요청을 저장하고 다시 읽는다 |
 | FR-22 | `test_FR22_selector_digest_includes_start_count` | 시작이나 개수가 다르면 충돌 |

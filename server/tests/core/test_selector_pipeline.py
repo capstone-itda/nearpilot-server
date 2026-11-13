@@ -231,6 +231,8 @@ def test_FR09_boundary_probability_formula():
     # 두 기기의 프레임 수를 서로 바꿔도 같다. D=1, N=10/40: s² = 16·(1/10 + 1/40) = 2, D/s = 0.7071 → 0.7602
     assert p(-50.0, 10, -51.0, 40, 4.0, 0.0) == pytest.approx(0.7602499, abs=1e-6)
     assert p(-50.0, 40, -51.0, 10, 4.0, 0.0) == pytest.approx(0.7602499, abs=1e-6)
+    # 프레임 잡음도 식에 들어간다. D=2, N=8/8, σf=2: s² = 4·(2/8) = 1, D/s = 2 → Φ(2)
+    assert p(-50.0, 8, -52.0, 8, 2.0, 0.0) == pytest.approx(0.9772499, abs=1e-6)
     # D=0 이면 0.5 다
     assert p(-60.0, 30, -60.0, 30, 4.0, 3.5) == 0.5
 
@@ -279,6 +281,22 @@ def test_FR09_selector_boundary_low_probability_asks():
     last = events(audit, PARENT)[-1]
     assert last.step is Step.PROXIMITY
     assert thaw(last.payload) == {"verdict": "ASK", "reason": "ORDER_UNCERTAIN", "settings_version": "t", "children": 0}
+
+
+@pytest.mark.parametrize(("frame_sigma", "static_sigma", "verdict"), [
+    (1.0, 0.0, Verdict.OK),   # s = 0.258, D/s = 3.87 → 0.99995
+    (4.0, 0.0, Verdict.ASK),  # 프레임 잡음만 키움: s = 1.033 → 0.833
+    (1.0, 3.5, Verdict.ASK),  # 고정 오차만 키움: s = 4.96 → 0.580
+])
+def test_FR09_selector_boundary_sigmas_come_from_settings(frame_sigma, static_sigma, verdict):
+    """판정은 두 표준편차를 설정에서 읽는다. 같은 1 dB 차이도 설정에 따라 결과가 바뀐다 (AGENTS.md 설정 규칙)."""
+    settings = Settings(version="t", order_boundary_min_prob=0.9,
+                        order_frame_sigma_db=frame_sigma, order_static_sigma_db=static_sigma)
+    pipe, repo, prox, store, audit = build(*two_lights(-60.0, -61.0), settings=settings)
+    d = pipe.decide_selector(request("near:light:1:1")).decision
+    assert d.verdict is verdict
+    if verdict is Verdict.ASK:
+        assert d.reason is ReasonCode.ORDER_UNCERTAIN
 
 
 def test_FR09_selector_boundary_high_probability_runs():
@@ -839,6 +857,17 @@ def test_FR22_selector_resend_after_order_uncertain():
     assert again.decision == first.decision
     # 두 번째에 하위 요청도 예약도 저장도 취소도 없다
     assert (list(repo.child_links), list(repo.reserved), list(repo.saved), len(store.cancels), len(audit.events)) == before
+    assert "link_selector_child" not in repo.calls
+
+
+def test_FR22_selector_resend_order_uncertain_without_record():
+    """결정 33: 기록이 손상된 ORDER_UNCERTAIN 재전송은 내부 오류로 바꾸지 않는다. 실행한 기기가 없다."""
+    pipe, repo, prox, store, audit = build(*two_lights(-60.0, -61.0), settings=BOUNDARY)
+    pipe.decide_selector(request("near:light:1:1"))
+    repo.records[PARENT] = replace(repo.records[PARENT], selector=None)
+    d = pipe.decide_selector(request("near:light:1:1")).decision
+    assert (d.verdict, d.reason) == (Verdict.ASK, ReasonCode.ORDER_UNCERTAIN)
+    assert (d.devices, d.selected_count) == ((), 0)
     assert "link_selector_child" not in repo.calls
 
 

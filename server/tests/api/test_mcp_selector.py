@@ -66,7 +66,7 @@ def test_FR09_tool_description_mentions_order_uncertain():
     tool = next(t for t in tools if t["name"] == "request_use")
     # near 거리 선택자의 순서가 애매하면 아무것도 실행하지 않고 ASK 와 ORDER_UNCERTAIN 이 오며, 호스트는 사용자에게 되묻는다
     for text in ("near 거리 선택자는 경계의 기기들의 순서가 애매하면 아무것도 실행하지 않고",
-                 "ASK 와 ORDER_UNCERTAIN 을 반환", "사용자에게 기기를 더 구체적으로 묻거나 가까이 가 달라고 한다"):
+                 "ASK 와 ORDER_UNCERTAIN 을 반환", "사용자에게 어느 기기인지 더 구체적으로 묻는다"):
         assert text in tool["description"], text
 
 
