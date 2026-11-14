@@ -66,6 +66,18 @@ class HttpSmartThingsTransport:
             raise SmartThingsTransportError(f"SmartThings {capability}.{attribute} 형식이 다르다")
         return entry.get("value")
 
+    def get_component_status(self, device_id: str) -> dict[str, Any]:
+        """`main` 구성요소의 전체 상태 (FR-09, #289). 보고 상태 조회만 쓴다."""
+        path = f"/devices/{_quote(device_id)}/components/{COMPONENT}/status"
+        raw = self._request("GET", path, None, what="component status")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            raise SmartThingsTransportError("SmartThings 구성요소 상태 응답이 JSON 이 아니다") from None
+        if not isinstance(body, dict):
+            raise SmartThingsTransportError("SmartThings 구성요소 상태 응답 형식이 다르다")
+        return body
+
     # ── 공통 ─────────────────────────────────────────────────────
 
     def _token(self) -> str:

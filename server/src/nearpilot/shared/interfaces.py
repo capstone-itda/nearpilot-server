@@ -72,6 +72,7 @@ from nearpilot.shared.models import (
     PolicyCheckResult,
     PolicyRevision,
     ProximityResult,
+    ReportedState,
     RequestLink,
     ReserveRequest,
     ReserveResult,
@@ -557,6 +558,17 @@ class ExecutionReadiness(Protocol):
     """
 
     def can_execute(self, node_id: str) -> bool: ...
+
+
+@runtime_checkable
+class ReportedStateReader(Protocol):
+    """IOT 제공, CORE(기기 조회) 사용. 외부 API 기기의 보고 상태 (FR-09, #289).
+
+    지원하지 않는 기기와 조회 실패는 None 이다. CORE는 `get_device_state` 응답에만 담고
+    판정과 실행에 쓰지 않는다 (NFR-07).
+    """
+
+    def read(self, node_id: str) -> ReportedState | None: ...
 
 
 # ── CORE 내부 (decision ↔ proximity) ────────────────────────────────

@@ -51,7 +51,7 @@ class FakeCore:
                          "access": "operable", "actions": LOCKER_ACTIONS}]
         self.device_state = {"node_id": "locker-1", "kind": "locker", "occupancy": "rental",
                              "state": "available", "online": True, "trusted": True,
-                             "access_mode": "open", "actions": LOCKER_ACTIONS}
+                             "access_mode": "open", "actions": LOCKER_ACTIONS, "reported": None}
         self.device_calls, self.state_calls = [], []
         self.error: Exception | None = None
         self.decision = Decision("internal-1", "r1", Verdict.OK, ReasonCode.OK, node_id="locker-1",

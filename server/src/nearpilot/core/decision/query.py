@@ -23,7 +23,7 @@ from nearpilot.shared.enums import (
     Verdict,
     Visibility,
 )
-from nearpilot.shared.interfaces import ExecutionReadiness, PolicyChecker, Repository
+from nearpilot.shared.interfaces import ExecutionReadiness, PolicyChecker, ReportedStateReader, Repository
 from nearpilot.shared.models import NodeInfo
 
 log = logging.getLogger(__name__)
@@ -40,12 +40,15 @@ class DeviceQueryService:
         settings: Settings,
         clock: Callable[[], datetime],
         readiness: ExecutionReadiness,
+        *,
+        reported: ReportedStateReader | None = None,
     ) -> None:
         self._repo = repo
         self._policy = policy
         self._settings = settings
         self._clock = clock
         self._readiness = readiness
+        self._reported = reported
 
     # ── find_available_devices ──────────────────────────────────────
 
@@ -123,6 +126,27 @@ class DeviceQueryService:
             "trusted": node.trust_state is TrustState.TRUSTED,
             "access_mode": policy.mode.value,
             "actions": self._actions(node),
+            "reported": self._reported_of(node_id),
+        }
+
+    def _reported_of(self, node_id: str) -> dict[str, Any] | None:
+        """외부 API 기기의 보고 상태 (FR-09, #289). 참고 정보이고 판정에 쓰지 않는다 (NFR-07).
+
+        리더가 없거나, 지원하지 않는 기기이거나, 조회에 실패하면 None 이다. 리더 오류는 나머지 응답을 막지 않는다.
+        """
+        if self._reported is None:
+            return None
+        try:
+            state = self._reported.read(node_id)
+        except Exception:  # noqa: BLE001 - 참고 정보의 오류로 상태 조회를 실패시키지 않는다
+            log.exception("보고 상태 조회 중 예외: %s", node_id)
+            return None
+        if state is None or state.node_id != node_id:
+            return None
+        return {
+            v.key: {"value": v.value,
+                    "observed_at": None if v.observed_at is None else v.observed_at.isoformat()}
+            for v in state.values
         }
 
     def _actions(self, node: NodeInfo) -> list[dict[str, Any]]:

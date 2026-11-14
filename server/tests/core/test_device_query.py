@@ -297,7 +297,8 @@ def test_FR09_공개_기기_상태를_반환한다():
     svc, *_ = build()
     assert svc.get_device_state("anyone", "locker-1") == {
         "node_id": "locker-1", "kind": "locker", "occupancy": "rental", "state": "available",
-        "online": True, "trusted": True, "access_mode": "open", "actions": LOCKER_ACTIONS}
+        "online": True, "trusted": True, "access_mode": "open", "actions": LOCKER_ACTIONS,
+        "reported": None}
 
 
 def test_FR09_상태_조회는_근접_검사를_하지_않는다():
@@ -317,7 +318,7 @@ def test_FR09_점유_상태는_주체_없이_반환한다(state, expected):
     result = svc.get_device_state("anyone", "locker-1")
     assert result["state"] == expected
     assert set(result) == {"node_id", "kind", "occupancy", "state", "online", "trusted", "access_mode",
-                           "actions"}
+                           "actions", "reported"}
 
 
 def test_FR09_device_query_speaker_controls():
@@ -394,7 +395,8 @@ def test_FR09_비공개_기기를_점유_중인_본인은_조회한다():
     repo.open_sessions = {("someone", "locker-1")}
     assert svc.get_device_state("someone", "locker-1") == {  # 점유 주체 키가 없다
         "node_id": "locker-1", "kind": "locker", "occupancy": "rental", "state": "occupied",
-        "online": True, "trusted": True, "access_mode": "restricted", "actions": LOCKER_ACTIONS}
+        "online": True, "trusted": True, "access_mode": "restricted", "actions": LOCKER_ACTIONS,
+        "reported": None}
     repo.open_sessions = set()  # 세션이 닫혔다
     assert svc.get_device_state("someone", "locker-1") == {"reason_code": "TARGET_UNAVAILABLE"}
 
@@ -430,3 +432,70 @@ def test_FR09_복원_중인_기기는_목록에서_뺀다():
 def test_FR11_복원_사실을_공개하지_않는다():
     svc, *_ = build(readiness=FakeReadiness({"locker-1"}))
     assert "복원" not in repr(svc.find_available_devices("u1"))
+
+
+# ── 보고 상태 (FR-09, #289) ─────────────────────────────────────────
+
+
+class FakeReported:
+    def __init__(self, state=None, error: Exception | None = None):
+        self.state, self.error = state, error
+        self.calls: list[str] = []
+
+    def read(self, node_id):
+        self.calls.append(node_id)
+        if self.error is not None:
+            raise self.error
+        return self.state
+
+
+def build_reported(reported):
+    repo, policy_check = FakeRepo(), FakePolicy()
+    svc = DeviceQueryService(repo, policy_check, Settings(version="v1"), lambda: NOW, FakeReadiness(),
+                             reported=reported)
+    return svc, repo
+
+
+def test_FR09_device_state_includes_reported():
+    from nearpilot.shared.models import ReportedState, ReportedValue
+    observed = datetime(2026, 11, 13, 12, 31, 14, tzinfo=timezone.utc)
+    reported = FakeReported(ReportedState("locker-1", (
+        ReportedValue("power", "on", NOW), ReportedValue("volume", 2, observed),
+        ReportedValue("mute", None, None)), NOW))
+    svc, _ = build_reported(reported)
+    result = svc.get_device_state("anyone", "locker-1")
+    assert result["reported"] == {
+        "power": {"value": "on", "observed_at": NOW.isoformat()},
+        "volume": {"value": 2, "observed_at": observed.isoformat()},
+        "mute": {"value": None, "observed_at": None}}
+    assert reported.calls == ["locker-1"]
+
+
+def test_FR09_mqtt_node_reported_null():
+    reported = FakeReported(None)
+    svc, _ = build_reported(reported)
+    assert svc.get_device_state("anyone", "locker-1")["reported"] is None
+    svc, _ = build_reported(None)
+    assert svc.get_device_state("anyone", "locker-1")["reported"] is None
+
+
+def test_FR09_reported_for_other_node_is_ignored():
+    from nearpilot.shared.models import ReportedState, ReportedValue
+    svc, _ = build_reported(FakeReported(ReportedState("other", (ReportedValue("power", "on"),), NOW)))
+    assert svc.get_device_state("anyone", "locker-1")["reported"] is None
+
+
+def test_FR09_hidden_node_does_not_read_reported():
+    reported = FakeReported(None)
+    svc, repo = build_reported(reported)
+    repo.policies["locker-1"] = policy(visibility=Visibility.PRIVATE)
+    assert svc.get_device_state("stranger", "locker-1") == {"reason_code": "TARGET_UNAVAILABLE"}
+    assert svc.get_device_state("anyone", "no-such") == {"reason_code": "TARGET_UNAVAILABLE"}
+    assert reported.calls == []
+
+
+def test_FR09_reader_error_keeps_state():
+    svc, _ = build_reported(FakeReported(error=RuntimeError("secret internal detail")))
+    result = svc.get_device_state("anyone", "locker-1")
+    assert result["reported"] is None and result["state"] == "available"
+    assert "secret" not in repr(result)

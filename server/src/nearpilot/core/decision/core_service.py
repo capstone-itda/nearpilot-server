@@ -20,6 +20,7 @@ from nearpilot.shared.config import Settings
 from nearpilot.shared.interfaces import (
     AuditLog,
     ExecutionReadiness,
+    ReportedStateReader,
     ExecutionService,
     ExecutionStore,
     PolicyChecker,
@@ -94,6 +95,7 @@ def build_core_service(
     store: ExecutionStore,
     release: UseRelease,
     window: BatchAllocator | None = None,
+    reported: ReportedStateReader | None = None,
     new_id: Callable[[], str] = lambda: uuid.uuid4().hex,
 ) -> DelegatingCoreService:
     """판정 서비스를 만들고 CORE 서비스로 묶는다.
@@ -107,6 +109,6 @@ def build_core_service(
     return DelegatingCoreService(
         use=RequestUseService(pipeline, execution, store),
         access=AccessRequestService(repo, policy, audit, settings, clock, new_id=new_id),
-        query=DeviceQueryService(repo, policy, settings, clock, readiness),
+        query=DeviceQueryService(repo, policy, settings, clock, readiness, reported=reported),
         release=release,
     )

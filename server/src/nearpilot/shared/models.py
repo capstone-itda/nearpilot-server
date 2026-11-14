@@ -1455,3 +1455,35 @@ class ProvisioningBundle:
     mqtt_host: str
     mqtt_port: int
 
+
+
+@dataclass(frozen=True, slots=True)
+class ReportedValue:
+    """외부 API 기기가 보고한 값 하나 (FR-09, #289). 관측 시각은 외부 API가 기록한 시각이다.
+
+    판정, 허가, 실행 성공의 근거가 아니다 (FR-07, NFR-07).
+    """
+
+    key: str
+    value: Any
+    observed_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, str) or not self.key:
+            raise ValueError("ReportedValue.key 는 빈 문자열이 아니어야 한다")
+        object.__setattr__(self, "value", _freeze(self.value))
+
+
+@dataclass(frozen=True, slots=True)
+class ReportedState:
+    """기기 하나의 보고 상태 (FR-09, #289). `read_at` 은 서버가 외부 API를 읽은 시각이다."""
+
+    node_id: str
+    values: tuple[ReportedValue, ...]
+    read_at: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "values", tuple(self.values))
+        keys = [v.key for v in self.values]
+        if len(keys) != len(set(keys)):
+            raise ValueError("ReportedState 의 키가 겹친다")

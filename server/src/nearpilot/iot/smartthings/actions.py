@@ -61,12 +61,22 @@ class Plan:
 
 
 @dataclass(frozen=True, slots=True)
+class Reported:
+    """보고 상태의 키 하나와 읽을 속성 (FR-09, #289, specs/iot-device-reported-state 결정 1)."""
+
+    key: str
+    capability: str
+    attribute: str
+
+
+@dataclass(frozen=True, slots=True)
 class SmartThingsAction:
     """NearPilot 동작 이름 하나에 대응하는 SmartThings 쪽 정보."""
 
     requires: tuple[str, ...]  # 선언 합성에서 이 capability 가 모두 있어야 동작을 선언한다
     declaration: Mapping[str, Any]  # device-protocol.md 형식의 동작 선언(이름 포함)
     plan: Callable[[Mapping[str, Any] | None], Plan | None]
+    reported: Reported | None = None  # 이 동작이 바꾸는 값. 확인 속성과 같다
 
 
 _SIGNAL = {"kind": "signal_output"}
@@ -163,27 +173,32 @@ MODE_ID_MAX_LENGTH = 32
 ACTIONS: dict[str, SmartThingsAction] = {
     "on": SmartThingsAction(
         requires=("switch",), plan=_switch("on"),
+        reported=Reported("power", "switch", "switch"),
         declaration={"name": "on", "description": "켜기", "input_schema": _NO_ARGS, "result": _SIGNAL},
     ),
     "off": SmartThingsAction(
         requires=("switch",), plan=_switch("off"),
+        reported=Reported("power", "switch", "switch"),
         declaration={"name": "off", "description": "끄기", "role": "deactivate",
                      "input_schema": _NO_ARGS, "result": _SIGNAL},
     ),
     "set_volume": SmartThingsAction(
         requires=("audioVolume",), plan=_volume,
+        reported=Reported("volume", "audioVolume", "volume"),
         declaration={"name": "set_volume", "description": "음량",
                      "input_schema": _schema("volume", {"type": "integer", "minimum": 0, "maximum": 100}),
                      "result": _SIGNAL},
     ),
     "set_mute": SmartThingsAction(
         requires=("audioMute",), plan=_mute,
+        reported=Reported("mute", "audioMute", "mute"),
         declaration={"name": "set_mute", "description": "음소거",
                      "input_schema": _schema("state", {"type": "string", "enum": ["muted", "unmuted"]}),
                      "result": _SIGNAL},
     ),
     "set_picture_mode": SmartThingsAction(
         requires=("custom.picturemode",),
+        reported=Reported("picture_mode", "custom.picturemode", "pictureMode"),
         plan=_mode("custom.picturemode", "setPictureMode", "pictureMode", "supportedPictureModesMap"),
         declaration={"name": "set_picture_mode", "description": "화면 모드 ID",
                      "input_schema": _schema("mode", {"type": "string", "maxLength": MODE_ID_MAX_LENGTH}),
@@ -191,6 +206,7 @@ ACTIONS: dict[str, SmartThingsAction] = {
     ),
     "set_sound_mode": SmartThingsAction(
         requires=("custom.soundmode",),
+        reported=Reported("sound_mode", "custom.soundmode", "soundMode"),
         plan=_mode("custom.soundmode", "setSoundMode", "soundMode", "supportedSoundModesMap"),
         declaration={"name": "set_sound_mode", "description": "소리 모드 ID",
                      "input_schema": _schema("mode", {"type": "string", "maxLength": MODE_ID_MAX_LENGTH}),
@@ -198,12 +214,14 @@ ACTIONS: dict[str, SmartThingsAction] = {
     ),
     "set_channel": SmartThingsAction(
         requires=("tvChannel",), plan=_channel,
+        reported=Reported("channel", "tvChannel", "tvChannel"),
         declaration={"name": "set_channel", "description": "채널 번호나 up·down",
                      "input_schema": _schema("channel", {"type": "string", "maxLength": 4}),
                      "result": _SIGNAL},
     ),
     "launch_app": SmartThingsAction(
         requires=("custom.launchapp", "tvChannel"), plan=_launch,
+        reported=Reported("app", "tvChannel", "tvChannelName"),
         declaration={"name": "launch_app", "description": "앱 실행",
                      "input_schema": _schema("app", {"type": "string", "enum": sorted(APPS)}),
                      "result": _SIGNAL},
