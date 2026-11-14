@@ -35,6 +35,14 @@ def test_FR08_무효한_토큰은_401():
     assert "not-registered" not in r.text
 
 
+def test_FR09_초기화_응답에_호스트_안내_instructions가_있다():
+    c = Client()
+    r = run(c.post("initialize", INIT))
+    instructions = r.json()["result"]["instructions"]
+    for text in ("message", "verdict", "reason", "지어내지"):
+        assert text in instructions, text
+
+
 def test_FR08_Bearer가_아닌_헤더는_401():
     c = Client()
     r = run(c.post("tools/list", token=None, headers={"Authorization": f"Basic {TOKEN_A}"}))
@@ -104,7 +112,7 @@ def test_FR09_request_use는_토큰_계정으로_요청을_만든다():
     assert (req.target.kind, req.target.device_kind) == (TargetKind.NEAREST, "locker")
     assert req.host_kind is None and req.parent_internal_request_id is None
     assert resp == {"verdict": "OK", "reason": "OK", "node_id": "locker-1", "use_id": "use-1",
-                    "request_id": "r1", "message": None}
+                    "request_id": "r1", "message": "1번 사물함을 열었습니다."}
 
 
 def test_FR09_인자의_사용자_ID는_계정으로_쓰지_않는다():

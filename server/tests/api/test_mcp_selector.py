@@ -141,7 +141,7 @@ def test_FR09_existing_response_keys_unchanged(target_spec):
     resp = c.call({"target_spec": target_spec, "action": "open", "request_id": "r1"})
     assert set(resp) == BASE_KEYS
     assert resp == {"verdict": "OK", "reason": "OK", "node_id": "locker-1", "use_id": "use-1",
-                    "request_id": "r1", "message": None}
+                    "request_id": "r1", "message": "1번 사물함을 열었습니다."}
 
 
 @pytest.mark.parametrize("target_spec", ["nearest:locker", "locker-1", "any:locker"])
