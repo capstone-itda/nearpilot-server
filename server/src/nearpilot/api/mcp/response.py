@@ -84,8 +84,10 @@ def status_denied(reason: ReasonCode) -> dict[str, Any]:
 
 # 동작 목록은 이름, 설명, 인자 스키마만 담는다. 제작사 정보와 선언 해시는 넣지 않는다 (FR-09, FR-11).
 _DEVICE_KEYS = ("node_id", "kind", "occupancy", "access", "actions")
-_STATE_KEYS = ("node_id", "kind", "occupancy", "state", "online", "trusted", "access_mode", "actions")
+_STATE_KEYS = ("node_id", "kind", "occupancy", "state", "online", "trusted", "access_mode", "actions",
+               "reported")
 _ACTION_KEYS = ("name", "description", "input_schema")
+_REPORTED_KEYS = ("value", "observed_at")  # 보고 상태는 값과 관측 시각만 담는다 (FR-09, FR-11, #289)
 
 
 def _filtered(item: Mapping[str, Any], keys: Sequence[str]) -> dict[str, Any]:
@@ -93,6 +95,11 @@ def _filtered(item: Mapping[str, Any], keys: Sequence[str]) -> dict[str, Any]:
     out = {key: item.get(key) for key in keys}
     if "actions" in out and out["actions"] is not None:
         out["actions"] = [{key: action.get(key) for key in _ACTION_KEYS} for action in out["actions"]]
+    if isinstance(out.get("reported"), Mapping):
+        out["reported"] = {str(name): {key: entry.get(key) for key in _REPORTED_KEYS}
+                           for name, entry in out["reported"].items() if isinstance(entry, Mapping)}
+    elif "reported" in out:
+        out["reported"] = None
     return out
 
 

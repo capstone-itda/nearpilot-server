@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -30,3 +30,14 @@ class SmartThingsTransport(Protocol):
                      arguments: Sequence[Any]) -> None: ...
 
     def get_attribute(self, device_id: str, capability: str, attribute: str) -> Any: ...
+
+
+@runtime_checkable
+class SmartThingsStatusSource(Protocol):
+    """기기 하나의 `main` 구성요소 전체 상태 조회 (FR-09, #289, specs/iot-device-reported-state).
+
+    반환값은 `{capability: {attribute: {"value": ..., "timestamp": ...}}}` 모양이다.
+    실패는 `SmartThingsTransportError`다.
+    """
+
+    def get_component_status(self, device_id: str) -> Mapping[str, Any]: ...

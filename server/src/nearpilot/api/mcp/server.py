@@ -72,7 +72,13 @@ _DEVICES_DESCRIPTION = (
     "access 가 operable 이면 사용을 요청할 수 있고 approval_required 이면 승인이 필요하다. "
     "조회는 실행 허가가 아니다. 실제 실행은 request_use 가 지정 방식에 따라 별도로 판정한다."
 )
-_DEVICE_STATE_DESCRIPTION = "기기(node_id)의 상태를 조회한다. 근접 검사는 하지 않는다."
+_DEVICE_STATE_DESCRIPTION = (
+    "기기(node_id)의 상태를 조회한다. 근접 검사는 하지 않는다. "
+    "reported 는 외부 API 기기가 보고한 마지막 값이다(예: power, volume, mute, channel). "
+    "값마다 observed_at(기기가 그 값을 기록한 시각)이 있다. observed_at 이 오래됐으면 현재 값이 아닐 수 있다. "
+    "'조금 올려 줘' 같은 상대 조작은 reported 값을 기준으로 인자를 계산한다. 값이 오래됐거나 없으면 사용자에게 확인한다. "
+    "reported 는 실행 결과의 근거가 아니다. reported 가 null 이면 보고 상태가 없는 기기다."
+)
 
 # MCP SDK 가 127.0.0.1 바인딩에 자동으로 켜는 DNS 리바인딩 방어의 기본 허용 목록이다.
 _LOCAL_HOSTS = ("127.0.0.1:*", "localhost:*", "[::1]:*")

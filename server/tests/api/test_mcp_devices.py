@@ -7,7 +7,7 @@ import json
 from _mcp_client import TOKEN_A, TOKEN_B, Client, run
 
 UNAVAILABLE = {"node_id": None, "kind": None, "occupancy": None, "state": None, "online": None,
-               "trusted": None, "access_mode": None, "actions": None,
+               "trusted": None, "access_mode": None, "actions": None, "reported": None,
                "reason": "TARGET_UNAVAILABLE"}
 
 
@@ -72,7 +72,7 @@ def test_FR11_상태에서_허용_목록_밖의_키를_버린다():
                            "place_id": "p"}
     resp = state(c, {"node_id": "locker-1"})
     assert set(resp) == {"node_id", "kind", "occupancy", "state", "online", "trusted",
-                         "access_mode", "actions", "reason"}
+                         "access_mode", "actions", "reported", "reason"}
     assert "user-b" not in json.dumps(resp)
 
 
@@ -95,3 +95,15 @@ def test_FR08_토큰이_없으면_조회_도구를_처리하지_않는다():
     r = run(c.post("tools/call", {"name": "find_available_devices", "arguments": {}}, token=None))
     assert r.status_code == 401
     assert c.core.device_calls == [] and c.core.state_calls == []
+
+
+def test_FR09_mcp_get_device_state_passes_reported():
+    """보고 상태는 값과 관측 시각만 그대로 싣는다. 그 밖의 키는 버린다 (FR-11, #289)."""
+    c = Client()
+    c.core.device_state = {**c.core.device_state, "reported": {
+        "volume": {"value": 2, "observed_at": "2026-11-13T12:31:14+00:00", "device_id": "dev-secret"},
+        "power": {"value": "on", "observed_at": None}}}
+    resp = state(c, {"node_id": "locker-1"})
+    assert resp["reported"] == {"volume": {"value": 2, "observed_at": "2026-11-13T12:31:14+00:00"},
+                                "power": {"value": "on", "observed_at": None}}
+    assert "dev-secret" not in json.dumps(resp)

@@ -42,7 +42,8 @@ from nearpilot.iot.mqtt import (
 from nearpilot.iot.routing import RoutingCommandGateway
 from nearpilot.iot.smartthings.gateway import SmartThingsCommandGateway
 from nearpilot.iot.smartthings.http import HttpSmartThingsTransport
-from nearpilot.iot.smartthings.transport import SmartThingsTransport
+from nearpilot.iot.smartthings.reported import ReportedStateRouter, SmartThingsReportedState
+from nearpilot.iot.smartthings.transport import SmartThingsStatusSource, SmartThingsTransport
 from nearpilot.runtime.auth_audit import AuditedAuthenticator
 from nearpilot.runtime.config import DashboardConfig, ServerConfig, SmartThingsConfig
 from nearpilot.runtime.database import ThreadDatabase
@@ -52,7 +53,7 @@ from nearpilot.shared.config import Settings
 from nearpilot.shared.enums import ExecutionStatus
 from nearpilot.shared.interfaces import (
     AdminService, ApprovalService, CoreService, NodeCommandGateway, ProximityEstimator, RecoveryService,
-    RetentionStore,
+    ReportedStateReader, RetentionStore,
 )
 from nearpilot.shared.interfaces import NodeAdminService as NodeAdminApi
 from nearpilot.shared.models import Decision, ExecutionContext, ExecutionResult, UseRequest
@@ -455,7 +456,7 @@ class Runtime:
         core = build_core_service(
             repo=repo, proximity=proximity, policy=policy, audit=audit, settings=s, clock=clock,
             readiness=restore, execution=_SharedLightSuccess(execution, shared_light),
-            store=store, release=release, window=window)
+            store=store, release=release, window=window, reported=self._reported_state(s))
         node_events = NodeEventService(
             repository=repo, store=store, proximity=proximity, execution=execution,
             restore=restore, recovery=recovery, shared_light=shared_light,
@@ -500,6 +501,22 @@ class Runtime:
         }
         log.info("SmartThings 바인딩 %d개: %s", len(routes), ", ".join(sorted(routes)))
         return RoutingCommandGateway(mqtt_gateway, routes)
+
+    def _reported_state(self, settings: Settings) -> ReportedStateReader | None:
+        """바인딩한 SmartThings 기기의 보고 상태 리더 (FR-09, #289). 바인딩이 없으면 None 이다."""
+        smartthings = self.config.smartthings
+        if smartthings is None:
+            return None
+        transport = self._smartthings_transport_factory(smartthings)
+        if not isinstance(transport, SmartThingsStatusSource):
+            log.warning("SmartThings transport 가 구성요소 상태 조회를 지원하지 않아 보고 상태를 두지 않는다")
+            return None
+        return ReportedStateRouter({
+            binding.node_id: SmartThingsReportedState(
+                transport, binding.device_id, binding.node_id,
+                cache_sec=lambda: settings.reported_state_cache_sec, clock=self._clock)
+            for binding in smartthings.bindings
+        })
 
     def _dashboard_parts(self, dashboard: DashboardConfig) -> DashboardParts:
         """조회 서비스와 따라 읽기를 만든다. `create_app` 이 서버를 시작하기 전에 라우터를 붙이므로 여기서 만든다.
