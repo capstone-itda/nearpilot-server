@@ -102,7 +102,9 @@ def _volume(arguments: Mapping[str, Any] | None) -> Plan | None:
     volume = _arg(arguments, "volume")
     if type(volume) is not int:
         return None
-    return Plan("audioVolume", "setVolume", (volume,), Confirm(EQUALS, "audioVolume", "volume", (volume,)))
+    # 클라우드 값이 refresh 없이는 갱신되지 않는다 (spec 결정 24, 2026-11-14 실기)
+    return Plan("audioVolume", "setVolume", (volume,), Confirm(EQUALS, "audioVolume", "volume", (volume,)),
+                refresh=True)
 
 
 _MUTE_COMMANDS = {"muted": "mute", "unmuted": "unmute"}
@@ -113,7 +115,7 @@ def _mute(arguments: Mapping[str, Any] | None) -> Plan | None:
     command = _MUTE_COMMANDS.get(state) if isinstance(state, str) else None
     if command is None:
         return None
-    return Plan("audioMute", command, (), Confirm(EQUALS, "audioMute", "mute", (state,)))
+    return Plan("audioMute", command, (), Confirm(EQUALS, "audioMute", "mute", (state,)), refresh=True)
 
 
 def _mode(capability: str, command: str, attribute: str, map_attribute: str

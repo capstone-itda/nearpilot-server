@@ -96,6 +96,8 @@
 | 명령 요청의 응답 시간 초과나 5xx | 보냈을 수 있다. 확인 조회를 계속하고, 확인하지 못하면 `UNKNOWN` | `test_FR07_ambiguous_post_keeps_confirming` |
 | `set_channel`의 `channel`이 번호도 `up`·`down`도 아님 | 보내지 않고 `NOT_SENT` | `test_FR06_invalid_channel_not_sent` |
 | `set_mute`의 `state`가 `muted` | `audioMute.mute`를 보내고 `mute`가 `muted`인지 확인 | `test_FR07_set_mute_selects_command` |
+| `set_volume`·`set_mute` 뒤 클라우드 값이 옛 값으로 남음 | 확인 조회마다 `refresh`를 먼저 보낸다. 갱신된 값이 요청한 값이면 `SUCCEEDED` | `test_FR07_volume_and_mute_confirmed_after_refresh` |
+| `refresh` 동작의 명령을 보냄 | 확인 조회 간격만큼 기다린 뒤 첫 `refresh`를 보낸다 | `test_FR07_refresh_waits_one_interval_after_send` |
 | 화면 모드 ID의 이름을 대응표에서 찾음 | 이름을 인자로 보낸다. `refresh` 뒤 현재 모드를 확인 | `test_FR07_picture_mode_sends_name_from_map` |
 | 대응표가 아직 `null` | `refresh` 뒤 다시 읽는다. 끝내 없으면 보내지 않고 `NOT_SENT` | `test_FR07_mode_map_missing_not_sent` |
 | 상대 명령(`up`) 뒤 값이 바뀜 | `SUCCEEDED`, `confirmation`에 전후 값 | `test_FR07_channel_up_confirmed_by_change` |
@@ -156,6 +158,8 @@
     - 판정은 core가 한다: 조립(`runtime/assembly.py`)이 바인딩 목록을 `ExecutionService(non_isolating_nodes=...)`로 넘기고, core가 `ExecutionStore.record_result(..., isolate=False)`와 근거의 `"isolated": false`를 함께 정한다. iot는 결과를 바꾸지 않는다.
     - db는 `isolate=False`면 결과와 감사(`isolated: false`)만 남기고 사용분을 `consumed`로 둔다(전송을 시도했다). 기기 상태와 점유 세션은 건드리지 않는다.
     - 대여형 실행은 지금 규칙(격리)을 따른다. 재시작 복원(`restore.py`)과 통신·저장 장애의 `isolate_device`도 바꾸지 않는다.
+24. `set_volume`·`set_mute`도 확인 조회마다 `refresh`를 먼저 보낸다 (2026-11-14 담당자 결정). display-1(M5) 실기에서 음량 명령은 실행됐지만 `audioVolume.volume`이 전날 값으로 남아 결과가 `unknown`이었다. `refresh`를 보내자 3초 안에 실제 값으로 바뀌었다. 성공 확인의 기준(속성이 요청한 값과 같다)은 그대로다 — `architecture.md`의 "상태 반영이 늦는 동작은 확인 조회 전에 `refresh.refresh`를 보낸다"를 따른다.
+25. `refresh`가 필요한 동작은 명령을 보낸 뒤 확인 조회 간격(`confirm_poll_sec`)만큼 기다린 다음 첫 `refresh`와 조회를 한다 (2026-11-14 담당자 결정). 실기에서 전송 직후의 `refresh`는 기기가 적용하기 전이라 옛 값을 읽었고, 음량 확인이 매번 두 번째 조회(약 5초)에 성공했다. SmartThings 기기당 호출 한도(분당 명령 12, 조회 12) 안에서 "볼륨 좀만 더" 한 번이 쓰는 호출을 줄인다.
 
 ## 7. 가정
 

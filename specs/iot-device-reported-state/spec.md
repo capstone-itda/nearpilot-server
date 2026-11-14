@@ -23,6 +23,7 @@
 
 - 키는 기기가 선언한 동작이 바꾸는 값의 이름이다. 선언 합성과 같은 규칙(동작의 `requires` capability가 모두 있음)으로 고른 동작의 값만 담는다 (FR-09, #289).
 - 관측 시각은 SmartThings의 속성별 `timestamp`다. 서버는 오래된 값을 빼지 않는다 (#289).
+- 읽기 전에 `refresh.refresh`를 한 번 보낸다. 캐시 안에서는 보내지 않는다 (결정 7).
 - 서버는 `get_device_state`를 부를 때만 SmartThings를 읽는다. `reported_state_cache_sec` 동안 결과를 재사용한다 (§1.2, #289).
 - `find_available_devices`는 보고 상태를 담지 않는다 (#289).
 - 가시성 검사를 통과한 기기만 SmartThings를 읽는다 (FR-09).
@@ -55,7 +56,6 @@
 
 ### 만들지 않는 것
 
-- `set_volume`·`set_mute`의 결과 불명 처리(refresh)는 별도 fix 작업이다.
 - MQTT 기기의 보고 상태는 만들지 않는다.
 - 대시보드 표시는 만들지 않는다.
 
@@ -72,6 +72,8 @@
 | MQTT 기기를 조회한다 | `reported`는 `null`이다 | `test_FR09_mqtt_node_reported_null` |
 | 비공개 기기를 권한 없이 조회한다 | 기존처럼 `TARGET_UNAVAILABLE`이고 SmartThings를 읽지 않는다 | `test_FR09_hidden_node_does_not_read_reported` |
 | 리더가 예외를 던진다 | `reported`는 `null`이고 나머지 응답은 그대로다 | `test_FR09_reader_error_keeps_state` |
+| 클라우드 값이 기기 값보다 늦다(리모컨으로 음량을 바꿈) | `refresh` 뒤 읽어서 기기 값을 담는다 | `test_FR09_refresh_before_read_gets_device_value` |
+| `refresh`를 보내지 못한다(429 등) | 클라우드에 남은 값을 그대로 담는다 | `test_FR09_refresh_failure_still_reads` |
 
 ## 6. 결정
 
@@ -81,6 +83,7 @@
 - 담을 동작은 선언 합성과 같은 규칙으로 고른다. 동작의 `requires` capability가 응답에 모두 있으면 담는다 — 인터페이스(`read(node_id)`)를 바꾸지 않고, IOT가 저장소를 읽지 않는다. 선언과 응답의 capability가 같으므로 선언한 동작과 같다.
 - 전체 상태 조회는 `SmartThingsTransport`에 더하지 않고 별도 `SmartThingsStatusSource`로 둔다 — 기존 명령 경로의 fake와 계약을 바꾸지 않는다.
 - 노드별 리더 라우팅은 `ReportedStateRouter`(바인딩한 node_id → 리더)로 둔다.
+- 읽기 전에 `refresh.refresh`를 한 번 보낸다 (2026-11-14 담당자 결정). display-1(M5) 실기에서 클라우드의 `audioVolume.volume`은 기기 값이 바뀌어도 갱신되지 않았다(기기 10, 클라우드 8). `refresh` 응답(약 1.4초) 직후의 조회가 기기 값이었다. `observed_at`은 값이 마지막으로 바뀐 시각이라 오래됐다는 이유로 호스트가 값을 버리면 상대 조작을 하지 못한다. 그래서 서버가 조회 순간의 값을 맞추고, 도구 설명은 "필요한 키가 없을 때만 사용자에게 확인한다"로 안내한다. SmartThings 기기당 호출 한도(분당 명령 12, 조회 12)에서 한 번의 조회는 명령 1, 조회 1을 쓴다. `architecture.md` "보고 상태 조회"의 "한 번 읽는다"와 다르다 — docs 반영 이슈 초안을 담당자에게 넘긴다.
 
 ## 7. 가정
 
@@ -106,3 +109,6 @@
 | FR-09 | `test_FR09_reader_error_keeps_state` | 리더 예외가 나머지 응답을 막지 않는다 |
 | FR-11 | `test_FR11_reported_has_no_device_id` | 응답에 SmartThings `deviceId`가 없다 |
 | FR-09 | `test_FR09_mcp_get_device_state_passes_reported` | MCP 도구 응답에 `reported`가 그대로 실린다 |
+| FR-09 | `test_FR09_refresh_before_read_gets_device_value` | 읽기 전에 `refresh`를 보내고, 캐시 안에서는 보내지 않는다 |
+| FR-09 | `test_FR09_refresh_failure_still_reads` | `refresh` 실패는 읽기를 막지 않는다 |
+| FR-09 | `test_FR09_refresh_requires_command_transport` | 명령을 보낼 수 없는 transport로 `refresh`를 켜면 생성 오류다 |

@@ -514,7 +514,8 @@ class Runtime:
         return ReportedStateRouter({
             binding.node_id: SmartThingsReportedState(
                 transport, binding.device_id, binding.node_id,
-                cache_sec=lambda: settings.reported_state_cache_sec, clock=self._clock)
+                cache_sec=lambda: settings.reported_state_cache_sec, clock=self._clock,
+                refresh=isinstance(transport, SmartThingsTransport))
             for binding in smartthings.bindings
         })
 
