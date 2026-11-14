@@ -72,6 +72,8 @@ class _Light:
     resumed_session_id: str | None = None
     status: NodeStatus | None = None
     off_request: ExecutionContext | None = None
+    # 꺼짐이 NOT_SENT로 끝났을 때의 마지막 성공 명령 ID. 그대로면 다시 요청하지 않는다 (2026-11-14 담당자 결정)
+    abandoned_after: str | None = None
 
 
 class SharedLightService:
@@ -246,6 +248,10 @@ class SharedLightService:
             with self._lock_for(node_id):
                 if light.off_request == ctx:
                     light.off_request = None
+                if result.status == ExecutionStatus.NOT_SENT and result.command_id:
+                    # 보내지 못한 꺼짐은 다시 요청하지 않는다. 명령 없이 전송 전 확인에서 거부된 요청은 포기가 아니다.
+                    last = self._store.last_succeeded(node_id)
+                    light.abandoned_after = None if last is None else last.command_id
             if result.status == ExecutionStatus.SUCCEEDED:
                 self.on_execution_result(ctx, result)
         return result.status != ExecutionStatus.NOT_SENT
@@ -282,6 +288,8 @@ class SharedLightService:
             last = self._store.last_succeeded(node_id)
             if last is None or last.node_id != node_id or _role(node, last.action) is not None:
                 return False
+            if light.abandoned_after is not None and last.command_id == light.abandoned_after:
+                return False  # 이 켜기 뒤의 꺼짐은 이미 보내지 못했다. 새 켜기 성공 전에는 다시 요청하지 않는다.
             if _deactivate_action(node) is None:
                 return False
             ttl = timedelta(seconds=light.settings.online_ttl_sec)

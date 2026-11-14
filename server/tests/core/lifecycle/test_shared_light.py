@@ -87,12 +87,14 @@ class StoreFake:
 
     def __init__(self):
         self.last = {"light-1": "on"}
+        self.command_ids = {}  # 성공 명령 ID. 없으면 재시작 전 명령의 고정 ID다.
 
     def last_succeeded(self, node_id):
         action = self.last.get(node_id)
         if action is None:
             return None
-        return CommandRecord(f"last-{node_id}", f"request-last-{node_id}", node_id, action,
+        command_id = self.command_ids.get(node_id, f"last-{node_id}")
+        return CommandRecord(command_id, f"request-last-{node_id}", node_id, action,
                              ExecutionStatus.SUCCEEDED, ExecutionKind.SHARED)
 
 
@@ -145,6 +147,7 @@ def execution(env, user="visitor-a", request_id="request-1", action="on",
     result = replace(result, **changes)
     if result.status == ExecutionStatus.SUCCEEDED:
         env.store.last[node_id] = action  # 실제 DB는 성공 명령을 저장한다.
+        env.store.command_ids[node_id] = result.command_id
     env.service.on_execution_result(context, result)
     return context, result
 
@@ -648,6 +651,42 @@ def test_FR20_pending_off_not_duplicated(env):
     advance(env, 1)
     candidates(env)
     assert [c.internal_request_id for c in calls] == ["internal-1"] * 3 + ["internal-2"]
+
+
+def test_FR20_not_sent_off_not_retried(env):
+    """보내지 못한 꺼짐은 tick마다 다시 보내지 않는다. 새 켜기 성공 뒤의 이탈만 다시 꺼짐을 요청한다."""
+    outcome = [ExecutionStatus.NOT_SENT]
+    calls = active(env, outcome)
+    execution(env)
+    advance(env, 15)
+    assert candidates(env) == ()
+    assert len(calls) == 1
+    for _ in range(3):
+        advance(env, 1)
+        assert candidates(env) == ()
+    assert len(calls) == 1
+    assert not env.service.can_request_off("light-1")
+    outcome[0] = ExecutionStatus.SUCCEEDED
+    execution(env, request_id="request-2")
+    advance(env, 15)
+    assert candidates(env) == ("light-1",)
+    assert [c.internal_request_id for c in calls] == ["internal-1", "internal-2"]
+
+
+def test_FR20_refused_off_without_command_is_not_abandoned(env):
+    """명령 없이 전송 전 확인에서 거부된 요청은 포기가 아니다. 조건이 다시 맞으면 꺼짐을 요청한다."""
+    calls = active(env)
+    execution(env)
+    advance(env, 15)
+    status(env)
+    service = env.service
+    checks = iter([True, False])  # tick의 확인은 통과하고 실행 서비스의 전송 직전 확인에서 거부된다
+    service.can_request_off = lambda node_id: next(checks)
+    assert service.tick() == ()
+    del service.can_request_off
+    advance(env, 1)
+    assert candidates(env) == ("light-1",)
+    assert [c.internal_request_id for c in calls] == ["internal-1", "internal-2"]
 
 
 def test_FR20_internal_off_success_clears_light(env):
