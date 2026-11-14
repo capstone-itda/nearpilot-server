@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from nearpilot.iot.smartthings.gateway import SmartThingsCommandGateway
+from nearpilot.iot.smartthings.reported import ConfirmedValues
 from nearpilot.iot.smartthings.transport import (
     SmartThingsMaybeSent, SmartThingsNotSent, SmartThingsTransportError,
 )
@@ -455,3 +456,42 @@ def test_FR07_refresh_completion_alone_is_not_success():
     result = gateway.send(command("launch_app", arguments={"app": "youtube"}), timeout_sec=2)
     assert result.outcome is CommandOutcome.UNKNOWN
     assert transport.refreshes() >= 2
+
+
+# ── 확인한 값을 보고 상태에 넘김 (specs/iot-device-reported-state 결정 8) ──
+
+
+def confirmed_gateway(transport, clock):
+    confirmed = ConfirmedValues(monotonic=clock.monotonic)
+    gateway = SmartThingsCommandGateway(transport, DEVICE, poll_interval_sec=1.0, clock=clock.now,
+                                        monotonic=clock.monotonic, sleep=clock.sleep, confirmed=confirmed)
+    return gateway, confirmed
+
+
+def test_FR09_success_records_confirmed_value():
+    clock = FakeClock()
+    transport = StaleUntilRefresh(20, 23)
+    gateway, confirmed = confirmed_gateway(transport, clock)
+    assert gateway.send(command("set_volume", arguments={"volume": 23}), timeout_sec=5).outcome         is CommandOutcome.SUCCEEDED
+    values, stale_at = confirmed.snapshot()
+    assert values["volume"][0].value == 23 and values["volume"][0].observed_at == NOW
+    assert stale_at is None
+
+
+def test_FR09_unknown_result_marks_reported_stale():
+    clock = FakeClock()
+    transport = FakeTransport()
+    transport.attribute_sequence = [20]
+    gateway, confirmed = confirmed_gateway(transport, clock)
+    assert gateway.send(command("set_volume", arguments={"volume": 23}), timeout_sec=2).outcome         is CommandOutcome.UNKNOWN
+    values, stale_at = confirmed.snapshot()
+    assert values == {} and stale_at is not None
+
+
+def test_FR09_not_sent_keeps_reported():
+    clock = FakeClock()
+    transport = FakeTransport()
+    transport.post_error = SmartThingsNotSent("SmartThings audioVolume.setVolume: 요청 거부(409)")
+    gateway, confirmed = confirmed_gateway(transport, clock)
+    assert gateway.send(command("set_volume", arguments={"volume": 23}), timeout_sec=5).outcome         is CommandOutcome.NOT_SENT
+    assert confirmed.snapshot() == ({}, None)

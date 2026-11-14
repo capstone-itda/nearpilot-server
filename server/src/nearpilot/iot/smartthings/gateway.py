@@ -20,6 +20,7 @@ from typing import Any, Callable
 from nearpilot.iot.smartthings.actions import (
     ACTIONS, CHANGED, REFRESH_CAPABILITY, REFRESH_COMMAND, Confirm, Plan,
 )
+from nearpilot.iot.smartthings.reported import ConfirmedValues
 from nearpilot.iot.smartthings.transport import (
     SmartThingsMaybeSent, SmartThingsTransport, SmartThingsTransportError,
 )
@@ -54,6 +55,7 @@ class SmartThingsCommandGateway:
         clock: Callable[[], datetime] = _utc_now,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        confirmed: ConfirmedValues | None = None,
     ):
         if type(poll_interval_sec) not in (int, float) or not math.isfinite(poll_interval_sec) \
                 or poll_interval_sec <= 0:
@@ -64,6 +66,7 @@ class SmartThingsCommandGateway:
         self._clock = clock
         self._monotonic = monotonic
         self._sleep = sleep
+        self._confirmed_values = confirmed
         self._condition = threading.Condition()
         self._known: dict[str, NodeCommand] = {}
         self._waiters: dict[str, _Waiter] = {}
@@ -95,6 +98,7 @@ class SmartThingsCommandGateway:
         try:
             if owner:
                 result = self._run(command, plan, timeout_sec)
+                self._remember(command, result)
                 with self._condition:
                     if plan.confirm.method == CHANGED:
                         self._relative[command.command_id] = result
@@ -170,6 +174,24 @@ class SmartThingsCommandGateway:
                             "변화" if plan.confirm.method == CHANGED else repr(plan.confirm.expected))
                 return self._result(command, CommandOutcome.UNKNOWN)
             self._sleep(min(self._poll_interval_sec, remaining))
+
+    def _remember(self, command: NodeCommand, result: CommandResult) -> None:
+        """확인한 값을 보고 상태에 넘긴다 (reported-state spec 결정 8). 결과 불명이면 보고 상태 캐시를 버린다.
+
+        확인 속성이 보고 키의 속성과 같을 때만 기록한다. 보고 상태는 실행 성공의 근거가 아니다 (FR-07).
+        """
+        if self._confirmed_values is None:
+            return
+        if result.outcome is CommandOutcome.UNKNOWN:
+            self._confirmed_values.invalidate()
+            return
+        action = ACTIONS.get(command.action)
+        target = None if action is None else action.reported
+        confirmation = result.confirmation
+        if (result.outcome is CommandOutcome.SUCCEEDED and target is not None and confirmation is not None
+                and confirmation.get("capability") == target.capability
+                and confirmation.get("attribute") == target.attribute):
+            self._confirmed_values.record(target.key, confirmation.get("value"), result.reported_at)
 
     def _with_mode_name(self, plan: Plan) -> Plan | None:
         """대응표에서 모드 ID 의 이름을 골라 인자와 기대값에 넣는다. 대응표가 없으면 refresh 뒤 한 번 더 읽는다."""

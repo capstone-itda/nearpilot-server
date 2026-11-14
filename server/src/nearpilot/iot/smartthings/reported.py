@@ -14,6 +14,7 @@ import logging
 import time
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
+from dataclasses import replace
 from threading import Lock
 from typing import Any
 
@@ -66,22 +67,51 @@ def reported_values(status: Mapping[str, Any]) -> tuple[ReportedValue, ...]:
     return tuple(values)
 
 
+class ConfirmedValues:
+    """서버 명령으로 확인한 값 (spec 결정 8). 기기 하나의 게이트웨이가 기록하고 리더가 캐시 위에 겹친다.
+
+    결과 불명이면 캐시를 믿을 수 없다고 표시한다. 다음 조회는 SmartThings를 다시 읽는다.
+    시각 비교에 쓰는 단조 시계는 리더와 같은 것을 넘긴다.
+    """
+
+    def __init__(self, monotonic: Callable[[], float] = time.monotonic):
+        self._monotonic = monotonic
+        self._lock = Lock()
+        self._values: dict[str, tuple[ReportedValue, float]] = {}
+        self._stale_at: float | None = None
+
+    def record(self, key: str, value: Any, observed_at: datetime) -> None:
+        with self._lock:
+            self._values[key] = (ReportedValue(key, value, observed_at), self._monotonic())
+
+    def invalidate(self) -> None:
+        with self._lock:
+            self._stale_at = self._monotonic()
+
+    def snapshot(self) -> tuple[dict[str, tuple[ReportedValue, float]], float | None]:
+        with self._lock:
+            return dict(self._values), self._stale_at
+
+
 class SmartThingsReportedState:
     """바인딩한 기기 하나의 보고 상태. 조회 결과를 `cache_sec()` 초 동안 재사용한다.
 
     조회 실패는 캐시하지 않는다 (architecture.md "보고 상태 조회").
     `refresh` 가 참이면 읽기 전에 `refresh.refresh` 를 보낸다. 실패해도 읽기를 계속한다. 캐시 안에서는 보내지 않는다.
+    `confirmed` 가 있으면 캐시를 읽은 뒤 서버 명령으로 확인한 값을 겹쳐 답한다. 결과 불명이 기록되면 캐시를 버린다.
     """
 
     def __init__(
         self, source: SmartThingsStatusSource, device_id: str, node_id: str, *,
         cache_sec: Callable[[], float], clock: Callable[[], datetime] = _utc_now,
         monotonic: Callable[[], float] = time.monotonic, refresh: bool = False,
+        confirmed: ConfirmedValues | None = None,
     ):
         if refresh and not isinstance(source, SmartThingsTransport):
             raise ValueError("refresh 에는 명령을 보낼 수 있는 transport 가 필요하다")
         self._source = source
         self._refresh = refresh
+        self._confirmed = confirmed
         self._device_id = device_id
         self._node_id = node_id
         self._cache_sec = cache_sec
@@ -94,8 +124,10 @@ class SmartThingsReportedState:
     def read(self) -> ReportedState | None:
         with self._lock:
             now = self._monotonic()
-            if self._cached is not None and now - self._cached_at < self._cache_sec():
-                return self._cached
+            values, stale_at = ({}, None) if self._confirmed is None else self._confirmed.snapshot()
+            if (self._cached is not None and now - self._cached_at < self._cache_sec()
+                    and (stale_at is None or stale_at < self._cached_at)):
+                return self._overlay(self._cached, values)
             if self._refresh:
                 self._send_refresh()
             try:
@@ -106,6 +138,16 @@ class SmartThingsReportedState:
             state = ReportedState(self._node_id, reported_values(status), self._clock())
             self._cached, self._cached_at = state, now
             return state
+
+    def _overlay(self, cached: ReportedState,
+                 confirmed: Mapping[str, tuple[ReportedValue, float]]) -> ReportedState:
+        """캐시를 읽은 뒤 확인한 값만 같은 키 자리에 바꿔 넣는다. 바뀐 값이 없으면 캐시를 그대로 돌려준다."""
+        newer = {key: value for key, (value, at) in confirmed.items() if at >= self._cached_at}
+        if not newer:
+            return cached
+        values = [newer.pop(v.key, v) for v in cached.values]
+        values.extend(newer.values())
+        return replace(cached, values=tuple(values))
 
     def _send_refresh(self) -> None:
         # refresh 의 완료 응답은 근거가 아니다. 실패하면 클라우드에 남은 값을 그대로 읽는다.

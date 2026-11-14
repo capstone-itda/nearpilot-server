@@ -158,7 +158,7 @@ class Settings:
     online_ttl_sec: float = 15.0  # 온라인 유지 시간: 유효한 기기 메시지의 마지막 수신부터 (FR-13)
     status_report_sec: float = 1.0  # 기기 상태 보고 주기
     smartthings_poll_sec: float = 5.0  # SmartThings 하트비트 주기: online_ttl_sec 이하 (FR-13, #259)
-    reported_state_cache_sec: float = 2.0  # 보고 상태 캐시 시간: 외부 API를 읽은 시각부터. 0 이상 (FR-09, #289)
+    reported_state_cache_sec: float = 60.0  # 보고 상태 캐시 시간: 외부 API를 읽은 시각부터. 0 이상 (FR-09, #289, #296)
     reservation_wait_sec: float = 10.0  # 예약 대기 제한: 예약부터 전송 시작까지 (FR-19)
     exec_timeout_sec: float = 3.0  # 실행 응답 제한: 전송 시도 뒤 결과 대기 (FR-07)
     # 종류별 실행 응답 제한. 설정 파일에서는 `"exec_timeout_sec.{kind}"` 로 쓴다. 없는 종류는 exec_timeout_sec (#271).
