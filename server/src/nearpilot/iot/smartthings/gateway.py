@@ -146,6 +146,11 @@ class SmartThingsCommandGateway:
                         command.node_id, command.command_id, error)
             return self._result(command, CommandOutcome.NOT_SENT)
 
+        if plan.refresh:
+            # 전송 직후의 refresh 는 기기가 적용하기 전이라 옛 값을 읽는다. 한 간격 기다려 호출 한도를 아낀다 (spec 결정 25)
+            remaining = deadline - self._monotonic()
+            if remaining > 0:
+                self._sleep(min(self._poll_interval_sec, remaining))
         while True:
             if plan.refresh:
                 self._refresh()

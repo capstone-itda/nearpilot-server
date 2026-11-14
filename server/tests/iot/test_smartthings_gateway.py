@@ -203,6 +203,34 @@ class StaleUntilRefresh(FakeTransport):
         return self.fresh if self.refreshes() else self.stale
 
 
+class AppliedAfter(FakeTransport):
+    """기기가 전송 1초 뒤에 값을 적용하고, refresh 를 받아야 클라우드 값이 바뀐다 (2026-11-14 실기 약 5초 → 2회 확인)."""
+
+    def __init__(self, clock, stale, fresh):
+        super().__init__()
+        self.clock, self.stale, self.fresh = clock, stale, fresh
+        self.refreshed_at: list[float] = []
+
+    def post_command(self, device_id, capability, command, arguments):
+        super().post_command(device_id, capability, command, arguments)
+        if capability == "refresh":
+            self.refreshed_at.append(self.clock.value)
+
+    def get_attribute(self, device_id, capability, attribute):
+        self.reads.append((capability, attribute))
+        return self.fresh if any(at >= 1.0 for at in self.refreshed_at) else self.stale
+
+
+def test_FR07_refresh_waits_one_interval_after_send():
+    clock = FakeClock()
+    transport = AppliedAfter(clock, 20, 23)
+    gateway = make_gateway(transport, clock)
+    result = gateway.send(command("set_volume", arguments={"volume": 23}), timeout_sec=10)
+    assert result.outcome is CommandOutcome.SUCCEEDED
+    assert transport.refreshed_at == [1.0]  # 전송 직후가 아니라 한 간격 뒤에 한 번만 보낸다
+    assert len(transport.reads) == 1
+
+
 @pytest.mark.parametrize(("action", "arguments", "stale", "fresh"), [
     ("set_volume", {"volume": 5}, 2, 5),
     ("set_mute", {"state": "muted"}, "unmuted", "muted"),
