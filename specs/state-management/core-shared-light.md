@@ -101,6 +101,7 @@
 | 실행 함수를 주입하지 않았다 | 꺼짐 후보만 반환하고 요청하지 않는다 | `test_FR20_last_holder_leave_off_candidate` |
 | 꺼짐 요청이 아직 끝나지 않았다 | 새 내부 요청을 만들지 않고 같은 문맥을 다시 인계한다 | `test_FR20_pending_off_not_duplicated` |
 | 서버 내부 꺼짐이 성공한다 | 유지 대상자를 비우고 같은 보고로 다시 요청하지 않는다 | `test_FR20_internal_off_success_clears_light` |
+| 서버 내부 꺼짐 명령이 `NOT_SENT`로 끝난다 | 다시 요청하지 않는다. 새 켜기 성공 전까지 그 기기의 꺼짐을 만들지 않는다. 명령 없이 전송 전 확인에서 거부된 요청은 포기로 보지 않는다 | `test_FR20_not_sent_off_not_retried` |
 | 유지 대상자의 횟수형 승인을 다 썼다 | 유지 권한이 있다. 유지 대상자로 남긴다 | `test_FR20_exhausted_approval_keeps_holder` |
 | 유예 중 같은 장소의 다른 앵커가 본인 비콘을 받는다 | 타이머를 초기화한다 | `test_FR20_same_place_anchor_resets_timer` |
 | 다른 장소의 앵커가 본인 비콘을 받는다 | 타이머를 초기화하지 않는다 | `test_FR20_other_place_account_connection_does_not_reset` |
@@ -133,6 +134,7 @@
 - `tick()`은 꺼짐 후보마다 서버 내부 요청을 만들어 주입한 `execute`로 넘긴다 — 실행 함수가 없으면 후보만 반환한다.
 - `can_request_off(node_id)`는 `core-execution`의 `confirm_internal`로 연결한다 — 실행 서비스가 같은 기기 잠금 안에서 확인하고 전송을 시작한다.
 - 끝나지 않은 꺼짐 요청은 조명별로 하나만 둔다 — 같은 문맥의 재인계로 진행 상태를 읽고, 끝나면 지운다.
+- 꺼짐 명령이 `NOT_SENT`로 끝나면 다시 요청하지 않는다. 그때의 마지막 성공 명령 ID를 메모리에 두고, 마지막 성공 명령이 그대로면 꺼짐 후보를 만들지 않는다. 새 켜기 성공은 마지막 성공 명령을 바꾸므로 다시 꺼짐 대상이 된다 — `tick()`마다 다시 보내면 SmartThings 호출 한도를 다 써서 `429`가 이어졌고, 기기가 다시 연결된 순간 오래된 꺼짐이 실행됐다. 담당자가 2026-11-14에 재시도 없이 한 번만 시도하기로 정했다. 기록은 메모리에만 두므로 재시작하면 한 번 더 시도한다 (유지 대상자를 복원하지 않는 것과 같은 원칙).
 - 내부 요청 ID는 주입한 `new_id`로 만든다. 기본값은 UUID다 — 테스트에서 ID를 고정한다.
 - 조회 실패는 예외로 알리고 유지 대상자를 보존한다 — 실패를 이탈이나 권한 만료로 보지 않는다.
 - DB와 정책 검사는 `shared` 계약의 fake로 검증한다 — 실제 서버 조립은 이 spec에 넣지 않는다.
@@ -167,6 +169,7 @@
 | FR-20 | `test_FR20_duplicate_success_does_not_reset_timer` | 같은 성공 인계가 타이머를 연장하지 않는다 |
 | FR-20 | `test_FR20_query_failure_keeps_holders` | 조회 실패가 유지 대상자를 지우지 않는다 |
 | FR-20 | `test_FR20_pending_off_not_duplicated` | 끝나지 않은 꺼짐 요청을 중복해서 만들지 않는다 |
+| FR-20 | `test_FR20_not_sent_off_not_retried` | `NOT_SENT`로 끝난 꺼짐을 다시 요청하지 않고, 새 켜기 성공 뒤에만 다시 요청한다 |
 | FR-20 | `test_FR20_internal_off_through_real_execution` | 실제 실행 서비스로 내부 요청을 저장·전송하고 유지 대상자 확인을 거친다 |
 | FR-20 | `test_FR20_exhausted_approval_keeps_holder` | 횟수형 승인 소진 계정을 유지 대상자로 남긴다 |
 | NFR-12 | `test_NFR12_signal_loss_within_grace_keeps_holder` | 같은 장소 재수신이 유예를 초기화한다 |
