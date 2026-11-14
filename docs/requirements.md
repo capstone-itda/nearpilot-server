@@ -56,7 +56,7 @@
 | 인자 상한 | `param_max.{kind}.{action}.{arg}` | 조명 `param_max.light.on.brightness` 64, 스피커 `param_max.speaker.on.volume` 20, 디스플레이(M5) `param_max.display.set_volume.volume` 50 | 정수 | 선택 설정이다. 서버는 기기 선언의 `maximum`과 이 값 중 작은 값으로 인자를 검사한다. 설정이 없으면 선언의 범위만 쓴다 (FR-09, #245). 기존 `light_brightness_max`와 `speaker_volume_max`는 이 형식으로 옮긴다. |
 | 전역 할당 허용 종류 | `any_allowed_kinds` | `["locker"]` | 종류 이름의 목록 | 전역 할당(`any:{kind}`)을 받는 종류다. 목록에 없는 종류의 `any:` 요청은 거부한다 (FR-23, #245). `display` 종류는 이 목록에 넣지 않는다 (#271). |
 | 인자 기본값 | `param_default.{kind}.{action}.{arg}` | 조명 `param_default.light.on.brightness` 64, `param_default.light.on.color` `#FFFFFF`, 스피커 `param_default.speaker.on.volume` 20, 디스플레이(M5) `param_default.display.set_volume.volume` 20 | 선언의 인자 스키마와 인자 상한 설정을 만족하는 값 | 선택 설정이다. 같은 동작의 앞선 성공 명령이 없을 때 생략한 인자에 쓴다 (FR-09, #245). 기존 `light_default_brightness`, `light_default_color`, `speaker_default_volume`은 이 형식으로 옮긴다. `display` 종류의 기본값은 첫 실행에서 음량이 크게 나오지 않도록 낮게 둔다. |
-| 보고 상태 캐시 시간 | `reported_state_cache_sec` | 2초 | 0 이상 | 서버가 외부 API 기기의 보고 상태를 읽은 시각부터 잰다. 이 시간 안의 `get_device_state`는 같은 조회 결과를 쓴다. 0이면 매번 읽는다 (FR-09, #289). |
+| 보고 상태 캐시 시간 | `reported_state_cache_sec` | 60초 | 0 이상 | 서버가 외부 API 기기의 보고 상태를 읽은 시각부터 잰다. 이 시간 안의 `get_device_state`는 같은 조회 결과에 서버 명령으로 확인한 값을 겹쳐 쓴다. 이 시간이 지나면 외부 API를 다시 읽어 서버 밖의 변경을 반영한다. 0이면 매번 읽는다 (FR-09, #289, #296). |
 | SmartThings 상태 확인 주기 | `smartthings_poll_sec` | 5초 | `status_report_sec` 이상이고 `online_ttl_sec` 이하 | SmartThings 클라우드 기기의 하트비트다. 서버는 이 주기로 기기 상태를 조회해서 `on_status`로 넘기고 `last_seen_at`을 갱신한다 (FR-13, #259). |
 
 - 재시작 뒤 초기 참여 대기는 별도 설정이 아니다. 서버는 이탈 판단의 미수신 시간과 유예 시간을 더해서 계산한다. 초기 기준은 10초와 5초의 합이다 (FR-20).
@@ -168,6 +168,7 @@
 - #235의 A안은 FR-12A, NFR-04와 `architecture.md` §2·4·5에 반영한다. 원격 재시작은 판정을 거치지 않는 관리 기능이다. 소유자 스크립트가 REST로 요청하고, 대시보드는 보기 전용을 유지한다.
 - #234의 A안은 FR-12A, NFR-12와 `architecture.md` §2·4·5·8에 반영한다. 앱은 서버의 기기 접속 설정 묶음과 사용자가 입력한 Wi-Fi를 BLE로 기기에 넣는다.
 - #289의 A안은 §1.2, FR-07, FR-09와 `architecture.md` §4에 반영한다. 외부 API 기기의 보고 상태를 관측 시각과 함께 `get_device_state`로 보여 준다. 보고 상태는 판정과 실행 성공의 근거가 아니다.
+- #296의 B안은 §1.2, FR-07, FR-09와 `architecture.md` §4에 반영한다. 서버는 보고 상태를 읽기 전에 외부 API에 새로 고침을 요청하고, 캐시 시간 안에서는 서버 명령으로 확인한 값을 겹쳐 답한다. 음량·음소거의 결과 확인도 새로 고침 뒤에 조회한다.
 - #245의 A안과 세부 질문 9개의 권장안(2026-11-06 대면 합의)은 §1.2·1.3, FR-04~07, FR-09, FR-11, FR-12A, FR-13, FR-17, FR-20, FR-23, NFR-07, NFR-12와 `architecture.md` §4·5·6, `device-protocol.md`에 반영한다.
   - 기기는 동작과 점유 방식을 기기 선언으로 스스로 발표한다. 서버는 동작과 점유 방식을 기기에 주입하지 않는다. 서버는 접속 정보만 넣는다.
   - MCP 도구 6개와 도구별 입력 스키마는 유지한다. 기기마다 다른 동작과 인자 스키마는 조회 응답에 담는다.
@@ -365,8 +366,8 @@
 | 선언할 동작 | SmartThings capability.command | 인자 | 성공 확인(조회할 속성) |
 |---|---|---|---|
 | `on` / `off` | `switch.on` / `switch.off` | 없음 | `switch` 속성이 요청한 값과 같다 |
-| `set_volume` | `audioVolume.setVolume` | `volume` | `audioVolume.volume` 속성이 요청한 값과 같다 |
-| `set_mute` | `state`가 `muted`면 `audioMute.mute`, `unmuted`면 `audioMute.unmute` | `state` | `audioMute.mute` 속성이 요청한 값과 같다 |
+| `set_volume` | `audioVolume.setVolume` | `volume` | `refresh` 뒤 `audioVolume.volume` 속성이 요청한 값과 같다 (#296) |
+| `set_mute` | `state`가 `muted`면 `audioMute.mute`, `unmuted`면 `audioMute.unmute` | `state` | `refresh` 뒤 `audioMute.mute` 속성이 요청한 값과 같다 (#296) |
 | `set_picture_mode` | `custom.picturemode.setPictureMode` | `mode`(모드 ID) | `refresh` 뒤 `custom.picturemode.pictureMode`가 요청한 모드다 |
 | `set_sound_mode` | `custom.soundmode.setSoundMode` | `mode`(모드 ID) | `refresh` 뒤 `custom.soundmode.soundMode`가 요청한 모드다 |
 | `set_channel` | 번호면 `tvChannel.setTvChannel`, `up`·`down`이면 `tvChannel.channelUp`·`channelDown` | `channel` | `refresh` 뒤 `tvChannel.tvChannel`이 번호와 같다. `up`·`down`은 전송 전 값에서 바뀐다 |
@@ -494,9 +495,10 @@
   - **보고 상태** (#289)
     - `get_device_state`는 외부 API 기기의 보고 상태를 `reported`에 담는다. 값마다 키, 값, 관측 시각(`observed_at`)을 담는다.
     - 키는 기기가 선언한 동작이 바꾸는 값의 이름이다. 예: `power`, `volume`, `mute`, `channel`, `picture_mode`, `sound_mode`.
-    - 관측 시각은 외부 API가 그 값을 마지막으로 기록한 시각이다. 서버는 오래된 값을 빼지 않는다. 호스트가 관측 시각으로 판단한다.
+    - 관측 시각은 그 값이 마지막으로 바뀐 시각이다. 외부 API가 기록한 시각이거나, 서버 명령으로 확인한 값이면 서버가 확인한 시각이다. 값이 오래 그대로면 관측 시각이 오래돼도 현재 값이다. 서버는 오래된 값을 빼지 않는다 (#296).
     - MQTT 기기와 조회에 실패한 기기의 `reported`는 `null`이다.
-    - 서버는 호스트가 `get_device_state`를 부를 때 외부 API를 읽는다. 보고 상태 캐시 시간 안에는 같은 결과를 쓴다 (§1.2).
+    - 서버는 호스트가 `get_device_state`를 부를 때 외부 API에 새로 고침을 요청한 뒤 읽는다. 보고 상태 캐시 시간 안에는 같은 결과를 쓴다 (§1.2, #296).
+    - 캐시 시간 안에 서버 명령이 값을 바꾸고 결과를 확인했으면 그 값을 같은 키에 담는다. 결과가 불명이면 다음 조회는 외부 API를 다시 읽는다 (#296).
     - `find_available_devices`는 보고 상태를 담지 않는다.
     - 보고 상태는 참고 정보다. 판정, 허가, 실행 성공의 근거로 쓰지 않는다 (FR-07, NFR-07).
     - 응답에 외부 API의 기기 ID와 계정 정보를 넣지 않는다 (FR-11, NFR-08).
