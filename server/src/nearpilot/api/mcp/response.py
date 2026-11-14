@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
+from nearpilot.api.mcp.messages import build_message
 from nearpilot.shared.enums import ReasonCode, Verdict
 from nearpilot.shared.models import Decision, DeviceOutcome
 
@@ -26,19 +27,27 @@ def _device_entry(device: DeviceOutcome) -> dict[str, Any]:
     return entry
 
 
-def host_response(decision: Decision) -> dict[str, Any]:
+def host_response(
+    decision: Decision, *, action: str | None = None, item_actions: Mapping[int, str] | None = None,
+) -> dict[str, Any]:
     """기존 여섯 키. 거리 선택자·묶음 판정(`selected_count` 가 None 이 아님)에는 `devices`, `selected_count`, `similar` 를 더한다.
 
     `devices` 는 판정이 정한 순서 그대로이고 기기마다 네 키를 담는다. 묶음 요청의 기기에는 1부터 센 항목 순서 `item` 을 더한다.
     하위 요청의 내부 ID 는 `DeviceOutcome` 에 없다 (FR-09, FR-11).
+
+    `message` 는 core가 채운 값을 그대로 쓴다. 비어 있으면 `ReasonCode`로 안내 문장을 만든다. `action`과
+    `item_actions`(묶음 요청의 1부터 센 항목 순서 → 동작 이름)는 그 문장이 동작 이름을 쓸 때만 참조한다 (FR-09).
     """
+    message = decision.message
+    if message is None:
+        message = build_message(decision, action=action, item_actions=item_actions)
     out: dict[str, Any] = {
         "verdict": decision.verdict.value,
         "reason": decision.reason.value,
         "node_id": decision.node_id,
         "use_id": decision.use_id,
         "request_id": decision.request_id or None,  # 반납 판정에는 요청 ID가 없다
-        "message": decision.message,
+        "message": message,
     }
     if decision.selected_count is not None:
         out["devices"] = [_device_entry(device) for device in decision.devices]
@@ -47,7 +56,9 @@ def host_response(decision: Decision) -> dict[str, Any]:
     return out
 
 
-def denied_response(reason: ReasonCode, request_id: str = "", *, selector: bool = False) -> dict[str, Any]:
+def denied_response(
+    reason: ReasonCode, request_id: str = "", *, selector: bool = False, action: str | None = None,
+) -> dict[str, Any]:
     """판정까지 가지 못한 거부. 예외 내용 대신 일반 안내만 넣는다.
 
     `selector` 이면(형식이 맞는 거리 선택자이거나 묶음 형식) 고르기 전에 끝난 판정과 같은 `devices`, `selected_count`, `similar` 를 더한다 (FR-09).
@@ -56,7 +67,7 @@ def denied_response(reason: ReasonCode, request_id: str = "", *, selector: bool 
     picked: dict[str, Any] = {"devices": (), "selected_count": 0, "similar": False} if selector else {}
     return host_response(Decision(
         internal_request_id="", request_id=request_id, verdict=Verdict.DENY, reason=reason,
-        message=message, **picked))
+        message=message, **picked), action=action)
 
 
 _STATUS_TIMES = ("rental_due_at", "closed_at")

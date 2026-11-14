@@ -74,6 +74,13 @@ _DEVICES_DESCRIPTION = (
 )
 _DEVICE_STATE_DESCRIPTION = "기기(node_id)의 상태를 조회한다. 근접 검사는 하지 않는다."
 
+_SERVER_INSTRUCTIONS = (
+    "도구 결과에 message가 있으면 그 내용을 바탕으로 사용자에게 답한다. "
+    "verdict나 reason 코드값을 그대로 읽어 주지 않는다. "
+    "표현은 다듬어도 되지만 결과는 바꾸지 않는다. verdict가 OK가 아니면 성공했다고 말하지 않는다. "
+    "message에 없는 원인이나 사실을 지어내지 않는다."
+)
+
 # MCP SDK 가 127.0.0.1 바인딩에 자동으로 켜는 DNS 리바인딩 방어의 기본 허용 목록이다.
 _LOCAL_HOSTS = ("127.0.0.1:*", "localhost:*", "[::1]:*")
 _LOCAL_ORIGINS = ("http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*")
@@ -147,7 +154,7 @@ def build_app(
     core: CoreService, authenticator: Authenticator, clock: Callable[[], datetime],
     *, public_hosts: Sequence[str] = (),
 ) -> Starlette:
-    mcp = MCPServer("nearpilot")
+    mcp = MCPServer("nearpilot", instructions=_SERVER_INSTRUCTIONS)
     # 도구 입력 스키마는 기기 종류와 관계없이 같다 (FR-09). arguments 와 requests 는 Any 로 받아서 SDK 가 자료형을
     # 바꾸지 않게 하고 직접 검사한다. target_spec 과 action 은 문자열로 받는다 (아래 주석).
     # 동작별 인자 스키마는 조회 응답의 actions[].input_schema 가 알린다.
@@ -183,12 +190,13 @@ def build_app(
             else:
                 # 묶음 형식(단일 요청 인자가 하나도 없다)은 묶음 응답 키를 담는다. 두 형식을 섞었으면 기존 여섯 키다 (FR-09)
                 with_devices = target_spec is None and action is None and arguments is None
-            return denied_response(reason, request_id, selector=with_devices)
+            return denied_response(reason, request_id, selector=with_devices, action=action)
 
         try:
             account = _account_of(ctx)
             if account is None:  # 미들웨어를 거치지 않았다
                 return deny(ReasonCode.INTERNAL_ERROR)
+            item_actions: dict[int, str] | None = None
             try:
                 if not request_id:
                     raise ValueError("request_id 가 비었다")
@@ -199,6 +207,8 @@ def build_app(
                         user_id=account.user_id, request_id=request_id,
                         target=TargetSpec(TargetKind.BATCH, None), action=BATCH_ACTION,
                         host_kind=None, received_at=clock(), items=_batch_items(requests))
+                    # 묶음 항목의 1부터 센 순서 → 동작 이름. 응답 message 가 기기별 동작을 말할 때만 쓴다 (FR-09)
+                    item_actions = {i + 1: r["action"] for i, r in enumerate(requests)}
                 else:
                     if target_spec is None or action is None:
                         raise ValueError("target_spec 이나 action 이 없다")
@@ -209,7 +219,8 @@ def build_app(
             except ValueError:
                 return deny(ReasonCode.INVALID_INPUT)
             # 판정과 실행 인계는 동기 함수다. 이벤트 루프를 막지 않는다.
-            return host_response(await asyncio.to_thread(core.request_use, req))
+            decision = await asyncio.to_thread(core.request_use, req)
+            return host_response(decision, action=action, item_actions=item_actions)
         except Exception:  # noqa: BLE001 - 알 수 없는 오류는 거부한다. 예외 내용은 응답에 넣지 않는다
             log.exception("request_use 도구 처리 중 예외")
             return deny(ReasonCode.INTERNAL_ERROR)
@@ -239,7 +250,7 @@ def build_app(
             decision = await asyncio.to_thread(
                 core.request_access, account.user_id, node_id, act, request_id)
             # 승인 요청은 실행 허가가 아니다. 서비스가 담아도 use_id 는 내보내지 않는다.
-            return {**host_response(decision), "use_id": None}
+            return {**host_response(decision, action=act), "use_id": None}
         except Exception:  # noqa: BLE001 - 알 수 없는 오류는 거부한다. 예외 내용은 응답에 넣지 않는다
             log.exception("request_access 도구 처리 중 예외")
             return denied_response(ReasonCode.INTERNAL_ERROR, request_id)
