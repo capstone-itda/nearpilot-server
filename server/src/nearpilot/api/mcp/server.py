@@ -75,8 +75,12 @@ _DEVICES_DESCRIPTION = (
 _DEVICE_STATE_DESCRIPTION = (
     "기기(node_id)의 상태를 조회한다. 근접 검사는 하지 않는다. "
     "reported 는 외부 API 기기가 보고한 마지막 값이다(예: power, volume, mute, channel). "
-    "값마다 observed_at(기기가 그 값을 기록한 시각)이 있다. observed_at 이 오래됐으면 현재 값이 아닐 수 있다. "
-    "'조금 올려 줘' 같은 상대 조작은 reported 값을 기준으로 인자를 계산한다. 값이 오래됐거나 없으면 사용자에게 확인한다. "
+    "서버는 조회할 때 기기에 새로 고침을 요청한 뒤 읽는다. "
+    "값마다 observed_at(그 값이 마지막으로 바뀐 시각)이 있다. 값이 오래 바뀌지 않았으면 observed_at 이 오래돼도 현재 값이다. "
+    "'조금 올려 줘' 같은 상대 조작은 조작 직전에 이 도구를 불러 reported 값을 기준으로 인자를 계산하고, "
+    "결과가 그 동작의 input_schema 범위 안에 들게 한다. "
+    "필요한 키가 reported 에 없거나 reported 가 null 이면 사용자에게 확인한다. "
+    "reported 의 power 가 off 이면 켜기 말고 다른 동작은 실행되지 않으므로, 먼저 켤지 사용자에게 확인한다. "
     "reported 는 실행 결과의 근거가 아니다. reported 가 null 이면 보고 상태가 없는 기기다."
 )
 

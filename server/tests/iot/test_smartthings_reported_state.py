@@ -160,3 +160,57 @@ def test_FR09_http_component_status_invalid_body(tmp_path, body):
     with pytest.raises(SmartThingsTransportError) as raised:
         transport.get_component_status(DEVICE)
     assert DEVICE not in str(raised.value)
+
+
+# ── 읽기 전 refresh (spec 결정 7) ─────────────────────────────────
+
+
+class RefreshingSource(FakeSource):
+    """refresh 를 받기 전까지 음량이 옛 값으로 남는다 (2026-11-14 display-1: 리모컨·명령 뒤 클라우드 값이 남았다)."""
+
+    def __init__(self, refresh_error: Exception | None = None):
+        stale = json.loads(json.dumps(STATUS))
+        fresh = json.loads(json.dumps(STATUS))
+        fresh["audioVolume"]["volume"] = {"value": 10, "timestamp": "2026-11-14T07:47:24.111Z"}
+        super().__init__(status=stale)
+        self.fresh = fresh
+        self.refresh_error = refresh_error
+        self.posted: list[tuple] = []
+
+    def post_command(self, device_id, capability, command, arguments):
+        self.posted.append((device_id, capability, command, arguments))
+        if self.refresh_error is not None:
+            raise self.refresh_error
+        self.status = self.fresh
+
+    def get_attribute(self, device_id, capability, attribute):  # SmartThingsTransport 계약을 채운다
+        raise AssertionError("보고 상태는 구성요소 상태만 읽는다")
+
+
+def refreshing_reader(source, cache_sec=2.0):
+    clock = [0.0]
+    r = SmartThingsReportedState(source, DEVICE, "display-1", cache_sec=lambda: cache_sec,
+                                 clock=lambda: NOW, monotonic=lambda: clock[0], refresh=True)
+    return r, clock
+
+
+def test_FR09_refresh_before_read_gets_device_value():
+    source = RefreshingSource()
+    state, clock = refreshing_reader(source)
+    assert as_dict(state.read())["volume"][0] == 10
+    assert source.posted == [(DEVICE, "refresh", "refresh", [])]
+    clock[0] = 1.0
+    state.read()
+    assert len(source.posted) == 1  # 캐시 안에서는 다시 보내지 않는다
+
+
+def test_FR09_refresh_failure_still_reads(caplog):
+    source = RefreshingSource(refresh_error=SmartThingsNotSent("SmartThings refresh.refresh: 요청 거부(429)"))
+    state, _ = refreshing_reader(source)
+    assert as_dict(state.read())["volume"][0] == 2  # 클라우드에 남은 값을 그대로 담는다
+    assert DEVICE not in caplog.text
+
+
+def test_FR09_refresh_requires_command_transport():
+    with pytest.raises(ValueError):
+        SmartThingsReportedState(FakeSource(), DEVICE, "display-1", cache_sec=lambda: 2.0, refresh=True)

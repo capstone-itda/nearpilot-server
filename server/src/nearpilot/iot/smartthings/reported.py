@@ -1,6 +1,8 @@
 """SmartThings 기기의 보고 상태 조회 (FR-09, FR-11, #289, specs/iot-device-reported-state).
 
 CORE가 `get_device_state`에서 부를 때만 `main` 구성요소의 전체 상태를 한 번 읽는다.
+읽기 전에 `refresh.refresh`를 한 번 보낸다. 리모컨으로 바꾼 음량처럼 클라우드에 남은 옛 값을 기기 값으로 갱신한다
+(spec 결정 7, 2026-11-14 실기: refresh 응답 직후의 조회가 새 값이었다).
 동작 표의 보고 키(`SmartThingsAction.reported`)로 값과 관측 시각(SmartThings `timestamp`)을 담는다.
 보고 상태는 참고 정보다. 판정, 허가, 실행 성공의 근거가 아니다 (FR-07, NFR-07).
 로그와 결과에 `deviceId`와 토큰을 남기지 않는다 (NFR-08).
@@ -15,8 +17,10 @@ from datetime import datetime, timezone
 from threading import Lock
 from typing import Any
 
-from nearpilot.iot.smartthings.actions import ACTIONS
-from nearpilot.iot.smartthings.transport import SmartThingsStatusSource, SmartThingsTransportError
+from nearpilot.iot.smartthings.actions import ACTIONS, REFRESH_CAPABILITY, REFRESH_COMMAND
+from nearpilot.iot.smartthings.transport import (
+    SmartThingsStatusSource, SmartThingsTransport, SmartThingsTransportError,
+)
 from nearpilot.shared.models import ReportedState, ReportedValue
 
 log = logging.getLogger(__name__)
@@ -66,14 +70,18 @@ class SmartThingsReportedState:
     """바인딩한 기기 하나의 보고 상태. 조회 결과를 `cache_sec()` 초 동안 재사용한다.
 
     조회 실패는 캐시하지 않는다 (architecture.md "보고 상태 조회").
+    `refresh` 가 참이면 읽기 전에 `refresh.refresh` 를 보낸다. 실패해도 읽기를 계속한다. 캐시 안에서는 보내지 않는다.
     """
 
     def __init__(
         self, source: SmartThingsStatusSource, device_id: str, node_id: str, *,
         cache_sec: Callable[[], float], clock: Callable[[], datetime] = _utc_now,
-        monotonic: Callable[[], float] = time.monotonic,
+        monotonic: Callable[[], float] = time.monotonic, refresh: bool = False,
     ):
+        if refresh and not isinstance(source, SmartThingsTransport):
+            raise ValueError("refresh 에는 명령을 보낼 수 있는 transport 가 필요하다")
         self._source = source
+        self._refresh = refresh
         self._device_id = device_id
         self._node_id = node_id
         self._cache_sec = cache_sec
@@ -88,6 +96,8 @@ class SmartThingsReportedState:
             now = self._monotonic()
             if self._cached is not None and now - self._cached_at < self._cache_sec():
                 return self._cached
+            if self._refresh:
+                self._send_refresh()
             try:
                 status = self._source.get_component_status(self._device_id)
             except SmartThingsTransportError as error:
@@ -96,6 +106,13 @@ class SmartThingsReportedState:
             state = ReportedState(self._node_id, reported_values(status), self._clock())
             self._cached, self._cached_at = state, now
             return state
+
+    def _send_refresh(self) -> None:
+        # refresh 의 완료 응답은 근거가 아니다. 실패하면 클라우드에 남은 값을 그대로 읽는다.
+        try:
+            self._source.post_command(self._device_id, REFRESH_CAPABILITY, REFRESH_COMMAND, [])  # type: ignore[attr-defined]
+        except SmartThingsTransportError as error:
+            log.info("SmartThings 보고 상태 새로 고침을 보내지 못했다: node=%s (%s)", self._node_id, error)
 
 
 class ReportedStateRouter:
