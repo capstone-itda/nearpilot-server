@@ -188,7 +188,32 @@ def test_FR07_set_volume_uses_argument_as_expected_value():
     gateway = make_gateway(transport, FakeClock())
     result = gateway.send(command("set_volume", arguments={"volume": 20}), timeout_sec=5)
     assert result.outcome is CommandOutcome.SUCCEEDED
-    assert transport.posted == [(DEVICE, "audioVolume", "setVolume", [20])]
+    assert transport.commands() == [("audioVolume", "setVolume", [20])]
+
+
+class StaleUntilRefresh(FakeTransport):
+    """클라우드 값이 refresh 를 받기 전까지 옛 값으로 남는다 (2026-11-14 display-1 실기)."""
+
+    def __init__(self, stale, fresh):
+        super().__init__()
+        self.stale, self.fresh = stale, fresh
+
+    def get_attribute(self, device_id, capability, attribute):
+        self.reads.append((capability, attribute))
+        return self.fresh if self.refreshes() else self.stale
+
+
+@pytest.mark.parametrize(("action", "arguments", "stale", "fresh"), [
+    ("set_volume", {"volume": 5}, 2, 5),
+    ("set_mute", {"state": "muted"}, "unmuted", "muted"),
+])
+def test_FR07_volume_and_mute_confirmed_after_refresh(action, arguments, stale, fresh):
+    transport = StaleUntilRefresh(stale, fresh)
+    gateway = make_gateway(transport, FakeClock())
+    result = gateway.send(command(action, arguments=arguments), timeout_sec=5)
+    assert result.outcome is CommandOutcome.SUCCEEDED
+    assert result.confirmation["value"] == fresh
+    assert transport.refreshes() >= 1
 
 
 def test_FR07_volume_reported_as_float_succeeds():
