@@ -42,7 +42,7 @@ from nearpilot.iot.mqtt import (
 from nearpilot.iot.routing import RoutingCommandGateway
 from nearpilot.iot.smartthings.gateway import SmartThingsCommandGateway
 from nearpilot.iot.smartthings.http import HttpSmartThingsTransport
-from nearpilot.iot.smartthings.reported import ReportedStateRouter, SmartThingsReportedState
+from nearpilot.iot.smartthings.reported import ConfirmedValues, ReportedStateRouter, SmartThingsReportedState
 from nearpilot.iot.smartthings.transport import SmartThingsStatusSource, SmartThingsTransport
 from nearpilot.runtime.auth_audit import AuditedAuthenticator
 from nearpilot.runtime.config import DashboardConfig, ServerConfig, SmartThingsConfig
@@ -257,6 +257,8 @@ class Runtime:
         self.config = config
         # 시험은 가짜 transport 를 넘긴다. 기본은 urllib HTTP 다
         self._smartthings_transport_factory = smartthings_transport_factory or _http_smartthings
+        # 게이트웨이가 확인한 값을 보고 상태 리더가 겹쳐 쓴다. 바인딩한 기기마다 하나다 (reported-state spec 결정 8)
+        self._confirmed_values: dict[str, ConfirmedValues] = {}
         self.settings = config.settings
         self._clock = clock
         self._client_factory = client_factory
@@ -496,11 +498,15 @@ class Runtime:
         transport = self._smartthings_transport_factory(smartthings)
         routes = {
             binding.node_id: SmartThingsCommandGateway(
-                transport, binding.device_id, poll_interval_sec=smartthings.confirm_poll_sec, clock=clock)
+                transport, binding.device_id, poll_interval_sec=smartthings.confirm_poll_sec, clock=clock,
+                confirmed=self._confirmed(binding.node_id))
             for binding in smartthings.bindings
         }
         log.info("SmartThings 바인딩 %d개: %s", len(routes), ", ".join(sorted(routes)))
         return RoutingCommandGateway(mqtt_gateway, routes)
+
+    def _confirmed(self, node_id: str) -> ConfirmedValues:
+        return self._confirmed_values.setdefault(node_id, ConfirmedValues())
 
     def _reported_state(self, settings: Settings) -> ReportedStateReader | None:
         """바인딩한 SmartThings 기기의 보고 상태 리더 (FR-09, #289). 바인딩이 없으면 None 이다."""
@@ -515,7 +521,7 @@ class Runtime:
             binding.node_id: SmartThingsReportedState(
                 transport, binding.device_id, binding.node_id,
                 cache_sec=lambda: settings.reported_state_cache_sec, clock=self._clock,
-                refresh=isinstance(transport, SmartThingsTransport))
+                refresh=isinstance(transport, SmartThingsTransport), confirmed=self._confirmed(binding.node_id))
             for binding in smartthings.bindings
         })
 

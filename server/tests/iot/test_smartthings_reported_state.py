@@ -9,7 +9,7 @@ import pytest
 
 from nearpilot.iot.smartthings.http import HttpSmartThingsTransport
 from nearpilot.iot.smartthings.reported import (
-    ReportedStateRouter, SmartThingsReportedState, reported_values,
+    ConfirmedValues, ReportedStateRouter, SmartThingsReportedState, reported_values,
 )
 from nearpilot.iot.smartthings.transport import SmartThingsNotSent, SmartThingsTransportError
 
@@ -214,3 +214,55 @@ def test_FR09_refresh_failure_still_reads(caplog):
 def test_FR09_refresh_requires_command_transport():
     with pytest.raises(ValueError):
         SmartThingsReportedState(FakeSource(), DEVICE, "display-1", cache_sec=lambda: 2.0, refresh=True)
+
+
+# ── 서버가 확인한 값 겹치기 (spec 결정 8) ─────────────────────────
+
+
+def confirmed_reader(source, cache_sec=60.0):
+    clock = [0.0]
+    confirmed = ConfirmedValues(monotonic=lambda: clock[0])
+    r = SmartThingsReportedState(source, DEVICE, "display-1", cache_sec=lambda: cache_sec,
+                                 clock=lambda: NOW, monotonic=lambda: clock[0], confirmed=confirmed)
+    return r, confirmed, clock
+
+
+def test_FR09_confirmed_value_overlays_cache():
+    source = FakeSource()
+    state, confirmed, clock = confirmed_reader(source)
+    assert as_dict(state.read())["volume"][0] == 2
+    clock[0] = 5.0
+    confirmed.record("volume", 5, NOW)
+    values = as_dict(state.read())
+    assert values["volume"] == (5, NOW) and values["power"][0] == "off"
+    assert len(source.calls) == 1  # SmartThings 를 다시 읽지 않는다
+    assert [v.key for v in state.read().values][:2] == ["power", "volume"]  # 키 순서는 그대로다
+
+
+def test_FR09_unknown_result_invalidates_cache():
+    source = FakeSource()
+    state, confirmed, clock = confirmed_reader(source)
+    state.read()
+    clock[0] = 5.0
+    confirmed.invalidate()
+    clock[0] = 6.0
+    state.read()
+    assert len(source.calls) == 2
+
+
+def test_FR09_fresh_read_supersedes_older_confirmed():
+    source = FakeSource()
+    state, confirmed, clock = confirmed_reader(source)
+    confirmed.record("volume", 30, NOW)
+    clock[0] = 1.0
+    assert as_dict(state.read())["volume"][0] == 2  # 확인 뒤에 SmartThings 를 새로 읽었으면 읽은 값이 맞다
+
+
+def test_FR09_cache_expiry_reads_again_with_confirmed():
+    source = FakeSource()
+    state, confirmed, clock = confirmed_reader(source, cache_sec=60.0)
+    state.read()
+    confirmed.record("volume", 5, NOW)
+    clock[0] = 60.0
+    assert as_dict(state.read())["volume"][0] == 2  # 유효시간이 지나면 리모컨 변경을 반영하려고 다시 읽는다
+    assert len(source.calls) == 2
