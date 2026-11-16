@@ -2,7 +2,7 @@
 
 - 담당: 작업 지시자 (상태 관리)
 - 요구사항: FR-04, FR-05, FR-06, FR-07, FR-09, FR-17, FR-20, NFR-07, NFR-08
-- 따르는 결정: #271 (decision PR #272), #259, #270(실기 기록)
+- 따르는 결정: #271 (decision PR #272), #259, #270(실기 기록), #301
 
 ## 1. 왜
 
@@ -99,6 +99,9 @@
 | `set_volume`·`set_mute` 뒤 클라우드 값이 옛 값으로 남음 | 확인 조회마다 `refresh`를 먼저 보낸다. 갱신된 값이 요청한 값이면 `SUCCEEDED` | `test_FR07_volume_and_mute_confirmed_after_refresh` |
 | `refresh` 동작의 명령을 보냄 | 확인 조회 간격만큼 기다린 뒤 첫 `refresh`를 보낸다 | `test_FR07_refresh_waits_one_interval_after_send` |
 | 화면 모드 ID의 이름을 대응표에서 찾음 | 이름을 인자로 보낸다. `refresh` 뒤 현재 모드를 확인 | `test_FR07_picture_mode_sends_name_from_map` |
+| 화면 모드 이름을 인자로 받음 | 대응표에서 같은 이름을 찾아 보낸다 (#301) | `test_FR07_picture_mode_accepts_name` |
+| 같은 문자열이 한 항목의 ID이고 다른 항목의 이름임 | ID로 본다 | `test_FR07_mode_id_wins_over_same_name` |
+| 대응표에 없는 ID나 이름 | 보내지 않고 `NOT_SENT` | `test_FR07_mode_unknown_name_not_sent` |
 | 대응표가 아직 `null` | `refresh` 뒤 다시 읽는다. 끝내 없으면 보내지 않고 `NOT_SENT` | `test_FR07_mode_map_missing_not_sent` |
 | 상대 명령(`up`) 뒤 값이 바뀜 | `SUCCEEDED`, `confirmation`에 전후 값 | `test_FR07_channel_up_confirmed_by_change` |
 | 상대 명령을 같은 `command_id`로 다시 보냄 | 다시 보내지 않고 처음 결과를 돌려준다 | `test_FR06_relative_command_not_resent` |
@@ -139,7 +142,7 @@
 5. `changed` 동작은 전송 전 값을 `refresh` 뒤에 읽는다. 전송 전 값을 읽지 못하면 보내지 않고 `NOT_SENT`다 — 비교할 값이 없으면 성공을 확인할 수 없다.
 6. `changed` 동작의 결과는 `command_id`로 저장한다. 같은 `command_id`가 다시 오면 저장한 결과를 돌려준다. 저장은 프로세스 메모리에만 둔다 — 서버를 다시 시작하면 CORE의 미확정 명령은 이미 복구 규칙을 따른다.
 7. `set_channel`의 `channel`은 문자열 하나다. 숫자 1~4자리면 `setTvChannel`, `up`·`down`이면 `channelUp`·`channelDown`이다. 펌웨어 패턴에 대안 `|`가 없어서 스키마에는 `maxLength: 4`만 둔다. 인자를 둘로 나누면 판정이 생략한 인자를 마지막 성공 명령으로 채워(FR-09) 두 인자가 함께 오게 된다.
-8. 화면 모드와 소리 모드는 전송 직전에 `supportedPictureModesMap`·`supportedSoundModesMap`을 읽고 ID의 이름을 고른다. 대응표가 `null`이면 `refresh` 뒤 한 번 더 읽는다. 확인은 현재 모드 값이 ID나 그 이름과 같으면 성공이다.
+8. 화면 모드와 소리 모드는 전송 직전에 `supportedPictureModesMap`·`supportedSoundModesMap`을 읽고 ID의 이름을 고른다. 대응표가 `null`이면 `refresh` 뒤 한 번 더 읽는다. 확인은 현재 모드 값이 요청 값이나 그 이름과 같으면 성공이다. `mode` 인자는 ID나 이름이다 (#301). 대응표에서 ID를 먼저 찾고, 없으면 이름을 찾는다 — 같은 문자열이 다른 항목의 이름이어도 ID가 우선이다. 동작 선언(설명 `화면 모드 ID`, 스키마)과 펌웨어 선언은 바꾸지 않는다 — 발표 해시와 2048바이트 상한을 건드리지 않는다. 이름도 된다는 안내는 MCP `get_device_state` 도구 설명에 둔다.
 9. `launch_app`의 앱 표(`youtube` → 인자 `["", "YouTube"]`, 식별자 `9Ur5IzDKqV.TizenYouTube`)는 동작 표에 둔다. #270 실기 값이다.
 10. `CommandResult.confirmation`은 `{"source": "smartthings_state", "capability", "attribute", "value"}`다. `changed`면 `before`도 담는다. 값은 감사에 남으므로 토큰과 `deviceId`를 담지 않는다.
 11. core는 확인 근거를 결과 사건의 근거(`evidence`)에 `{"source": "server_state_confirmed", "confirmation": ...}`로 남긴다. 사건 키는 지금의 서버 결과 키 `server:{command_id}`를 쓴다.
@@ -163,7 +166,7 @@
 
 ## 7. 가정
 
-- `supportedPictureModesMap`·`supportedSoundModesMap`의 값은 `{"id", "name"}` 객체의 목록이라고 가정한다. #270은 ID와 이름의 대응을 기록했지만 원문 형식을 남기지 않았다. 다르면 실기 점검에서 fix로 고친다 — #270.
+- `supportedPictureModesMap`·`supportedSoundModesMap`의 값은 `{"id", "name"}` 객체의 목록이라고 가정한다. #270은 ID와 이름의 대응을 기록했지만 원문 형식을 남기지 않았다. 2026-11-16 display-1 조회에서 이 형식을 확인했다 — #270, #299.
 - 화면 모드의 현재 값(`pictureMode`)은 ID나 이름 중 하나라고 가정한다. 그래서 둘 다 성공으로 본다 — #270.
 - 명령 응답 시간 초과는 SmartThings가 명령을 받았을 수 있는 상황으로 본다. 그래서 `NOT_SENT`로 확정하지 않는다 — FR-07.
 - 화면·소리 모드 ID는 32자 이하 문자열이라고 가정한다(`maxLength: 32`). #270은 ID 형식을 남기지 않았다. 다르면 실기 점검에서 fix로 고친다 — #270.
