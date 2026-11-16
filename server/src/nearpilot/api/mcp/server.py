@@ -81,6 +81,9 @@ _DEVICE_STATE_DESCRIPTION = (
     "결과가 그 동작의 input_schema 범위 안에 들게 한다. "
     "필요한 키가 reported 에 없거나 reported 가 null 이면 사용자에게 확인한다. "
     "reported 의 power 가 off 이면 켜기 말고 다른 동작은 실행되지 않으므로, 먼저 켤지 사용자에게 확인한다. "
+    "picture_mode·sound_mode 에는 supported(기기가 지원하는 모드의 id 와 name 목록)가 있다. "
+    "모드를 바꿀 때는 이 목록에서 사용자 요청에 맞는 모드를 골라 그 id 나 name 을 mode 인자로 보낸다. "
+    "목록에 없는 값은 실행되지 않는다. "
     "reported 는 실행 결과의 근거가 아니다. reported 가 null 이면 보고 상태가 없는 기기다."
 )
 

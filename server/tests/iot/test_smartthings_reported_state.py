@@ -266,3 +266,38 @@ def test_FR09_cache_expiry_reads_again_with_confirmed():
     clock[0] = 60.0
     assert as_dict(state.read())["volume"][0] == 2  # 유효시간이 지나면 리모컨 변경을 반영하려고 다시 읽는다
     assert len(source.calls) == 2
+
+
+# ── 화면·소리 모드의 지원 목록 (#301) ─────────────────────────────
+
+MODE_STATUS = {
+    **STATUS,
+    "custom.picturemode": {
+        "pictureMode": {"value": "영화 화면", "timestamp": "2026-11-15T23:53:40.895Z"},
+        "supportedPictureModesMap": {"value": [
+            {"id": "modeGen_65552", "name": "에코 화면"}, {"id": "modeMovie", "name": "영화 화면"},
+            {"id": "", "name": "빈 ID"}, {"name": "ID 없음"}, "modeDynamic"],
+            "timestamp": "2026-11-15T23:37:16.331Z"}},
+    "custom.soundmode": {"soundMode": {"value": "AI 사운드", "timestamp": "2026-11-15T23:37:15.883Z"}},
+}
+
+
+def test_FR09_mode_supported_list():
+    """화면 모드에는 기기의 ID·이름 대응을 지원 목록으로 담는다. 형식이 다른 항목은 뺀다."""
+    from nearpilot.shared.models import ReportedOption
+    values = {v.key: v for v in reported_values(MODE_STATUS)}
+    assert values["picture_mode"].value == "영화 화면"
+    assert values["picture_mode"].supported == (ReportedOption("modeGen_65552", "에코 화면"),
+                                                ReportedOption("modeMovie", "영화 화면"))
+    assert values["sound_mode"].supported is None  # 대응표가 없으면 목록 없이 현재 값만 담는다
+    assert values["volume"].supported is None  # 모드가 아닌 키는 목록이 없다
+
+
+def test_FR09_confirmed_mode_keeps_supported():
+    """확인한 모드 값을 겹쳐도 캐시의 지원 목록은 남는다."""
+    state, confirmed, clock = confirmed_reader(FakeSource(status=MODE_STATUS))
+    state.read()
+    clock[0] = 5.0
+    confirmed.record("picture_mode", "에코 화면", NOW)
+    picture = {v.key: v for v in state.read().values}["picture_mode"]
+    assert picture.value == "에코 화면" and [o.id for o in picture.supported] == ["modeGen_65552", "modeMovie"]

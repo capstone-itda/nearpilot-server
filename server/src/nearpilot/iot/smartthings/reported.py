@@ -22,7 +22,7 @@ from nearpilot.iot.smartthings.actions import ACTIONS, REFRESH_CAPABILITY, REFRE
 from nearpilot.iot.smartthings.transport import (
     SmartThingsStatusSource, SmartThingsTransport, SmartThingsTransportError,
 )
-from nearpilot.shared.models import ReportedState, ReportedValue
+from nearpilot.shared.models import ReportedOption, ReportedState, ReportedValue
 
 log = logging.getLogger(__name__)
 
@@ -63,8 +63,22 @@ def reported_values(status: Mapping[str, Any]) -> tuple[ReportedValue, ...]:
         if not isinstance(entry, Mapping):
             continue
         seen.add(target.key)
-        values.append(ReportedValue(target.key, entry.get("value"), _timestamp(entry.get("timestamp"))))
+        supported = None
+        if target.supported is not None:
+            table = attributes.get(target.supported)
+            supported = _options(table.get("value") if isinstance(table, Mapping) else None)
+        values.append(ReportedValue(target.key, entry.get("value"), _timestamp(entry.get("timestamp")),
+                                    supported))
     return tuple(values)
+
+
+def _options(table: Any) -> tuple[ReportedOption, ...] | None:
+    """`[{"id", "name"}, ...]` 대응표를 지원 값 목록으로 바꾼다 (#301). 목록이 아니면 None, 형식이 다른 항목은 뺀다."""
+    if not isinstance(table, (list, tuple)):
+        return None
+    return tuple(ReportedOption(item["id"], item["name"]) for item in table
+                 if isinstance(item, Mapping) and isinstance(item.get("id"), str) and item["id"]
+                 and isinstance(item.get("name"), str) and item["name"])
 
 
 class ConfirmedValues:
@@ -145,7 +159,8 @@ class SmartThingsReportedState:
         newer = {key: value for key, (value, at) in confirmed.items() if at >= self._cached_at}
         if not newer:
             return cached
-        values = [newer.pop(v.key, v) for v in cached.values]
+        # 확인한 값에는 지원 목록이 없다. 캐시의 목록을 그대로 둔다 (#301).
+        values = [_keep_supported(newer.pop(v.key), v) if v.key in newer else v for v in cached.values]
         values.extend(newer.values())
         return replace(cached, values=tuple(values))
 
@@ -155,6 +170,10 @@ class SmartThingsReportedState:
             self._source.post_command(self._device_id, REFRESH_CAPABILITY, REFRESH_COMMAND, [])  # type: ignore[attr-defined]
         except SmartThingsTransportError as error:
             log.info("SmartThings 보고 상태 새로 고침을 보내지 못했다: node=%s (%s)", self._node_id, error)
+
+
+def _keep_supported(confirmed: ReportedValue, cached: ReportedValue) -> ReportedValue:
+    return confirmed if confirmed.supported is not None else replace(confirmed, supported=cached.supported)
 
 
 class ReportedStateRouter:

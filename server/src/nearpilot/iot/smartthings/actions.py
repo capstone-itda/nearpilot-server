@@ -42,10 +42,10 @@ class Confirm:
 
 @dataclass(frozen=True, slots=True)
 class ModeName:
-    """보낼 인자를 기기가 반환한 ID·이름 대응에서 고른다 (spec 결정 8)."""
+    """보낼 인자를 기기가 반환한 ID·이름 대응에서 고른다 (spec 결정 8). 요청 값은 ID나 이름이다 (#301)."""
 
     attribute: str  # 같은 capability 의 대응표 속성 (예: supportedPictureModesMap)
-    mode_id: str
+    requested: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +67,7 @@ class Reported:
     key: str
     capability: str
     attribute: str
+    supported: str | None = None  # 같은 capability 의 지원 값 대응표 속성. 화면·소리 모드만 둔다 (#301)
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,12 +122,13 @@ def _mute(arguments: Mapping[str, Any] | None) -> Plan | None:
 def _mode(capability: str, command: str, attribute: str, map_attribute: str
           ) -> Callable[[Mapping[str, Any] | None], Plan | None]:
     def plan(arguments: Mapping[str, Any] | None) -> Plan | None:
-        mode_id = _arg(arguments, "mode")
-        if not isinstance(mode_id, str) or not mode_id:
+        mode = _arg(arguments, "mode")
+        if not isinstance(mode, str) or not mode:
             return None
-        # 기대값의 이름은 게이트웨이가 대응표에서 고른 뒤 더한다. 현재 값이 ID 나 이름이면 성공이다 (spec 가정).
-        return Plan(capability, command, (), Confirm(EQUALS, capability, attribute, (mode_id,)),
-                    refresh=True, mode_name=ModeName(map_attribute, mode_id))
+        # 요청 값은 ID나 이름이다 (#301). 기대값의 이름은 게이트웨이가 대응표에서 고른 뒤 더한다.
+        # 현재 값이 요청 값이나 그 이름이면 성공이다 (spec 가정).
+        return Plan(capability, command, (), Confirm(EQUALS, capability, attribute, (mode,)),
+                    refresh=True, mode_name=ModeName(map_attribute, mode))
     return plan
 
 
@@ -200,7 +202,7 @@ ACTIONS: dict[str, SmartThingsAction] = {
     ),
     "set_picture_mode": SmartThingsAction(
         requires=("custom.picturemode",),
-        reported=Reported("picture_mode", "custom.picturemode", "pictureMode"),
+        reported=Reported("picture_mode", "custom.picturemode", "pictureMode", "supportedPictureModesMap"),
         plan=_mode("custom.picturemode", "setPictureMode", "pictureMode", "supportedPictureModesMap"),
         declaration={"name": "set_picture_mode", "description": "화면 모드 ID",
                      "input_schema": _schema("mode", {"type": "string", "maxLength": MODE_ID_MAX_LENGTH}),
@@ -208,7 +210,7 @@ ACTIONS: dict[str, SmartThingsAction] = {
     ),
     "set_sound_mode": SmartThingsAction(
         requires=("custom.soundmode",),
-        reported=Reported("sound_mode", "custom.soundmode", "soundMode"),
+        reported=Reported("sound_mode", "custom.soundmode", "soundMode", "supportedSoundModesMap"),
         plan=_mode("custom.soundmode", "setSoundMode", "soundMode", "supportedSoundModesMap"),
         declaration={"name": "set_sound_mode", "description": "소리 모드 ID",
                      "input_schema": _schema("mode", {"type": "string", "maxLength": MODE_ID_MAX_LENGTH}),

@@ -471,6 +471,20 @@ def test_FR09_device_state_includes_reported():
     assert reported.calls == ["locker-1"]
 
 
+def test_FR09_device_state_includes_mode_supported():
+    """지원 목록이 있는 키만 supported 를 ID와 이름으로 담는다 (#301)."""
+    from nearpilot.shared.models import ReportedOption, ReportedState, ReportedValue
+    reported = FakeReported(ReportedState("locker-1", (
+        ReportedValue("picture_mode", "영화 화면", NOW,
+                      (ReportedOption("modeGen_65552", "에코 화면"), ReportedOption("modeMovie", "영화 화면"))),
+        ReportedValue("volume", 2, NOW)), NOW))
+    svc, _ = build_reported(reported)
+    result = svc.get_device_state("anyone", "locker-1")["reported"]
+    assert result["picture_mode"]["supported"] == [{"id": "modeGen_65552", "name": "에코 화면"},
+                                                   {"id": "modeMovie", "name": "영화 화면"}]
+    assert "supported" not in result["volume"]
+
+
 def test_FR09_mqtt_node_reported_null():
     reported = FakeReported(None)
     svc, _ = build_reported(reported)

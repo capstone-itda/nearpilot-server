@@ -24,7 +24,7 @@ from nearpilot.shared.enums import (
     Visibility,
 )
 from nearpilot.shared.interfaces import ExecutionReadiness, PolicyChecker, ReportedStateReader, Repository
-from nearpilot.shared.models import NodeInfo
+from nearpilot.shared.models import NodeInfo, ReportedValue
 
 log = logging.getLogger(__name__)
 
@@ -143,11 +143,7 @@ class DeviceQueryService:
             return None
         if state is None or state.node_id != node_id:
             return None
-        return {
-            v.key: {"value": v.value,
-                    "observed_at": None if v.observed_at is None else v.observed_at.isoformat()}
-            for v in state.values
-        }
+        return {v.key: _reported_entry(v) for v in state.values}
 
     def _actions(self, node: NodeInfo) -> list[dict[str, Any]]:
         """기기 선언의 동작 목록. 인자 스키마의 상한은 선언 값과 `param_max` 중 작은 값이다 (FR-09).
@@ -186,3 +182,12 @@ def _state_of(state: DeviceState) -> str:
 
 def _unavailable() -> dict[str, Any]:
     return {"reason_code": ReasonCode.TARGET_UNAVAILABLE.value}
+
+
+def _reported_entry(value: ReportedValue) -> dict[str, Any]:
+    """보고 값 하나. 지원 값 목록은 있을 때만 담는다 (FR-09, #301)."""
+    entry: dict[str, Any] = {"value": value.value,
+                             "observed_at": None if value.observed_at is None else value.observed_at.isoformat()}
+    if value.supported is not None:
+        entry["supported"] = [{"id": option.id, "name": option.name} for option in value.supported]
+    return entry
