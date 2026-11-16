@@ -169,6 +169,7 @@
 - #234의 A안은 FR-12A, NFR-12와 `architecture.md` §2·4·5·8에 반영한다. 앱은 서버의 기기 접속 설정 묶음과 사용자가 입력한 Wi-Fi를 BLE로 기기에 넣는다.
 - #289의 A안은 §1.2, FR-07, FR-09와 `architecture.md` §4에 반영한다. 외부 API 기기의 보고 상태를 관측 시각과 함께 `get_device_state`로 보여 준다. 보고 상태는 판정과 실행 성공의 근거가 아니다.
 - #296의 B안은 §1.2, FR-07, FR-09와 `architecture.md` §4에 반영한다. 서버는 보고 상태를 읽기 전에 외부 API에 새로 고침을 요청하고, 캐시 시간 안에서는 서버 명령으로 확인한 값을 겹쳐 답한다. 음량·음소거의 결과 확인도 새로 고침 뒤에 조회한다.
+- #301의 B안은 FR-07, FR-09와 `architecture.md` §4에 반영한다. 보고 상태의 화면·소리 모드에 기기가 지원하는 모드 목록(ID와 이름)을 담는다. 화면·소리 모드 동작의 인자는 모드 ID나 이름이다.
 - #245의 A안과 세부 질문 9개의 권장안(2026-11-06 대면 합의)은 §1.2·1.3, FR-04~07, FR-09, FR-11, FR-12A, FR-13, FR-17, FR-20, FR-23, NFR-07, NFR-12와 `architecture.md` §4·5·6, `device-protocol.md`에 반영한다.
   - 기기는 동작과 점유 방식을 기기 선언으로 스스로 발표한다. 서버는 동작과 점유 방식을 기기에 주입하지 않는다. 서버는 접속 정보만 넣는다.
   - MCP 도구 6개와 도구별 입력 스키마는 유지한다. 기기마다 다른 동작과 인자 스키마는 조회 응답에 담는다.
@@ -368,13 +369,13 @@
 | `on` / `off` | `switch.on` / `switch.off` | 없음 | `switch` 속성이 요청한 값과 같다 |
 | `set_volume` | `audioVolume.setVolume` | `volume` | `refresh` 뒤 `audioVolume.volume` 속성이 요청한 값과 같다 (#296) |
 | `set_mute` | `state`가 `muted`면 `audioMute.mute`, `unmuted`면 `audioMute.unmute` | `state` | `refresh` 뒤 `audioMute.mute` 속성이 요청한 값과 같다 (#296) |
-| `set_picture_mode` | `custom.picturemode.setPictureMode` | `mode`(모드 ID) | `refresh` 뒤 `custom.picturemode.pictureMode`가 요청한 모드다 |
-| `set_sound_mode` | `custom.soundmode.setSoundMode` | `mode`(모드 ID) | `refresh` 뒤 `custom.soundmode.soundMode`가 요청한 모드다 |
+| `set_picture_mode` | `custom.picturemode.setPictureMode` | `mode`(모드 ID나 이름, #301) | `refresh` 뒤 `custom.picturemode.pictureMode`가 요청한 모드다 |
+| `set_sound_mode` | `custom.soundmode.setSoundMode` | `mode`(모드 ID나 이름, #301) | `refresh` 뒤 `custom.soundmode.soundMode`가 요청한 모드다 |
 | `set_channel` | 번호면 `tvChannel.setTvChannel`, `up`·`down`이면 `tvChannel.channelUp`·`channelDown` | `channel` | `refresh` 뒤 `tvChannel.tvChannel`이 번호와 같다. `up`·`down`은 전송 전 값에서 바뀐다 |
 | `launch_app` | `custom.launchapp.launchApp` | `app` | `refresh` 뒤 `tvChannel.tvChannelName`이 앱 식별자와 같다 |
 
     - 선언 동작은 기기 선언 상한(8개) 안에 둔다. 한 선언 동작이 인자 값에 따라 SmartThings 명령을 고를 수 있다.
-    - 화면 모드와 소리 모드의 인자는 모드 ID다. 서버는 기기가 반환한 ID와 이름의 대응으로 이름을 골라 보낸다. 실기에서 영어 이름은 동작하지 않았다 (#270).
+    - 화면 모드와 소리 모드의 인자는 모드 ID나 이름이다. 서버는 기기가 반환한 ID와 이름의 대응으로 이름을 골라 보낸다. 대응에 없는 값이면 보내지 않는다. 실기에서 영어 이름은 동작하지 않았다 (#270, #301).
     - `set_channel`의 `up`·`down`은 결과가 앞선 상태에 달린 상대 명령이다. 서버는 같은 `command_id`의 재전송에 명령을 다시 보내지 않고 처음 결과를 쓴다.
     - `refresh`의 완료 응답은 성공 근거가 아니다. 서버는 실행 응답 제한 안에서 `refresh`와 재조회를 되풀이한다.
     - 서버는 `samsungvd.remoteControl.send`와 `tvChannel.setTvChannelName`을 선언하지 않는다. 리모컨 키는 확인할 속성이 없거나 토글이다. 채널 이름 지정은 실기에서 완료 응답 뒤에도 채널이 바뀌지 않았다 (#270).
@@ -499,6 +500,7 @@
     - MQTT 기기와 조회에 실패한 기기의 `reported`는 `null`이다.
     - 서버는 호스트가 `get_device_state`를 부를 때 외부 API에 새로 고침을 요청한 뒤 읽는다. 보고 상태 캐시 시간 안에는 같은 결과를 쓴다 (§1.2, #296).
     - 캐시 시간 안에 서버 명령이 값을 바꾸고 결과를 확인했으면 그 값을 같은 키에 담는다. 결과가 불명이면 다음 조회는 외부 API를 다시 읽는다 (#296).
+    - 화면 모드(`picture_mode`)와 소리 모드(`sound_mode`)에는 기기가 지원하는 모드 목록(`supported`)을 함께 담는다. 목록의 항목은 모드 ID와 이름이다. 값은 외부 API가 반환한 대응이고, 기기마다 다를 수 있다. 호스트는 이 목록에서 사용자 요청에 맞는 모드를 골라 ID나 이름으로 보낸다 (#301).
     - `find_available_devices`는 보고 상태를 담지 않는다.
     - 보고 상태는 참고 정보다. 판정, 허가, 실행 성공의 근거로 쓰지 않는다 (FR-07, NFR-07).
     - 응답에 외부 API의 기기 ID와 계정 정보를 넣지 않는다 (FR-11, NFR-08).
