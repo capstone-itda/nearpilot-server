@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from nearpilot.iot.smartthings.actions import (
-    ACTIONS, CHANGED, REFRESH_CAPABILITY, REFRESH_COMMAND, Confirm, Plan,
+    ACTIONS, CHANGED, REFRESH_CAPABILITY, REFRESH_COMMAND, Confirm, Plan, Reported,
 )
 from nearpilot.iot.smartthings.reported import ConfirmedValues
 from nearpilot.iot.smartthings.transport import (
@@ -179,6 +179,7 @@ class SmartThingsCommandGateway:
         """확인한 값을 보고 상태에 넘긴다 (reported-state spec 결정 8). 결과 불명이면 보고 상태 캐시를 버린다.
 
         확인 속성이 보고 키의 속성과 같을 때만 기록한다. 보고 상태는 실행 성공의 근거가 아니다 (FR-07).
+        같은 capability 를 다른 보고 키도 쓰면(`channel`·`app`) 그 키도 함께 바뀌므로 겹치지 않고 캐시를 버린다 (#299 S14).
         """
         if self._confirmed_values is None:
             return
@@ -188,6 +189,9 @@ class SmartThingsCommandGateway:
         action = ACTIONS.get(command.action)
         target = None if action is None else action.reported
         confirmation = result.confirmation
+        if result.outcome is CommandOutcome.SUCCEEDED and target is not None and _shares_capability(target):
+            self._confirmed_values.invalidate()
+            return
         if (result.outcome is CommandOutcome.SUCCEEDED and target is not None and confirmation is not None
                 and confirmation.get("capability") == target.capability
                 and confirmation.get("attribute") == target.attribute):
@@ -234,6 +238,12 @@ class SmartThingsCommandGateway:
                 confirmation: Mapping[str, Any] | None = None) -> CommandResult:
         return CommandResult(command.command_id, outcome, report=None, reported_at=self._clock(),
                              confirmation=confirmation)
+
+
+def _shares_capability(target: Reported) -> bool:
+    """다른 보고 키가 같은 capability 를 쓴다. on·off 처럼 보고 키가 같으면 아니다."""
+    return any(other.reported is not None and other.reported.capability == target.capability
+               and other.reported.key != target.key for other in ACTIONS.values())
 
 
 def _is_number(value: Any) -> bool:

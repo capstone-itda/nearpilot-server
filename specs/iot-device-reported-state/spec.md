@@ -25,6 +25,7 @@
 - 관측 시각은 SmartThings의 속성별 `timestamp`다. 서버는 오래된 값을 빼지 않는다 (#289).
 - 읽기 전에 `refresh.refresh`를 한 번 보낸다. 캐시 안에서는 보내지 않는다 (결정 7).
 - 캐시 안에서는 서버 명령으로 확인한 값을 겹쳐 답한다. 결과 불명이 나오면 캐시를 버린다 (결정 8).
+- 다른 보고 키와 capability를 같이 쓰는 명령(`set_channel`, `launch_app`)이 성공하면 겹치지 않고 캐시를 버린다 (결정 9).
 - 서버는 `get_device_state`를 부를 때만 SmartThings를 읽는다. `reported_state_cache_sec` 동안 결과를 재사용한다 (§1.2, #289).
 - `find_available_devices`는 보고 상태를 담지 않는다 (#289).
 - 가시성 검사를 통과한 기기만 SmartThings를 읽는다 (FR-09).
@@ -76,6 +77,7 @@
 | 클라우드 값이 기기 값보다 늦다(리모컨으로 음량을 바꿈) | `refresh` 뒤 읽어서 기기 값을 담는다 | `test_FR09_refresh_before_read_gets_device_value` |
 | `refresh`를 보내지 못한다(429 등) | 클라우드에 남은 값을 그대로 담는다 | `test_FR09_refresh_failure_still_reads` |
 | 캐시 안에서 서버 명령이 값을 바꾸고 확인했다 | SmartThings를 다시 읽지 않고 확인한 값을 그 키에 담는다 | `test_FR09_confirmed_value_overlays_cache` |
+| 캐시 안에서 채널이나 앱을 바꾸고 확인했다(`channel`·`app`이 함께 바뀜) | 다음 조회는 캐시를 버리고 다시 읽는다 | `test_FR09_shared_capability_success_marks_reported_stale` |
 | 서버 명령의 결과가 불명이다 | 다음 조회는 캐시를 버리고 다시 읽는다 | `test_FR09_unknown_result_invalidates_cache` |
 | 확인한 값보다 나중에 SmartThings를 읽었다 | 읽은 값을 쓴다 | `test_FR09_fresh_read_supersedes_older_confirmed` |
 | 캐시 시간이 지났다(리모컨 변경 가능) | 확인한 값이 있어도 다시 읽는다 | `test_FR09_cache_expiry_reads_again_with_confirmed` |
@@ -90,6 +92,7 @@
 - 노드별 리더 라우팅은 `ReportedStateRouter`(바인딩한 node_id → 리더)로 둔다.
 - 읽기 전에 `refresh.refresh`를 한 번 보낸다 (2026-11-14 담당자 결정). display-1(M5) 실기에서 클라우드의 `audioVolume.volume`은 기기 값이 바뀌어도 갱신되지 않았다(기기 10, 클라우드 8). `refresh` 응답(약 1.4초) 직후의 조회가 기기 값이었다. `observed_at`은 값이 마지막으로 바뀐 시각이라 오래됐다는 이유로 호스트가 값을 버리면 상대 조작을 하지 못한다. 그래서 서버가 조회 순간의 값을 맞추고, 도구 설명은 "필요한 키가 없을 때만 사용자에게 확인한다"로 안내한다. SmartThings 기기당 호출 한도(분당 명령 12, 조회 12)에서 한 번의 조회는 명령 1, 조회 1을 쓴다. docs는 #296으로 반영했다.
 - 게이트웨이가 확인한 값을 기기별 `ConfirmedValues`에 기록하고, 리더는 캐시를 읽은 뒤 확인한 값을 같은 키에 겹친다 (2026-11-14 담당자 결정, B안). "볼륨 좀만 더"마다 `get_device_state`가 refresh와 조회(약 1.8초, 명령 1·조회 1)를 쓰지 않게 한다. 캐시 시간은 `reported_state_cache_sec`이고, 지나면 다시 읽어 리모컨 변경을 반영한다. 결과 불명이면 기기 값을 알 수 없으므로 캐시를 버린다. 확인 속성과 보고 키의 속성이 같을 때만 기록한다. 보고 상태는 여전히 실행 성공의 근거가 아니다. docs는 #296으로 반영했다(`reported_state_cache_sec` 초기값 60초).
+- 다른 보고 키와 capability를 같이 쓰는 명령이 성공하면 확인한 값을 겹치지 않고 캐시를 버린다 (2026-11-16 담당자 결정, #299 S14). `set_channel`과 `launch_app`은 `tvChannel`의 `tvChannel`(`channel`)과 `tvChannelName`(`app`)을 함께 바꾼다. 한 키만 겹치면 캐시 안에서 `channel` 504와 502의 이름이 함께 나왔다. 확인 조회에서 함께 받은 값을 겹치는 방법은 전송 계층 인터페이스를 바꿔야 해서 고르지 않았다. 다음 조회는 refresh와 조회(약 1.7초)를 쓴다. `on`·`off`는 `switch`를 같이 쓰지만 보고 키가 `power` 하나라 그대로 겹친다.
 
 ## 7. 가정
 
@@ -125,3 +128,5 @@
 | FR-09 | `test_FR09_success_records_confirmed_value` | 게이트웨이가 확인한 값을 기록한다 |
 | FR-09 | `test_FR09_unknown_result_marks_reported_stale` | 결과 불명이면 캐시를 버리라고 표시한다 |
 | FR-09 | `test_FR09_not_sent_keeps_reported` | 보내지 못한 명령은 보고 상태를 바꾸지 않는다 |
+| FR-09 | `test_FR09_shared_capability_success_marks_reported_stale` | 채널·앱 명령이 성공하면 겹치지 않고 캐시를 버리라고 표시한다 |
+| FR-09 | `test_FR09_same_key_capability_still_records` | `on`·`off`처럼 보고 키가 같으면 확인한 값을 기록한다 |

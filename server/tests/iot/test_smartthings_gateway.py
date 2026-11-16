@@ -488,6 +488,34 @@ def test_FR09_unknown_result_marks_reported_stale():
     assert values == {} and stale_at is not None
 
 
+@pytest.mark.parametrize("action, arguments, attribute, value", [
+    ("set_channel", {"channel": "504"}, "tvChannel", "504"),
+    ("set_channel", {"channel": "up"}, "tvChannel", None),
+    ("launch_app", {"app": "youtube"}, "tvChannelName", "9Ur5IzDKqV.TizenYouTube"),
+])
+def test_FR09_shared_capability_success_marks_reported_stale(action, arguments, attribute, value):
+    """채널을 바꾸면 기기에서 `channel`과 `app`(같은 tvChannel)이 함께 바뀐다. 한 키만 겹치면
+    다른 키가 옛 값으로 남으므로(#299 S14) 확인한 값을 겹치지 않고 캐시를 버린다."""
+    clock = FakeClock()
+    transport = FakeTransport()
+    transport.values[("tvChannel", attribute)] = ["502", "503"] if value is None else [value]
+    gateway, confirmed = confirmed_gateway(transport, clock)
+    assert gateway.send(command(action, arguments=arguments), timeout_sec=5).outcome is CommandOutcome.SUCCEEDED
+    values, stale_at = confirmed.snapshot()
+    assert values == {} and stale_at is not None
+
+
+def test_FR09_same_key_capability_still_records():
+    """on·off 는 switch 를 함께 쓰지만 보고 키가 power 하나라 확인한 값을 그대로 겹친다."""
+    clock = FakeClock()
+    transport = FakeTransport()
+    transport.values[("switch", "switch")] = ["on"]
+    gateway, confirmed = confirmed_gateway(transport, clock)
+    assert gateway.send(command("on"), timeout_sec=5).outcome is CommandOutcome.SUCCEEDED
+    values, stale_at = confirmed.snapshot()
+    assert values["power"][0].value == "on" and stale_at is None
+
+
 def test_FR09_not_sent_keeps_reported():
     clock = FakeClock()
     transport = FakeTransport()
