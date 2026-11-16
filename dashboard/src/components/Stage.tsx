@@ -110,6 +110,25 @@ function LightFigure({ d }: { d: StageDeviceView }) {
   );
 }
 
+/** 모니터: 받침과 목 위의 얇은 화면. 켜지면 화면이 빛난다 */
+function DisplayFigure({ d }: { d: StageDeviceView }) {
+  const K = ROOM_ISO;
+  const h = DEVICE_H.display, panel = 50, depth = 8;
+  const x0 = d.x - DEVICE_W / 2, y0 = d.y - depth / 2;
+  const foot = K.box(d.x - 18, d.y - 12, 0, 36, 24, 4);
+  const neck = K.box(d.x - 5, d.y - 3, 4, 10, 6, h - panel - 4);
+  const top = K.box(x0, y0, h - panel, DEVICE_W, depth, panel);
+  return (
+    <g className="np-stage__device-body">
+      {[foot, neck, top].map((f, i) => <g key={i}><path className="np-iso__face" d={f.side} /><path className="np-iso__face" d={f.front} /><path className="np-iso__face np-iso__top" d={f.top} /></g>)}
+      <g transform={K.FRONT(x0, y0 + depth, h)}>
+        <rect className="np-iso__glass" x="4" y="4" width={DEVICE_W - 8} height={panel - 13} rx="1" />
+        <circle className="np-iso__detail-fill" cx={DEVICE_W / 2} cy={panel - 4.5} r="1.5" />
+      </g>
+    </g>
+  );
+}
+
 function Device({ d, edit, calm }: { d: StageDeviceView; edit?: DeviceEditProps; calm?: boolean }) {
   // 장소가 바뀌어 새로 그려지는 기기는 도착 강조 없이 겹쳐 나타난다 (처음 그릴 때 정한다. 상태가 바뀌면 key가 달라져 새로 그린다)
   const quiet = useRef(calm).current;
@@ -121,7 +140,7 @@ function Device({ d, edit, calm }: { d: StageDeviceView; edit?: DeviceEditProps;
   return (
     <g className={quiet ? 'np-stage__device' : 'np-stage__device np-flash'} data-component="StageDevice" data-spot={`${d.x} ${d.y}`} data-tone={d.tone} data-dim={b(d.dim)} data-on={b(!d.hidden)} {...editAttrs}>
       {edit ? <rect className="np-stage__hit" x={d.body.x1 - 12} y={d.body.y1 - 12} width={d.body.x2 - d.body.x1 + 24} height={d.body.y2 - d.body.y1 + 24} /> : null}
-      {d.deviceKind === 'light' ? <LightFigure d={d} /> : <DeviceFigure d={d} />}
+      {d.deviceKind === 'light' ? <LightFigure d={d} /> : d.deviceKind === 'display' ? <DisplayFigure d={d} /> : <DeviceFigure d={d} />}
       <text className="np-stage__label" x={l.x} y={l.y + 19} data-anchor="middle">{d.name}</text>
       <text className="np-stage__device-status" x={l.x} y={l.y + DEVICE_LABEL_H - 6} data-anchor="middle">{d.status}</text>
     </g>

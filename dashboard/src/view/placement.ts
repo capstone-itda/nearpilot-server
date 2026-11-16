@@ -34,8 +34,8 @@ export function textWidth(s: string, size: number): number {
 /** 기기 본체의 평면 크기와 높이 (평면 단위) */
 export const DEVICE_W = 60;
 export const DEVICE_D = 36;
-export const DEVICE_H: Record<string, number> = { locker: 110, speaker: 56, light: 84 };
-/** 사물함·조명·스피커 밖의 종류는 앞면 부품 없는 상자다. 높이는 표시용이다 (spec 결정 5) */
+export const DEVICE_H: Record<string, number> = { locker: 110, speaker: 56, light: 84, display: 80 };
+/** 사물함·조명·스피커·모니터 밖의 종류는 앞면 부품 없는 상자다. 높이는 표시용이다 (spec 결정 5) */
 export const OTHER_DEVICE_H = 70;
 export const deviceHeight = (kind: DeviceKind) => (Object.hasOwn(DEVICE_H, kind) ? DEVICE_H[kind] : OTHER_DEVICE_H);
 

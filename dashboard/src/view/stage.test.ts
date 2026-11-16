@@ -163,6 +163,7 @@ describe('stageView 선언한 새 종류', () => {
     expect(focusDevices(s.request!, layout)).toEqual(['fan-1']);
     expect(deviceHeight('fan')).toBe(OTHER_DEVICE_H);
     expect(deviceHeight('constructor')).toBe(OTHER_DEVICE_H);
+    expect(deviceHeight('display')).toBe(80);
   });
 });
 
