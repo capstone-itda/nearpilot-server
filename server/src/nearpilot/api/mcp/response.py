@@ -99,6 +99,7 @@ _STATE_KEYS = ("node_id", "kind", "occupancy", "state", "online", "trusted", "ac
                "reported")
 _ACTION_KEYS = ("name", "description", "input_schema")
 _REPORTED_KEYS = ("value", "observed_at")  # 보고 상태는 값과 관측 시각만 담는다 (FR-09, FR-11, #289)
+_OPTION_KEYS = ("id", "name")  # 화면·소리 모드의 지원 목록은 있을 때만 ID와 이름으로 담는다 (#301)
 
 
 def _filtered(item: Mapping[str, Any], keys: Sequence[str]) -> dict[str, Any]:
@@ -107,10 +108,19 @@ def _filtered(item: Mapping[str, Any], keys: Sequence[str]) -> dict[str, Any]:
     if "actions" in out and out["actions"] is not None:
         out["actions"] = [{key: action.get(key) for key in _ACTION_KEYS} for action in out["actions"]]
     if isinstance(out.get("reported"), Mapping):
-        out["reported"] = {str(name): {key: entry.get(key) for key in _REPORTED_KEYS}
+        out["reported"] = {str(name): _reported_entry(entry)
                            for name, entry in out["reported"].items() if isinstance(entry, Mapping)}
     elif "reported" in out:
         out["reported"] = None
+    return out
+
+
+def _reported_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
+    out = {key: entry.get(key) for key in _REPORTED_KEYS}
+    supported = entry.get("supported")
+    if isinstance(supported, Sequence) and not isinstance(supported, (str, bytes)):
+        out["supported"] = [{key: option.get(key) for key in _OPTION_KEYS}
+                            for option in supported if isinstance(option, Mapping)]
     return out
 
 

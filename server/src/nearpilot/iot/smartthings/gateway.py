@@ -204,7 +204,7 @@ class SmartThingsCommandGateway:
         if table is None:
             self._refresh()
             table = self._get(plan.capability, mode.attribute)
-        name = _mode_name(table, mode.mode_id)
+        name = _mode_name(table, mode.requested)
         if name is None:
             return None
         confirm = replace(plan.confirm, expected=tuple(dict.fromkeys((*plan.confirm.expected, name))))
@@ -257,12 +257,17 @@ def _same_value(actual: Any, expected: Any) -> bool:
     return type(actual) is type(expected) and actual == expected
 
 
-def _mode_name(table: Any, mode_id: str) -> str | None:
-    """`[{"id", "name"}, ...]` 대응표에서 ID 의 이름. 형식이 다르거나 없으면 None (spec 가정)."""
+def _mode_name(table: Any, requested: str) -> str | None:
+    """`[{"id", "name"}, ...]` 대응표에서 요청 값(ID 나 이름)의 이름. 형식이 다르거나 없으면 None (spec 가정, #301).
+
+    ID 를 먼저 찾는다. 같은 문자열이 다른 항목의 이름이어도 ID 가 우선이다.
+    """
     if not isinstance(table, (list, tuple)):
         return None
-    for item in table:
-        if isinstance(item, Mapping) and item.get("id") == mode_id:
-            name = item.get("name")
-            return name if isinstance(name, str) and name else None
+    items = [item for item in table if isinstance(item, Mapping)]
+    for field in ("id", "name"):
+        for item in items:
+            if item.get(field) == requested:
+                name = item.get("name")
+                return name if isinstance(name, str) and name else None
     return None

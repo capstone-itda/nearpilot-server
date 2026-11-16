@@ -107,3 +107,16 @@ def test_FR09_mcp_get_device_state_passes_reported():
     assert resp["reported"] == {"volume": {"value": 2, "observed_at": "2026-11-13T12:31:14+00:00"},
                                 "power": {"value": "on", "observed_at": None}}
     assert "dev-secret" not in json.dumps(resp)
+
+
+def test_FR09_mcp_reported_passes_mode_supported():
+    """지원 목록은 있을 때만 ID와 이름으로 싣는다. 항목의 다른 키는 버린다 (FR-11, #301)."""
+    c = Client()
+    c.core.device_state = {**c.core.device_state, "reported": {
+        "picture_mode": {"value": "영화 화면", "observed_at": None,
+                         "supported": [{"id": "modeMovie", "name": "영화 화면", "device_id": "dev-secret"}]},
+        "volume": {"value": 2, "observed_at": None}}}
+    resp = state(c, {"node_id": "locker-1"})
+    assert resp["reported"]["picture_mode"]["supported"] == [{"id": "modeMovie", "name": "영화 화면"}]
+    assert "supported" not in resp["reported"]["volume"]
+    assert "dev-secret" not in json.dumps(resp)

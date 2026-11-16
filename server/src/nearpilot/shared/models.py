@@ -1458,20 +1458,39 @@ class ProvisioningBundle:
 
 
 @dataclass(frozen=True, slots=True)
+class ReportedOption:
+    """보고 키가 가질 수 있는 값 하나. 화면·소리 모드의 ID와 이름이다 (FR-09, #301)."""
+
+    id: str
+    name: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.id, str) or not self.id or not isinstance(self.name, str) or not self.name:
+            raise ValueError("ReportedOption 의 id 와 name 은 빈 문자열이 아니어야 한다")
+
+
+@dataclass(frozen=True, slots=True)
 class ReportedValue:
     """외부 API 기기가 보고한 값 하나 (FR-09, #289). 관측 시각은 외부 API가 기록한 시각이다.
 
+    `supported`는 기기가 지원하는 값의 목록이다. 화면·소리 모드만 담고, 나머지는 None 이다 (#301).
     판정, 허가, 실행 성공의 근거가 아니다 (FR-07, NFR-07).
     """
 
     key: str
     value: Any
     observed_at: datetime | None = None
+    supported: tuple[ReportedOption, ...] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.key, str) or not self.key:
             raise ValueError("ReportedValue.key 는 빈 문자열이 아니어야 한다")
         object.__setattr__(self, "value", _freeze(self.value))
+        if self.supported is not None:
+            supported = tuple(self.supported)
+            if not all(isinstance(option, ReportedOption) for option in supported):
+                raise ValueError("ReportedValue.supported 는 ReportedOption 목록이어야 한다")
+            object.__setattr__(self, "supported", supported)
 
 
 @dataclass(frozen=True, slots=True)

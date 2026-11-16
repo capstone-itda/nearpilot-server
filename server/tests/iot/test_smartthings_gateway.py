@@ -523,3 +523,40 @@ def test_FR09_not_sent_keeps_reported():
     gateway, confirmed = confirmed_gateway(transport, clock)
     assert gateway.send(command("set_volume", arguments={"volume": 23}), timeout_sec=5).outcome         is CommandOutcome.NOT_SENT
     assert confirmed.snapshot() == ({}, None)
+
+
+# ── 모드 이름 인자 (#301) ─────────────────────────────────────────
+
+DISPLAY_MODES = [{"id": "modeGen_65552", "name": "에코 화면"}, {"id": "modeMovie", "name": "영화 화면"}]
+
+
+def test_FR07_picture_mode_accepts_name():
+    """호스트가 보고 상태에서 본 이름을 그대로 보내도 같은 명령을 보낸다 (#301)."""
+    transport = FakeTransport()
+    transport.values[("custom.picturemode", "supportedPictureModesMap")] = [DISPLAY_MODES]
+    transport.values[("custom.picturemode", "pictureMode")] = ["영화 화면", "에코 화면"]
+    gateway = make_gateway(transport, FakeClock())
+    result = gateway.send(command("set_picture_mode", arguments={"mode": "에코 화면"}), timeout_sec=5)
+    assert result.outcome is CommandOutcome.SUCCEEDED
+    assert transport.commands() == [("custom.picturemode", "setPictureMode", ["에코 화면"])]
+
+
+def test_FR07_mode_id_wins_over_same_name():
+    """같은 문자열이 한 항목의 ID 이고 다른 항목의 이름이면 ID 로 본다."""
+    transport = FakeTransport()
+    transport.values[("custom.soundmode", "supportedSoundModesMap")] = [
+        [{"id": "modeA", "name": "modeB"}, {"id": "modeB", "name": "또렷하게 들을 때"}]]
+    transport.values[("custom.soundmode", "soundMode")] = ["또렷하게 들을 때"]
+    gateway = make_gateway(transport, FakeClock())
+    result = gateway.send(command("set_sound_mode", arguments={"mode": "modeB"}), timeout_sec=5)
+    assert result.outcome is CommandOutcome.SUCCEEDED
+    assert transport.commands() == [("custom.soundmode", "setSoundMode", ["또렷하게 들을 때"])]
+
+
+def test_FR07_mode_unknown_name_not_sent():
+    transport = FakeTransport()
+    transport.values[("custom.picturemode", "supportedPictureModesMap")] = [DISPLAY_MODES]
+    gateway = make_gateway(transport, FakeClock())
+    result = gateway.send(command("set_picture_mode", arguments={"mode": "게임 화면"}), timeout_sec=5)
+    assert result.outcome is CommandOutcome.NOT_SENT
+    assert transport.commands() == []
