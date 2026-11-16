@@ -14,7 +14,7 @@ describe('text', () => {
     expect(toolCall({ tool: 'request_use', target: { kind: 'explicit', nodeId: 'locker-2' }, action: 'open' })).toBe('request_use(locker-2, open)');
   });
   it('FR12A 아는 종류·동작은 쉬운 말, 기기가 선언한 다른 이름은 그대로 보인다', () => {
-    expect([kindName('locker'), kindName('light'), kindName('speaker'), kindName('fan')]).toEqual(['사물함', '조명', '스피커', 'fan']);
+    expect([kindName('locker'), kindName('light'), kindName('speaker'), kindName('display'), kindName('fan')]).toEqual(['사물함', '조명', '스피커', '모니터', 'fan']);
     expect([actionName('open'), actionName('close'), actionName('on'), actionName('off'), actionName('spin')]).toEqual(['열기', '닫기', '켜기', '끄기', 'spin']);
     expect([actionVerb('close'), actionVerb('spin')]).toEqual(['닫아요', 'spin 실행해요']);
     // Object의 속성 이름은 아는 이름이 아니다

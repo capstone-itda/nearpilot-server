@@ -7,7 +7,7 @@ export const VERDICT_LABEL: Record<string, string> = {
 };
 
 /** 아는 종류·동작 이름의 쉬운 말. 기기가 선언한 다른 이름은 이름 그대로 보인다 (#245) */
-export const KIND_NAME: Record<string, string> = { locker: '사물함', light: '조명', speaker: '스피커' };
+export const KIND_NAME: Record<string, string> = { locker: '사물함', light: '조명', speaker: '스피커', display: '모니터' };
 export const ACTION_NAME: Record<string, string> = { open: '열기', close: '닫기', on: '켜기', off: '끄기' };
 export const OUTPUT_COMPLETE = '제어 신호 출력 완료';
 export const ACTION_VERB: Record<string, string> = { open: '열어요', close: '닫아요', on: '켜요', off: '꺼요' };
