@@ -2,7 +2,8 @@
 
 - 담당: dnnals (근접 추정. 이 작업에 필요한 shared, DB, 판정, runtime, CLI, 평가 도구 연결 포함)
 - 요구사항: FR-05, FR-16, FR-17, FR-18, FR-22, FR-23, NFR-02
-- 따르는 결정: #252 (decision PR #257). 남은 미결은 #258.
+- 따르는 결정: #252 (decision PR #257), #305 (decision PR #309), #306 (decision PR #308), #307 (decision PR #310). 남은 미결은 #258.
+- 고친 작업: fix/core-proximity-zero — 측정 영점(#307), 영점 재탐색(#305), 거리 순서의 영점 보정(#306). 결정 23~25
 
 ## 1. 왜
 
@@ -17,19 +18,23 @@
   - 공통 모델 파일 하나. 설정 `[proximity] model_version`이 고른다.
   - 신뢰 기기의 `rssi` 프레임과 보고(빈 보고 포함), 기기 선언의 `vendor`
   - DB에 저장한 자동 영점 개정
+  - 소유자의 측정 영점 요청과 영점 재탐색 요청 (관리 REST, #305, #307)
 - 출력:
   - `ProximityResult.posteriors`는 근접 참여 후보만 담는다. `ProximityResult.unzeroed`는 그중 자동 영점이 없는 기기다. `ProximityResult.conservative`는 그 기기마다 보수적 사후확률이다.
   - `ProximityResult.calib_version`은 판정에 적용한 자동 영점의 개정 번호다.
   - 근접 지정과 전역 할당은 자동 영점이 없는 기기의 임계값 비교에 보수적 사후확률을 쓴다. 근접 지정은 1등의 보수적 사후확률이 임계값 미만이면 `ASK`이고 2등을 고르지 않는다.
   - 합성 공통 모델 파일 `synthetic-2.json`. 시드를 고정한 생성기와 공통 적합 함수로 만든다.
+  - `DistanceOrder.values`는 영점으로 보정한 RSSI의 평균이다. `DistanceOrder.calib_version`은 거기에 적용한 영점의 개정 번호다 (#306).
+  - 측정 영점과 영점 재탐색의 결과 (`ZeroMeasureResult`, `ZeroResetResult`)
 - 바뀌는 상태:
-  - DB 테이블 `auto_zero` (마이그레이션 `0013`). 행을 더하기만 한다.
+  - DB 테이블 `auto_zero` (마이그레이션 `0013`, 출처 열은 `0014`). 행을 더하기만 한다.
   - 근접 추정의 자동 영점 표본과 기기별 자동 영점 (메모리)
 - 약속:
   - 모델 파일에 장소 ID, 기기 ID, 좌표, 앵커별 파라미터가 없다. 소유자의 일은 기기 등록과 신뢰뿐이다.
   - 사후확률 출력, 근접 임계값, HMM, 우도 온도는 그대로다.
   - 합성 모델은 합성임을 파일 안에 표시한다. 실제 정확도를 검증했다고 쓰지 않는다.
   - 명시 지정과 거리 선택자의 판정은 이전과 같다. 거리 선택자는 자동 영점이 없는 기기도 사후확률로 비교한다.
+  - 영점은 두 가지다. 측정 영점(#307)이 있는 기기는 자동 영점을 찾지 않는다. 둘 다 `auto_zero` 행이고 같은 개정 번호를 쓴다. 이 spec에서 "자동 영점이 있는 기기"는 출처와 상관없이 영점 행이 있는 기기다.
 
 ## 3. 제약
 
@@ -39,6 +44,11 @@
 - 거리 순서에는 자동 영점이 없는 근접 참여 기기도 선다 (FR-16).
 - 근접 추정은 좌표와 기기 배치를 쓰지 않는다. 공통 파라미터는 공통 모델 파일에서 읽는다 (FR-16).
 - 자동 영점은 장소의 관측으로 찾는다. 라벨과 소유자 입력을 쓰지 않는다 (FR-16).
+- 측정 영점은 소유자가 고정 거리에서 잰 RSSI로 서버가 계산한다. 소유자는 영점 숫자를 넣지 않는다. 측정 거리, 측정 시간, 기준값은 설정에서 받는다 (FR-16, #307).
+- 측정 영점이 있는 기기에는 자동 영점을 찾지 않는다. `vendor`가 바뀌면 측정 영점도 버린다 (FR-16, #307).
+- 소유자는 기기 하나나 장소의 모든 기기의 영점을 버리고 다시 찾게 할 수 있다. 버림은 버림 행(새 개정)이다. 다시 찾을 때까지 그 기기는 자동 영점이 없는 기기로 판정한다 (FR-16, #305).
+- 거리 선택자의 정렬 값은 프레임마다 그 기기의 영점을 뺀 RSSI의 평균이다. 영점이 없는 기기는 0 dB를 뺀다. 거리 선택자 요청의 판정 기록은 그 영점의 개정 번호를 보정 버전으로 남긴다 (FR-09, FR-22, #306).
+- 측정 영점과 영점 재탐색은 장소 소유자만 한다. 소유자가 아니면 `403` `NOT_OWNER`다 (architecture §5).
 - `vendor.model`이나 `vendor.firmware`가 바뀌면 그 기기의 자동 영점을 버리고 다시 찾는다. 버린 사실도 DB에 남긴다. 재부팅과 동작 선언 변경은 자동 영점을 유지한다 (FR-16).
 - `vendor`는 자동 영점을 버리는 조건으로만 쓴다. 판정 분기에 쓰지 않는다 (FR-16).
 - DB는 자동 영점과 개정 번호를 저장한다. 판정 기록이 참조하는 개정을 지우지 않는다. 서버를 다시 시작해도 저장한 자동 영점을 쓴다 (FR-16, FR-22).
@@ -57,13 +67,16 @@
   - `ProximityResult.unzeroed`, `ProximityResult.conservative`, `ProximityResult.threshold_probability()`
   - `AutoZero`, `AutoZeroState`, `AutoZeroStore` Protocol
   - `ProximityEstimator` 문서 문자열 (전체 상태와 결과의 뜻)
-- `server/src/nearpilot/db/` — 마이그레이션 `0013`, `AutoZeroStore` 구현
+  - `AutoZero.source`, `ZeroSource`, `ZeroOutcome`, `ZeroMeasureResult`, `ZeroResetResult`, `ZeroCalibrator` Protocol, `NodeAdminService`의 영점 메서드, `DistanceOrder.calib_version`, 측정 영점 설정 (#305, #306, #307)
+- `server/src/nearpilot/db/` — 마이그레이션 `0013`, `0014`, `AutoZeroStore` 구현
 - `server/src/nearpilot/core/proximity/` — 공통 모델 파일, 관측 모델, 자동 영점, 공통 적합, 합성 생성기, 추정기. 장소별 모델과 배치 파일 코드를 지운다.
-- `server/src/nearpilot/core/decision/pipeline.py` — 근접 지정과 전역 할당의 자동 영점 규칙
+- `server/src/nearpilot/core/decision/pipeline.py` — 근접 지정과 전역 할당의 자동 영점 규칙, 거리 선택자 판정 기록의 보정 버전 (#306)
+- `server/src/nearpilot/core/lifecycle/node_admin.py` — 측정 영점과 영점 재탐색 (#305, #307)
+- `server/src/nearpilot/api/rest/nodes.py` — 영점 관리 REST 세 경로 (#305, #307)
 - `server/src/nearpilot/core/decision/recheck.py` — `nearest:`·`any:` 요청의 재검사가 쓰는 확률 (결정 22)
 - `server/src/nearpilot/core/dashboard/queries.py` — 모델과 보정 버전의 출처
 - `server/src/nearpilot/runtime/` — 설정 로더, 조립, 복원, `ThreadDatabase.auto_zero_store`
-- `server/src/nearpilot/cli/` — `fit`, `eval`, `evaluate-reask`
+- `server/src/nearpilot/cli/` — `fit`, `eval`, `evaluate-reask`, `zero` (#305, #307), `recover`의 요청 대기 한계 인자
 - `server/tools/evaluation/` — 근접 표본 수집, 평가 harness, 평가 서버 설정, 지표 3 장면(결정 21), `EXPECTED_SCHEMA_VERSION`
 - `server/tools/node_lab/` — 실험실 모델 파일과 설정(`setup.py`), 시연의 대상 지정(`session.py`, 결정 20)
 - `server/config/` — 설정 예시, `final-demo` 설정과 모델, README
@@ -77,7 +90,7 @@
 ### 고치지 않는 곳
 
 - 항상: `docs/` (위의 파일은 제외), `AGENTS.md` (Gotchas 절은 제외), `server/pyproject.toml`, `.github/`
-- 이 작업: 거리 순서의 계산(`distance_order`), 명시 지정과 거리 선택자의 판정 규칙, 거리 선택자 요청의 재검사, IOT, 펌웨어, 시뮬레이터, 대시보드 화면, 수집 도구(`tools/data_collection`), 분할 도구
+- 이 작업: 명시 지정과 거리 선택자의 판정 규칙(정렬 값의 보정은 제외, #306), 거리 선택자 요청의 재검사, IOT, 펌웨어, 시뮬레이터, 대시보드 화면, 수집 도구(`tools/data_collection`), 분할 도구
 
 `docs/architecture.md` §4 "근접 사후확률의 범위"가 `shared` 접점의 모양을 근접 추정 spec에 맡겼다. 그래서 이 작업은 `shared`를 고친다.
 
@@ -90,12 +103,18 @@
 | `AutoZeroStore.auto_zeros`, `AutoZeroStore.save_auto_zero` | 제공 / 사용 | DB → 근접 추정 |
 | `Repository.save_decision`의 `DecisionRecord.calib_version` | 사용 | 판정 → DB |
 | `NodeInfo.descriptor.vendor` | 사용 | DB → 근접 추정 |
+| `ZeroCalibrator.apply_measured_zero`, `discard_zeros` | 제공 | 근접 추정 → 상태 관리 |
+| `NodeAdminService.measure_zero`, `reset_zero`, `reset_place_zeros` | 제공 | 상태 관리 → API |
+| `ProximityEstimator.distance_order` → `DistanceOrder.calib_version` | 제공 | 근접 추정 → 판정 |
+| `Repository.beacons_of`, `rssi_since`, `is_place_owner` | 사용 | DB → 상태 관리 |
 
 ### 만들지 않는 것
 
 - 장소를 나눈 지표 8 시험 도구 (학습 장소와 시험 장소를 바꿔 두 번 시험). 실측 뒤에 만든다 (#252).
 - 실측 데이터로 만든 공통 모델과 지표 8 채점
-- 찾은 자동 영점의 갱신. 찾은 뒤에는 `vendor`가 바뀌기 전까지 고정한다 (결정 5).
+- 찾은 자동 영점의 저절로 갱신. 찾은 뒤에는 `vendor`가 바뀌거나 소유자가 버리기 전까지 고정한다 (결정 5, 24).
+- 영점 숫자를 직접 넣는 경로 (#307)
+- 대시보드 화면의 측정 영점 버튼. 측정은 운영 명령 `nearpilot zero`로 한다.
 - 비콘을 못 들은 근접 참여 기기를 증거로 쓰는 것 (결정 3)
 - 대시보드 화면의 자동 영점 표시. 기존 `calibrationVersion` 칸의 값만 바뀐다.
 - `auto_zero` 행의 보존 정리. 행을 지우지 않는다.
@@ -132,6 +151,16 @@
 | 수집 전용 모드다 (모델 없음) | `posterior`는 `ModelMismatchError`. 자동 영점 표본을 모으지 않는다 | `test_FR16_collect_only_no_model` |
 | 적합 입력의 한 역할(앞, 옆, 없음)에 표본이 둘보다 적거나 표준편차가 0이다 | `FitError` | `test_FR16_common_fit_rejects_thin_roles` |
 | `fit`의 분할 결과 둘이 같은 장소다 | 종료 코드 `EXIT_INVALID` | `test_FR16_cli_fit_rejects_duplicate_place` |
+| 측정 영점: 소유자가 아니다 | `403` `NOT_OWNER`. 기다리지 않는다 | `test_FR16_measure_zero_not_owner` |
+| 측정 영점: 기기가 `trusted`가 아니다, 소유자의 활성 비콘이 없다 | `409` `NOT_TRUSTED`, `NO_BEACON`. 기다리지 않는다 | `test_FR16_measure_zero_requires_trusted_and_beacon` |
+| 측정 영점: 측정 구간에 그 기기의 프레임이 `zero_measure_min_frames`보다 적다 | `422` `NOT_ENOUGH_FRAMES`와 프레임 수. 저장하지 않는다 | `test_FR16_measure_zero_not_enough_frames` |
+| 측정 영점: 저장이 실패한다 | `503` `NOT_SAVED`. 메모리의 영점은 그대로다 | `test_FR16_measure_zero_store_failure` |
+| 측정 영점이 있는 기기 | 자동 영점 표본을 모으지 않고 찾지 않는다 | `test_FR16_measured_zero_blocks_auto_zero` |
+| 측정 영점이 있는 기기의 `vendor`가 바뀌었다 | 버림 행을 쓰고 자동 영점을 다시 모은다 | `test_FR16_vendor_change_discards_measured_zero` |
+| 측정 영점을 저장하는 동안 그 기기의 자동 영점 저장이 늦게 끝난다 | 메모리는 더 늦은 개정(측정 영점)을 둔다 | `test_FR16_late_auto_zero_write_keeps_measured_zero` |
+| 영점 재탐색: 영점이 없는 기기 | 버림 행을 쓰지 않는다. 모으던 표본만 지운다 | `test_FR16_reset_zero_without_zero_writes_nothing` |
+| 영점 재탐색: 장소에 기기가 없다 | `404` `NOT_FOUND` | `test_FR16_reset_place_zeros_unknown_place` |
+| 거리 선택자: 영점이 있는 기기가 섞여 있다 | 정렬 값은 보정한 값이다. 영점이 없는 기기는 보정 없이 계산한다 | `test_FR09_distance_order_subtracts_zero` |
 
 ## 6. 결정
 
@@ -241,6 +270,25 @@
     - 위 영점 배치가 모든 경우에 가장 불리하다는 증명은 없다. 관측 모델의 분포 폭이 비슷해서 앞 기기의 값이 낮아지고 다른 기기의 값이 높아질수록 i의 확률이 줄어드는 근사다.
     - 지금 Δ는 합성 생성기(`z` ∈ [−6, 6] dB)에서 나온 값이다. 실측 전에는 실제 기기의 영점 폭을 검증하지 않았다.
 
+23. 측정 영점 (#307). 담당자가 2026-11-17에 골랐다 (기준값, 흐름, 거리).
+    - 측정 영점 = 측정 구간에 그 기기가 들은 소유자 활성 비콘 RSSI의 중앙값 − 설정 `zero_measure_reference_dbm`이다. 기준값은 측정 거리에서 영점이 0인 기기가 듣는 RSSI다 — 기기를 하나씩 재도 다른 기기의 값이 바뀌지 않는다. 측정한 기기들의 평균을 0으로 두는 방법은 기기를 더 잴 때마다 다른 기기의 영점이 바뀌어 고르지 않았다.
+    - 측정 거리는 한 곳(설정 `zero_measure_distance_m`, 초기 0.5 m)이다. 거리는 소유자에게 알리는 값이고 계산에 쓰지 않는다 — 거리 환산식이 필요 없다.
+    - 흐름은 REST 한 번이다. `POST /admin/nodes/{node_id}/zero/measure`를 받으면 서버가 `zero_measure_sec`(초기 10초) 동안 기다린 뒤 그 구간(서버 수신 시각, 요청 시각 이상 끝 시각 이하)의 DB 관측으로 계산해 저장하고 `200`으로 결과를 준다. 서버에 진행 중인 측정 상태를 두지 않는다. 기다리는 동안 요청 접수 문을 잡는다 — 종료 대기 한계(초기 30초)보다 짧다.
+    - 프레임이 `zero_measure_min_frames`(초기 5)보다 적으면 `422` `NOT_ENOUGH_FRAMES`다. 기준값 초기 −44 dBm은 최종 시연 장소 실측 40회차의 기기 앞(약 0.5 m) 평균에서 정했다. 실측으로 다시 정한다.
+    - 측정 영점은 `auto_zero` 행(`source` = `measured`, 마이그레이션 `0014`)이다. 근접 추정기 `apply_measured_zero`가 저장소에 쓰고 메모리의 영점을 바꾸고 표본을 지운다 (`ZeroCalibrator`). 측정은 기기의 신뢰와 소유자의 활성 비콘이 필요하다.
+    - 측정 영점이 있는 기기는 영점이 있는 기기다. 표본을 모으지 않으므로 자동 영점을 찾지 않는다. `vendor`가 바뀌면 결정 5처럼 버린다.
+    - 운영 명령: `nearpilot zero measure NODE_ID --token-file PATH`. 명령은 측정 시간보다 20초 더 기다린다.
+24. 영점 재탐색 (#305). 담당자가 2026-11-17에 골랐다.
+    - `POST /admin/nodes/{node_id}/zero/reset`, `POST /admin/places/{place_id}/zero/reset`. 응답 `200` `{"nodes": [...], "revision": N}`. 장소 경로는 장소의 모든 기기(신뢰 상태와 상관없이)다.
+    - 측정 영점도 버린다. 버림 행은 `source` = `auto`다 — 다음 영점은 자동으로 찾는다.
+    - 영점이 있는 기기만 버림 행을 쓴다. 모으던 표본은 모든 대상 기기에서 지운다. `revision`은 그 뒤의 최신 개정이다.
+    - 운영 명령: `nearpilot zero reset NODE_ID` 또는 `nearpilot zero reset --place PLACE_ID`.
+    - 상태 코드: `NOT_OWNER` 403, `NOT_FOUND` 404, `NOT_TRUSTED`·`NO_BEACON` 409, `NOT_ENOUGH_FRAMES` 422, `NOT_SAVED` 503. 소유권을 먼저 본다 (재시작 경로와 같다).
+25. 거리 순서의 영점 보정 (#306).
+    - `distance_order`는 근접 사후확률과 같은 메모리의 영점(출처와 상관없이)을 프레임마다 뺀다. 프레임 수와 경계 확률의 식은 그대로다.
+    - `DistanceOrder.calib_version`은 계산할 때의 최신 개정 번호다. 판정은 ③ 감사 기록의 거리 순서 항목에 넣고, 거리 선택자 상위 요청의 판정 기록 `calib_version`에 쓴다. 하위 요청의 판정 기록은 이전처럼 사후확률의 개정이다.
+    - 기본값 `"0"`이라 기존 fake는 "영점 없음"으로 읽힌다.
+
 ## 7. 가정
 
 없음
@@ -306,4 +354,22 @@
 | FR-22 | `test_FR22_auto_zero_rows_survive_cleanup` | 보존 정리가 행을 지우지 않는다 |
 | FR-22 | `test_FR22_calib_version_recorded` | 판정 기록의 `calib`이 결과의 개정 번호다 |
 | NFR-02 | `test_NFR02_switch_within_two_seconds` | 이동 뒤 2초 안에 대상이 바뀐다 (합성 경로). strict xfail로 둔다 — 시험용 공통 모델(`window_sec` 3, `stay` 0.9)로 시드 20개 중 7개가 2초를 넘는다. 이전 모델도 같은 이유의 xfail이었다. 담당자가 2026-11-09에 정했다 |
+| FR-16 | `test_FR16_measured_zero_median_minus_reference` | 측정 영점이 중앙값 − 기준값이고 유한하지 않은 값을 버린다 |
+| FR-16 | `test_FR16_measure_zero_saves_measured_row` | 측정 시간을 기다린 뒤 구간 안의 그 기기 프레임으로 계산해 `measured` 행을 쓴다 |
+| FR-16 | `test_FR16_measure_zero_not_owner` | 소유자가 아니면 기다리지 않고 `NOT_OWNER` |
+| FR-16 | `test_FR16_measure_zero_requires_trusted_and_beacon` | 신뢰 기기와 활성 비콘이 필요하다 |
+| FR-16 | `test_FR16_measure_zero_not_enough_frames` | 프레임이 모자라면 저장하지 않는다 |
+| FR-16 | `test_FR16_measure_zero_store_failure` | 저장 실패는 `NOT_SAVED`다 |
+| FR-16 | `test_FR16_measured_zero_blocks_auto_zero` | 측정 영점이 있는 기기는 자동 영점을 찾지 않는다 |
+| FR-16 | `test_FR16_vendor_change_discards_measured_zero` | `vendor` 변경이 측정 영점도 버린다 |
+| FR-16 | `test_FR16_late_auto_zero_write_keeps_measured_zero` | 늦게 끝난 자동 영점 저장이 측정 영점을 덮지 않는다 |
+| FR-16 | `test_FR16_reset_zero_discards_and_refinds` | 재탐색이 버림 행을 쓰고 다시 표본을 모아 찾는다 |
+| FR-16 | `test_FR16_reset_zero_without_zero_writes_nothing` | 영점이 없는 기기는 버림 행이 없다 |
+| FR-16 | `test_FR16_reset_place_zeros_all_nodes` | 장소 경로가 장소의 모든 기기를 버린다 |
+| FR-16 | `test_FR16_reset_place_zeros_unknown_place` | 없는 장소는 `NOT_FOUND` |
+| FR-16 | `test_FR16_rest_zero_routes` | REST 세 경로의 상태 코드와 응답에 사용자 ID가 없다 |
+| FR-16 | `test_FR16_cli_zero_measure_and_reset` | `nearpilot zero`가 REST를 부르고 결과를 쓴다 |
+| FR-22 | `test_FR22_migration_0014_zero_source` | 스키마 버전 14, 이전 행은 `auto`, 측정 행은 `measured` |
+| FR-09 | `test_FR09_distance_order_subtracts_zero` | 정렬 값이 영점을 뺀 평균이고 `calib_version`이 개정 번호다 |
+| FR-22 | `test_FR22_selector_record_keeps_order_calib_version` | 거리 선택자 상위 판정 기록과 감사 기록에 거리 순서의 개정이 있다 |
 | NFR-02 | `test_NFR02_flicker_reduced` | 공통 모델로도 정지 중 깜빡임이 기준선보다 80% 줄어든다 (합성 경로) |
