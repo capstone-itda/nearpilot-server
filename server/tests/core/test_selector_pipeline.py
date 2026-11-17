@@ -583,12 +583,25 @@ def test_FR22_selector_records_posterior_for_parent_and_rental_children():
         assert record.settings.version == "t"
     assert repo.records[PARENT].policy_version is None
     assert [repo.records[c].policy_version for c in child_ids(repo)] == [1, 1]
-    # 사후확률을 부르지 않은 요청(공용형만)의 기록에는 근접 값이 없다
+
+
+def test_FR22_selector_record_keeps_order_calib_version():
+    """거리 선택자 상위 판정 기록과 거리 순서 감사는 정렬 값에 적용한 영점의 개정을 남긴다 (#306)."""
+    settings = Settings(version="t", threshold_locker=0.4)
+    pipe, repo, prox, _store, audit = build(
+        lockers(), LOCKER_VALUES, {"locker-1": 0.5, "locker-2": 0.45}, settings=settings)
+    prox.order_calib = "7"
+    pipe.decide_selector(request("near:locker:1:2", action="open"))
+    assert repo.records[PARENT].calib_version == "7"
+    assert [repo.records[c].calib_version for c in child_ids(repo)] == ["c", "c"]  # 하위 요청은 사후확률의 개정이다
+    assert thaw(events(audit, PARENT, Step.PROXIMITY)[0].payload)["calib_version"] == "7"
+    # 사후확률을 부르지 않은 요청(공용형만)의 기록에는 근접 값이 없다. 상위 요청만 거리 순서의 보정 버전을 남긴다 (#306)
     pipe, repo, *_ = build(lights(), LIGHT_VALUES)
     pipe.decide_selector(request("near:light:1:2"))
     for iid in (PARENT, *child_ids(repo)):
         record = repo.records[iid]
-        assert (record.model_version, record.calib_version, record.window_start) == (None, None, None)
+        calib = "c" if iid == PARENT else None
+        assert (record.model_version, record.calib_version, record.window_start) == (None, calib, None)
         assert dict(record.posteriors) == {}
 
 
@@ -958,7 +971,7 @@ def test_FR22_selector_audit_records_order_and_children():
     assert candidate == {"place_id": "p", "candidates": ["light-1", "light-2", "light-3"], "online_ttl_sec": 15.0}
     assert order == {
         "selector": "near:light:1:2", "order": ["light-2", "light-1", "light-3"],
-        "values": LIGHT_VALUES, "selected": ["light-2", "light-1"], "similar": False,
+        "values": LIGHT_VALUES, "selected": ["light-2", "light-1"], "similar": False, "calib_version": "c",
         "anchor_recent_sec": 3.0, "order_similar_db": 3.0,
         # near 는 경계 확률의 재료도 남긴다. 끝 경계는 (light-1 -60, light-3 -75) 다 (#278)
         "counts": {"light-2": 30, "light-1": 30, "light-3": 30},

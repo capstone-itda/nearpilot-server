@@ -154,6 +154,11 @@ class Settings:
     order_frame_sigma_db: float = 4.0  # 경계 확률의 프레임 잡음: 정렬 값에 쓰는 프레임 하나의 RSSI 표준편차 dB. 0 초과 (FR-09, #278)
     order_static_sigma_db: float = 3.5  # 경계 확률의 고정 오차: 평균으로 줄지 않는 기기별 RSSI 오차의 표준편차 dB. 0 이상 (FR-09, #278)
     order_boundary_min_prob: float = 0.9  # near: 경계 확률의 기준: 이 값보다 작으면 ASK. 0.5 이상 1 미만 (FR-09, #278)
+    # 측정 영점 (FR-16, #307). 소유자가 비콘을 거치대에 고정하고 기기마다 같은 거리에서 잰다
+    zero_measure_sec: float = 10.0  # 측정 시간: 서버가 측정 요청을 받은 뒤 프레임을 모으는 구간. 양수
+    zero_measure_distance_m: float = 0.5  # 측정 거리: 소유자에게 알리는 기기와 비콘 사이 거리 m. 양수. 계산에 쓰지 않는다
+    zero_measure_reference_dbm: float = -44.0  # 기준값: 측정 거리에서 영점이 0인 기기가 듣는 RSSI dBm. 측정 영점 = 중앙값 − 기준값
+    zero_measure_min_frames: int = 5  # 측정 구간에 필요한 그 기기의 프레임 수. 모자라면 저장하지 않는다. 1 이상의 정수
     batch_max_items: int = 8  # 묶음 요청 항목 수의 상한: 넘으면 DENY. 1 이상의 정수 (FR-09, #284)
     online_ttl_sec: float = 15.0  # 온라인 유지 시간: 유효한 기기 메시지의 마지막 수신부터 (FR-13)
     status_report_sec: float = 1.0  # 기기 상태 보고 주기
@@ -215,6 +220,7 @@ class Settings:
             "beacon_recent_sec", "anchor_recent_sec", "order_similar_db",
             "order_frame_sigma_db", "order_static_sigma_db", "order_boundary_min_prob",
             "batch_max_items",
+            "zero_measure_sec", "zero_measure_distance_m", "zero_measure_reference_dbm", "zero_measure_min_frames",
             "online_ttl_sec", "status_report_sec", "smartthings_poll_sec", "reported_state_cache_sec",
             "reservation_wait_sec", "exec_timeout_sec",
             "rental_duration_sec", "approval_ttl_sec", "approval_pending_ttl_sec",
@@ -227,7 +233,8 @@ class Settings:
             if isinstance(v, float) and not isfinite(v):
                 raise ValueError(f"{name} 는 유한한 숫자여야 한다: {v}")
             if name in (
-                "allocation_window_ms", "batch_max_items", "approval_ttl_sec", "approval_pending_ttl_sec",
+                "allocation_window_ms", "batch_max_items", "zero_measure_min_frames",
+                "approval_ttl_sec", "approval_pending_ttl_sec",
                 "use_history_retention_days", "audit_retention_days",
                 "request_dedup_ttl_sec", "dedup_entry_limit", "retention_cleanup_interval_sec",
             ) and not isinstance(v, int):
@@ -283,6 +290,9 @@ class Settings:
             "anchor_recent_sec",
             "order_similar_db",
             "order_frame_sigma_db",
+            "zero_measure_sec",
+            "zero_measure_distance_m",
+            "zero_measure_min_frames",
             "online_ttl_sec",
             "status_report_sec",
             "smartthings_poll_sec",

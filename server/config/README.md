@@ -292,6 +292,45 @@ nearpilot restart locker-1 --token-file config/.env.owner-token
 | `NODE_OFFLINE` (409) | 기기의 현재 연결을 확인하지 못했다. 전원과 Wi-Fi를 확인한다. |
 | `NOT_SENT` (503) | MQTT가 준비되지 않았거나 발행 결과를 모른다. 잠시 뒤 다시 실행한다. |
 
+# 기기별 영점 (측정 영점과 재탐색)
+
+기기마다 같은 거리에서도 RSSI가 일정하게 다르다. 서버는 그 차이(영점)를 빼고 근접 사후확률과 거리 선택자(`near:`/`far:`)의 정렬 값을 계산한다.
+영점은 두 가지다 (#307). 장소 소유자가 `nearpilot zero`로 잰 측정 영점이 있으면 그 값을 쓰고, 없으면 서버가 장소의 관측으로 자동 영점을 찾는다.
+`nearpilot serve`가 떠 있어야 한다. 토큰 파일과 `--server`는 `nearpilot recover`와 같다.
+
+측정 영점은 선택이다. 기기 하나씩 잰다.
+
+1. 소유자 계정의 활성 비콘(`PUT /me/beacon`으로 등록한 비콘)을 거치대에 고정한다. 손에 들지 않는다.
+2. 비콘을 잴 기기에서 `zero_measure_distance_m`(초기 0.5 m) 앞에, 기기를 마주 보게 둔다. 비콘과 기기 사이에 서지 않는다.
+3. 아래 명령을 실행하고 `zero_measure_sec`(초기 10초) 동안 움직이지 않는다.
+
+```
+nearpilot zero measure light-1 --token-file config/.env.owner-token
+```
+
+- 서버는 그 구간에 기기가 들은 비콘 RSSI의 중앙값에서 `zero_measure_reference_dbm`(초기 −44 dBm)을 뺀 값을 측정 영점으로 저장한다. 영점 숫자를 직접 넣는 경로는 없다.
+- 측정 영점이 있는 기기는 자동 영점을 찾지 않는다. 기기 펌웨어(`vendor`)가 바뀌면 측정 영점도 버린다.
+- 다시 재면 새 값이 앞 값을 대신한다. 행은 지우지 않는다 (판정 기록이 개정 번호로 참조한다).
+
+영점(측정 영점 포함)이 의심스러우면 버리고 자동 영점을 다시 찾게 한다 (#305).
+
+```
+nearpilot zero reset light-1 --token-file config/.env.owner-token
+nearpilot zero reset --place place-final-demo --token-file config/.env.owner-token
+```
+
+- 다시 찾을 때까지 그 기기는 영점이 없는 기기로 판정한다(보수적 사후확률). 자동 영점은 방문자가 여러 기기 사이를 지나다녀야 찾는다.
+
+| 사유 | 뜻 |
+|---|---|
+| `INVALID_TOKEN` (401) | 토큰이 없거나 틀리다. |
+| `NOT_OWNER` (403) | 토큰의 계정이 그 기기 장소의 소유자가 아니다. |
+| `NOT_FOUND` (404) | 장소에 기기가 없다. |
+| `NOT_TRUSTED` (409) | 기기가 `trusted`가 아니다. |
+| `NO_BEACON` (409) | 소유자 계정에 활성 비콘이 없다. |
+| `NOT_ENOUGH_FRAMES` (422) | 측정 구간에 그 기기가 들은 비콘 프레임이 `zero_measure_min_frames`(초기 5)보다 적다. 비콘 전원, 비콘 등록, 기기의 `rssi` 보고를 확인한다. |
+| `NOT_SAVED` (503) | 저장하지 못했다. 잠시 뒤 다시 실행한다. |
+
 # FAULT 복구
 
 기기가 `FAULT`로 격리되면 그 기기가 있는 장소의 소유자가 `nearpilot recover`로 푼다. `nearpilot serve`가 떠 있어야 한다.

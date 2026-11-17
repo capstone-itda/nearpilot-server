@@ -56,6 +56,7 @@ from nearpilot.shared.interfaces import (
     ReportedStateReader, RetentionStore,
 )
 from nearpilot.shared.interfaces import NodeAdminService as NodeAdminApi
+from nearpilot.shared.interfaces import ZeroCalibrator
 from nearpilot.shared.models import Decision, ExecutionContext, ExecutionResult, UseRequest
 
 log = logging.getLogger(__name__)
@@ -434,8 +435,11 @@ class Runtime:
         self._late_recovery.bind(recovery)
         # 기기 관리. 판정을 거치지 않고 소유권만 검사한다 (#235).
         restarter = MqttNodeRestarter(connection, delivery, settings=settings, clock=clock)
+        # 측정 영점과 영점 재탐색은 근접 추정기가 메모리의 영점과 함께 저장한다 (#305, #307).
+        calibrator = proximity if isinstance(proximity, ZeroCalibrator) else None
         self._late_nodes.bind(NodeAdminService(repository=repo, restarter=restarter, clock=clock,
-                                               settings=settings, provisioning=self._provisioning))
+                                               settings=settings, provisioning=self._provisioning,
+                                               calibrator=calibrator))
         release = ReleaseService(repository=repo, store=store, settings=settings, clock=clock,
                                  lock_for=locks)
         execute_off = Late("shared_light_execute")

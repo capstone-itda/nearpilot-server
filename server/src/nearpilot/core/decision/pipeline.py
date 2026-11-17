@@ -239,6 +239,7 @@ class _Pick:
     similar: bool
     counts: Mapping[str, int]  # near 는 거리 순서의 기기별 프레임 수. far 는 비어 있다
     boundary_probability: float | None  # near 의 가장 낮은 경계 확률. 경계가 없는 요청과 far 는 None 이다 (#278)
+    calib_version: str = "0"  # 정렬 값에 적용한 영점의 개정 번호 (#306)
 
 
 @dataclass
@@ -408,6 +409,7 @@ class DecisionPipeline:
                 step, detail = Step.DEDUP, {"capacity_exceeded": True}
             else:
                 pick = self._pick(req, iid)
+                run.applied.calib_version = pick.calib_version  # 상위 판정 기록의 보정 버전은 거리 순서의 것이다 (#306)
                 if not pick.selected:  # 고를 기기가 없다. 거리 순서는 기록에 남긴다
                     raise _Stop(Step.PROXIMITY, self._decision(
                         req, iid, Verdict.DENY, ReasonCode.NO_CANDIDATE))
@@ -477,7 +479,7 @@ class DecisionPipeline:
             direction, order.values, req.target.start, req.target.count, s.order_similar_db)
         detail: dict[str, Any] = {
             "selector": req.target.serialize(), "order": list(direction), "values": dict(order.values),
-            "selected": list(selected), "similar": similar,
+            "selected": list(selected), "similar": similar, "calib_version": order.calib_version,
             "anchor_recent_sec": s.anchor_recent_sec, "order_similar_db": s.order_similar_db}
         counts: Mapping[str, int] = {}
         lowest: float | None = None
@@ -494,7 +496,7 @@ class DecisionPipeline:
                 order_boundary_min_prob=s.order_boundary_min_prob)
         self._audit_step(Step.PROXIMITY, iid, detail)
         return _Pick(beacons, candidates, [n for n in all_nodes if n.place_id == place_id],
-                     direction, order.values, selected, similar, counts, lowest)
+                     direction, order.values, selected, similar, counts, lowest, order.calib_version)
 
     def _judge_children(
         self, req: UseRequest, iid: str, digest: str, pick: _Pick, run: _SelectorRun
@@ -547,7 +549,10 @@ class DecisionPipeline:
             if run.posterior is None:  # 상위 요청 하나에 한 번이다. 후보는 ②의 전체 후보다
                 run.posterior = self._proximity.posterior(
                     pick.beacons, pick.candidates, req.received_at, place_nodes=pick.place_nodes)
+                order_calib = run.applied.calib_version
                 self._apply_posterior(run.applied, run.posterior)
+                if order_calib is not None:  # 상위 요청은 거리 순서에 적용한 영점의 개정을 남긴다 (#306)
+                    run.applied.calib_version = order_calib
             self._apply_posterior(applied, run.posterior)
             p = run.posterior.posteriors.get(node_id, 0.0)
             self._audit_step(Step.PROXIMITY, iid, {
@@ -784,6 +789,7 @@ class DecisionPipeline:
         req = entry.req
         item_run = _SelectorRun(children=run.children)
         pick = self._pick(req, iid)
+        item_run.applied.calib_version = pick.calib_version  # 거리 순서의 보정 버전 (#306)
         entry.pick = pick  # 멈춰도 거리 순서는 기록에 남긴다
         if not pick.selected:
             raise _Stop(Step.PROXIMITY, self._decision(req, iid, Verdict.DENY, ReasonCode.NO_CANDIDATE))

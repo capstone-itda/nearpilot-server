@@ -10,6 +10,7 @@ import pytest
 
 from nearpilot.db.repositories.retention import SqliteRetentionStore
 from nearpilot.shared.config import Settings
+from nearpilot.shared.enums import ZeroSource
 from nearpilot.shared.models import AutoZero
 
 from conftest import insert_node, insert_place, insert_request, insert_use_session, insert_user
@@ -40,7 +41,7 @@ def _rows(conn) -> list[sqlite3.Row]:
 
 
 def test_FR22_migration_0013_auto_zero(conn):
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 14
     columns = [(c["name"], c["type"], c["notnull"], c["pk"]) for c in conn.execute("PRAGMA table_info(auto_zero)")]
     assert columns == [
         ("revision", "INTEGER", 0, 1),
@@ -49,6 +50,7 @@ def test_FR22_migration_0013_auto_zero(conn):
         ("vendor_model", "TEXT", 0, 0),
         ("vendor_firmware", "TEXT", 0, 0),
         ("recorded_at", "TEXT", 1, 0),
+        ("source", "TEXT", 1, 0),  # 마이그레이션 0014 (#307)
     ]
     # 개정 번호는 지운 행의 번호도 다시 쓰지 않는다 — 판정 기록이 참조하는 개정은 저절로 남는다 (FR-22).
     sql = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'auto_zero'").fetchone()["sql"]
@@ -57,6 +59,22 @@ def test_FR22_migration_0013_auto_zero(conn):
     assert foreign_keys == [("node", "node_id", "node_id")]
     assert "auto_zero_node" in {i["name"] for i in conn.execute("PRAGMA index_list(auto_zero)")}
     assert [c["name"] for c in conn.execute("PRAGMA index_info(auto_zero_node)")] == ["node_id", "revision"]
+
+
+def test_FR22_migration_0014_zero_source(conn, repo):
+    """영점 행의 출처 (#307). 이전 행과 출처 없이 쓴 행은 auto, 측정 영점은 measured 다. 버림 행은 auto 만 받는다."""
+    _devices(conn, "a")
+    _save(repo, "a", 1.5)
+    measured = repo.save_auto_zero("a", -2.0, "model-a", "1.0.0", _at(1), source=ZeroSource.MEASURED)
+    assert [row["source"] for row in _rows(conn)] == ["auto", "measured"]
+    state = repo.auto_zeros()
+    assert (state.zeros["a"].zero_db, state.zeros["a"].source, state.zeros["a"].revision) == (
+        -2.0, ZeroSource.MEASURED, measured)
+    assert repo.auto_zeros(1).zeros["a"].source is ZeroSource.AUTO
+    with pytest.raises(ValueError):
+        repo.save_auto_zero("a", None, "model-a", "1.0.0", _at(2), source=ZeroSource.MEASURED)
+    with pytest.raises(sqlite3.IntegrityError):  # 테이블도 모르는 출처를 거부한다
+        conn.execute("INSERT INTO auto_zero (node_id, zero_db, recorded_at, source) VALUES ('a', 1.0, 'x', 'manual')")
 
 
 # ── 개정 시점의 기기별 자동 영점 ────────────────────────────────────

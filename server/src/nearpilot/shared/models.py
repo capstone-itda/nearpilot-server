@@ -19,6 +19,8 @@ from nearpilot.shared.frozen import freeze as _freeze
 from nearpilot.shared.descriptor import DeviceDescriptor, is_name
 from nearpilot.shared.enums import (
     RestartOutcome,
+    ZeroOutcome,
+    ZeroSource,
     ApprovalDecisionReason,
     AdminWriteOutcome,
     AdminWriteReason,
@@ -471,7 +473,8 @@ class ProximityResult:
 class DistanceOrder:
     """근접 참여 기기의 가까운 순서와 기기별 정렬 값 (FR-09, FR-16, #253).
 
-    정렬 값은 최근 구간에서 그 비콘 RSSI 의 평균(dBm)이다. 비콘을 보지 못한 기기는 None 이고 순서의 끝에 있다.
+    정렬 값은 최근 구간에서 그 비콘 RSSI 마다 그 기기의 영점을 뺀 값의 평균(dB)이다. 영점이 없는 기기는 0 dB 를 뺀다 (#306).
+    비콘을 보지 못한 기기는 None 이고 순서의 끝에 있다. `calib_version` 은 정렬 값에 적용한 영점의 개정 번호다.
     `counts` 는 기기별로 최근 구간 안에서 그 비콘을 보고한 유한한 프레임 수다. 정렬 값과 같은 프레임을 센다 (경계 확률의 N).
     기본값은 빈 사전이다. 비어 있지 않으면 거리 순서의 기기와 같고, 정렬 값이 없는 기기만 0이다 (FR-09, #278).
     """
@@ -479,6 +482,7 @@ class DistanceOrder:
     nodes: tuple[str, ...]
     values: Mapping[str, float | None]
     counts: Mapping[str, int] = field(default_factory=dict)
+    calib_version: str = "0"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "values", _freeze(self.values))
@@ -507,14 +511,18 @@ class DistanceOrder:
 
 @dataclass(frozen=True, slots=True)
 class AutoZero:
-    """기기 하나의 자동 영점 개정 (FR-16, #252). zero_db 가 None 이면 버림 개정이다."""
+    """기기 하나의 영점 개정 (FR-16, #252, #307). zero_db 가 None 이면 버림 개정이다.
+
+    `source` 는 영점의 출처다. 측정 영점도 같은 행으로 남긴다. 버림 행은 AUTO 다 (다음 영점을 자동으로 찾는다).
+    """
 
     node_id: str
-    zero_db: float | None  # dB. 보정한 RSSI 는 `r - zero_db` 다. None 이면 자동 영점이 없다
+    zero_db: float | None  # dB. 보정한 RSSI 는 `r - zero_db` 다. None 이면 영점이 없다
     vendor_model: str | None  # 이 개정을 기록할 때 기기 선언의 vendor. 선언이 없으면 None
     vendor_firmware: str | None
     revision: int  # 서버 전체에 하나인 증가 번호
     recorded_at: datetime
+    source: ZeroSource = ZeroSource.AUTO
 
 
 @dataclass(frozen=True, slots=True)
@@ -1439,6 +1447,36 @@ class RestartResult:
     outcome: RestartOutcome
     restart_id: str | None = None
     expires_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ZeroMeasureResult:
+    """`NodeAdminService.measure_zero` 의 결과 (#307). 사용자 ID 를 담지 않는다 (NFR-08).
+
+    `zero_db`, `median_dbm`, `revision` 은 MEASURED 일 때만 있다. `frames` 는 측정 구간에 그 기기가 들은 프레임 수다.
+    `distance_m`, `reference_dbm` 은 측정에 쓴 설정 값이다.
+    """
+
+    node_id: str
+    outcome: ZeroOutcome
+    frames: int = 0
+    median_dbm: float | None = None
+    zero_db: float | None = None
+    revision: int | None = None
+    distance_m: float | None = None
+    reference_dbm: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ZeroResetResult:
+    """`NodeAdminService.reset_zero`, `reset_place_zeros` 의 결과 (#305).
+
+    `nodes` 는 영점을 버리고 다시 찾을 기기다. `revision` 은 그 뒤의 최신 개정 번호이고 DISCARDED 일 때만 있다.
+    """
+
+    outcome: ZeroOutcome
+    nodes: tuple[str, ...] = ()
+    revision: int | None = None
 
 
 @dataclass(frozen=True)
