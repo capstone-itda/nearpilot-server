@@ -22,12 +22,15 @@ from nearpilot.shared.enums import (
     ExecutionStatus,
     ReasonCode,
     RestartOutcome,
+    ZeroSource,
     Role,
     TrustState,
     Verdict,
 )
 from nearpilot.shared.models import (
     ProvisioningBundle,
+    ZeroMeasureResult,
+    ZeroResetResult,
     RestartResult,
     RecoveryRecord,
     RecoverySettlement,
@@ -516,9 +519,29 @@ class AutoZeroStore(Protocol):
 
     def save_auto_zero(
         self, node_id: str, zero_db: float | None, vendor_model: str | None,
-        vendor_firmware: str | None, recorded_at: datetime,
+        vendor_firmware: str | None, recorded_at: datetime, *, source: ZeroSource = ZeroSource.AUTO,
     ) -> int:
-        """개정 하나를 더하고 새 개정 번호를 반환한다. zero_db 가 None 이면 버림이다."""
+        """개정 하나를 더하고 새 개정 번호를 반환한다. zero_db 가 None 이면 버림이다.
+
+        `source` 는 영점의 출처다 (#307). 버림 행은 AUTO 다.
+        """
+        ...
+
+
+@runtime_checkable
+class ZeroCalibrator(Protocol):
+    """근접 추정 → 상태 관리. 소유자의 측정 영점 저장과 영점 재탐색 (FR-16, #305, #307).
+
+    근접 추정이 메모리의 영점과 표본을 함께 바꾸도록 저장소 쓰기를 근접 추정을 거쳐 한다.
+    저장소 예외는 그대로 올린다 (관리 요청의 실패다).
+    """
+
+    def apply_measured_zero(self, node: NodeInfo, zero_db: float, recorded_at: datetime) -> int:
+        """측정 영점 행을 쓰고 새 개정 번호를 반환한다. 그 기기의 자동 영점 표본을 지운다."""
+        ...
+
+    def discard_zeros(self, nodes: Sequence[NodeInfo], recorded_at: datetime) -> int:
+        """기기마다 영점이 있으면 버림 행을 쓰고 표본을 지운다. 그 뒤의 최신 개정 번호를 반환한다."""
         ...
 
 
@@ -1021,6 +1044,18 @@ class NodeAdminService(Protocol):
 
     def provisioning(self, user_id: str, node_id: str) -> ProvisioningBundle:
         """기기 접속 설정 묶음 (#234). 소유자가 아니면 PermissionError, 묶음이 없으면 LookupError 다."""
+        ...
+
+    def measure_zero(self, user_id: str, node_id: str) -> ZeroMeasureResult:
+        """측정 영점을 잰다 (#307). 설정의 측정 시간만큼 기다린 뒤 결과를 반환한다."""
+        ...
+
+    def reset_zero(self, user_id: str, node_id: str) -> ZeroResetResult:
+        """기기 하나의 영점을 버리고 자동 영점을 다시 찾게 한다 (#305)."""
+        ...
+
+    def reset_place_zeros(self, user_id: str, place_id: str) -> ZeroResetResult:
+        """장소의 모든 기기의 영점을 버리고 자동 영점을 다시 찾게 한다 (#305)."""
         ...
 
 

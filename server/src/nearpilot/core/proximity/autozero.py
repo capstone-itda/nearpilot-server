@@ -4,6 +4,7 @@
 칸 하나에 1등이 아닌 앵커가 둘 이상 있으면, 그 앵커마다 `자기 값 − (1등이 아닌 앵커들 값의 평균)`이 그 앵커의 표본이다.
 표본이 모델의 `auto_zero.min_bins` 이상이면 표본의 중앙값이 자동 영점이다.
 서버의 근접 추정기(메모리 표본)와 적합·평가·합성(`zeros_from_frames`)이 같은 함수를 쓴다.
+`measured_zero`는 소유자가 고정 거리에서 잰 측정 영점이다 (#307).
 현재 시각, 무작위, I/O를 쓰지 않는다.
 """
 
@@ -103,3 +104,20 @@ def zeros_from_frames(
         if zero is not None:
             zeros[anchor_id] = zero
     return zeros
+
+
+def measured_zero(rssis: Sequence[float], reference_dbm: float, min_frames: int) -> tuple[float, float] | None:
+    """측정 영점 (#307). 고정 거리에서 그 기기가 들은 RSSI의 (중앙값, 중앙값 − 기준값)이다.
+
+    유한하지 않은 값은 버린다. 남은 값이 `min_frames`보다 적으면 None이다. 짝수 개면 가운데 두 값의 평균이다.
+    중앙값을 쓰는 까닭은 자동 영점과 같다 — 몸에 가린 순간의 큰 하락 몇 개가 값을 끌지 않는다.
+    """
+    if min_frames < 1:
+        raise ValueError(f"min_frames는 1 이상이어야 한다 ({min_frames!r})")
+    if not math.isfinite(reference_dbm):
+        raise ValueError(f"기준값은 유한한 수여야 한다 ({reference_dbm!r})")
+    values = [value for value in rssis if math.isfinite(value)]
+    if len(values) < min_frames:
+        return None
+    median = float(statistics.median(values))
+    return median, median - reference_dbm

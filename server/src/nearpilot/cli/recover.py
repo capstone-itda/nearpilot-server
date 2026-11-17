@@ -128,8 +128,12 @@ def _read_token(path: str) -> str:
     return token
 
 
-def _send(method: str, base: str, path: str, token: str) -> tuple[int, dict[str, Any] | None]:
+def _send(
+    method: str, base: str, path: str, token: str, *, timeout: float = _TIMEOUT_SEC,
+) -> tuple[int, dict[str, Any] | None]:
     """요청을 보내고 (상태 코드, JSON 객체인 본문)을 돌려준다. 본문이 JSON 객체가 아니면 None이다.
+
+    `timeout`은 응답을 기다리는 한계(초)다. 서버가 오래 기다리는 요청(측정 영점)만 늘린다.
 
     4xx·5xx도 상태 코드와 본문으로 돌려준다. 서버와 통신하지 못하면 `CliError`(종료 코드 1)다.
     """
@@ -139,7 +143,7 @@ def _send(method: str, base: str, path: str, token: str) -> tuple[int, dict[str,
         raise CliError(f"--server 주소를 해석하지 못했다: {base}", EXIT_INVALID) from None
     try:
         try:
-            with urllib.request.urlopen(request, timeout=_TIMEOUT_SEC) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 status, raw = response.status, response.read()
         except urllib.error.HTTPError as error:  # 4xx, 5xx. URLError의 하위 클래스라서 먼저 받는다
             with error:  # HTTPError는 응답이다. 읽은 뒤 닫는다

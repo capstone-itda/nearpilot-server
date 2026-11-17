@@ -1,4 +1,5 @@
-"""FR-12A NFR-04 NFR-12 소유자용 기기 관리 REST: 원격 재시작(#235)과 기기 접속 설정 묶음(#234).
+"""FR-12A NFR-04 NFR-12 FR-16 소유자용 기기 관리 REST: 원격 재시작(#235), 기기 접속 설정 묶음(#234),
+측정 영점(#307)과 영점 재탐색(#305).
 
 토큰으로 계정을 식별해 `NodeAdminService.restart`에 넘긴다. 소유권과 결과는 상태 관리가 정한다 (NFR-07).
 응답에 사용자 ID, 토큰, 기기 연결 세션 ID를 넣지 않는다 (NFR-08). MCP에는 열지 않는다.
@@ -14,9 +15,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from nearpilot.api.auth.authenticator import AuthenticationError, Authenticator
-from nearpilot.shared.enums import ReasonCode, RestartOutcome
+from nearpilot.shared.enums import ReasonCode, RestartOutcome, ZeroOutcome
 from nearpilot.shared.interfaces import NodeAdminService
-from nearpilot.shared.models import Account
+from nearpilot.shared.models import Account, ZeroResetResult
 
 log = logging.getLogger(__name__)
 
@@ -24,6 +25,16 @@ _REJECTED_STATUS: dict[RestartOutcome, int] = {
     RestartOutcome.NOT_OWNER: 403,
     RestartOutcome.NODE_OFFLINE: 409,
     RestartOutcome.NOT_SENT: 503,
+}
+
+
+_ZERO_STATUS: dict[ZeroOutcome, int] = {
+    ZeroOutcome.NOT_OWNER: 403,
+    ZeroOutcome.NOT_FOUND: 404,
+    ZeroOutcome.NOT_TRUSTED: 409,
+    ZeroOutcome.NO_BEACON: 409,
+    ZeroOutcome.NOT_ENOUGH_FRAMES: 422,
+    ZeroOutcome.NOT_SAVED: 503,
 }
 
 
@@ -78,5 +89,57 @@ def build_node_admin_router(nodes: NodeAdminService, authenticator: Authenticato
             "node_id": bundle.node_id, "mqtt_user": bundle.mqtt_user, "mqtt_password": bundle.mqtt_password,
             "mqtt_host": bundle.mqtt_host, "mqtt_port": bundle.mqtt_port,
         }, headers={"Cache-Control": "no-store"})
+
+    @router.post("/admin/nodes/{node_id}/zero/measure")
+    async def measure_zero(node_id: str, request: Request) -> JSONResponse:
+        """측정 영점 (#307). 서버가 설정의 측정 시간만큼 기다린 뒤 응답한다."""
+        account = await authenticate(request)
+        if isinstance(account, JSONResponse):
+            return account
+        try:
+            result = await asyncio.to_thread(nodes.measure_zero, account.user_id, node_id)
+        except Exception:  # noqa: BLE001 - 예외 내용은 응답에 넣지 않는다
+            log.exception("측정 영점 요청 중 예외: node_id=%s", node_id)
+            return _error(500, ReasonCode.INTERNAL_ERROR.value)
+        body = {"node_id": result.node_id, "frames": result.frames, "median_dbm": result.median_dbm,
+                "zero_db": result.zero_db, "revision": result.revision,
+                "distance_m": result.distance_m, "reference_dbm": result.reference_dbm}
+        if result.outcome is ZeroOutcome.MEASURED:
+            return JSONResponse(body)
+        status = _ZERO_STATUS.get(result.outcome)
+        if status is None:
+            log.error("측정 영점 결과에 상태 코드가 없다: %s", result.outcome.value)
+            return _error(500, ReasonCode.INTERNAL_ERROR.value)
+        return JSONResponse({"error": result.outcome.value, **body}, status_code=status)
+
+    async def reset(account: Account, call, *args: str) -> JSONResponse:
+        try:
+            result: ZeroResetResult = await asyncio.to_thread(call, account.user_id, *args)
+        except Exception:  # noqa: BLE001 - 예외 내용은 응답에 넣지 않는다
+            log.exception("영점 재탐색 요청 중 예외: %s", args)
+            return _error(500, ReasonCode.INTERNAL_ERROR.value)
+        if result.outcome is ZeroOutcome.DISCARDED:
+            return JSONResponse({"nodes": list(result.nodes), "revision": result.revision})
+        status = _ZERO_STATUS.get(result.outcome)
+        if status is None:
+            log.error("영점 재탐색 결과에 상태 코드가 없다: %s", result.outcome.value)
+            return _error(500, ReasonCode.INTERNAL_ERROR.value)
+        return _error(status, result.outcome.value)
+
+    @router.post("/admin/nodes/{node_id}/zero/reset")
+    async def reset_node_zero(node_id: str, request: Request) -> JSONResponse:
+        """기기 하나의 영점을 버리고 자동 영점을 다시 찾는다 (#305)."""
+        account = await authenticate(request)
+        if isinstance(account, JSONResponse):
+            return account
+        return await reset(account, nodes.reset_zero, node_id)
+
+    @router.post("/admin/places/{place_id}/zero/reset")
+    async def reset_place_zero(place_id: str, request: Request) -> JSONResponse:
+        """장소의 모든 기기의 영점을 버리고 자동 영점을 다시 찾는다 (#305)."""
+        account = await authenticate(request)
+        if isinstance(account, JSONResponse):
+            return account
+        return await reset(account, nodes.reset_place_zeros, place_id)
 
     return router

@@ -362,6 +362,26 @@ class AdminWriteReason(StrEnum):
     NODE_OCCUPIED = "NODE_OCCUPIED"  # 점유 중인 기기의 장소 이동·정책 변경. outcome 은 CONFLICT
 
 
+class ZeroSource(StrEnum):
+    """기기별 영점 행의 출처 (FR-16, #307). 버림 행은 다음 영점을 자동 영점으로 찾는다는 뜻으로 AUTO 다."""
+
+    AUTO = "auto"
+    MEASURED = "measured"
+
+
+class ZeroOutcome(StrEnum):
+    """측정 영점과 영점 재탐색 요청의 결과 (FR-16, #305, #307)."""
+
+    MEASURED = "MEASURED"  # 측정 영점을 저장했다
+    DISCARDED = "DISCARDED"  # 영점을 버리고 자동 영점을 다시 찾는다
+    NOT_OWNER = "NOT_OWNER"
+    NOT_FOUND = "NOT_FOUND"  # 기기나 장소가 없다
+    NOT_TRUSTED = "NOT_TRUSTED"  # trusted 기기가 아니다
+    NO_BEACON = "NO_BEACON"  # 소유자의 활성 비콘이 없다
+    NOT_ENOUGH_FRAMES = "NOT_ENOUGH_FRAMES"  # 측정 구간에 그 기기의 프레임이 모자라다
+    NOT_SAVED = "NOT_SAVED"  # 저장소 쓰기가 실패했다
+
+
 class RestartOutcome(StrEnum):
     """기기 원격 재시작 요청의 결과 (#235). SENT 는 브로커 발행이고 재시작 완료가 아니다."""
 

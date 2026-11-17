@@ -19,6 +19,7 @@ from nearpilot.db.repositories._common import (
 )
 from nearpilot.shared.enums import (
     AccessMode,
+    ZeroSource,
     ApprovalDecisionReason,
     ApprovalMode,
     ApprovalStatus,
@@ -1149,20 +1150,22 @@ class SqliteRepository:
 
     def save_auto_zero(
         self, node_id: str, zero_db: float | None, vendor_model: str | None,
-        vendor_firmware: str | None, recorded_at: datetime,
+        vendor_firmware: str | None, recorded_at: datetime, *, source: ZeroSource = ZeroSource.AUTO,
     ) -> int:
-        """개정 하나를 더하고 새 개정 번호를 반환한다. `zero_db`가 `None`이면 버림이다.
+        """개정 하나를 더하고 새 개정 번호를 반환한다. `zero_db`가 `None`이면 버림이다. `source`는 출처다 (#307).
 
         개정은 서버 전체에 하나인 증가 번호다. 행을 고치거나 지우지 않는다. `zero_db`가 유한하지 않은
         float면 `ValueError`다. 없는 `node_id`면 `sqlite3.IntegrityError`가 그대로 올라간다.
         """
         if zero_db is not None and not isfinite(zero_db):
             raise ValueError(f"자동 영점은 유한한 값이어야 한다: node={node_id} zero_db={zero_db!r}")
+        if zero_db is None and source is not ZeroSource.AUTO:
+            raise ValueError(f"버림 행의 출처는 auto 다: node={node_id} source={source}")
         with immediate_transaction(self._conn):
             cursor = self._conn.execute(
-                "INSERT INTO auto_zero (node_id, zero_db, vendor_model, vendor_firmware, recorded_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (node_id, zero_db, vendor_model, vendor_firmware, iso(recorded_at)),
+                "INSERT INTO auto_zero (node_id, zero_db, vendor_model, vendor_firmware, recorded_at, source) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (node_id, zero_db, vendor_model, vendor_firmware, iso(recorded_at), ZeroSource(source).value),
             )
             return cursor.lastrowid
 
@@ -1179,7 +1182,7 @@ class SqliteRepository:
         elif revision < 0:
             raise ValueError(f"개정 번호는 0 이상이어야 한다: {revision}")
         rows = self._conn.execute(
-            "SELECT revision, node_id, zero_db, vendor_model, vendor_firmware, recorded_at FROM auto_zero "
+            "SELECT revision, node_id, zero_db, vendor_model, vendor_firmware, recorded_at, source FROM auto_zero "
             "WHERE revision IN (SELECT MAX(revision) FROM auto_zero WHERE revision <= ? GROUP BY node_id) "
             "ORDER BY node_id",
             (revision,),
@@ -1188,7 +1191,7 @@ class SqliteRepository:
             row["node_id"]: AutoZero(
                 node_id=row["node_id"], zero_db=row["zero_db"], vendor_model=row["vendor_model"],
                 vendor_firmware=row["vendor_firmware"], revision=row["revision"],
-                recorded_at=parse_iso(row["recorded_at"]),
+                recorded_at=parse_iso(row["recorded_at"]), source=ZeroSource(row["source"]),
             )
             for row in rows
         }

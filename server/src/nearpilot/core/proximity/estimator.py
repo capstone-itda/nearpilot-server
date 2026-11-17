@@ -6,8 +6,13 @@
 이상이면 `zero_from_samples`로 값을 내서 `AutoZeroStore`에 저장한다. 찾은 값은 `vendor`(모델, 펌웨어)가 바뀔 때까지 고정한다.
 `vendor`는 자동 영점을 버리는 조건으로만 쓰고 판정 분기에는 쓰지 않는다.
 `distance_order`는 신뢰 기기의 마지막 `rssi` 보고 시각과 버퍼의 프레임으로 거리 순서를 낸다. 근접 모델 파일을 쓰지 않는다.
+정렬 값은 프레임마다 그 기기의 영점을 뺀 RSSI의 평균이다. 영점이 없는 기기는 0 dB를 뺀다 (#306).
+소유자의 측정 영점(#307)과 영점 재탐색(#305)은 `apply_measured_zero`, `discard_zeros`가 받는다. 측정 영점이 있는 기기는
+자동 영점을 찾지 않는다 — 영점이 있는 기기는 출처와 상관없이 표본을 모으지 않는다.
 현재 시각을 읽지 않는다. 자동 영점 행의 `recorded_at`은 그 행을 만든 프레임이나 보고의 `received_at`이다.
 버퍼, 보고 시각 표, 자동 영점 상태는 잠금 하나로 보호하고, 저장소 쓰기는 잠금 밖에서 한다 (결정 15).
+저장소 쓰기는 쓰기 잠금으로 하나씩 한다. 소유자의 측정·버림은 기기의 세대를 올려, 그 전에 예약한 자동 영점 쓰기를 버리게 한다
+— 늦게 끝난 자동 영점 쓰기가 측정 영점을 덮지 않는다 (결정 23).
 저장소 예외는 `observe`와 `observe_report` 밖으로 올리지 않는다 (IOT가 인계 실패로 보고 다시 인계한다).
 """
 
@@ -25,7 +30,7 @@ from nearpilot.core.proximity.autozero import bin_index, bin_samples, zero_from_
 from nearpilot.core.proximity.common_model import CommonModel, ModelMismatchError
 from nearpilot.core.proximity.posterior import ProximityInputError, compute_posteriors
 from nearpilot.shared.config import Settings
-from nearpilot.shared.enums import TrustState
+from nearpilot.shared.enums import TrustState, ZeroSource
 from nearpilot.shared.interfaces import AutoZeroStore
 from nearpilot.shared.models import (
     AutoZero, AutoZeroState, BeaconKey, DistanceOrder, NodeInfo, ProximityResult, RssiFrame, RssiReport,
@@ -51,6 +56,8 @@ class _Write:
     zero_db: float | None
     vendor: _VendorKey
     recorded_at: datetime
+    source: ZeroSource = ZeroSource.AUTO
+    generation: int | None = None  # 예약할 때 기기의 세대. None이면 소유자의 쓰기라 늘 한다
 
 
 @dataclass(slots=True)
@@ -95,6 +102,8 @@ class HmmProximityEstimator:
         self._samples: dict[str, list[float]] = {}
         self._vendor_seen: dict[str, _VendorKey] = {}  # 기기 ID → 마지막으로 본 vendor 열쇠. 모으던 표본의 vendor다
         self._saving: set[str] = set()  # 저장소에 쓰는 중인 기기. 같은 기기를 두 번 저장하지 않고 그동안 표본도 더하지 않는다
+        self._generation: dict[str, int] = {}  # 기기 ID → 소유자가 측정·버림을 한 횟수. 그 전에 예약한 자동 쓰기를 버린다
+        self._write_lock = threading.Lock()  # 저장소 쓰기를 하나씩 한다. 잠금 순서는 쓰기 잠금 → 상태 잠금이다
 
     @property
     def calib_version(self) -> str:
@@ -184,6 +193,8 @@ class HmmProximityEstimator:
         with self._lock:
             frames = list(self._frames.values())
             reports = dict(self._reports)
+            zeros = {node_id: row.zero_db for node_id, row in self._zeros.items() if row.zero_db is not None}
+            revision = self._revision
         participants = {
             node.node_id
             for node in candidates
@@ -198,7 +209,7 @@ class HmmProximityEstimator:
                 and since <= frame.received_at <= at
                 and math.isfinite(frame.rssi)  # 유한하지 않은 RSSI는 결측과 같이 버린다
             ):
-                rssis[frame.node_id].append(frame.rssi)
+                rssis[frame.node_id].append(frame.rssi - zeros.get(frame.node_id, 0.0))
         means = {node_id: math.fsum(values) / len(values) for node_id, values in rssis.items()}
 
         # 값이 큰(가까운) 기기부터, 같으면 기기 ID 순서다. 비콘을 보지 못한 기기는 끝에 기기 ID 순서로 둔다.
@@ -206,7 +217,45 @@ class HmmProximityEstimator:
         unheard = sorted(participants - means.keys())
         # 프레임 수는 평균을 낸 리스트의 길이다. 정렬 값과 같은 프레임을 센다. 비콘을 보지 못한 기기는 0이다 (경계 확률의 N, #278).
         counts = {**{node_id: len(values) for node_id, values in rssis.items()}, **dict.fromkeys(unheard, 0)}
-        return DistanceOrder(nodes=(*heard, *unheard), values={**means, **dict.fromkeys(unheard)}, counts=counts)
+        return DistanceOrder(nodes=(*heard, *unheard), values={**means, **dict.fromkeys(unheard)}, counts=counts,
+                             calib_version=str(revision))
+
+    # ── 소유자의 영점 관리 (#305, #307) ─────────────────────────────
+
+    def apply_measured_zero(self, node: NodeInfo, zero_db: float, recorded_at: datetime) -> int:
+        """측정 영점 행을 쓰고 새 개정 번호를 반환한다. 그 기기의 자동 영점 표본을 지운다. 저장소 예외는 올린다.
+
+        `vendor`는 지금 기기 선언의 값이다. 뒤에 `vendor`가 바뀌면 자동 영점처럼 버린다.
+        """
+        if not math.isfinite(zero_db):
+            raise ValueError(f"측정 영점은 유한한 값이어야 한다: node={node.node_id} zero_db={zero_db!r}")
+        key = _vendor_key(node)
+        with self._lock:
+            self._vendor_seen[node.node_id] = key
+            self._samples.pop(node.node_id, None)
+            self._generation[node.node_id] = self._generation.get(node.node_id, 0) + 1
+            self._saving.add(node.node_id)
+        self._flush([_Write(node.node_id, zero_db, key, recorded_at, ZeroSource.MEASURED)], raise_errors=True)
+        with self._lock:
+            return self._zeros[node.node_id].revision
+
+    def discard_zeros(self, nodes: Sequence[NodeInfo], recorded_at: datetime) -> int:
+        """기기마다 모으던 표본을 지우고, 영점이 있으면 버림 행을 쓴다. 그 뒤의 최신 개정 번호를 반환한다.
+
+        저장소 예외는 올린다. 실패해도 메모리의 영점은 지운 채로 둔다 — `vendor` 변경의 버림과 같다.
+        """
+        writes: list[_Write] = []
+        with self._lock:
+            for node in nodes:
+                self._samples.pop(node.node_id, None)
+                self._generation[node.node_id] = self._generation.get(node.node_id, 0) + 1
+                if self._has_zero(node.node_id):
+                    del self._zeros[node.node_id]
+                    self._saving.add(node.node_id)
+                    writes.append(_Write(node.node_id, None, _vendor_key(node), recorded_at))
+        self._flush(writes, raise_errors=True)
+        with self._lock:
+            return self._revision
 
     # ── 자동 영점 (잠금 안에서 부른다) ──────────────────────────────
 
@@ -228,7 +277,8 @@ class HmmProximityEstimator:
             del self._zeros[node.node_id]
             self._samples.pop(node.node_id, None)
             self._saving.add(node.node_id)
-            writes.append(_Write(node.node_id, None, key, received_at))
+            writes.append(_Write(node.node_id, None, key, received_at,
+                                 generation=self._generation.get(node.node_id, 0)))
 
     def _collect(self, frame: RssiFrame, node: NodeInfo, writes: list[_Write]) -> None:
         """새 프레임을 칸에 더하고, 닫힌 칸에서 표본을 모아 찾은 자동 영점의 쓰기를 예약한다."""
@@ -261,34 +311,65 @@ class HmmProximityEstimator:
             if zero is None:
                 continue
             self._saving.add(anchor_id)
-            writes.append(_Write(anchor_id, zero, self._vendor_seen[anchor_id], frame.received_at))
+            writes.append(_Write(anchor_id, zero, self._vendor_seen[anchor_id], frame.received_at,
+                                 generation=self._generation.get(anchor_id, 0)))
 
     # ── 저장소 쓰기 (잠금 밖) ───────────────────────────────────────
 
-    def _flush(self, writes: list[_Write]) -> None:
-        """예약한 쓰기를 순서대로 한다. 저장소 예외는 올리지 않는다 (IOT가 인계 실패로 본다)."""
+    def _flush(self, writes: list[_Write], *, raise_errors: bool = False) -> None:
+        """예약한 쓰기를 순서대로 한다. 저장소 예외는 올리지 않는다 (IOT가 인계 실패로 본다).
+
+        `raise_errors`면 모든 쓰기를 시도한 뒤 처음 실패한 예외를 올린다 (소유자의 관리 요청).
+        """
+        error: Exception | None = None
         for write in writes:
-            saved: int | None = None  # 저장소가 돌려준 개정 번호. 저장소가 없으면 None이고 메모리에서 올린다
-            failed = False
-            if self._store is not None:
-                try:
+            with self._write_lock:
+                error = self._write_one(write, error)
+        if raise_errors and error is not None:
+            raise error
+
+    def _write_one(self, write: _Write, error: Exception | None) -> Exception | None:
+        """쓰기 하나. 쓰기 잠금 안에서 부른다. 실패하면 처음 실패한 예외를 돌려준다 (`error`가 이미 있으면 그대로)."""
+        if write.generation is not None:
+            with self._lock:
+                if self._generation.get(write.node_id, 0) != write.generation:
+                    # 예약한 뒤 소유자가 측정하거나 버렸다. 이 자동 쓰기는 낡았다
+                    self._saving.discard(write.node_id)
+                    return error
+        saved: int | None = None  # 저장소가 돌려준 개정 번호. 저장소가 없으면 None이고 메모리에서 올린다
+        failed = False
+        if self._store is not None:
+            try:
+                if write.source is ZeroSource.AUTO:
                     saved = self._store.save_auto_zero(
                         write.node_id, write.zero_db, write.vendor[0], write.vendor[1], write.recorded_at,
                     )
-                except Exception:
-                    failed = True
-                    kind = "버림" if write.zero_db is None else "값"
-                    log.warning("자동 영점 저장에 실패했다: node=%s 종류=%s", write.node_id, kind, exc_info=True)
-            with self._lock:
-                self._saving.discard(write.node_id)
-                if failed:
-                    # 찾은 값은 기억하지 않고 표본을 남긴다. 다음에 표본이 늘 때 다시 저장한다. 버림은 이미 메모리에서 지웠다.
-                    continue
-                revision = self._revision + 1 if saved is None else saved
-                self._revision = max(self._revision, revision)
-                self._zeros[write.node_id] = AutoZero(
-                    node_id=write.node_id, zero_db=write.zero_db, vendor_model=write.vendor[0],
-                    vendor_firmware=write.vendor[1], revision=revision, recorded_at=write.recorded_at,
-                )
-                if write.zero_db is not None:
-                    self._samples.pop(write.node_id, None)
+                else:
+                    saved = self._store.save_auto_zero(
+                        write.node_id, write.zero_db, write.vendor[0], write.vendor[1], write.recorded_at,
+                        source=write.source,
+                    )
+            except Exception as exc:
+                failed = True
+                error = error or exc
+                kind = "버림" if write.zero_db is None else "값"
+                log.warning("자동 영점 저장에 실패했다: node=%s 종류=%s 출처=%s", write.node_id, kind, write.source.value,
+                            exc_info=True)
+        with self._lock:
+            self._saving.discard(write.node_id)
+            if failed:
+                # 찾은 값은 기억하지 않고 표본을 남긴다. 다음에 표본이 늘 때 다시 저장한다. 버림은 이미 메모리에서 지웠다.
+                return error
+            revision = self._revision + 1 if saved is None else saved
+            self._revision = max(self._revision, revision)
+            current = self._zeros.get(write.node_id)
+            if current is not None and current.revision > revision:
+                return error  # 더 늦은 개정이 이미 메모리에 있다
+            self._zeros[write.node_id] = AutoZero(
+                node_id=write.node_id, zero_db=write.zero_db, vendor_model=write.vendor[0],
+                vendor_firmware=write.vendor[1], revision=revision, recorded_at=write.recorded_at,
+                source=write.source,
+            )
+            if write.zero_db is not None:
+                self._samples.pop(write.node_id, None)
+        return error

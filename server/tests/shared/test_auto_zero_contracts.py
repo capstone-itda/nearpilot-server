@@ -175,7 +175,7 @@ def test_FR22_sqlite_repository_implements_auto_zero_store():
         assert _shape(getattr(SqliteRepository, name)) == _shape(getattr(AutoZeroStore, name))
     assert [p for p, *_ in _shape(AutoZeroStore.auto_zeros)] == ["self", "revision"]
     assert [p for p, *_ in _shape(AutoZeroStore.save_auto_zero)] == [
-        "self", "node_id", "zero_db", "vendor_model", "vendor_firmware", "recorded_at"]
+        "self", "node_id", "zero_db", "vendor_model", "vendor_firmware", "recorded_at", "source"]  # source 는 #307
 
 
 def test_FR22_auto_zero_store_rejects_object_without_methods():

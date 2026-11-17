@@ -228,13 +228,15 @@ class FakeProximity:
 
     `counts` 는 기기별 프레임 수다. 주지 않으면(None) 정렬 값이 있는 기기는 `HEARD_FRAMES`, None 인 기기는 0 이다.
     주면 근접 참여 기기의 값만 거리 순서에 그대로 넘긴다. 빈 사전이면 프레임 수가 없는 거리 순서가 된다.
+    `order_calib`는 거리 순서의 보정 버전이다 (#306). 기본은 사후확률의 보정 버전 "c"와 같다.
     """
 
     def __init__(
         self, values: dict[str, float | None], posteriors: dict[str, float] | None = None,
-        counts: dict[str, int] | None = None,
+        counts: dict[str, int] | None = None, order_calib: str = "c",
     ) -> None:
         self.values = values
+        self.order_calib = order_calib
         self.posteriors = {} if posteriors is None else posteriors
         self.counts = counts
         self.order_calls: list[list[str]] = []  # distance_order 에 넘긴 후보
@@ -252,7 +254,8 @@ class FakeProximity:
             counts = {n: 0 if self.values[n] is None else HEARD_FRAMES for n in nodes}
         else:
             counts = {n: self.counts[n] for n in nodes if n in self.counts}
-        return DistanceOrder(nodes=nodes, values={n: self.values[n] for n in nodes}, counts=counts)
+        return DistanceOrder(nodes=nodes, values={n: self.values[n] for n in nodes}, counts=counts,
+                             calib_version=self.order_calib)
 
     def posterior(self, beacons: Any, candidates: Any, at: datetime, *, place_nodes: Any) -> ProximityResult:
         self.posterior_calls.append(
