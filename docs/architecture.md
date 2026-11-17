@@ -832,7 +832,7 @@ M5를 `occupancy: shared`로 선언하면 FR-20 "공용형 기기" 규칙이 그
 
 **자동 영점** ([#252](https://github.com/capstone-itda/nearpilot-server/issues/252) 세부 질문 1의 (b))
 
-- 근접 추정은 기기별 자동 영점을 장소의 관측으로 찾는다. 소유자는 값을 넣지 않는다.
+- 근접 추정은 측정 영점이 없는 기기의 자동 영점을 장소의 관측으로 찾는다. 소유자는 값을 넣지 않는다 (#307).
 - 근접 추정은 자동 영점이 바뀌면 `shared` 접점으로 DB에 새 개정을 저장한다. DB는 기기별 자동 영점과 개정 번호를 저장한다.
 - 근접 추정은 서버를 시작할 때 DB에서 최신 자동 영점을 읽는다. 서버를 다시 시작해도 자동 영점을 유지한다.
 - `ProximityResult.calib_version`은 판정에 적용한 자동 영점의 개정 번호다. 판정 기록은 이 값을 보정 버전으로 남긴다.
@@ -843,6 +843,14 @@ M5를 `occupancy: shared`로 선언하면 FR-20 "공용형 기기" 규칙이 그
 - 근접 추정은 `vendor`를 자동 영점을 버리는 조건으로만 쓴다. 판정 분기에는 `vendor`를 쓰지 않는다.
 - 개정 번호는 서버 전체에 하나다. `auto_zero` 행 하나가 개정 하나다. `shared` 접점은 `AutoZeroStore`다.
 - 자동 영점을 찾는 방법과 "찾았다"의 기준은 `specs/core-proximity-common-model` 결정 4에 있다. 기기가 1~2대인 장소는 자동 영점을 찾지 못한다 (FR-16).
+
+**측정 영점** ([#307](https://github.com/capstone-itda/nearpilot-server/issues/307) C안)
+
+- 장소 소유자는 운영 명령으로 기기 하나의 측정 영점을 잰다. 명령은 관리 REST를 거치고, api는 근접 추정의 `shared` 접점을 부른다.
+- 측정하는 동안 소유자의 활성 비콘은 고정되어 있고 사람은 비켜 있다. 근접 추정은 측정 구간에 그 기기가 보고한 그 비콘의 RSSI로 영점을 계산한다. 측정 거리, 측정 시간, 기준값은 설정에서 받는다.
+- 근접 추정은 측정 영점을 `auto_zero`의 새 개정으로 저장하고 출처를 함께 남긴다. 측정 영점이 있는 기기에는 자동 영점을 찾지 않는다.
+- `vendor.model`이나 `vendor.firmware`가 바뀌면 측정 영점도 버린다. 버린 뒤에는 측정하지 않은 기기와 같다.
+- 측정 절차와 계산 방법의 세부는 근접 추정 구현 spec이 정한다.
 
 ### 기기 보고의 인계
 
@@ -1491,6 +1499,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | 계정 | 앱: 계정과 비콘 등록, MCP 연결용 토큰 발급 | FR-01 |
 | 승인 | 앱: 대기 중인 승인 목록, 알림을 누를 때 승인 요청 한 건 조회, 승인 또는 거부 전달. 권한, 상태, 정책 버전은 CORE가 검증한다. | FR-03, FR-14 |
 | 대시보드 조회 | 대시보드: 현재 상태(기기 목록, 연결, 신뢰), 요청·판정 이력, 판정 단계별 결과, 승인 목록, 감사 로그, 사전 평가 결과. 읽기만 한다. | FR-12A |
+| 영점 측정 | 소유자 스크립트: 기기 하나의 측정 영점 측정 | FR-16 |
 | 복구 | 소유자 스크립트: `FAULT` 복구 준비 조회와 복구 승인 | FR-12A, NFR-04 |
 | 기기 관리 | 소유자 스크립트: 기기 원격 재시작, 자동 영점 재탐색. 소유자 앱: 기기 접속 설정 묶음 조회 | FR-12A, FR-16, NFR-04, NFR-12 |
 
@@ -1506,6 +1515,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 - 기기 접속 설정 묶음: `GET /admin/nodes/{node_id}/provisioning` (#234). 소유자 앱이 BLE 설정 전에 부른다.
   - `200`과 묶음(§4 "기기 접속 설정 묶음")이다. `Cache-Control: no-store`를 붙인다.
   - 장소 소유자가 아니면 `403` `NOT_OWNER`, 묶음이 없으면 `404` `NOT_FOUND`다.
+- 측정 영점 측정 (#307): 장소 소유자가 기기 하나의 측정 영점을 잰다. 소유자 스크립트가 부른다. 경로와 응답 형식은 구현 spec이 정한다. 장소 소유자가 아니면 `403` `NOT_OWNER`다.
 - 준비 조회 응답은 `node_id`, `recovery_id`, `status`, `blockers`(사유 코드 배열), `evidence`(`observed_at`, `execution_outcome`, `command_idle`), `checked_at`이다. 기기 연결 세션 ID는 넣지 않는다.
 - 승인 응답은 `recovery_id`, `outcome`, `reason_code`, `completed_at`, `readiness`(준비 조회와 같은 형식)다. `completed`는 `200`, `pending`은 `202`다.
 - 승인 거부는 `{"error": "<사유 코드>"}`다. `NOT_OWNER`는 `403`, `RECOVERY_MISMATCH`·`NOT_READY`·`STATE_CONFLICT`는 `409`, `STORE_NOT_APPLIED`는 `503`이다. 준비 조회에서 소유자가 아니면 `403`과 `NOT_OWNER`다. 승인은 요청 본문을 읽지 않는다.
@@ -1628,7 +1638,7 @@ RSSI는 약 1초 프레임을 유지한다. 서버는 기기 상태 보고 주�
 | `approval` | PK `approval_id`, FK `node_id`, `requester_user_id`, `internal_request_id`, `approved_by_user_id`, `action`, 정책 리비전 참조, `status` (`pending`, `approved`, `denied`), `created_at`, `pending_until`, `valid_until`, `used_count`. 요청 참조는 승인 신청의 출처다. 허용 범위는 요청자, 기기, 동작, 정책 버전으로 검사한다. |
 | `approval_usage` | PK `usage_id`, FK `approval_id`, `internal_request_id`, 명령 연결, `state` (`reserved`, `held`, `consumed`, `released`). 요청별로 중복 예약을 막는다. 허용 횟수는 예약, 보류, 소진을 합쳐서 검사한다. `used_count`는 소진 집계값이며 중복으로 계산하지 않는다. 미전송이 확정되면 자동으로 반환한다. 결과가 실패하거나 불명이면 보류하고 복구 뒤 정산한다. 검증된 `DEVICE_BUSY`의 접수·실행 전 거부이면 이번 요청의 사용분을 반환한다. 공용형 제한 기기의 요청에도 행을 만든다. 무제한이면 횟수 검사만 생략한다. |
 | `collection_run` | PK `collection_id`, FK `beacon_id`, `label` (기기 1~7 앞 또는 none), `started_at`, nullable `ended_at`. 같은 비콘의 수집 구간은 겹치지 않는다. |
-| `auto_zero` | PK `revision`(개정 번호), FK `node_id`, 자동 영점 `zero_db`(dB. 버림이면 NULL), 기기 선언의 `vendor_model`, `vendor_firmware`, `recorded_at`. 행을 고치거나 지우지 않는다. 판정 기록의 보정 버전이 개정 번호를 참조한다 (#252). |
+| `auto_zero` | PK `revision`(개정 번호), FK `node_id`, 영점 `zero_db`(dB. 버림이면 NULL), 영점의 출처(측정 영점 또는 자동 영점), 기기 선언의 `vendor_model`, `vendor_firmware`, `recorded_at`. 행을 고치거나 지우지 않는다. 판정 기록의 보정 버전이 개정 번호를 참조한다 (#252, #307). |
 | `rssi_observation` | PK `obs_id`, FK `node_id`, `beacon_id`, `rssi` (dBm), `frame_ts` (약 1초 프레임), 서버 수신 시각 `received_at`, 발행 시각 `sent_at`, 기기 연결 ID `session_id`, 순번 `seq`, `(node_id, session_id, seq, beacon_id)` UNIQUE, nullable FK `collection_id`. 등록된 활성 비콘의 관측만 저장한다. 라벨은 연결한 수집 회차에서 읽는다. |
 | `request` | TEXT PK `internal_request_id`, FK `user_id`, 외부 `request_id`, UNIQUE `(user_id, request_id)`, 정규화 입력 요약 `input_digest`, nullable FK `parent_internal_request_id`, 거리 선택자·묶음 요청 하위 요청의 nullable 상위 요청 연결, nullable FK `node_id`, `target_spec`, `action`, `verdict`, `reason_code`, `p_max`, 버전 `model`, `calib`, `policy_ver`, `config_ver`, 실제 설정을 포함한 JSON `decision_context`, `host_kind` |
 | `node_command` | TEXT PK `command_id`, FK `internal_request_id`, `node_id`, 대상 동작과 입력 요약, 서버가 정한 동작 인자 JSON `arguments`(없을 수 있다. 기존 `light`, `speaker`를 대체한다), 전송 시도, 실행 상태, 결과, 시각. 승인 사용분과 연결한다. 결과 불명은 실패, 미전송과 구분한다. 접수·실행 전 거부는 미전송, 실패와 구분한다. 기록은 재시작 뒤에도 보존한다. |
