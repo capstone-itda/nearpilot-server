@@ -438,3 +438,23 @@ def test_NFR13_재검사가_막으면_확률을_감사에_남긴다(mutate, reas
     else:
         assert (payload["p"], payload["threshold"]) == (p, c.settings.threshold_locker)
         assert d.p_max == p  # 판정 값은 그대로다
+
+
+def test_FR18_recheck_applies_kind_scope_and_rssi_floor():
+    class RssiProximity(FakeProximity):
+        def posterior(self, beacons, candidates, at, *, place_nodes):
+            super().posterior(beacons, candidates, at, place_nodes=place_nodes)
+            return ProximityResult(self.posteriors, at, at, "m", "c", mean_rssi={"locker-1": -53.0})
+
+    repo = FakeRepo()
+    repo.nodes_list = [node(), anchor()]
+    prox = RssiProximity({"locker-1": 0.99})
+    rc = Rechecker(repo, prox, FakePolicy(), FakeAudit(), clock=lambda: NOW, new_id=lambda: "e1")
+    base = dict(version="v1", proximity_state_scope="kind")
+
+    passed = rc.recheck(ctx(settings=Settings(**base, proximity_rssi_floor_dbm=-53.0)))
+    failed = rc.recheck(ctx(settings=Settings(**base, proximity_rssi_floor_dbm=-52.0)))
+
+    assert passed.verdict is Verdict.OK
+    assert (failed.verdict, failed.reason) == (Verdict.ASK, ReasonCode.MOVE_CLOSER)
+    assert prox.place_nodes == [["locker-1"], ["locker-1"]]

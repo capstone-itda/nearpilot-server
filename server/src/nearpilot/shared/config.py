@@ -154,6 +154,10 @@ class Settings:
     order_frame_sigma_db: float = 4.0  # 경계 확률의 프레임 잡음: 정렬 값에 쓰는 프레임 하나의 RSSI 표준편차 dB. 0 초과 (FR-09, #278)
     order_static_sigma_db: float = 3.5  # 경계 확률의 고정 오차: 평균으로 줄지 않는 기기별 RSSI 오차의 표준편차 dB. 0 이상 (FR-09, #278)
     order_boundary_min_prob: float = 0.9  # near: 경계 확률의 기준: 이 값보다 작으면 ASK. 0.5 이상 1 미만 (FR-09, #278)
+    # 근접 지정(`nearest:`)의 전체 상태 범위 (FR-16, #312). "place" 는 장소의 모든 근접 참여 기기, "kind" 는 요청 종류의 기기만 쓴다
+    proximity_state_scope: str = "place"
+    # 근접 지정의 RSSI 하한 dBm (FR-17, #312). 고른 기기의 관측 구간 평균 RSSI 가 이 값보다 작으면 ASK 다. None 이면 보지 않는다
+    proximity_rssi_floor_dbm: float | None = None
     # 측정 영점 (FR-16, #307). 소유자가 비콘을 거치대에 고정하고 기기마다 같은 거리에서 잰다
     zero_measure_sec: float = 10.0  # 측정 시간: 서버가 측정 요청을 받은 뒤 프레임을 모으는 구간. 양수
     zero_measure_distance_m: float = 0.5  # 측정 거리: 소유자에게 알리는 기기와 비콘 사이 거리 m. 양수. 계산에 쓰지 않는다
@@ -240,6 +244,10 @@ class Settings:
             ) and not isinstance(v, int):
                 raise ValueError(f"{name} 는 정수여야 한다: {v}")
         _check_threshold("threshold_speaker", self.threshold_speaker)
+        if self.proximity_state_scope not in ("place", "kind"):
+            raise ValueError(f"proximity_state_scope 는 place 또는 kind 여야 한다: {self.proximity_state_scope!r}")
+        if self.proximity_rssi_floor_dbm is not None and not _number(self.proximity_rssi_floor_dbm):
+            raise ValueError("proximity_rssi_floor_dbm 는 유한한 숫자 또는 None 이어야 한다")
         if not isinstance(self.thresholds, Mapping):
             raise ValueError("thresholds 는 표여야 한다")
         for kind, v in self.thresholds.items():

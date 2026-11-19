@@ -4,6 +4,7 @@
 - 요구사항: FR-05, FR-16, FR-17, FR-18, FR-22, FR-23, NFR-02
 - 따르는 결정: #252 (decision PR #257), #305 (decision PR #309), #306 (decision PR #308), #307 (decision PR #310). 남은 미결은 #258.
 - 고친 작업: fix/core-proximity-zero — 측정 영점(#307), 영점 재탐색(#305), 거리 순서의 영점 보정(#306). 결정 23~25
+- 고친 작업: fix/core-proximity-kind-scope — 근접 지정의 전체 상태 범위와 RSSI 하한 설정(#312). 결정 26
 
 ## 1. 왜
 
@@ -26,6 +27,7 @@
   - 합성 공통 모델 파일 `synthetic-2.json`. 시드를 고정한 생성기와 공통 적합 함수로 만든다.
   - `DistanceOrder.values`는 영점으로 보정한 RSSI의 평균이다. `DistanceOrder.calib_version`은 거기에 적용한 영점의 개정 번호다 (#306).
   - 측정 영점과 영점 재탐색의 결과 (`ZeroMeasureResult`, `ZeroResetResult`)
+  - `ProximityResult.mean_rssi`는 `posteriors` 기기 중 관측 구간에 값이 있는 기기의 영점 보정 평균 RSSI다 (#312).
 - 바뀌는 상태:
   - DB 테이블 `auto_zero` (마이그레이션 `0013`, 출처 열은 `0014`). 행을 더하기만 한다.
   - 근접 추정의 자동 영점 표본과 기기별 자동 영점 (메모리)
@@ -40,6 +42,8 @@
 
 - 전체 상태는 근접 참여 기기 앞 상태들과 "어느 기기 앞도 아님" 상태다. 근접 참여 기기는 `at − anchor_recent_sec` 이후에 `rssi` 보고(빈 보고 포함)를 보낸 장소의 `trusted` 기기다 (FR-16, §1.2).
 - 근접 참여 기기가 아닌 후보는 근접 지정과 전역 할당의 후보가 아니다 (FR-05).
+- `proximity_state_scope`가 `kind`이면 근접 지정과 그 재검사는 요청 종류의 기기만 전체 상태에 넣는다. 기본값 `place`는 위 규칙과 같다 (#312).
+- `proximity_rssi_floor_dbm`이 있으면 근접 지정과 그 재검사는 고른 기기의 평균 RSSI가 하한 미만일 때 `ASK`다. 기본값 `None`은 하한을 보지 않는다 (#312).
 - 근접 지정과 전역 할당, 그 요청의 실행 직전 재검사는 자동 영점이 없는 기기의 임계값 비교에 보수적 사후확률을 쓴다. 사후확률이 가장 큰 기기가 임계값을 넘지 못하면 다른 후보를 고르지 않고 `ASK`다 (FR-17, FR-18, FR-23, 결정 22).
 - 거리 순서에는 자동 영점이 없는 근접 참여 기기도 선다 (FR-16).
 - 근접 추정은 좌표와 기기 배치를 쓰지 않는다. 공통 파라미터는 공통 모델 파일에서 읽는다 (FR-16).
@@ -161,6 +165,9 @@
 | 영점 재탐색: 영점이 없는 기기 | 버림 행을 쓰지 않는다. 모으던 표본만 지운다 | `test_FR16_reset_zero_without_zero_writes_nothing` |
 | 영점 재탐색: 장소에 기기가 없다 | `404` `NOT_FOUND` | `test_FR16_reset_place_zeros_unknown_place` |
 | 거리 선택자: 영점이 있는 기기가 섞여 있다 | 정렬 값은 보정한 값이다. 영점이 없는 기기는 보정 없이 계산한다 | `test_FR09_distance_order_subtracts_zero` |
+| 범위가 `kind`이고 같은 종류의 기기가 후보에서 빠졌다 | 그 기기도 전체 상태에 남는다 | `test_FR16_kind_scope_keeps_same_kind_non_candidate` |
+| 고른 기기의 평균 RSSI가 하한 미만이거나 값이 없다 | `ASK`·`LOW_CONFIDENCE`. 재검사는 `ASK`·`MOVE_CLOSER` | `test_FR17_rssi_floor_asks`, `test_FR17_rssi_floor_missing_value_asks`, `test_FR18_recheck_applies_kind_scope_and_rssi_floor` |
+| 설정의 범위가 `place`, `kind`가 아니거나 하한이 유한한 숫자가 아니다 | `ValueError`. 서버가 시작하지 않는다 | `test_FR16_proximity_scope_settings_reject_bad_values` |
 
 ## 6. 결정
 
@@ -288,15 +295,30 @@
     - `distance_order`는 근접 사후확률과 같은 메모리의 영점(출처와 상관없이)을 프레임마다 뺀다. 프레임 수와 경계 확률의 식은 그대로다.
     - `DistanceOrder.calib_version`은 계산할 때의 최신 개정 번호다. 판정은 ③ 감사 기록의 거리 순서 항목에 넣고, 거리 선택자 상위 요청의 판정 기록 `calib_version`에 쓴다. 하위 요청의 판정 기록은 이전처럼 사후확률의 개정이다.
     - 기본값 `"0"`이라 기존 fake는 "영점 없음"으로 읽힌다.
+26. 근접 지정의 전체 상태 범위와 RSSI 하한 (#312). 담당자가 2026-11-19에 구현을 지시했다.
+    - 범위는 `proximity_state_scope`, 하한은 `proximity_rssi_floor_dbm`이다. 기본값은 지금 규칙과 같다.
+    - 판정이 근접 추정에 넘기는 `place_nodes`를 좁힌다. 판정 한 건에 적용한 설정 버전을 그대로 쓰고, 추정기의 계산은 바꾸지 않는다.
+    - `nearest:`만 적용한다. 명시 지정, `any:`, 거리 선택자의 판정은 이전과 같다.
+    - 평균 RSSI는 칸 평균을 영점으로 보정해 평균한 값이다. 프레임 수가 많은 칸이 평균을 끌지 않는다.
 
 ## 7. 가정
 
-없음
+- #312의 팀 결정 전에는 FR-16의 전체 상태 규칙이 유효하다. 기본값은 그 규칙을 지키고, `kind`는 설정한 서버에서만 동작한다. 결정이 나면 `docs/requirements.md`와 `docs/architecture.md`에 반영한다.
 
 ## 8. 테스트
 
 | 요구사항 | 테스트 | 확인하는 것 |
 |---|---|---|
+| FR-16 | `test_FR16_default_scope_keeps_every_place_node` | 기본값은 다른 종류의 기기도 전체 상태에 넣는다 |
+| FR-16 | `test_FR16_kind_scope_keeps_same_kind_non_candidate` | `kind`는 같은 종류만 남기고 후보에서 빠진 기기도 남긴다 |
+| FR-16 | `test_FR16_kind_scope_only_applies_to_nearest` | 명시 지정, `any:`, 거리 선택자의 상태는 좁히지 않는다 |
+| FR-16 | `test_FR16_mean_rssi_is_zero_corrected_bin_mean` | 평균 RSSI는 영점으로 보정한 칸 평균의 평균이다 |
+| FR-16 | `test_FR16_result_mean_rssi_rejects_bad_values` | 후보 밖 기기와 유한하지 않은 값을 거부한다 |
+| FR-16 | `test_FR16_proximity_scope_settings_reject_bad_values` | 범위와 하한의 형식을 검사한다 |
+| FR-17 | `test_FR17_rssi_floor_asks` | 평균 RSSI가 하한 미만이면 `ASK`다 |
+| FR-17 | `test_FR17_rssi_floor_allows_value_at_floor` | 하한과 같으면 통과한다 |
+| FR-17 | `test_FR17_rssi_floor_missing_value_asks` | 평균 RSSI가 없으면 `ASK`다 |
+| FR-18 | `test_FR18_recheck_applies_kind_scope_and_rssi_floor` | 재검사도 같은 범위와 하한을 쓴다 |
 | FR-16 | `test_FR16_common_model_loads` | 형식 예의 파일을 읽는다. 읽은 모델은 바꿀 수 없다 |
 | FR-16 | `test_FR16_common_model_rejects_layout_keys` | `place_id`, `nodes`, `none_points`, `calib_version` 키를 거부한다 |
 | FR-16 | `test_FR16_common_model_rejects_bad_values` | 범위 밖 값과 이름 불일치를 거부한다 |

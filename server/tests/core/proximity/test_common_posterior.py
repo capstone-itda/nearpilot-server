@@ -737,3 +737,26 @@ def test_FR16_node_named_like_none_state_is_not_confused_with_it():
 def test_FR16_posterior_public_names():
     assert NONE_STATE == "__none__"
     assert issubclass(ProximityInputError, ValueError)
+
+
+def test_FR16_mean_rssi_is_zero_corrected_bin_mean():
+    nodes = nodes_of(("locker-1", "locker-2"))
+    frames = [
+        replace(standing_frames("locker-1", ("locker-1",), count=1)[0], rssi=-40.0, seq=1,
+                frame_ts=AT - timedelta(seconds=0.5), received_at=AT - timedelta(seconds=0.5)),
+        replace(standing_frames("locker-1", ("locker-1",), count=1)[0], rssi=-40.0, seq=2,
+                frame_ts=AT - timedelta(seconds=0.4), received_at=AT - timedelta(seconds=0.4)),
+        replace(standing_frames("locker-1", ("locker-1",), count=1)[0], rssi=-50.0, seq=3,
+                frame_ts=AT - timedelta(seconds=1.5), received_at=AT - timedelta(seconds=1.5)),
+    ]
+    result = compute_posteriors(
+        MODEL, frames, BEACON, nodes, nodes, AT, bin_sec=BIN_SEC, participants=["locker-1", "locker-2"],
+        zeros={"locker-1": 2.0}, calib_version="1",
+    )
+    assert dict(result.mean_rssi) == {"locker-1": pytest.approx(-47.0)}
+
+
+@pytest.mark.parametrize("mean_rssi", [{"locker-2": -40.0}, {"locker-1": math.inf}, {"locker-1": True}])
+def test_FR16_result_mean_rssi_rejects_bad_values(mean_rssi):
+    with pytest.raises(ValueError):
+        ProximityResult({"locker-1": 0.5}, AT, AT, "m", "c", mean_rssi=mean_rssi)
