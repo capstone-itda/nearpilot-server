@@ -108,6 +108,27 @@ def target_kind(req: UseRequest, nodes: Sequence[NodeInfo]) -> str | None:
     return next((n.kind for n in nodes if n.node_id == req.target.node_id), None)
 
 
+def proximity_state_nodes(
+    req: UseRequest, place_nodes: Sequence[NodeInfo], settings: Settings
+) -> Sequence[NodeInfo]:
+    """근접 추정에 넘길 전체 상태의 기기 (FR-16, #312). 범위가 `kind` 인 근접 지정만 요청 종류의 기기로 좁힌다.
+
+    후보에서 빠진 같은 종류의 기기는 남는다. 최초 판정과 실행 직전 재검사가 같은 규칙을 쓴다.
+    """
+    if settings.proximity_state_scope != "kind" or req.target.kind is not TargetKind.NEAREST:
+        return place_nodes
+    return [n for n in place_nodes if n.kind == req.target.device_kind]
+
+
+def below_rssi_floor(req: UseRequest, result: ProximityResult, node_id: str, settings: Settings) -> bool:
+    """근접 지정이 고른 기기의 평균 RSSI 가 하한 미만인가 (FR-17, #312). 값이 없는 기기도 미만으로 본다."""
+    floor = settings.proximity_rssi_floor_dbm
+    if floor is None or req.target.kind is not TargetKind.NEAREST:
+        return False
+    rssi = result.mean_rssi.get(node_id)
+    return rssi is None or rssi < floor
+
+
 def is_reoperate(node: NodeInfo, action: str) -> bool:
     """기기 선언에서 이 동작의 역할이 `reoperate` 인가 (FR-09). 동작 이름으로 정하지 않는다."""
     spec = None if node.descriptor is None else node.descriptor.action(action)
@@ -1017,7 +1038,7 @@ class DecisionPipeline:
             self._audit_step(Step.PROXIMITY, iid, {"skipped": True, "reason": "explicit_target",
                                                   "node_id": node_id})
         else:
-            place_nodes = [n for n in all_nodes if n.place_id == place_id]
+            place_nodes = proximity_state_nodes(req, [n for n in all_nodes if n.place_id == place_id], s)
             result = self._proximity.posterior(beacons, candidates, now, place_nodes=place_nodes)
             posteriors = dict(result.posteriors)
             applied.model_version, applied.calib_version = result.model_version, result.calib_version
@@ -1026,7 +1047,9 @@ class DecisionPipeline:
             prox_detail = {"posteriors": posteriors, "threshold": threshold,
                            "model_version": result.model_version, "calib_version": result.calib_version,
                            "unzeroed": sorted(result.unzeroed),
-                           "conservative": dict(sorted(result.conservative.items()))}
+                           "conservative": dict(sorted(result.conservative.items())),
+                           "state_scope": s.proximity_state_scope, "rssi_floor_dbm": s.proximity_rssi_floor_dbm,
+                           "mean_rssi": dict(sorted(result.mean_rssi.items()))}
             self._audit_step(Step.PROXIMITY, iid, {**prox_detail, "best": result.best})
             if any_kind:
                 node_id, p, check = self._assign_any(req, iid, applied, by_id, result, threshold, now)
@@ -1035,7 +1058,8 @@ class DecisionPipeline:
                 # 1등에 자동 영점이 없으면 보수적 사후확률이 임계값 이상일 때만 진행한다 (FR-17)
                 best = result.best
                 p_top = None if best is None else result.threshold_probability(best[0])
-                if best is None or p_top < threshold or best[0] not in by_id:
+                if (best is None or p_top < threshold or best[0] not in by_id
+                        or below_rssi_floor(req, result, best[0], s)):
                     raise _Stop(Step.PROXIMITY, self._decision(
                         req, iid, Verdict.ASK, ReasonCode.LOW_CONFIDENCE, p_max=p_top))
                 node_id, p = best[0], p_top

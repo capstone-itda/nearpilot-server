@@ -197,6 +197,7 @@ def compute_posteriors(
     (Δ는 `model.auto_zero_bound_db`). i가 실제로 세게 듣는 기기이고 다른 기기들은 약하게 듣는다고 보는 쪽이 i에게 가장 불리하다.
     값은 `min(posteriors[i], 그 계산의 i 확률)`이라 `posteriors[i]` 이하이고, Δ가 0이면 같다.
     Δ를 모르면(`model.auto_zero_bound_db`가 `None`) 영점이 어느 값일지 알 수 없어서 다시 계산하지 않고 0.0이다 (어떤 임계값도 넘지 못한다).
+    `mean_rssi`는 `posteriors` 기기 중 관측 구간에 값이 있는 기기의 칸 평균을 영점으로 보정해 평균한 값이다 (#312).
     입력 관계가 맞지 않으면 `ProximityInputError`다.
     """
     _check_inputs(candidates, place_nodes, bin_sec)
@@ -215,6 +216,11 @@ def compute_posteriors(
         candidate.node_id: probability[candidate.node_id] for candidate in candidates if candidate.node_id in probability
     }
     unzeroed = frozenset(node_id for node_id in posteriors if node_id not in zeros)
+    mean_rssi: dict[str, float] = {}
+    for node_id in posteriors:
+        values = [row[node_id] - zeros.get(node_id, 0.0) for row in observed.values() if node_id in row]
+        if values:
+            mean_rssi[node_id] = math.fsum(values) / len(values)
 
     bound = model.auto_zero_bound_db
     conservative: dict[str, float] = {}
@@ -237,4 +243,5 @@ def compute_posteriors(
         calib_version=calib_version,
         unzeroed=unzeroed,
         conservative=conservative,
+        mean_rssi=mean_rssi,
     )

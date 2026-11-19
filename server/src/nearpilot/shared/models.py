@@ -425,6 +425,8 @@ class ProximityResult:
     # 키 집합은 unzeroed 와 같고 값은 같은 기기의 posteriors 이하다. 기본값이 빈 dict 라 unzeroed 기본값과 맞는다.
     # 모델이 Δ를 모르면(auto_zero_bound_db 가 None) 그 값은 0.0이다.
     conservative: Mapping[str, float] = field(default_factory=dict)
+    # posteriors 기기 중 관측 구간에 값이 있는 기기의 평균 RSSI dBm. 칸 평균을 영점으로 보정해 평균한 값이다 (FR-17, #312).
+    mean_rssi: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for probability in self.posteriors.values():
@@ -454,6 +456,13 @@ class ProximityResult:
         object.__setattr__(self, "posteriors", _freeze(self.posteriors))
         object.__setattr__(self, "unzeroed", unzeroed)
         object.__setattr__(self, "conservative", _freeze(self.conservative))
+        outside_rssi = set(self.mean_rssi).difference(self.posteriors)
+        if outside_rssi:
+            raise ValueError(f"평균 RSSI의 기기는 posteriors 안에 있어야 한다: {sorted(outside_rssi)}")
+        for node_id, rssi in self.mean_rssi.items():
+            if isinstance(rssi, bool) or not isinstance(rssi, (int, float)) or not isfinite(rssi):
+                raise ValueError(f"평균 RSSI는 유한한 숫자여야 한다: {node_id}")
+        object.__setattr__(self, "mean_rssi", _freeze(self.mean_rssi))
 
     @property
     def best(self) -> tuple[str, float] | None:

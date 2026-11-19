@@ -13,7 +13,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from nearpilot.core.decision.pipeline import (
-    is_reoperate, make_decision, select_candidates, target_kind, threshold_for,
+    below_rssi_floor, is_reoperate, make_decision, proximity_state_nodes, select_candidates, target_kind,
+    threshold_for,
 )
 from nearpilot.shared.enums import (
     ExecutionKind, Occupancy, ReasonCode, SessionState, Step, TargetKind, TrustState, Verdict,
@@ -112,12 +113,12 @@ class Rechecker:
             threshold = threshold_for(s, req.target.device_kind)
             if threshold is None:
                 raise ValueError("임계값 설정이 없다")
-            place_nodes = [n for n in all_nodes if n.place_id == place_id]
+            place_nodes = proximity_state_nodes(req, [n for n in all_nodes if n.place_id == place_id], s)
             result = self._proximity.posterior(beacons, candidates, now, place_nodes=place_nodes)
             p = (dict(result.posteriors).get(node_id, 0.0) if req.target.is_selector
                  else result.threshold_probability(node_id))
             prob = {"p": p, "threshold": threshold}
-            if p < threshold:
+            if p < threshold or below_rssi_floor(req, result, node_id, s):
                 raise stop(Verdict.ASK, ReasonCode.MOVE_CLOSER, prob, p_max=p)
 
         # ④ 정책 — 이 요청의 ID 를 넘겨 ⑤가 예약한 자기 사용분을 남은 횟수에서 뺀다 (FR-14, FR-19)

@@ -8,7 +8,7 @@ import pytest
 
 from nearpilot.core.decision.core_service import build_core_service
 from nearpilot.core.decision.digest import input_digest
-from nearpilot.core.decision.pipeline import DecisionPipeline
+from nearpilot.core.decision.pipeline import DecisionPipeline, proximity_state_nodes
 from nearpilot.shared.config import Settings
 from nearpilot.shared.descriptor import DescriptorError, legacy_descriptor
 from nearpilot.shared.enums import (
@@ -1247,3 +1247,67 @@ def test_FR22_capacity_stops_before_beacon_and_saves_record():
     assert repo.saved == [decision] and not repo.reserved
     assert repo.records[0].model_version is None
     assert [event.step for event in audit.events] == [Step.DEDUP]
+
+
+# ── 근접 지정의 전체 상태 범위와 RSSI 하한 (#312) ─────────────────────
+
+
+class RssiProximity(FakeProximity):
+    """평균 RSSI 를 함께 돌려주는 근접 추정 fake."""
+
+    def __init__(self, posteriors, mean_rssi):
+        super().__init__(posteriors)
+        self.mean_rssi = mean_rssi
+
+    def posterior(self, beacons, candidates, at, *, place_nodes):
+        super().posterior(beacons, candidates, at, place_nodes=place_nodes)
+        return ProximityResult(self.posteriors, at, at, "m", "c", mean_rssi=self.mean_rssi)
+
+
+def scoped(scope="kind", floor=None, mean_rssi=None):
+    settings = Settings(version="v1", threshold_locker=0.6, proximity_state_scope=scope,
+                        proximity_rssi_floor_dbm=floor)
+    prox = RssiProximity({"locker-1": 0.9}, {"locker-1": -45.0} if mean_rssi is None else mean_rssi)
+    repo = FakeRepo()
+    repo.nodes_list = [node("locker-1"), node("locker-2", device_state=DeviceState.FAULT), anchor()]
+    audit = FakeAudit()
+    n = iter(range(10_000))
+    pipe = DecisionPipeline(repo, prox, FakePolicy(), audit, settings, FakeReadiness(), new_id=lambda: f"e{next(n)}")
+    return pipe, prox, audit
+
+
+def test_FR16_default_scope_keeps_every_place_node():
+    pipe, prox, _ = scoped(scope="place")
+    assert pipe.decide(request()).verdict is Verdict.OK
+    assert prox.place_nodes == [["locker-1", "locker-2", "anchor-1"]]
+
+
+def test_FR16_kind_scope_keeps_same_kind_non_candidate():
+    pipe, prox, audit = scoped()
+    assert pipe.decide(request()).verdict is Verdict.OK
+    assert prox.calls == [["locker-1"]]
+    assert prox.place_nodes == [["locker-1", "locker-2"]]
+    detail = next(e.payload for e in audit.events if e.step is Step.PROXIMITY)
+    assert (detail["state_scope"], detail["mean_rssi"]) == ("kind", {"locker-1": -45.0})
+
+
+@pytest.mark.parametrize("target", ["locker-1", "any:locker", "near:locker:1:1", "far:locker:1:1"])
+def test_FR16_kind_scope_only_applies_to_nearest(target):
+    places = [node("locker-1"), anchor()]
+    assert proximity_state_nodes(request(target), places, Settings(proximity_state_scope="kind")) == places
+
+
+def test_FR17_rssi_floor_asks():
+    pipe, _, _ = scoped(floor=-44.0)
+    d = pipe.decide(request())
+    assert (d.verdict, d.reason, d.p_max) == (Verdict.ASK, ReasonCode.LOW_CONFIDENCE, 0.9)
+
+
+def test_FR17_rssi_floor_allows_value_at_floor():
+    pipe, _, _ = scoped(floor=-45.0)
+    assert pipe.decide(request()).verdict is Verdict.OK
+
+
+def test_FR17_rssi_floor_missing_value_asks():
+    pipe, _, _ = scoped(floor=-90.0, mean_rssi={})
+    assert pipe.decide(request()).verdict is Verdict.ASK
